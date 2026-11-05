@@ -1,0 +1,8 @@
+apiVersion: v2
+name: asterius-platform
+description: Internal developer portal — software catalog, self-service actions with approvals, pipeline/webhook automation and third-party ingestion.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.30.0-0" # native preStop sleep, ValidatingAdmissionPolicy-era clusters
+keywords: [developer-portal, idp, platform-engineering, self-service, catalog]

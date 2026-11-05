@@ -1,0 +1,75 @@
+integrations:
+  # Pull: GitHub repositories every hour (needs the GITHUB_TOKEN secret, then set enabled: true).
+  - identifier: github
+    title: GitHub repositories
+    type: github
+    enabled: false
+    intervalMinutes: 60
+    deleteMissing: true
+    config:
+      org: my-org
+      token: ${secret:GITHUB_TOKEN}
+    mappings:
+      - kind: repository
+        filter: archived = false and fork = false
+        entity:
+          blueprint: repository
+          identifier: name
+          title: name
+          properties:
+            url: html_url
+            language: language
+            defaultBranch: default_branch
+            visibility: visibility
+          # Convention: a repository belongs to the service with the same name, when it exists.
+          relations:
+            service: name
+
+  # Pull: deployments of the cluster the platform runs in (in-cluster service account, read-only RBAC).
+  - identifier: k8s-prod
+    title: Kubernetes (prod-weu)
+    type: kubernetes
+    enabled: false
+    intervalMinutes: 15
+    deleteMissing: true
+    config:
+      cluster: prod-weu
+      labelSelector: app.kubernetes.io/name
+    mappings:
+      - kind: apps/v1/Deployment
+        entity:
+          blueprint: workload
+          identifier: $integration.config.cluster & "." & metadata.namespace & "." & metadata.name
+          title: metadata.name
+          properties:
+            cluster: $integration.config.cluster
+            namespace: metadata.namespace
+            image: spec.template.spec.containers[0].image
+            replicas: spec.replicas
+            ready: 'status.readyReplicas = spec.replicas'
+          relations:
+            service: 'metadata.labels."app.kubernetes.io/name"'
+
+  # Push: CI/CD pipelines POST deployment events to /api/v1/ingest/deployments
+  #   curl -X POST $URL -H "X-Asterius-Token: $INGEST_TOKEN" -H 'content-type: application/json' \
+  #        -d '{"service":"payment-api","environment":"prod-weu","version":"1.4.2","status":"success"}'
+  - identifier: deployments
+    title: Deployment events (CI/CD)
+    type: webhook
+    config:
+      secret: ${secret:INGEST_TOKEN}
+    mappings:
+      - kind: event
+        filter: $exists(service) and $exists(environment)
+        entity:
+          blueprint: deployment
+          identifier: service & "-" & environment
+          title: service & " → " & environment
+          properties:
+            status: status
+            version: version
+            url: url
+            deployedAt: $now()
+          relations:
+            service: service
+            environment: environment

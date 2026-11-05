@@ -1,0 +1,35 @@
+{{- $v := .Values -}}
+{{- if $v.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "ap.fullname" . }}
+  labels: {{- include "ap.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Chart.Name }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes: [Ingress{{ if $v.networkPolicy.egress }}, Egress{{ end }}]
+  ingress:
+    # Ingress controller → API (UI, API, inbound webhooks, run callbacks)
+    - from:
+        - namespaceSelector:
+            matchLabels: {{- toYaml $v.networkPolicy.ingressNamespaceSelector | nindent 14 }}
+      ports: [{ port: 8080, protocol: TCP }] # numeric: named ports are not resolved by every CNI
+    # Prometheus → /metrics
+    - from:
+        - namespaceSelector:
+            matchLabels: {{- toYaml $v.networkPolicy.monitoringNamespaceSelector | nindent 14 }}
+      ports: [{ port: 8080, protocol: TCP }] # numeric: named ports are not resolved by every CNI
+    # Same release (helm test, pod-to-pod)
+    - from:
+        - podSelector: { matchLabels: { app.kubernetes.io/instance: {{ .Release.Name }} } }
+      ports: [{ port: 8080, protocol: TCP }] # numeric: named ports are not resolved by every CNI
+  {{- if $v.networkPolicy.egress }}
+  egress:
+    - ports: [{ port: 53, protocol: UDP }, { port: 53, protocol: TCP }]
+    - ports: [{ port: 5432, protocol: TCP }]
+    {{- toYaml $v.networkPolicy.egress | nindent 4 }}
+  {{- end }}
+{{- end }}

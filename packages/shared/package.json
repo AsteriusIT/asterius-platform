@@ -1,0 +1,7 @@
+{
+  "name": "@asterius/shared",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Types shared by the Asterius Platform server and web UI (declarations only).",
+  "types": "index.d.ts"
+}

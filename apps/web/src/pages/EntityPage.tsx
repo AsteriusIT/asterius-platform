@@ -1,0 +1,282 @@
+import { useState } from 'react';
+import { Anchor, Badge, Button, Card, Grid, Group, Menu, SimpleGrid, Stack, Table, Tabs, Text, Tooltip } from '@mantine/core';
+import { modals } from '@mantine/modals';
+import { notifications } from '@mantine/notifications';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Link, useNavigate, useParams } from 'react-router';
+import { IconChevronDown, IconDots, IconPencil, IconTrash } from '@tabler/icons-react';
+import type { Action, Blueprint, Entity } from '@asterius/shared';
+import { api, errorText } from '../lib/api';
+import { useAuth } from '../lib/auth';
+import { PropertyValue } from '../components/PropertyValue';
+import { orderedFields } from '../components/SchemaForm';
+import { ActionRunModal } from '../components/ActionRunModal';
+import { DataTable } from '../components/DataTable';
+import { ResourceEditor } from '../components/ResourceEditor';
+import { EntityIcon } from '../components/icons';
+import { Empty, Mono, PageHeader, QueryView, StatusBadge, TimeAgo } from '../components/ui';
+
+export function EntityPage() {
+  const { bp = '', id = '' } = useParams();
+  const blueprint = useQuery({ queryKey: ['blueprint', bp], queryFn: () => api.blueprint(bp) });
+  const entity = useQuery({ queryKey: ['entity', bp, id], queryFn: () => api.entity(bp, id) });
+  return <QueryView q={blueprint}>{(b) => <QueryView q={entity}>{(e) => <EntityView bp={b} e={e} />}</QueryView>}</QueryView>;
+}
+
+const entityLink = (e: Pick<Entity, 'blueprint' | 'identifier'>) => `/catalog/${e.blueprint}/${encodeURIComponent(e.identifier)}`;
+
+function EntityView({ bp, e }: { bp: Blueprint; e: Entity }) {
+  const { user, isAdmin } = useAuth();
+  const navigate = useNavigate();
+  const qc = useQueryClient();
+  const [runAction, setRunAction] = useState<Action | null>(null);
+  const [editing, setEditing] = useState(false);
+  const related = useQuery({ queryKey: ['related', bp.identifier, e.identifier], queryFn: () => api.related(bp.identifier, e.identifier) });
+  const actions = useQuery({ queryKey: ['entity-actions', bp.identifier, e.identifier], queryFn: () => api.entityActions(bp.identifier, e.identifier) });
+  const runs = useQuery({
+    queryKey: ['runs', 'entity', bp.identifier, e.identifier],
+    queryFn: () => api.runs({ blueprint: bp.identifier, entity: e.identifier, limit: 20 }),
+    refetchInterval: 15_000,
+  });
+  const canEdit = (isAdmin || (!!e.team && user?.teams.some((t) => t.identifier === e.team))) && !e.source.startsWith('integration:');
+
+  const day2 = (actions.data ?? []).filter((a) => a.trigger?.on === 'day-2');
+  const deletes = (actions.data ?? []).filter((a) => a.trigger?.on === 'delete');
+
+  const remove = () =>
+    modals.openConfirmModal({
+      title: `Delete ${e.title}?`,
+      children: <Text fz="sm">This removes the entity from the catalog only. Use a decommission action to also remove the real resources.</Text>,
+      labels: { confirm: 'Delete', cancel: 'Cancel' },
+      confirmProps: { color: 'red' },
+      onConfirm: async () => {
+        try {
+          await api.deleteEntity(bp.identifier, e.identifier);
+          void qc.invalidateQueries({ queryKey: ['entities'] });
+          navigate(`/catalog/${bp.identifier}`);
+        } catch (err) {
+          notifications.show({ color: 'red', message: errorText(err) });
+        }
+      },
+    });
+
+  return (
+    <Stack>
+      <PageHeader
+        crumbs={[{ label: bp.title, to: `/catalog/${bp.identifier}` }, { label: e.identifier }]}
+        title={e.title}
+        icon={bp.icon}
+        description={
+          <Group gap="xs" component="span">
+            {e.team && <Badge color="gray">{e.team}</Badge>}
+            <Text span fz="sm" c="dimmed">
+              source <Mono>{e.source}</Mono> · updated <TimeAgo at={e.updatedAt} />
+            </Text>
+          </Group>
+        }
+        actions={
+          <>
+            {day2.map((a) => (
+              <Tooltip
+                key={a.identifier}
+                label={a.allowedForMe ? a.description : 'You are not allowed to run this action'}
+                disabled={!a.description && a.allowedForMe}
+                multiline
+                w={260}
+              >
+                <Button
+                  variant="light"
+                  color="gray"
+                  c="var(--mantine-color-text)"
+                  leftSection={<EntityIcon name={a.icon} size={16} />}
+                  disabled={!a.allowedForMe}
+                  onClick={() => setRunAction(a)}
+                >
+                  {a.title}
+                </Button>
+              </Tooltip>
+            ))}
+            {(canEdit || deletes.length > 0) && (
+              <Menu position="bottom-end">
+                <Menu.Target>
+                  <Button variant="default" px="xs" aria-label="More">
+                    <IconDots size={18} />
+                  </Button>
+                </Menu.Target>
+                <Menu.Dropdown>
+                  {canEdit && (
+                    <Menu.Item leftSection={<IconPencil size={16} />} onClick={() => setEditing(true)}>
+                      Edit as YAML
+                    </Menu.Item>
+                  )}
+                  {deletes.map((a) => (
+                    <Menu.Item
+                      key={a.identifier}
+                      color="red"
+                      leftSection={<EntityIcon name={a.icon} size={16} />}
+                      disabled={!a.allowedForMe}
+                      onClick={() => setRunAction(a)}
+                    >
+                      {a.title}
+                    </Menu.Item>
+                  ))}
+                  {canEdit && (
+                    <Menu.Item color="red" leftSection={<IconTrash size={16} />} onClick={remove}>
+                      Delete from catalog
+                    </Menu.Item>
+                  )}
+                </Menu.Dropdown>
+              </Menu>
+            )}
+          </>
+        }
+      />
+
+      <Tabs defaultValue="overview" keepMounted={false}>
+        <Tabs.List mb="md">
+          <Tabs.Tab value="overview">Overview</Tabs.Tab>
+          <Tabs.Tab value="runs" rightSection={runs.data?.total ? <Badge size="xs">{runs.data.total}</Badge> : undefined}>
+            Runs
+          </Tabs.Tab>
+          <Tabs.Tab value="json">Raw</Tabs.Tab>
+        </Tabs.List>
+
+        <Tabs.Panel value="overview">
+          <Grid>
+            <Grid.Col span={{ base: 12, md: 7 }}>
+              <Card>
+                <Text fw={600} mb="sm">
+                  Properties
+                </Text>
+                <Table withRowBorders={false} verticalSpacing={6} highlightOnHover={false}>
+                  <Table.Tbody>
+                    {orderedFields(bp.schema).map((k) => (
+                      <Table.Tr key={k}>
+                        <Table.Td w="35%" c="dimmed" fz="sm" style={{ verticalAlign: 'top' }}>
+                          {bp.schema.properties[k].title ?? k}
+                        </Table.Td>
+                        <Table.Td>
+                          <PropertyValue schema={bp.schema.properties[k]} value={e.properties[k]} />
+                        </Table.Td>
+                      </Table.Tr>
+                    ))}
+                    {Object.keys(e.properties)
+                      .filter((k) => !bp.schema.properties[k])
+                      .map((k) => (
+                        <Table.Tr key={k}>
+                          <Table.Td c="dimmed" fz="sm">
+                            {k}
+                          </Table.Td>
+                          <Table.Td>
+                            <PropertyValue value={e.properties[k]} />
+                          </Table.Td>
+                        </Table.Tr>
+                      ))}
+                  </Table.Tbody>
+                </Table>
+              </Card>
+            </Grid.Col>
+            <Grid.Col span={{ base: 12, md: 5 }}>
+              <Stack>
+                <QueryView q={related}>
+                  {(rel) => (
+                    <>
+                      <RelationCard title="Relations" groups={Object.entries(bp.relations).map(([name, r]) => [r.title ?? name, rel.outgoing[name] ?? []])} />
+                      <RelationCard title="Referenced by" groups={Object.entries(rel.incoming).map(([k, list]) => [k.replace('.', ' · '), list])} />
+                    </>
+                  )}
+                </QueryView>
+              </Stack>
+            </Grid.Col>
+          </Grid>
+        </Tabs.Panel>
+
+        <Tabs.Panel value="runs">
+          <DataTable
+            rows={runs.data?.items}
+            loading={runs.isPending}
+            error={runs.error}
+            rowKey={(r) => r.id}
+            onRowClick={(r) => navigate(`/runs/${r.id}`)}
+            empty="No action has run on this entity yet"
+            columns={[
+              {
+                key: 'a',
+                label: 'Action',
+                render: (r) => (
+                  <Text fz="sm" fw={500}>
+                    {r.actionTitle}
+                  </Text>
+                ),
+              },
+              { key: 's', label: 'Status', render: (r) => <StatusBadge status={r.status} label={r.statusLabel} /> },
+              { key: 'u', label: 'By', render: (r) => r.triggeredBy.name },
+              { key: 't', label: 'When', render: (r) => <TimeAgo at={r.createdAt} /> },
+            ]}
+          />
+        </Tabs.Panel>
+
+        <Tabs.Panel value="json">
+          <Card>
+            <pre style={{ margin: 0, fontSize: 12, overflowX: 'auto' }}>{JSON.stringify(e, null, 2)}</pre>
+          </Card>
+        </Tabs.Panel>
+      </Tabs>
+
+      <ActionRunModal action={runAction} entity={e} onClose={() => setRunAction(null)} />
+      <ResourceEditor
+        title={`Edit ${e.title}`}
+        isNew={false}
+        value={editing ? { identifier: e.identifier, title: e.title, team: e.team, properties: e.properties, relations: e.relations } : null}
+        onClose={() => setEditing(false)}
+        onSave={async (_id, body) => {
+          const saved = await api.saveEntity(bp.identifier, e.identifier, body);
+          qc.setQueryData(['entity', bp.identifier, e.identifier], saved);
+          void qc.invalidateQueries({ queryKey: ['related'] });
+          return saved;
+        }}
+      />
+    </Stack>
+  );
+}
+
+function RelationCard({ title, groups }: { title: string; groups: [string, Entity[]][] }) {
+  const nonEmpty = groups.filter(([, l]) => l.length);
+  return (
+    <Card>
+      <Text fw={600} mb="sm">
+        {title}
+      </Text>
+      {!nonEmpty.length && <Empty title="None" />}
+      <SimpleGrid cols={1} spacing="sm">
+        {nonEmpty.map(([label, list]) => (
+          <div key={label}>
+            <Group gap={4} mb={4}>
+              <IconChevronDown size={14} />
+              <Text fz="xs" c="dimmed" fw={500}>
+                {label}
+              </Text>
+            </Group>
+            <Group gap={6}>
+              {list.map((x) =>
+                x.source === 'missing' ? (
+                  <Tooltip key={x.identifier} label="Not in the catalog (yet)">
+                    <Badge color="gray" variant="outline" style={{ textDecoration: 'line-through' }}>
+                      {x.identifier}
+                    </Badge>
+                  </Tooltip>
+                ) : (
+                  <Anchor key={`${x.blueprint}/${x.identifier}`} component={Link} to={entityLink(x)}>
+                    <Badge variant="light" style={{ cursor: 'pointer' }}>
+                      {x.title}
+                    </Badge>
+                  </Anchor>
+                ),
+              )}
+            </Group>
+          </div>
+        ))}
+      </SimpleGrid>
+    </Card>
+  );
+}

@@ -1,0 +1,11 @@
+teams:
+  - identifier: platform
+    title: Platform
+    description: Builds and runs the internal developer platform.
+    # entraGroupId: 00000000-0000-0000-0000-000000000000   # members of this group join the team at sign-in
+  - identifier: payments
+    title: Payments
+    description: Payment processing and billing.
+  - identifier: checkout
+    title: Checkout
+    description: Cart, checkout and order flows.

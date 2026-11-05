@@ -1,0 +1,147 @@
+blueprints:
+  - identifier: system
+    title: System
+    icon: sitemap
+    description: A group of services delivering one business capability.
+    schema:
+      properties:
+        criticality:
+          { type: string, title: Criticality, enum: [low, medium, high, critical], enumColors: { low: gray, medium: blue, high: orange, critical: red } }
+        description: { type: string, title: Description, format: markdown }
+      required: [criticality]
+
+  - identifier: service
+    title: Service
+    icon: box
+    description: A deployable unit owned by one team.
+    schema:
+      properties:
+        language: { type: string, title: Language, enum: [go, java, node, python, dotnet] }
+        tier: { type: integer, title: Tier, minimum: 1, maximum: 3, default: 2 }
+        lifecycle:
+          {
+            type: string,
+            title: Lifecycle,
+            enum: [experimental, production, deprecated],
+            default: experimental,
+            enumColors: { experimental: yellow, production: green, deprecated: gray },
+          }
+        repositoryUrl: { type: string, title: Repository, format: url }
+        runbook: { type: string, title: Runbook, format: url }
+        onCall: { type: string, title: On-call, format: email }
+      order: [lifecycle, tier, language, repositoryUrl, runbook, onCall]
+    relations:
+      system: { title: System, target: system }
+      dependsOn: { title: Depends on, target: service, many: true }
+
+  - identifier: repository
+    title: Repository
+    icon: git-branch
+    description: Source repositories (ingested from GitHub / Azure DevOps / GitLab).
+    schema:
+      properties:
+        url: { type: string, title: URL, format: url }
+        language: { type: string, title: Language }
+        defaultBranch: { type: string, title: Default branch }
+        visibility: { type: string, title: Visibility }
+    relations:
+      service: { title: Service, target: service }
+
+  - identifier: environment
+    title: Environment
+    icon: server
+    description: Runtime environments (requested through self-service).
+    schema:
+      properties:
+        type: { type: string, title: Type, enum: [development, staging, production], enumColors: { development: gray, staging: blue, production: red } }
+        region: { type: string, title: Region, enum: [westeurope, northeurope, switzerlandnorth] }
+        expiresAt: { type: string, title: Expires, format: date }
+      required: [type]
+
+  - identifier: deployment
+    title: Deployment
+    icon: rocket
+    description: Deployments reported by CI/CD (inbound webhook).
+    schema:
+      properties:
+        status: { type: string, title: Status, enumColors: { success: green, failure: red, in_progress: blue } }
+        version: { type: string, title: Version }
+        url: { type: string, title: URL, format: url }
+        deployedAt: { type: string, title: Deployed at, format: date-time }
+    relations:
+      service: { title: Service, target: service }
+      environment: { title: Environment, target: environment }
+
+  - identifier: database
+    title: Database
+    icon: database
+    description: Managed databases (PostgreSQL, MySQL) used by services.
+    schema:
+      properties:
+        engine: { type: string, title: Engine, enum: [postgres, mysql], enumColors: { postgres: blue, mysql: orange } }
+        version: { type: string, title: Version }
+        sizeGb: { type: integer, title: Storage (GB), minimum: 1, maximum: 4096 }
+        tier: { type: string, title: Tier, enum: [burstable, general-purpose, memory-optimized], default: general-purpose }
+        lastCredentialRotation: { type: string, title: Credentials rotated, format: date-time, hidden: true }
+      required: [engine, sizeGb]
+      order: [engine, version, sizeGb, tier]
+    relations:
+      usedBy: { title: Used by, target: service, many: true }
+      environment: { title: Environment, target: environment }
+
+  - identifier: workload
+    title: Kubernetes workload
+    icon: brand-kubernetes
+    description: Deployments running in the clusters (Kubernetes integration).
+    schema:
+      properties:
+        cluster: { type: string, title: Cluster }
+        namespace: { type: string, title: Namespace }
+        image: { type: string, title: Image }
+        replicas: { type: integer, title: Replicas }
+        ready: { type: boolean, title: Ready }
+    relations:
+      service: { title: Service, target: service }
+
+# Demo data: created when missing, never overwritten (delete this block in a real installation).
+entities:
+  - {
+      blueprint: system,
+      identifier: payments,
+      title: Payments,
+      team: payments,
+      properties: { criticality: critical, description: 'Card payments, refunds and payouts.' },
+    }
+  - { blueprint: system, identifier: storefront, title: Storefront, team: checkout, properties: { criticality: high } }
+  - blueprint: service
+    identifier: payment-api
+    title: Payment API
+    team: payments
+    properties: { language: go, tier: 1, lifecycle: production, repositoryUrl: 'https://github.com/example/payment-api', onCall: payments-oncall@example.com }
+    relations: { system: payments }
+  - blueprint: service
+    identifier: fraud-scoring
+    title: Fraud scoring
+    team: payments
+    properties: { language: python, tier: 2, lifecycle: production }
+    relations: { system: payments, dependsOn: [payment-api] }
+  - blueprint: service
+    identifier: cart
+    title: Cart
+    team: checkout
+    properties: { language: node, tier: 2, lifecycle: production }
+    relations: { system: storefront, dependsOn: [payment-api] }
+  - blueprint: database
+    identifier: payments-db
+    title: Payments DB
+    team: payments
+    properties: { engine: postgres, version: '16', sizeGb: 64, tier: general-purpose }
+    relations: { usedBy: [payment-api, fraud-scoring], environment: prod-weu }
+  - blueprint: database
+    identifier: cart-cache-db
+    title: Cart DB
+    team: checkout
+    properties: { engine: mysql, version: '8.4', sizeGb: 20, tier: burstable }
+    relations: { usedBy: [cart], environment: prod-weu }
+  - { blueprint: environment, identifier: prod-weu, title: Production (West Europe), team: platform, properties: { type: production, region: westeurope } }
+  - { blueprint: environment, identifier: staging-weu, title: Staging (West Europe), team: platform, properties: { type: staging, region: westeurope } }

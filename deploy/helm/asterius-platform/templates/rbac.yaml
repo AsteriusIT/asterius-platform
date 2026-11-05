@@ -1,0 +1,57 @@
+{{- $v := .Values -}}
+{{- if $v.serviceAccount.create }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "ap.serviceAccountName" . }}
+  labels: {{- include "ap.labels" . | nindent 4 }}
+  {{- with $v.serviceAccount.annotations }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
+automountServiceAccountToken: false
+{{- end }}
+{{- if $v.rbac.clusterRead.enabled }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "ap.fullname" . }}-read
+  labels: {{- include "ap.labels" . | nindent 4 }}
+rules: {{- toYaml $v.rbac.clusterRead.rules | nindent 2 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "ap.fullname" . }}-read
+  labels: {{- include "ap.labels" . | nindent 4 }}
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: {{ include "ap.fullname" . }}-read }
+subjects:
+  - { kind: ServiceAccount, name: {{ include "ap.serviceAccountName" . }}, namespace: {{ .Release.Namespace }} }
+{{- end }}
+{{- range $ns := $v.rbac.jobNamespaces }}
+---
+# Kubernetes Job invoker: create and follow jobs in {{ $ns }} only.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "ap.fullname" $ }}-jobs
+  namespace: {{ $ns }}
+  labels: {{- include "ap.labels" $ | nindent 4 }}
+rules:
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [create, get, delete]
+  - apiGroups: [""]
+    resources: [pods, pods/log]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "ap.fullname" $ }}-jobs
+  namespace: {{ $ns }}
+  labels: {{- include "ap.labels" $ | nindent 4 }}
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: {{ include "ap.fullname" $ }}-jobs }
+subjects:
+  - { kind: ServiceAccount, name: {{ include "ap.serviceAccountName" $ }}, namespace: {{ $.Release.Namespace }} }
+{{- end }}

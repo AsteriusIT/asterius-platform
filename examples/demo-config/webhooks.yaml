@@ -1,0 +1,8 @@
+webhooks:
+  # Notify a chat relay / automation of approvals to give and finished runs.
+  - identifier: runs-relay
+    title: Runs → automation relay
+    url: https://automation.example.internal/asterius-events
+    events: [run.created, run.updated]
+    secret: ${secret:WEBHOOK_SIGNING_KEY}
+    enabled: false

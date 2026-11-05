@@ -1,0 +1,124 @@
+# Asterius Platform → Azure DevOps administration pipeline.
+#
+# Queued by the platform's "azure-pipeline" invoker (config/azure-devops.yaml) with template parameters;
+# one pipeline serves every operation. Setup: examples/azure-devops/README.md.
+#
+# Needs the secret pipeline variable ADO_ADMIN_PAT: a PAT allowed to manage projects, repositories, groups
+# and users of the organization (the build identity cannot create or delete projects).
+
+trigger: none
+pr: none
+
+parameters:
+  - name: operation
+    type: string
+    values: [create-project, delete-project, add-member, remove-member, create-repository, delete-repository]
+  - name: project
+    type: string
+  - name: description
+    type: string
+    default: ' '
+  - name: process
+    type: string
+    default: Agile
+    values: [Agile, Scrum, Basic, CMMI]
+  - name: visibility
+    type: string
+    default: private
+    values: [private, public]
+  - name: member
+    type: string
+    default: ' '
+  - name: group
+    type: string
+    default: Contributors
+  - name: repository
+    type: string
+    default: ' '
+
+# The run name shows up in the platform's step link and in Azure DevOps.
+name: ${{ parameters.operation }} · ${{ parameters.project }} · $(Date:yyyyMMdd)$(Rev:.r)
+
+pool:
+  vmImage: ubuntu-latest
+
+steps:
+  - checkout: none
+
+  - bash: |
+      set -euo pipefail
+      # Parameters arrive as environment variables: never interpolated into the script (no injection).
+      trim() { local s="$1"; s="${s#"${s%%[![:space:]]*}"}"; printf '%s' "${s%"${s##*[![:space:]]}"}"; }
+      PROJECT=$(trim "$P_PROJECT"); MEMBER=$(trim "$P_MEMBER"); REPOSITORY=$(trim "$P_REPOSITORY"); DESCRIPTION=$(trim "$P_DESCRIPTION")
+      fail() { echo "##vso[task.logissue type=error]$1"; exit 1; }
+      require() { [ -n "$2" ] || fail "parameter '$1' is required for $P_OPERATION"; }
+
+      az devops configure --defaults organization="$ORG"
+      project_id() { az devops project show --project "$PROJECT" --query id -o tsv 2>/dev/null || true; }
+      group_descriptor() {
+        az devops security group list --project "$PROJECT" --query "graphGroups[?displayName=='$P_GROUP'].descriptor | [0]" -o tsv
+      }
+
+      echo "Operation: $P_OPERATION · project: $PROJECT"
+      case "$P_OPERATION" in
+        create-project)
+          if [ -n "$(project_id)" ]; then
+            echo "Project $PROJECT already exists: nothing to do"
+          else
+            # Waits until the project is created (the API is asynchronous).
+            az devops project create --name "$PROJECT" --description "${DESCRIPTION:- }" \
+              --process "$P_PROCESS" --visibility "$P_VISIBILITY" --source-control git -o table
+          fi
+          ;;
+        delete-project)
+          id=$(project_id)
+          if [ -z "$id" ]; then echo "Project $PROJECT does not exist: nothing to do"; else az devops project delete --id "$id" --yes; fi
+          ;;
+        add-member)
+          require member "$MEMBER"
+          descriptor=$(group_descriptor)
+          [ -n "$descriptor" ] || fail "group '$P_GROUP' not found in project $PROJECT"
+          # Users must belong to the organization first (Basic access level).
+          if ! az devops user show --user "$MEMBER" >/dev/null 2>&1; then
+            echo "Adding $MEMBER to the organization"
+            az devops user add --email-id "$MEMBER" --license-type express --send-email-invite false -o none
+          fi
+          az devops security group membership add --group-id "$descriptor" --member-id "$MEMBER" -o table
+          ;;
+        remove-member)
+          require member "$MEMBER"
+          descriptor=$(group_descriptor)
+          [ -n "$descriptor" ] || fail "group '$P_GROUP' not found in project $PROJECT"
+          if az devops security group membership list --id "$descriptor" --query "*.mailAddress" -o tsv | grep -qix "$MEMBER"; then
+            az devops security group membership remove --group-id "$descriptor" --member-id "$MEMBER" --yes
+          else
+            echo "$MEMBER is not in $P_GROUP: nothing to do"
+          fi
+          ;;
+        create-repository)
+          require repository "$REPOSITORY"
+          if az repos show --repository "$REPOSITORY" --project "$PROJECT" >/dev/null 2>&1; then
+            echo "Repository $REPOSITORY already exists: nothing to do"
+          else
+            az repos create --name "$REPOSITORY" --project "$PROJECT" -o table
+          fi
+          ;;
+        delete-repository)
+          require repository "$REPOSITORY"
+          id=$(az repos show --repository "$REPOSITORY" --project "$PROJECT" --query id -o tsv 2>/dev/null || true)
+          if [ -z "$id" ]; then echo "Repository $REPOSITORY does not exist: nothing to do"; else az repos delete --id "$id" --project "$PROJECT" --yes; fi
+          ;;
+      esac
+      echo "Done"
+    displayName: ${{ parameters.operation }}
+    env:
+      AZURE_DEVOPS_EXT_PAT: $(ADO_ADMIN_PAT)
+      ORG: $(System.CollectionUri)
+      P_OPERATION: ${{ parameters.operation }}
+      P_PROJECT: ${{ parameters.project }}
+      P_DESCRIPTION: ${{ parameters.description }}
+      P_PROCESS: ${{ parameters.process }}
+      P_VISIBILITY: ${{ parameters.visibility }}
+      P_MEMBER: ${{ parameters.member }}
+      P_GROUP: ${{ parameters.group }}
+      P_REPOSITORY: ${{ parameters.repository }}

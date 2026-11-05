@@ -1,0 +1,284 @@
+# Azure DevOps self-service: projects, their members and their repositories.
+#
+# Every workflow queues the same pipeline (examples/azure-devops/platform-ado.yml) with an `operation`
+# parameter, then records the result in the catalog. Setup: examples/azure-devops/README.md.
+#
+#   Create an Azure DevOps project           (self-service page)
+#     └ on the project: Add a member · Add a repository · Delete project (approval, removes its members/repos from the catalog)
+#         ├ on a member: Remove member
+#         └ on a repository: Delete repository
+
+# ── EDIT: where the platform-ado pipeline runs ──────────────────────────────────────────────────────
+# Reused below with `<<: *ado-pipeline` (YAML merge key). Unknown top-level keys are ignored.
+x-ado-pipeline: &ado-pipeline
+  type: azure-pipeline
+  organization: https://dev.azure.com/AsteriusIT # the organization where projects are created
+  project: Platform # the project that holds the pipeline
+  pipelineId: 1 # Pipelines → the pipeline → the id in its URL (definitionId)
+  branch: main
+  token: ${secret:ADO_PAT} # Admin → Secrets: PAT with "Build: Read & execute"
+# ────────────────────────────────────────────────────────────────────────────────────────────────────
+
+blueprints:
+  - identifier: ado-project
+    title: Azure DevOps project
+    icon: brand-azure
+    description: Projects created through self-service.
+    schema:
+      properties:
+        url: { type: string, title: URL, format: url }
+        description: { type: string, title: Description, format: markdown }
+        process: { type: string, title: Process, enum: [Agile, Scrum, Basic, CMMI] }
+        visibility: { type: string, title: Visibility, enum: [private, public], enumColors: { private: gray, public: orange } }
+        organization: { type: string, title: Organization, format: url, hidden: true }
+      order: [url, process, visibility, description]
+
+  - identifier: ado-repository
+    title: Azure DevOps repository
+    icon: git-branch
+    description: Git repositories of the Azure DevOps projects.
+    schema:
+      properties:
+        url: { type: string, title: URL, format: url }
+        name: { type: string, title: Name }
+        projectName: { type: string, title: Project name, hidden: true }
+      required: [name, projectName]
+    relations:
+      project: { title: Project, target: ado-project }
+
+  - identifier: ado-member
+    title: Azure DevOps member
+    icon: users
+    description: People added to a group of an Azure DevOps project.
+    schema:
+      properties:
+        email: { type: string, title: Email, format: email }
+        group: { type: string, title: Group, enum: [Readers, Contributors, Project Administrators], enumColors: { Readers: gray, Contributors: blue, Project Administrators: red } }
+        projectName: { type: string, title: Project name, hidden: true }
+      required: [email, group, projectName]
+    relations:
+      project: { title: Project, target: ado-project }
+
+actions:
+  # ── create ──────────────────────────────────────────────────────────────────────────────────────
+  - identifier: create-ado-project
+    title: Create an Azure DevOps project
+    icon: brand-azure
+    description: A new Azure DevOps project with a Git repository of the same name. Your team owns it and manages its members and repositories.
+    trigger:
+      type: form
+      on: create
+      blueprint: ado-project
+      inputs:
+        properties:
+          name: { type: string, title: Name, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{1,63}$", description: "letters, digits, . _ - (no spaces)" }
+          team: { type: string, title: Owning team, format: team }
+          description: { type: string, title: Description }
+          process: { type: string, title: Process, enum: [Agile, Scrum, Basic, CMMI], default: Agile }
+          visibility: { type: string, title: Visibility, enum: [private, public], default: private }
+        required: [name, team, process, visibility]
+        order: [name, team, description, process, visibility]
+    steps:
+      - id: provision
+        name: Create the project (pipeline)
+        type: invoke
+        timeoutMinutes: 30
+        invoker:
+          <<: *ado-pipeline
+          templateParameters:
+            operation: create-project
+            project: "{{ inputs.name }}"
+            description: "{{ inputs.description ? inputs.description : ' ' }}"
+            process: "{{ inputs.process }}"
+            visibility: "{{ inputs.visibility }}"
+      - id: register
+        name: Register in the catalog
+        type: invoke
+        invoker:
+          type: catalog
+          operation: upsert
+          blueprint: ado-project
+          identifier: "{{ inputs.name }}"
+          title: "{{ inputs.name }}"
+          team: "{{ inputs.team }}"
+          properties:
+            url: "{{ steps.provision.output.organization }}/{{ inputs.name }}"
+            organization: "{{ steps.provision.output.organization }}"
+            description: "{{ inputs.description }}"
+            process: "{{ inputs.process }}"
+            visibility: "{{ inputs.visibility }}"
+
+  # ── on a project ────────────────────────────────────────────────────────────────────────────────
+  - identifier: add-ado-member
+    title: Add a member
+    icon: users
+    description: Add someone to a group of the project (they join the organization if needed). Project Administrators are approved by the platform team.
+    trigger:
+      type: form
+      on: day-2
+      blueprint: ado-project
+      allowed: { ownerTeam: true, roles: [admin] }
+      inputs:
+        properties:
+          email: { type: string, title: Email, format: email, description: Their Entra ID / Microsoft account }
+          group: { type: string, title: Group, enum: [Readers, Contributors, Project Administrators], default: Contributors }
+        required: [email, group]
+    steps:
+      - id: approval
+        name: Platform approval
+        type: approval
+        if: inputs.group = "Project Administrators"
+        approvers: { teams: [platform], roles: [admin] }
+        allowSelfApproval: true # for a one-person test; remove in production
+        message: "{{ trigger.user.email }} asks to make **{{ inputs.email }}** administrator of **{{ entity.identifier }}**."
+      - id: add
+        name: Add to the group (pipeline)
+        type: invoke
+        timeoutMinutes: 20
+        invoker:
+          <<: *ado-pipeline
+          templateParameters:
+            operation: add-member
+            project: "{{ entity.identifier }}"
+            member: "{{ inputs.email }}"
+            group: "{{ inputs.group }}"
+      - id: register
+        name: Register in the catalog
+        type: invoke
+        invoker:
+          type: catalog
+          operation: upsert
+          blueprint: ado-member
+          identifier: "{{ entity.identifier }}:{{ $replace(inputs.group, ' ', '-') }}:{{ $lowercase(inputs.email) }}"
+          title: "{{ $lowercase(inputs.email) }} · {{ inputs.group }}"
+          team: "{{ entity.team }}"
+          properties: { email: "{{ $lowercase(inputs.email) }}", group: "{{ inputs.group }}", projectName: "{{ entity.identifier }}" }
+          relations: { project: "{{ entity.identifier }}" }
+
+  - identifier: add-ado-repository
+    title: Add a repository
+    icon: git-branch
+    description: Create a Git repository in the project.
+    trigger:
+      type: form
+      on: day-2
+      blueprint: ado-project
+      allowed: { ownerTeam: true, roles: [admin] }
+      inputs:
+        properties:
+          name: { type: string, title: Repository name, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{1,63}$", description: "letters, digits, . _ - (no spaces)" }
+        required: [name]
+    steps:
+      - id: create
+        name: Create the repository (pipeline)
+        type: invoke
+        timeoutMinutes: 20
+        invoker:
+          <<: *ado-pipeline
+          templateParameters:
+            operation: create-repository
+            project: "{{ entity.identifier }}"
+            repository: "{{ inputs.name }}"
+      - id: register
+        name: Register in the catalog
+        type: invoke
+        invoker:
+          type: catalog
+          operation: upsert
+          blueprint: ado-repository
+          identifier: "{{ entity.identifier }}:{{ inputs.name }}"
+          title: "{{ inputs.name }}"
+          team: "{{ entity.team }}"
+          properties: { name: "{{ inputs.name }}", projectName: "{{ entity.identifier }}", url: "{{ entity.properties.url }}/_git/{{ inputs.name }}" }
+          relations: { project: "{{ entity.identifier }}" }
+
+  # ── deletions ───────────────────────────────────────────────────────────────────────────────────
+  - identifier: remove-ado-member
+    title: Remove member
+    icon: trash
+    description: Remove this person from the group (they stay in the organization).
+    trigger:
+      type: form
+      on: delete
+      blueprint: ado-member
+      allowed: { ownerTeam: true, roles: [admin] }
+      inputs: { properties: {} }
+    steps:
+      - id: remove
+        name: Remove from the group (pipeline)
+        type: invoke
+        timeoutMinutes: 20
+        invoker:
+          <<: *ado-pipeline
+          templateParameters:
+            operation: remove-member
+            project: "{{ entity.properties.projectName }}"
+            member: "{{ entity.properties.email }}"
+            group: "{{ entity.properties.group }}"
+      - id: unregister
+        name: Remove from the catalog
+        type: invoke
+        invoker: { type: catalog, operation: delete, blueprint: ado-member, identifier: "{{ entity.identifier }}" }
+
+  - identifier: delete-ado-repository
+    title: Delete repository
+    icon: trash
+    description: Delete the repository and its history. Azure DevOps keeps deleted repositories in its recycle bin for 30 days.
+    trigger:
+      type: form
+      on: delete
+      blueprint: ado-repository
+      allowed: { ownerTeam: true, roles: [admin] }
+      inputs: { properties: {} }
+    steps:
+      - id: delete
+        name: Delete the repository (pipeline)
+        type: invoke
+        timeoutMinutes: 20
+        invoker:
+          <<: *ado-pipeline
+          templateParameters:
+            operation: delete-repository
+            project: "{{ entity.properties.projectName }}"
+            repository: "{{ entity.properties.name }}"
+      - id: unregister
+        name: Remove from the catalog
+        type: invoke
+        invoker: { type: catalog, operation: delete, blueprint: ado-repository, identifier: "{{ entity.identifier }}" }
+
+  - identifier: delete-ado-project
+    title: Delete project
+    icon: trash
+    description: Delete the project with its repositories, boards and pipelines. Needs an approval of the platform team.
+    trigger:
+      type: form
+      on: delete
+      blueprint: ado-project
+      allowed: { ownerTeam: true, roles: [admin] }
+      inputs:
+        properties:
+          reason: { type: string, title: Why, format: markdown }
+        required: [reason]
+      approval:
+        required: true
+        approvers: { teams: [platform], roles: [admin] }
+        allowSelfApproval: true # for a one-person test; remove in production
+    steps:
+      - id: delete
+        name: Delete the project (pipeline)
+        type: invoke
+        timeoutMinutes: 30
+        invoker:
+          <<: *ado-pipeline
+          templateParameters:
+            operation: delete-project
+            project: "{{ entity.identifier }}"
+      - id: unregister
+        name: Remove from the catalog
+        type: invoke
+        invoker:
+          type: catalog
+          operation: delete
+          blueprint: ado-project
+          identifier: "{{ entity.identifier }}"
+          cascade: true # its members and repositories too

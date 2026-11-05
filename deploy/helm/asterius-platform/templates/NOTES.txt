@@ -1,0 +1,13 @@
+Asterius Platform {{ .Chart.AppVersion }} is deploying.
+
+  URL:      {{ .Values.publicUrl }}
+  API:      {{ .Values.publicUrl }}/api/v1   (Authorization: Bearer <API token>)
+  Pods:     kubectl -n {{ .Release.Namespace }} get pods -l app.kubernetes.io/instance={{ .Release.Name }}
+
+{{- if not .Values.secrets.existingSecret }}
+
+SECRETS_KEY was {{ if .Values.secrets.values.SECRETS_KEY }}provided{{ else }}generated{{ end }} in Secret {{ include "ap.secretName" . }} (kept on uninstall).
+Back it up: without it, secrets stored in the platform cannot be decrypted.
+{{- end }}
+
+Configuration as code: {{ if .Values.config.existingConfigMap }}ConfigMap {{ .Values.config.existingConfigMap }}{{ else if .Values.config.useImageDefaults }}example configuration from the image{{ else }}config.files ({{ len .Values.config.files }} file(s)){{ end }}, mounted at /etc/asterius/config.

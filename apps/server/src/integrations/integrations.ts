@@ -1,0 +1,156 @@
+import type { Integration, SyncRun } from '@asterius/shared';
+import { config as platform } from '../config.js';
+import { all, bool, json, now, one, run } from '../db.js';
+import { badRequest, managedError, notFound } from '../lib/errors.js';
+import { checkTemplate } from '../lib/expr.js';
+import { integrationDef, type IntegrationDef } from '../schemas.js';
+import { getSource } from './sources/index.js';
+import { checkMapping } from './mapping.js';
+
+export interface IntegrationRow {
+  identifier: string;
+  title: string;
+  type: string;
+  enabled: number;
+  config: string;
+  mappings: string;
+  interval_minutes: number;
+  delete_missing: number;
+  managed: number;
+  next_sync_at: string | null;
+  locked_until: string | null;
+}
+
+interface SyncRow {
+  id: string;
+  integration: string;
+  trigger: SyncRun['trigger'];
+  status: SyncRun['status'];
+  stats: string;
+  logs: string;
+  started_at: string;
+  ended_at: string | null;
+}
+
+export const toSyncRun = (r: SyncRow): SyncRun => ({
+  id: r.id,
+  integration: r.integration,
+  trigger: r.trigger,
+  status: r.status,
+  stats: json(r.stats, { upserted: 0, deleted: 0, skipped: 0, failed: 0 }),
+  logs: json(r.logs, []),
+  startedAt: r.started_at,
+  endedAt: r.ended_at,
+});
+
+export const entitySource = (identifier: string) => `integration:${identifier}`;
+export const webhookUrl = (identifier: string) => `${platform.PUBLIC_URL}/api/v1/ingest/${identifier}`;
+
+export function toIntegration(r: IntegrationRow, lastSync: SyncRun | null): Integration {
+  return {
+    identifier: r.identifier,
+    title: r.title,
+    type: r.type,
+    enabled: bool(r.enabled),
+    config: json(r.config, {}),
+    mappings: json(r.mappings, []),
+    intervalMinutes: Number(r.interval_minutes),
+    deleteMissing: bool(r.delete_missing),
+    managed: bool(r.managed),
+    lastSync,
+    ...(r.type === 'webhook' ? { webhookUrl: webhookUrl(r.identifier) } : {}),
+  };
+}
+
+async function lastSyncs(): Promise<Map<string, SyncRun>> {
+  const rows = await all<SyncRow>(
+    `SELECT s.* FROM sync_runs s JOIN (SELECT integration, max(started_at) AS m FROM sync_runs GROUP BY integration) l
+     ON l.integration = s.integration AND l.m = s.started_at`,
+  );
+  return new Map(rows.map((r) => [r.integration, toSyncRun(r)]));
+}
+
+export async function listIntegrations(): Promise<Integration[]> {
+  const last = await lastSyncs();
+  return (await all<IntegrationRow>('SELECT * FROM integrations ORDER BY title')).map((r) => toIntegration(r, last.get(r.identifier) ?? null));
+}
+
+export async function getIntegrationRow(id: string): Promise<IntegrationRow> {
+  const r = await one<IntegrationRow>('SELECT * FROM integrations WHERE identifier = ?', id);
+  if (!r) throw notFound(`Integration ${id}`);
+  return r;
+}
+
+export async function getIntegration(id: string): Promise<Integration> {
+  const r = await getIntegrationRow(id);
+  const last = await one<SyncRow>('SELECT * FROM sync_runs WHERE integration = ? ORDER BY started_at DESC LIMIT 1', id);
+  return toIntegration(r, last ? toSyncRun(last) : null);
+}
+
+export async function syncHistory(id: string, limit = 30): Promise<SyncRun[]> {
+  return (await all<SyncRow>('SELECT * FROM sync_runs WHERE integration = ? ORDER BY started_at DESC LIMIT ?', id, limit)).map(toSyncRun);
+}
+
+export async function upsertIntegration(input: unknown, opts: { managed?: boolean } = {}): Promise<{ integration: Integration; created: boolean }> {
+  const def: IntegrationDef = integrationDef.parse(input);
+  const source = getSource(def.type);
+  try {
+    source.validate(def.config);
+  } catch (err) {
+    throw badRequest((err as Error).message);
+  }
+  checkTemplate(def.config);
+  const kinds = source.info.kinds ?? [];
+  for (const m of def.mappings) {
+    checkMapping(m);
+    if (!source.push && def.type !== 'kubernetes' && def.type !== 'http' && !kinds.includes(m.kind))
+      throw badRequest(`${def.type}: unknown kind "${m.kind}" (available: ${kinds.join(', ')})`);
+    if (!(await one('SELECT identifier FROM blueprints WHERE identifier = ?', m.entity.blueprint)))
+      throw badRequest(`Blueprint "${m.entity.blueprint}" does not exist`);
+  }
+  const existing = await one<IntegrationRow>('SELECT * FROM integrations WHERE identifier = ?', def.identifier);
+  if (existing && bool(existing.managed) && !opts.managed) throw managedError('Integration', def.identifier);
+  const t = now();
+  const vals = [
+    def.title,
+    def.type,
+    def.enabled ? 1 : 0,
+    JSON.stringify(def.config),
+    JSON.stringify(def.mappings),
+    def.intervalMinutes,
+    def.deleteMissing ? 1 : 0,
+    opts.managed ? 1 : 0,
+  ];
+  if (existing)
+    await run(
+      'UPDATE integrations SET title = ?, type = ?, enabled = ?, config = ?, mappings = ?, interval_minutes = ?, delete_missing = ?, managed = ?, updated_at = ? WHERE identifier = ?',
+      ...vals,
+      t,
+      def.identifier,
+    );
+  else
+    await run(
+      'INSERT INTO integrations (title, type, enabled, config, mappings, interval_minutes, delete_missing, managed, created_at, updated_at, next_sync_at, identifier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      ...vals,
+      t,
+      t,
+      t, // first sync as soon as a worker sees it
+      def.identifier,
+    );
+  return { integration: await getIntegration(def.identifier), created: !existing };
+}
+
+export async function deleteIntegration(id: string, opts: { managed?: boolean; deleteEntities?: boolean } = {}) {
+  const r = await getIntegrationRow(id);
+  if (bool(r.managed) && !opts.managed) throw managedError('Integration', id);
+  await run('DELETE FROM integrations WHERE identifier = ?', id);
+  // Entities stay in the catalog unless asked; they then show `integration:<id>` as an orphaned source.
+  if (opts.deleteEntities) await run('DELETE FROM entities WHERE source = ?', entitySource(id));
+}
+
+/** Ask workers to sync now (works from API-only pods: the next worker tick picks it up). */
+export async function requestSync(id: string) {
+  const r = await getIntegrationRow(id);
+  if (getSource(r.type).push) throw badRequest('Webhook integrations receive data; there is nothing to pull');
+  await run('UPDATE integrations SET next_sync_at = ? WHERE identifier = ?', '1970-01-01T00:00:00.000Z', id); // MANUAL in sync.ts
+}

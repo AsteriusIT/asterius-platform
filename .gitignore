@@ -1,0 +1,14 @@
+node_modules/
+dist/
+data/
+.env
+*.log
+*.tsbuildinfo
+backups/
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
+.beads/proxieddb/
+data-*/

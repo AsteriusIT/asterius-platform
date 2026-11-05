@@ -1,0 +1,102 @@
+{{- $v := .Values -}}
+{{- $checksum := include (print $.Template.BasePath "/config.yaml") . | sha256sum -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ap.fullname" . }}-api
+  labels: {{- include "ap.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  {{- if not $v.api.autoscaling.enabled }}
+  replicas: {{ $v.api.replicas }}
+  {{- end }}
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 1, maxUnavailable: 0 }
+  selector:
+    matchLabels: {{- include "ap.selector" (dict "root" . "component" "api") | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "ap.selector" (dict "root" . "component" "api") | nindent 8 }}
+        {{- with $v.podLabels }}{{ toYaml . | nindent 8 }}{{- end }}
+      annotations:
+        checksum/config: {{ $checksum }}
+        {{- with $v.podAnnotations }}{{ toYaml . | nindent 8 }}{{- end }}
+    spec:
+      {{- include "ap.podSpec" (dict "root" . "role" "api" "resources" $v.api.resources "grace" 30) | nindent 6 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ap.fullname" . }}-worker
+  labels: {{- include "ap.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  replicas: {{ $v.worker.replicas }}
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 1, maxUnavailable: 0 }
+  selector:
+    matchLabels: {{- include "ap.selector" (dict "root" . "component" "worker") | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "ap.selector" (dict "root" . "component" "worker") | nindent 8 }}
+        {{- with $v.podLabels }}{{ toYaml . | nindent 8 }}{{- end }}
+      annotations:
+        checksum/config: {{ $checksum }}
+        {{- with $v.podAnnotations }}{{ toYaml . | nindent 8 }}{{- end }}
+    spec:
+      {{- include "ap.podSpec" (dict "root" . "role" "worker" "resources" $v.worker.resources "grace" $v.worker.terminationGracePeriodSeconds) | nindent 6 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ap.fullname" . }}
+  labels: {{- include "ap.labels" . | nindent 4 }}
+spec:
+  type: {{ $v.service.type }}
+  selector: {{- include "ap.selector" (dict "root" . "component" "api") | nindent 4 }}
+  ports:
+    - { name: http, port: {{ $v.service.port }}, targetPort: http, protocol: TCP }
+---
+# Workers serve /metrics and probes only.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ap.fullname" . }}-worker
+  labels: {{- include "ap.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  clusterIP: None
+  selector: {{- include "ap.selector" (dict "root" . "component" "worker") | nindent 4 }}
+  ports:
+    - { name: http, port: 8080, targetPort: http, protocol: TCP }
+{{- if $v.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "ap.fullname" . }}
+  labels: {{- include "ap.labels" . | nindent 4 }}
+  {{- with $v.ingress.annotations }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with $v.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- if $v.ingress.tls.enabled }}
+  tls:
+    - hosts: [{{ $v.ingress.host | quote }}]
+      secretName: {{ $v.ingress.tls.secretName }}
+  {{- end }}
+  rules:
+    - host: {{ $v.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend: { service: { name: {{ include "ap.fullname" . }}, port: { name: http } } }
+{{- end }}

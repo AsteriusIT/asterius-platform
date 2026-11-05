@@ -1,0 +1,29 @@
+{
+  "name": "asterius-platform",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Internal developer portal: software catalog, self-service actions with approvals, pipeline/webhook automation and third-party data ingestion.",
+  "workspaces": [
+    "packages/shared",
+    "apps/server",
+    "apps/web"
+  ],
+  "scripts": {
+    "dev": "concurrently -n server,web -c blue,magenta \"npm run dev -w apps/server\" \"npm run dev -w apps/web\"",
+    "build": "npm run build -w apps/web && npm run build -w apps/server",
+    "start": "npm run start -w apps/server",
+    "typecheck": "npm run typecheck -w apps/server && npm run typecheck -w apps/web",
+    "test": "npm test -w apps/server && npm test -w apps/web",
+    "lint": "eslint . && prettier --check .",
+    "format": "prettier --write ."
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "concurrently": "^9.1.0",
+    "eslint": "^10.14.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.14.0",
+    "prettier": "^3.9.10",
+    "typescript-eslint": "^8.72.1"
+  }
+}

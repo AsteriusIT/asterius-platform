@@ -1,0 +1,182 @@
+/* LibreChat-like finish on top of Mantine (tokens in theme.ts). Only what component props cannot express. */
+body {
+  background: var(--mantine-color-body);
+  font-size: 15px;
+  font-feature-settings: 'cv11', 'ss01';
+  -webkit-font-smoothing: antialiased;
+}
+h1,
+h2,
+h3,
+h4,
+.mantine-Title-root {
+  letter-spacing: -0.015em;
+}
+
+/* Thin, quiet native scrollbars (tables, code, page) — overlay ScrollArea is used inside dialogs. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+/* ---- shell: white canvas, soft sidebar, no hard borders ---- */
+.app-header {
+  background: var(--mantine-color-body);
+  border-bottom: 1px solid var(--hairline);
+}
+.app-navbar {
+  background: var(--surface);
+  border-right: none;
+}
+.app-main {
+  background: var(--mantine-color-body);
+}
+.app-content {
+  max-width: 1240px;
+  margin: 0 auto;
+}
+
+/* Navigation: neutral hover/active (no colored fills), rounded items. */
+.nav-link {
+  border-radius: 10px;
+  padding: 8px 12px;
+  margin-bottom: 1px;
+  color: var(--mantine-color-text);
+  font-weight: 500;
+}
+.nav-link .mantine-NavLink-label {
+  font-size: 14px;
+}
+.nav-link:hover {
+  background: var(--surface-2);
+}
+.nav-link[data-active],
+.nav-link[data-active]:hover {
+  background: var(--surface-3);
+  color: var(--mantine-color-text);
+}
+.nav-link[data-active] .mantine-NavLink-section {
+  color: var(--mantine-color-text);
+}
+.nav-section {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-3);
+  padding: 16px 12px 6px;
+}
+
+/* ---- inputs: soft border, neutral focus ---- */
+.mantine-Input-input {
+  border-color: var(--mantine-color-default-border);
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+.mantine-Input-input:focus,
+.mantine-Input-input:focus-within {
+  border-color: var(--border-strong);
+  box-shadow: 0 0 0 3px var(--hairline);
+}
+.mantine-Input-input[data-error] {
+  border-color: var(--mantine-color-error);
+}
+
+/* Search box in the header: filled, borderless, LibreChat-style. */
+.header-search .mantine-Input-input {
+  background: var(--surface-2);
+  border-color: transparent;
+}
+.header-search .mantine-Input-input:focus {
+  background: var(--mantine-color-body);
+  border-color: var(--border-strong);
+}
+
+/* ---- surfaces ---- */
+.hover-card {
+  transition:
+    box-shadow 0.18s,
+    transform 0.18s;
+}
+.hover-card:hover {
+  box-shadow: var(--card-shadow-hover);
+  transform: translateY(-1px);
+}
+
+/* Workflow canvas (action builder): trigger and step nodes linked top to bottom. */
+.canvas-node,
+.canvas-placeholder {
+  display: block;
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--mantine-color-body);
+  border: 1px solid var(--mantine-color-default-border);
+  transition: border-color 0.15s;
+}
+.canvas-node:hover,
+.canvas-placeholder:hover {
+  border-color: var(--mantine-color-brand-4);
+}
+.canvas-node[data-active] {
+  border-color: var(--mantine-color-brand-6);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--mantine-color-brand-6) 18%, transparent);
+}
+.canvas-placeholder {
+  border-style: dashed;
+  border-width: 1.5px;
+  padding: 16px 12px;
+  color: var(--mantine-color-brand-7);
+}
+
+/* Tables: quiet headers and hairline rows. */
+/* Row hover in the sidebar tone: lighter than gray badges, which stay readable on hovered rows. */
+.mantine-Table-table {
+  --table-highlight-on-hover-color: var(--surface);
+}
+.mantine-Table-th {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--mantine-color-dimmed);
+  background: var(--mantine-color-body);
+}
+.mantine-Table-tr {
+  border-color: var(--hairline);
+}
+.mantine-Table-thead .mantine-Table-tr {
+  border-bottom: 1px solid var(--hairline);
+}
+
+/* Tabs: underline in text color, not accent. */
+.mantine-Tabs-list::before {
+  border-color: var(--hairline);
+}
+
+/* Code & logs */
+.mantine-Code-root {
+  background: var(--code-bg);
+}
+.log-view {
+  background: var(--code-bg);
+}
+
+/* Markdown */
+.markdown > :first-child {
+  margin-top: 0;
+}
+.markdown > :last-child {
+  margin-bottom: 0;
+}
+.markdown code {
+  font-family: var(--mantine-font-family-monospace);
+  font-size: 0.9em;
+  background: var(--code-bg);
+  padding: 1px 5px;
+  border-radius: 6px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .hover-card,
+  .hover-card:hover {
+    transition: none;
+    transform: none;
+  }
+}
