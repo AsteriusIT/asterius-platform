@@ -7,7 +7,7 @@ import path from 'node:path';
 import { ZodError } from 'zod';
 import { config } from './config.js';
 import { HttpError } from './lib/errors.js';
-import { ready } from './health.js';
+import { ready, stuckLoops } from './health.js';
 import { registry } from './metrics.js';
 import { authRoutes } from './routes/auth.js';
 import { catalogRoutes } from './routes/catalog.js';
@@ -67,7 +67,10 @@ export async function buildApp(opts: AppOptions = {}): Promise<FastifyInstance> 
   });
   await app.register(rateLimit, { global: true, max: 600, timeWindow: '1 minute' });
 
-  app.get('/healthz', { config: { rateLimit: false } }, async () => ({ ok: true }));
+  app.get('/healthz', { config: { rateLimit: false } }, async (_req, reply) => {
+    const stuck = stuckLoops(); // a worker loop that stopped iterating: let the orchestrator restart the pod
+    return reply.code(stuck.length ? 503 : 200).send(stuck.length ? { ok: false, stuck } : { ok: true });
+  });
   app.get('/readyz', { config: { rateLimit: false } }, async (_req, reply) => {
     const r = await ready();
     return reply.code(r.ok ? 200 : 503).send(r);

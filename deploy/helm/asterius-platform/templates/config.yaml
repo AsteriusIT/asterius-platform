@@ -13,6 +13,8 @@ data:
   WORKER_CONCURRENCY: {{ $v.worker.concurrency | quote }}
   RUN_POLL_SECONDS: {{ $v.settings.runPollSeconds | quote }}
   RUN_TIMEOUT_HOURS: {{ $v.settings.runTimeoutHours | quote }}
+  STEP_TIMEOUT_MINUTES: {{ $v.settings.stepTimeoutMinutes | default 1440 | quote }}
+  MIGRATE_ON_START: {{ not $v.migrations.job.enabled | quote }}
   HTTP_TIMEOUT_SECONDS: {{ $v.settings.httpTimeoutSeconds | quote }}
   RETENTION_DAYS: {{ $v.settings.retentionDays | quote }}
   AUTH_PROVIDERS: {{ $v.auth.providers | quote }}

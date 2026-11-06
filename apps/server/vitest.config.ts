@@ -11,6 +11,7 @@ export default defineConfig({
       ENTRA_CLIENT_SECRET: 'secret',
       PUBLIC_URL: 'http://platform.test',
       RUN_POLL_SECONDS: '2',
+      WORKER_IDLE_MAX_MS: '500',
       LOG_LEVEL: 'silent',
     },
     pool: 'forks',

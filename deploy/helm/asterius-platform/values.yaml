@@ -92,6 +92,13 @@ settings:
   runTimeoutHours: 24
   httpTimeoutSeconds: 30
   retentionDays: 90
+  stepTimeoutMinutes: 1440 # default timeout of one step; runTimeoutHours bounds the whole run
+# Schema migrations. With job.enabled, a Helm hook Job migrates and pods start with MIGRATE_ON_START=false;
+# otherwise every pod migrates at startup under a database advisory lock (fine for additive migrations).
+migrations:
+  job:
+    enabled: false
+    timeoutSeconds: 600
 # Extra non-secret environment variables.
 extraEnv: {}
 

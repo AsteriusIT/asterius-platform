@@ -47,6 +47,7 @@ export const webhookInvoker: Invoker = {
     const headers: Record<string, string> = {
       'content-type': 'application/json',
       'x-asterius-run-id': ctx.run.id,
+      'idempotency-key': ctx.run.idempotencyKey, // same for every retry of this step
       ...(config.headers as Record<string, string>),
     };
     if (config.secret) headers['x-asterius-signature'] = `sha256=${createHmac('sha256', str(config.secret)).update(body).digest('hex')}`;

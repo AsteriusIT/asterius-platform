@@ -1,6 +1,6 @@
 import type { ApprovalPolicy, Run, RunApproval, RunLog, RunPage, RunStatus } from '@asterius/shared';
 import { config } from '../config.js';
-import { all, forUpdate, json, newId, now, one, run, tx, type SqlValue } from '../db.js';
+import { all, forUpdate, json, newId, now, one, run, tx, type Driver, type SqlValue } from '../db.js';
 import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
 import { emit } from '../events.js';
 import { audit } from '../audit.js';
@@ -9,6 +9,7 @@ import { getEntity } from '../catalog/entities.js';
 import { compact, validate } from '../catalog/validation.js';
 import { canTrigger, getAction } from './actions.js';
 import { metrics } from '../metrics.js';
+import { wake } from './wake.js';
 import { canApproveStep, loadSteps, runStepsView, stepApprovalsOf, stepDefs, stepMessage } from './steps.js';
 
 /**
@@ -42,6 +43,11 @@ export interface RunRow {
   worker: string | null;
   locked_until: string | null;
   next_poll_at: string | null;
+  /** Run-level deadline (set when the workflow starts); housekeeping fails the run after it. */
+  deadline_at: string | null;
+  /** Set first by a cancel request, so workers stop starting/continuing steps while the cancellation completes. */
+  cancel_requested: number;
+  idempotency_key: string | null;
   created_at: string;
   started_at: string | null;
   ended_at: string | null;
@@ -107,11 +113,40 @@ export async function getRunRow(id: string) {
   return r;
 }
 
-export async function getRun(id: string, p: Principal): Promise<Run> {
+const LOG_COLUMNS = 'seq, at, level, message, step_id AS "stepId"';
+const LOG_TAIL = 1000;
+
+/**
+ * A run with its steps and log lines. Logs are bounded: the newest LOG_TAIL lines, or only the lines past `after`
+ * (sequence number) for incremental polling. `GET /runs/:id/logs` pages through the whole log.
+ */
+export async function getRun(id: string, p: Principal, opts: { after?: number } = {}): Promise<Run> {
   const r = await getRunRow(id);
   const approvals = (await approvalsOf([id])).get(id) ?? [];
-  const logs = await all<RunLog>('SELECT at, level, message, step_id AS "stepId" FROM run_logs WHERE run_id = ? ORDER BY seq LIMIT 10000', id);
-  return { ...toRun(r, approvals), logs, steps: await runStepsView(r, p), canApprove: canApprove(p, r, approvals), canCancel: canCancel(p, r) };
+  let logs: RunLog[];
+  let logsTruncated = false;
+  if (opts.after !== undefined)
+    logs = await all<RunLog>(`SELECT ${LOG_COLUMNS} FROM run_logs WHERE run_id = ? AND seq > ? ORDER BY seq LIMIT 2000`, id, opts.after);
+  else {
+    const newest = await all<RunLog>(`SELECT ${LOG_COLUMNS} FROM run_logs WHERE run_id = ? ORDER BY seq DESC LIMIT ?`, id, LOG_TAIL + 1);
+    logsTruncated = newest.length > LOG_TAIL;
+    logs = newest.slice(0, LOG_TAIL).reverse();
+  }
+  return { ...toRun(r, approvals), logs, logsTruncated, steps: await runStepsView(r, p), canApprove: canApprove(p, r, approvals), canCancel: canCancel(p, r) };
+}
+
+/** One page of a run's log, oldest first: continue with `after = next` while `next` is not null. */
+export async function getRunLogs(id: string, q: { after: number; limit: number; step?: string }) {
+  await getRunRow(id);
+  const rows = await all<RunLog>(
+    `SELECT ${LOG_COLUMNS} FROM run_logs WHERE run_id = ? AND seq > ?${q.step ? ' AND step_id = ?' : ''} ORDER BY seq LIMIT ?`,
+    id,
+    q.after,
+    ...(q.step ? [q.step] : []),
+    q.limit + 1,
+  );
+  const items = rows.slice(0, q.limit);
+  return { items, next: rows.length > q.limit ? (items[items.length - 1]?.seq ?? null) : null };
 }
 
 export interface RunQuery {
@@ -167,8 +202,27 @@ export async function pendingApprovals(p: Principal): Promise<Run[]> {
   return out;
 }
 
-export async function addLog(runId: string, message: string, level: RunLog['level'] = 'info', stepId: string | null = null) {
-  await run('INSERT INTO run_logs (run_id, at, level, message, step_id) VALUES (?, ?, ?, ?, ?)', runId, now(), level, message.slice(0, 8000), stepId);
+/**
+ * Append a log line unless the run already holds RUN_LOG_MAX_LINES (one notice is added when the cap is hit), so a
+ * chatty step cannot grow a run's log without bound. The cap check and insert are a single statement.
+ */
+export async function addLog(runId: string, message: string, level: RunLog['level'] = 'info', stepId: string | null = null, d?: Driver) {
+  const cap = config.RUN_LOG_MAX_LINES;
+  const exec = (sql: string, ...params: SqlValue[]) => (d ? d.query(sql, params) : run(sql, ...params));
+  const insert = (lvl: string, msg: string, step: string | null, guard: string, ...guardParams: SqlValue[]) =>
+    exec(
+      `INSERT INTO run_logs (run_id, at, level, message, step_id) SELECT CAST(? AS TEXT), CAST(? AS TEXT), CAST(? AS TEXT), CAST(? AS TEXT), CAST(? AS TEXT) WHERE ${guard}`,
+      runId,
+      now(),
+      lvl,
+      msg,
+      step,
+      ...guardParams,
+    );
+  const { changes } = await insert(level, message.slice(0, 8000), stepId, '(SELECT count(*) FROM run_logs WHERE run_id = ?) < ?', runId, cap);
+  if (changes) return;
+  const notice = `Log limit reached (${cap} lines): further output is dropped`;
+  await insert('warn', notice, null, 'NOT EXISTS (SELECT 1 FROM run_logs WHERE run_id = ? AND message = ?)', runId, notice);
 }
 
 export async function emitRun(id: string, type: 'run.created' | 'run.updated') {
@@ -178,7 +232,16 @@ export async function emitRun(id: string, type: 'run.created' | 'run.updated') {
 }
 
 // ---------- trigger ----------
-export async function triggerRun(p: Principal, actionId: string, body: { entity?: string | null; inputs?: Record<string, unknown> }): Promise<Run> {
+/**
+ * Create a run. With an `idempotencyKey` (Idempotency-Key header), retrying the same request returns the original run
+ * (`created: false`) instead of starting a second one; the same key with other inputs is a 409.
+ */
+export async function triggerRun(
+  p: Principal,
+  actionId: string,
+  body: { entity?: string | null; inputs?: Record<string, unknown> },
+  idempotencyKey?: string,
+): Promise<{ run: Run; created: boolean }> {
   const action = await getAction(actionId);
   if (!action.enabled) throw badRequest(`Action "${action.title}" is disabled`);
   const trigger = action.trigger;
@@ -196,12 +259,28 @@ export async function triggerRun(p: Principal, actionId: string, body: { entity?
   const inputs = compact(body.inputs ?? {});
   validate(trigger.inputs, inputs, 'inputs');
 
+  const replay = async () => {
+    const existing = await one<RunRow>(
+      `${SELECT} WHERE r.triggered_by = ? AND r.action = ? AND r.idempotency_key = ?`,
+      p.id,
+      action.identifier,
+      idempotencyKey ?? '',
+    );
+    if (!existing) return undefined;
+    if (JSON.stringify(compact(json(existing.inputs, {}))) !== JSON.stringify(inputs) || (existing.entity ?? null) !== entityId)
+      throw conflict('This Idempotency-Key was already used with a different request');
+    return { run: await getRun(existing.id, p), created: false };
+  };
+  if (idempotencyKey) {
+    const hit = await replay();
+    if (hit) return hit;
+  }
   const id = newId();
   const t = now();
   const status: RunStatus = trigger.approval.required ? 'PENDING_APPROVAL' : 'QUEUED';
-  await run(
-    `INSERT INTO runs (id, action, action_title, blueprint, entity, inputs, status, invoker, steps, approval, triggered_by, team, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  const inserted = await run(
+    `INSERT INTO runs (id, action, action_title, blueprint, entity, inputs, status, invoker, steps, approval, triggered_by, team, created_at, updated_at, idempotency_key)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
     id,
     action.identifier,
     action.title,
@@ -216,12 +295,20 @@ export async function triggerRun(p: Principal, actionId: string, body: { entity?
     entityTeam,
     t,
     t,
+    idempotencyKey ?? null,
   );
+  if (!inserted.changes) {
+    // A concurrent request with the same key won the unique index.
+    const hit = await replay();
+    if (hit) return hit;
+    throw conflict('The run could not be created; retry');
+  }
   await addLog(id, `Triggered by ${p.name} <${p.email}>${entityId ? ` on ${trigger.blueprint}/${entityId}` : ''}`);
   if (status === 'PENDING_APPROVAL') await addLog(id, `Waiting for ${trigger.approval.minApprovals ?? 1} approval(s)`);
   await audit(actorOf(p), 'run.triggered', `${action.identifier}${entityId ? ` → ${trigger.blueprint}/${entityId}` : ''}`, { runId: id });
   await emitRun(id, 'run.created');
-  return getRun(id, p);
+  if (status === 'QUEUED') wake();
+  return { run: await getRun(id, p), created: true };
 }
 
 // ---------- approvals ----------
@@ -263,6 +350,7 @@ export async function decide(p: Principal, runId: string, decision: 'approved' |
   await audit(actorOf(p), `run.${decision}`, r.action, { runId, comment });
   if (outcome) {
     await addLog(runId, outcome === 'QUEUED' ? 'Approved: queued for execution' : 'Run rejected');
+    if (outcome === 'QUEUED') wake();
     if (outcome === 'REJECTED') metrics.runFinished(r.action, outcome, 'workflow', null);
   }
   await emitRun(runId, 'run.updated');
@@ -270,30 +358,43 @@ export async function decide(p: Principal, runId: string, decision: 'approved' |
 }
 
 // ---------- cancel ----------
-/** `cancelSteps` (engine): stops running steps and asks external systems to stop. */
+/**
+ * Two-phase cancellation. A run in progress first gets `cancel_requested` (workers then stop starting or continuing
+ * steps), its steps are cancelled (`cancelSteps`, engine: asks external systems to stop), and only then the run turns
+ * CANCELLED. If the run moves meanwhile (a worker claimed a QUEUED run, an approval completed) the request is
+ * re-evaluated against the new status instead of failing.
+ */
 export async function cancelRun(p: Principal, runId: string, cancelSteps: (r: RunRow) => Promise<void>): Promise<Run> {
-  const r = await getRunRow(runId);
-  if (!canCancel(p, r)) throw forbidden(FINAL.includes(r.status) ? 'This run is already finished' : 'Only the requester or an admin can cancel');
-  if (r.status === 'IN_PROGRESS') {
-    try {
-      await cancelSteps(r);
-    } catch (err) {
-      await addLog(runId, `Could not cancel the external run: ${(err as Error).message}`, 'warn');
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const r = await getRunRow(runId);
+    if (!canCancel(p, r)) throw forbidden(FINAL.includes(r.status) ? 'This run is already finished' : 'Only the requester or an admin can cancel');
+    const stopSteps = async () => {
+      try {
+        await cancelSteps(r);
+      } catch (err) {
+        await addLog(runId, `Could not cancel the external run: ${(err as Error).message}`, 'warn');
+      }
+    };
+    if (r.status === 'IN_PROGRESS') {
+      await run("UPDATE runs SET cancel_requested = 1, updated_at = ? WHERE id = ? AND status = 'IN_PROGRESS'", now(), runId);
+      await stopSteps();
     }
+    const t = now();
+    const { changes } = await run(
+      `UPDATE runs SET status = 'CANCELLED', ended_at = ?, updated_at = ?, next_poll_at = NULL WHERE id = ? AND status = ?`,
+      t,
+      t,
+      runId,
+      r.status,
+    );
+    if (!changes) continue; // the run moved on: look again
+    if (r.status === 'IN_PROGRESS') await stopSteps(); // a step started while we were cancelling
+    await addLog(runId, `Cancelled by ${p.name}`, 'warn');
+    await audit(actorOf(p), 'run.cancelled', r.action, { runId });
+    await emitRun(runId, 'run.updated');
+    return getRun(runId, p);
   }
-  const t = now();
-  const { changes } = await run(
-    `UPDATE runs SET status = 'CANCELLED', ended_at = ?, updated_at = ?, next_poll_at = NULL WHERE id = ? AND status = ?`,
-    t,
-    t,
-    runId,
-    r.status,
-  );
-  if (!changes) throw conflict('The run changed meanwhile; reload');
-  await addLog(runId, `Cancelled by ${p.name}`, 'warn');
-  await audit(actorOf(p), 'run.cancelled', r.action, { runId });
-  await emitRun(runId, 'run.updated');
-  return getRun(runId, p);
+  throw conflict('The run keeps changing; try again');
 }
 
 // ---------- updates from the invoker / the external system ----------

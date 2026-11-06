@@ -8,6 +8,7 @@ import { invalidateWebhookCache } from '../events.js';
 import { resolveValue } from '../secrets.js';
 import { webhookDef, type WebhookDef } from '../schemas.js';
 import { metrics } from '../metrics.js';
+import { beat, registerLoop } from '../health.js';
 import { withSpan } from '../tracing.js';
 
 /**
@@ -183,9 +184,14 @@ export function startDeliveryWorker(log: FastifyBaseLogger) {
       log.error({ err }, 'webhook delivery tick failed');
     } finally {
       busy = false;
+      beat('webhook-delivery');
     }
   };
+  const unregister = registerLoop('webhook-delivery', 120_000);
   const timer = setInterval(() => void tick(), 3_000);
   timer.unref();
-  return () => clearInterval(timer);
+  return () => {
+    clearInterval(timer);
+    unregister();
+  };
 }

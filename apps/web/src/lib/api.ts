@@ -115,7 +115,8 @@ export const api = {
 
   runs: (q: { mine?: boolean; status?: string; action?: string; blueprint?: string; entity?: string; limit?: number; offset?: number }) =>
     request<RunPage>('GET', v1(`/runs${qs(q)}`)),
-  run: (id: string) => request<Run>('GET', v1(`/runs/${enc(id)}`)),
+  /** `after`: only log lines past this sequence number (incremental polling). */
+  run: (id: string, after?: number) => request<Run>('GET', v1(`/runs/${enc(id)}${after !== undefined ? `?after=${after}` : ''}`)),
   approvals: () => request<Run[]>('GET', v1('/approvals')),
   approve: (id: string, comment: string) => request<Run>('POST', v1(`/runs/${enc(id)}/approve`), { comment }),
   reject: (id: string, comment: string) => request<Run>('POST', v1(`/runs/${enc(id)}/reject`), { comment }),

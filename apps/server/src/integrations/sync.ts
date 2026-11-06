@@ -7,6 +7,7 @@ import { render } from '../lib/expr.js';
 import { resolveRef } from '../secrets.js';
 import { deleteEntity, upsertEntity } from '../catalog/entities.js';
 import { metrics } from '../metrics.js';
+import { beat, registerLoop } from '../health.js';
 import { withSpan } from '../tracing.js';
 import type { MappingDef } from '../schemas.js';
 import { getSource } from './sources/index.js';
@@ -73,9 +74,13 @@ async function processItem(r: IntegrationRow, mapping: MappingDef, item: unknown
 /** Full pull of one integration. Returns undefined when another worker holds it. */
 export async function runSync(identifier: string, trigger: SyncRun['trigger']): Promise<SyncRun | undefined> {
   const t = now();
+  // The lease carries an owner token: only the holder can renew or release it, so a sync that outlived its lease
+  // (and whose integration another worker has since claimed) can neither extend nor clear the new holder's lease.
+  const owner = newId();
   const { changes } = await run(
-    'UPDATE integrations SET locked_until = ? WHERE identifier = ? AND (locked_until IS NULL OR locked_until < ?)',
+    'UPDATE integrations SET locked_until = ?, lock_owner = ? WHERE identifier = ? AND (locked_until IS NULL OR locked_until < ?)',
     later(LEASE_MS),
+    owner,
     identifier,
     t,
   );
@@ -102,7 +107,8 @@ export async function runSync(identifier: string, trigger: SyncRun['trigger']): 
         for await (const page of source.list(kind, { config, log: log.add })) {
           for (const item of page) for (const m of forKind) await processItem(r, m, item, bindings, stats, log, seen);
           n += page.length;
-          await run('UPDATE integrations SET locked_until = ? WHERE identifier = ?', later(LEASE_MS), identifier); // renew the lease
+          const renewed = await run('UPDATE integrations SET locked_until = ? WHERE identifier = ? AND lock_owner = ?', later(LEASE_MS), identifier, owner);
+          if (!renewed.changes) throw new Error('The sync lease was lost to another worker; stopping'); // renew the lease
         }
       }
       log.add(`${n} items read`);
@@ -123,7 +129,12 @@ export async function runSync(identifier: string, trigger: SyncRun['trigger']): 
     now(),
     id,
   );
-  await run('UPDATE integrations SET locked_until = NULL, next_sync_at = ? WHERE identifier = ?', interval > 0 ? later(interval * 60_000) : null, identifier);
+  await run(
+    'UPDATE integrations SET locked_until = NULL, lock_owner = NULL, next_sync_at = ? WHERE identifier = ? AND lock_owner = ?',
+    interval > 0 ? later(interval * 60_000) : null,
+    identifier,
+    owner,
+  );
   metrics.sync(identifier, status, stats.upserted, stats.deleted);
   return toSyncRun({
     id,
@@ -232,7 +243,17 @@ export function startSyncScheduler(log: FastifyBaseLogger) {
         .finally(() => running--);
     }
   };
-  const timer = setInterval(() => tick().catch((err) => log.error({ err }, 'sync scheduler failed')), 10_000);
+  const unregister = registerLoop('sync-scheduler', 120_000);
+  const timer = setInterval(
+    () =>
+      tick()
+        .catch((err) => log.error({ err }, 'sync scheduler failed'))
+        .finally(() => beat('sync-scheduler')),
+    10_000,
+  );
   timer.unref();
-  return () => clearInterval(timer);
+  return () => {
+    clearInterval(timer);
+    unregister();
+  };
 }

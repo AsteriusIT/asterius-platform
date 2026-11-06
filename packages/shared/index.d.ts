@@ -262,6 +262,8 @@ export interface Action {
 export type RunStatus = 'PENDING_APPROVAL' | 'QUEUED' | 'IN_PROGRESS' | 'SUCCESS' | 'FAILURE' | 'REJECTED' | 'CANCELLED';
 
 export interface RunLog {
+  /** Sequence number (monotonic per run): pass the last one as `?after=` to fetch only newer lines. */
+  seq?: number;
   at: string;
   /** Step that wrote the line (null: the workflow itself). */
   stepId?: string | null;
@@ -295,6 +297,8 @@ export interface Run {
   endedAt: string | null;
   /** Present on GET /runs/:id. */
   logs?: RunLog[];
+  /** GET /runs/:id returns the newest lines only (see GET /runs/:id/logs to page through the rest). */
+  logsTruncated?: boolean;
   steps?: RunStep[];
   /** Approvals page: the step waiting for the caller's decision (null: the run-level approval). */
   pendingStep?: { id: string; name: string; message: string | null } | null;
