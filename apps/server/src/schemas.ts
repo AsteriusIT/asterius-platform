@@ -287,6 +287,13 @@ export const WEBHOOK_EVENTS = [
   'approval.decided',
   'sync.finished',
   'sync.failed',
+  'step.started',
+  'step.finished',
+  'team.created',
+  'team.updated',
+  'team.deleted',
+  'user.created',
+  'user.updated',
 ] as const;
 
 const RESERVED_HEADERS = /^(host|content-length|content-type|transfer-encoding|connection|x-asterius-.*)$/i;
@@ -300,7 +307,7 @@ export const webhookDef = z.object({
       z
         .string()
         .regex(
-          /^(\*|(entity|run|approval|sync)\.\*|entity\.(created|updated|deleted)|run\.(created|updated)|approval\.(requested|decided)|sync\.(finished|failed))$/,
+          /^(\*|(entity|run|approval|sync|step|team|user)\.\*|entity\.(created|updated|deleted)|run\.(created|updated)|approval\.(requested|decided)|sync\.(finished|failed)|step\.(started|finished)|team\.(created|updated|deleted)|user\.(created|updated))$/,
         ),
     )
     .min(1),

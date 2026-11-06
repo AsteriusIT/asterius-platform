@@ -780,6 +780,11 @@ export class AsteriusClient {
     return this.request('POST', `/api/v1/deliveries/${encodeURIComponent(id)}/redeliver`, { query });
   }
 
+  /** POST /api/v1/deliveries/redeliver */
+  postDeliveriesRedeliver(query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('POST', `/api/v1/deliveries/redeliver`, { query });
+  }
+
   /** POST /api/v1/deliveries/redeliver-failed */
   postDeliveriesRedeliverFailed(query?: Record<string, string | number | undefined>): Promise<unknown> {
     return this.request('POST', `/api/v1/deliveries/redeliver-failed`, { query });

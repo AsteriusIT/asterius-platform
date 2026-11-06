@@ -8,6 +8,7 @@ import { resolveRef, stepToken } from '../secrets.js';
 import { audit, SYSTEM } from '../audit.js';
 import { actorOf, type Principal } from '../auth/users.js';
 import { findEntity } from '../catalog/entities.js';
+import { emit } from '../events.js';
 import { metrics } from '../metrics.js';
 import { withSpan } from '../tracing.js';
 import { getInvoker } from './invokers/index.js';
@@ -210,6 +211,11 @@ async function complete(runId: string, stepId: string, from: StepRow['status'][]
   if (!ok) return false;
   const row = await one<StepRow>('SELECT * FROM run_steps WHERE run_id = ? AND step_id = ?', runId, stepId);
   metrics.stepFinished(row?.type ?? '?', c.status);
+  await emit({
+    type: 'step.finished',
+    blueprint: null,
+    data: { runId, stepId, name: row?.name, stepType: row?.type, status: c.status, statusLabel: c.statusLabel ?? null, link: c.link ?? null },
+  });
   await addLog(
     runId,
     c.status === 'SUCCESS' ? 'Step succeeded' : `Step failed${c.statusLabel ? `: ${c.statusLabel}` : ''}`,
@@ -274,6 +280,7 @@ export async function executeStep(runId: string, stepId: string) {
   if (r.status !== 'IN_PROGRESS') return void (await setStep(runId, stepId, 'RUNNING', { status: 'CANCELLED', ended_at: now(), locked_until: null }));
   const rows = await loadSteps(runId);
   const row = rows.find((s) => s.step_id === stepId)!;
+  await emit({ type: 'step.started', blueprint: null, data: { runId, stepId, name: row.name, stepType: row.type, attempt: Number(row.attempt) } });
   await addLog(runId, `Started${Number(row.attempt) > 1 ? ` (attempt ${row.attempt}/${def.retries + 1})` : ''}`, 'info', stepId);
   await emitRun(runId, 'run.updated');
   let secrets: string[] = [];

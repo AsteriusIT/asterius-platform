@@ -862,7 +862,7 @@
             "type": "array",
             "items": {
               "type": "string",
-              "pattern": "^(\\*|(entity|run|approval|sync)\\.\\*|entity\\.(created|updated|deleted)|run\\.(created|updated)|approval\\.(requested|decided)|sync\\.(finished|failed))$"
+              "pattern": "^(\\*|(entity|run|approval|sync|step|team|user)\\.\\*|entity\\.(created|updated|deleted)|run\\.(created|updated)|approval\\.(requested|decided)|sync\\.(finished|failed)|step\\.(started|finished)|team\\.(created|updated|deleted)|user\\.(created|updated))$"
             }
           },
           "blueprints": {
@@ -1895,7 +1895,7 @@
                   "type": "array",
                   "items": {
                     "type": "string",
-                    "pattern": "^(\\*|(entity|run|approval|sync)\\.\\*|entity\\.(created|updated|deleted)|run\\.(created|updated)|approval\\.(requested|decided)|sync\\.(finished|failed))$"
+                    "pattern": "^(\\*|(entity|run|approval|sync|step|team|user)\\.\\*|entity\\.(created|updated|deleted)|run\\.(created|updated)|approval\\.(requested|decided)|sync\\.(finished|failed)|step\\.(started|finished)|team\\.(created|updated|deleted)|user\\.(created|updated))$"
                   }
                 },
                 "blueprints": {
@@ -2498,7 +2498,7 @@
             "type": "array",
             "items": {
               "type": "string",
-              "pattern": "^(\\*|(entity|run|approval|sync)\\.\\*|entity\\.(created|updated|deleted)|run\\.(created|updated)|approval\\.(requested|decided)|sync\\.(finished|failed))$"
+              "pattern": "^(\\*|(entity|run|approval|sync|step|team|user)\\.\\*|entity\\.(created|updated|deleted)|run\\.(created|updated)|approval\\.(requested|decided)|sync\\.(finished|failed)|step\\.(started|finished)|team\\.(created|updated|deleted)|user\\.(created|updated))$"
             }
           },
           "blueprints": {
@@ -4167,6 +4167,40 @@
             }
           }
         ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/api/v1/deliveries/redeliver": {
+      "post": {
+        "operationId": "postDeliveriesRedeliver",
+        "tags": [
+          "deliveries"
+        ],
+        "summary": "POST /api/v1/deliveries/redeliver",
+        "parameters": [],
         "responses": {
           "200": {
             "description": "Success"

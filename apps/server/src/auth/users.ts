@@ -3,6 +3,7 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 import { config } from '../config.js';
 import { all, json, later, newId, now, one, run, tx } from '../db.js';
 import type { ApiToken, PublicUser, Role, Subjects, TeamRef, UserProvider } from '@asterius/shared';
+import { emit } from '../events.js';
 import { badRequest, conflict, notFound } from '../lib/errors.js';
 
 // ---------- passwords & tokens ----------
@@ -96,7 +97,9 @@ export async function createLocalUser(email: string, name: string, password: str
     await initialRole(email),
     now(),
   );
-  return (await getUser(id))!;
+  const created = (await getUser(id))!;
+  await emit({ type: 'user.created', blueprint: null, data: { user: { id, email: created.email, name: created.name, role: created.role } } });
+  return created;
 }
 
 /** Entra ID sign-in: upsert the user, then synchronise team memberships and admin role from group claims. */
@@ -176,7 +179,13 @@ export async function updateUser(id: string, patch: { role?: Role; active?: bool
       }
     });
   }
-  return publicUser((await getUser(id))!);
+  const updated = await publicUser((await getUser(id))!);
+  await emit({
+    type: 'user.updated',
+    blueprint: null,
+    data: { user: { id, email: updated.email, role: updated.role, active: updated.active }, changes: Object.keys(patch) },
+  });
+  return updated;
 }
 
 // ---------- sessions ----------

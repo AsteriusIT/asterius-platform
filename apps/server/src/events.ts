@@ -17,7 +17,14 @@ export type EventType =
   | 'approval.requested'
   | 'approval.decided'
   | 'sync.finished'
-  | 'sync.failed';
+  | 'sync.failed'
+  | 'step.started'
+  | 'step.finished'
+  | 'team.created'
+  | 'team.updated'
+  | 'team.deleted'
+  | 'user.created'
+  | 'user.updated';
 
 export interface DomainEvent {
   type: EventType;

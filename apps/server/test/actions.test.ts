@@ -234,4 +234,19 @@ describe('outbound webhooks', () => {
     await waitFor(async () => dead.received.length > before, 20_000);
     await dead.close();
   });
+
+  it('emits team, user and step events and redelivers a selection', async () => {
+    const sink = await fakeServer();
+    expect((await admin.put('/api/v1/webhooks/directory', { title: 'Dir', url: sink.url, events: ['team.*', 'user.*'] })).status).toBe(200);
+    await admin.put('/api/v1/teams/events-team', { title: 'Events team' });
+    const got = await waitFor(async () => sink.received.find((r) => JSON.parse(r.body).type === 'team.created'), 20_000);
+    expect(JSON.parse(got.body).data.team.identifier).toBe('events-team');
+    await admin.del('/api/v1/teams/events-team');
+    await waitFor(async () => sink.received.find((r) => JSON.parse(r.body).type === 'team.deleted'), 20_000);
+    const all = (await admin.get('/api/v1/deliveries?webhook=directory&limit=10&offset=0')).data as Array<{ id: string }>;
+    const before = sink.received.length;
+    expect((await admin.post('/api/v1/deliveries/redeliver', { ids: [all[0]!.id] })).data.queued).toBe(1);
+    await waitFor(async () => sink.received.length > before, 20_000);
+    await sink.close();
+  });
 });

@@ -136,7 +136,7 @@ const toDelivery = (r: DeliveryRow): Delivery => ({
   deliveredAt: r.delivered_at,
 });
 
-export async function listDeliveries(webhook: string | undefined, limit = 50, status?: Delivery['status']): Promise<Delivery[]> {
+export async function listDeliveries(webhook: string | undefined, limit = 50, status?: Delivery['status'], offset = 0): Promise<Delivery[]> {
   const where: string[] = [];
   const args: string[] = [];
   if (webhook) {
@@ -148,9 +148,10 @@ export async function listDeliveries(webhook: string | undefined, limit = 50, st
     args.push(status);
   }
   const rows = await all<DeliveryRow>(
-    `SELECT * FROM deliveries ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY created_at DESC LIMIT ?`,
+    `SELECT * FROM deliveries ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
     ...args,
     limit,
+    offset,
   );
   return rows.map(toDelivery);
 }
@@ -158,6 +159,17 @@ export async function listDeliveries(webhook: string | undefined, limit = 50, st
 export async function redeliver(id: string) {
   const { changes } = await run("UPDATE deliveries SET status = 'pending', attempts = 0, next_attempt_at = ?, locked_until = NULL WHERE id = ?", now(), id);
   if (!changes) throw notFound('Delivery');
+}
+
+/** Requeue the given deliveries (any status). Returns how many. */
+export async function redeliverMany(ids: string[]): Promise<number> {
+  if (!ids.length) return 0;
+  const { changes } = await run(
+    `UPDATE deliveries SET status = 'pending', attempts = 0, next_attempt_at = ?, locked_until = NULL WHERE id IN (${ids.map(() => '?').join(',')})`,
+    now(),
+    ...ids,
+  );
+  return Number(changes);
 }
 
 /** Requeue every failed delivery (optionally of one webhook). Returns how many. */

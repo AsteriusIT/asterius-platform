@@ -160,6 +160,10 @@ class AsteriusClient:
         """POST /api/v1/deliveries/{id}/redeliver"""
         return self._request("POST", f"/api/v1/deliveries/{urllib.parse.quote(id, safe='')}/redeliver", query)
 
+    def post_deliveries_redeliver(self, query: Optional[dict] = None) -> Any:
+        """POST /api/v1/deliveries/redeliver"""
+        return self._request("POST", f"/api/v1/deliveries/redeliver", query)
+
     def post_deliveries_redeliver_failed(self, query: Optional[dict] = None) -> Any:
         """POST /api/v1/deliveries/redeliver-failed"""
         return self._request("POST", f"/api/v1/deliveries/redeliver-failed", query)
