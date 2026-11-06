@@ -10,8 +10,8 @@ import {
   Grid,
   Group,
   MultiSelect,
-  ScrollArea,
   SegmentedControl,
+  Select,
   Stack,
   Table,
   Text,
@@ -25,7 +25,8 @@ import { IconCheck, IconExternalLink, IconPlayerStop, IconX } from '@tabler/icon
 import type { Run, RunStatus, RunStep } from '@asterius/shared';
 import { api, errorText } from '../lib/api';
 import { DataTable } from '../components/DataTable';
-import { duration, Empty, Markdown, PageHeader, QueryView, StatusBadge, STATUS_COLORS, TimeAgo } from '../components/ui';
+import { LogViewer } from '../components/LogViewer';
+import { duration, Empty, Markdown, PageHeader, QueryView, StatusBadge, STATUS_COLORS, STATUS_LABELS, TimeAgo } from '../components/ui';
 import { WorkflowGraph } from '../components/WorkflowGraph';
 import { STEP_STATUS_COLORS, STEP_STATUS_LABELS, STEP_TYPES } from '../lib/workflow';
 import { PropertyValue } from '../components/PropertyValue';
@@ -62,9 +63,12 @@ export function Runs() {
   const scope = params.get('scope') ?? 'mine';
   const status = params.get('status')?.split(',').filter(Boolean) ?? [];
   const page = Number(params.get('page') ?? 1);
+  const action = params.get('action');
+  const actions = useQuery({ queryKey: ['actions', 'all'], queryFn: () => api.actions(), staleTime: 60_000 });
   const q = useQuery({
-    queryKey: ['runs', scope, status.join(','), page],
-    queryFn: () => api.runs({ mine: scope === 'mine', status: status.join(',') || undefined, limit: PAGE, offset: (page - 1) * PAGE }),
+    queryKey: ['runs', scope, status.join(','), action, page],
+    queryFn: () =>
+      api.runs({ mine: scope === 'mine', status: status.join(',') || undefined, action: action ?? undefined, limit: PAGE, offset: (page - 1) * PAGE }),
     placeholderData: keepPreviousData,
     refetchInterval: (query) => (query.state.data?.items.some((r) => ACTIVE.includes(r.status)) ? 5_000 : 30_000),
   });
@@ -87,7 +91,25 @@ export function Runs() {
             { value: 'all', label: 'Everyone' },
           ]}
         />
-        <MultiSelect placeholder="Any status" clearable data={Object.keys(STATUS_COLORS)} value={status} onChange={(v) => set('status', v.join(','))} w={360} />
+        <MultiSelect
+          placeholder="Any status"
+          aria-label="Filter by status"
+          clearable
+          data={(Object.keys(STATUS_COLORS) as RunStatus[]).map((k) => ({ value: k, label: STATUS_LABELS[k] }))}
+          value={status}
+          onChange={(v) => set('status', v.join(','))}
+          w={320}
+        />
+        <Select
+          placeholder="Any action"
+          aria-label="Filter by action"
+          searchable
+          clearable
+          data={(actions.data ?? []).map((a) => ({ value: a.identifier, label: a.title }))}
+          value={action}
+          onChange={(v) => set('action', v ?? '')}
+          w={240}
+        />
       </Group>
       <DataTable
         rows={q.data?.items}
@@ -154,8 +176,6 @@ export function RunPage() {
   });
   return <QueryView q={q}>{(r) => <RunView r={r} />}</QueryView>;
 }
-
-const LOG_COLORS = { info: undefined, warn: 'var(--mantine-color-yellow-6)', error: 'var(--mantine-color-red-6)' } as const;
 
 /** The step to show first: ?step=, else the one needing attention, else the last that ran. */
 function defaultStep(r: Run, requested: string | null) {
@@ -359,21 +379,7 @@ function RunView({ r }: { r: Run }) {
                   )}
                 </Group>
               </Group>
-              <ScrollArea h={420} type="auto">
-                <pre
-                  className="log-view"
-                  style={{ margin: 0, padding: 14, minHeight: '100%', fontSize: 12.5, lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
-                >
-                  {logs.length === 0 && <span style={{ opacity: 0.55 }}>No log lines yet.</span>}
-                  {logs.map((l, i) => (
-                    <div key={i} style={{ color: LOG_COLORS[l.level] }}>
-                      <span style={{ opacity: 0.55 }}>{new Date(l.at).toLocaleTimeString()} </span>
-                      {allLogs && l.stepId && <span style={{ opacity: 0.7 }}>[{l.stepId}] </span>}
-                      {l.message}
-                    </div>
-                  ))}
-                </pre>
-              </ScrollArea>
+              <LogViewer lines={logs} showStep={allLogs} filename={`run-${r.id}.log`} follow={ACTIVE.includes(r.status)} />
             </Card>
           </Stack>
         </Grid.Col>

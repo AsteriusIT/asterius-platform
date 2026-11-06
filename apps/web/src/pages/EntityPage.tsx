@@ -3,7 +3,7 @@ import { Anchor, Badge, Button, Card, Grid, Group, Menu, SimpleGrid, Stack, Tabl
 import { modals } from '@mantine/modals';
 import { notifications } from '@mantine/notifications';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link, useNavigate, useParams } from 'react-router';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { IconChevronDown, IconDots, IconPencil, IconTrash } from '@tabler/icons-react';
 import type { Action, Blueprint, Entity } from '@asterius/shared';
 import { api, errorText } from '../lib/api';
@@ -23,6 +23,8 @@ export function EntityPage() {
   return <QueryView q={blueprint}>{(b) => <QueryView q={entity}>{(e) => <EntityView bp={b} e={e} />}</QueryView>}</QueryView>;
 }
 
+const TABS = ['overview', 'runs', 'json'];
+
 const entityLink = (e: Pick<Entity, 'blueprint' | 'identifier'>) => `/catalog/${e.blueprint}/${encodeURIComponent(e.identifier)}`;
 
 function EntityView({ bp, e }: { bp: Blueprint; e: Entity }) {
@@ -31,6 +33,11 @@ function EntityView({ bp, e }: { bp: Blueprint; e: Entity }) {
   const qc = useQueryClient();
   const [runAction, setRunAction] = useState<Action | null>(null);
   const [editing, setEditing] = useState(false);
+  const [params, setParams] = useSearchParams();
+  const tab = TABS.includes(params.get('tab') ?? '') ? params.get('tab')! : 'overview';
+  const links = Object.entries(bp.schema.properties)
+    .filter(([k, p]) => p.format === 'url' && typeof e.properties[k] === 'string' && /^https?:\/\//.test(e.properties[k] as string))
+    .map(([k, p]) => ({ label: p.title ?? k, href: e.properties[k] as string }));
   const related = useQuery({ queryKey: ['related', bp.identifier, e.identifier], queryFn: () => api.related(bp.identifier, e.identifier) });
   const actions = useQuery({ queryKey: ['entity-actions', bp.identifier, e.identifier], queryFn: () => api.entityActions(bp.identifier, e.identifier) });
   const runs = useQuery({
@@ -132,7 +139,7 @@ function EntityView({ bp, e }: { bp: Blueprint; e: Entity }) {
         }
       />
 
-      <Tabs defaultValue="overview" keepMounted={false}>
+      <Tabs value={tab} onChange={(t) => setParams(t && t !== 'overview' ? { tab: t } : {}, { replace: true })} keepMounted={false}>
         <Tabs.List mb="md">
           <Tabs.Tab value="overview">Overview</Tabs.Tab>
           <Tabs.Tab value="runs" rightSection={runs.data?.total ? <Badge size="xs">{runs.data.total}</Badge> : undefined}>
@@ -178,6 +185,20 @@ function EntityView({ bp, e }: { bp: Blueprint; e: Entity }) {
             </Grid.Col>
             <Grid.Col span={{ base: 12, md: 5 }}>
               <Stack>
+                {links.length > 0 && (
+                  <Card>
+                    <Text fw={600} mb="xs">
+                      Links
+                    </Text>
+                    <Stack gap={4}>
+                      {links.map((l) => (
+                        <Anchor key={l.href} href={l.href} target="_blank" rel="noopener noreferrer" fz="sm">
+                          {l.label}
+                        </Anchor>
+                      ))}
+                    </Stack>
+                  </Card>
+                )}
                 <QueryView q={related}>
                   {(rel) => (
                     <>
