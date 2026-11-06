@@ -9,8 +9,9 @@ import { z } from 'zod';
  *   runs:read      read actions, runs and approvals
  *   runs:trigger   start, approve, reject and cancel runs (implies runs:read)
  *   admin          everything, including administration endpoints and token management
+ *   scim           SCIM provisioning under /scim/v2 only (issued by POST /api/v1/scim/token, grants nothing else)
  */
-export const SCOPES = ['catalog:read', 'catalog:write', 'runs:read', 'runs:trigger', 'admin'] as const;
+export const SCOPES = ['catalog:read', 'catalog:write', 'runs:read', 'runs:trigger', 'admin', 'scim'] as const;
 export type Scope = (typeof SCOPES)[number];
 export const scopeSchema = z.enum(SCOPES);
 
@@ -20,12 +21,14 @@ const IMPLIES: Record<Scope, Scope[]> = {
   'catalog:read': ['catalog:read'],
   'runs:trigger': ['runs:trigger', 'runs:read'],
   'runs:read': ['runs:read'],
+  scim: ['scim'],
 };
 
 export const grants = (held: readonly string[], needed: Scope) => held.some((s) => IMPLIES[s as Scope]?.includes(needed));
 
 /** Scope a request needs, from its method and path (anything not recognised needs `admin`). */
 export function requiredScope(method: string, url: string): Scope {
+  if (url.startsWith('/scim/v2/')) return 'scim';
   const path = url.split('?')[0]!.replace(/^\/api\/(v1\/)?/, '');
   const [first, , third] = path.split('/');
   const read = method === 'GET' || method === 'HEAD';

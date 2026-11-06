@@ -115,7 +115,7 @@ export async function createLocalUser(email: string, name: string, password: str
   return (await getUser(id))!;
 }
 
-export type ExternalProvider = 'entra' | 'oidc' | 'github';
+export type ExternalProvider = 'entra' | 'oidc' | 'github' | 'saml';
 
 export interface ExternalIdentity {
   /** Stable subject, namespaced by the issuer (never the email). */
@@ -129,8 +129,24 @@ export interface ExternalIdentity {
   adminGroups?: string[];
 }
 
+/** Link a SCIM-provisioned account to the identity of the first SSO sign-in (same verified email). */
+export async function adoptScimUser(provider: string, externalId: string, email: string, emailVerified: boolean | undefined) {
+  if (emailVerified === false) return false;
+  const { changes } = await run(
+    "UPDATE users SET provider = ?, external_id = ? WHERE provider = 'scim' AND email = ? AND NOT EXISTS (SELECT 1 FROM users o WHERE o.provider = ? AND o.email = ?)",
+    provider,
+    externalId,
+    email.toLowerCase(),
+    provider,
+    email.toLowerCase(),
+  );
+  return changes > 0;
+}
+
 /** Sign-in through an identity provider: upsert the user, then synchronise team memberships and the admin role from groups. */
 export async function upsertExternalUser(provider: ExternalProvider, p: ExternalIdentity) {
+  // Accounts provisioned in advance by SCIM are claimed by the first SSO sign-in with the same verified email.
+  if (provider !== 'github') await adoptScimUser(provider, p.externalId, p.email, p.emailVerified);
   let user = await one<UserRow>('SELECT * FROM users WHERE provider = ? AND external_id = ?', provider, p.externalId);
   const groupAdmin = p.groups.some((g) => p.adminGroups?.includes(g));
   const emailAdmin = p.emailVerified !== false && config.ADMIN_EMAILS.includes(p.email.toLowerCase());
@@ -201,7 +217,10 @@ export async function updateUser(id: string, patch: { role?: Role; roles?: strin
   if (patch.roles) await run('UPDATE users SET extra_roles = ? WHERE id = ?', JSON.stringify([...new Set(patch.roles)]), id);
   if (patch.active !== undefined) {
     await run('UPDATE users SET active = ? WHERE id = ?', patch.active ? 1 : 0, id);
-    if (!patch.active) await run('DELETE FROM sessions WHERE user_id = ?', id);
+    if (!patch.active) {
+      await run('DELETE FROM sessions WHERE user_id = ?', id);
+      await run('DELETE FROM api_tokens WHERE user_id = ?', id);
+    }
   }
   if (patch.teams) {
     const teams = patch.teams;

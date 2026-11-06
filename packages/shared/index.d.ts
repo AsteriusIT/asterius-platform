@@ -6,7 +6,7 @@
 // ---------- identity ----------
 export type Role = 'admin' | 'member';
 /** Delegated roles (integration-admin, blueprint-owner, approver), granted on top of `member` (any other slug is a custom role usable in permission subjects). */
-export type UserProvider = 'local' | 'entra' | 'oidc' | 'github' | 'service';
+export type UserProvider = 'local' | 'entra' | 'oidc' | 'github' | 'saml' | 'scim' | 'service';
 
 export interface TeamRef {
   identifier: string;

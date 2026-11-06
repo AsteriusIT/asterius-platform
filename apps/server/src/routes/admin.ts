@@ -44,7 +44,10 @@ export async function adminRoutes(app: FastifyInstance, opts: { reloadConfig: ()
         .object({
           name: z.string().min(1).max(100),
           expiresInDays: z.number().int().min(1).max(730).nullish(),
-          scopes: z.array(scopeSchema).max(SCOPES.length).optional(),
+          scopes: z
+            .array(scopeSchema.exclude(['scim']))
+            .max(SCOPES.length)
+            .optional(),
           blueprints: z.array(z.string().max(64)).max(100).optional(),
           ipAllow: ipAllowSchema.optional(),
         })
@@ -101,6 +104,20 @@ export async function adminRoutes(app: FastifyInstance, opts: { reloadConfig: ()
       return u;
     });
     /** Service accounts: non-human identities for CI pipelines and scripts (API tokens only). */
+    /** SCIM provisioning token: a dedicated service account whose token carries only the `scim` scope. */
+    admin.post('/scim/token', async (req, reply) => {
+      const body = z.object({ expiresInDays: z.number().int().min(1).max(730).default(365) }).parse(req.body ?? {});
+      const sa = await createServiceAccount('SCIM provisioning', 'member');
+      const t = await createApiToken({
+        name: 'SCIM provisioning',
+        userId: sa.id,
+        createdBy: req.principal.id,
+        expiresInDays: tokenLifetime(body.expiresInDays, 365),
+        scopes: ['scim'],
+      });
+      await audit(actorOf(req.principal), 'scim.token_created', sa.email, { tokenId: t.id });
+      return reply.code(201).send({ token: t.token, baseUrl: `${config.PUBLIC_URL}/scim/v2` });
+    });
     admin.post('/service-accounts', async (req, reply) => {
       const body = z
         .object({
