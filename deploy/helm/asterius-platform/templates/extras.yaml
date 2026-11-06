@@ -15,7 +15,7 @@ spec:
     - port: http
       path: /metrics
       interval: {{ $v.metrics.serviceMonitor.interval }}
-      {{- if hasKey $v.secrets.values "METRICS_TOKEN" }}
+      {{- if or (not $v.secrets.existingSecret) (hasKey $v.secrets.values "METRICS_TOKEN") $v.metrics.tokenInExistingSecret }}
       bearerTokenSecret: { name: {{ include "ap.secretName" . }}, key: METRICS_TOKEN }
       {{- end }}
 ---

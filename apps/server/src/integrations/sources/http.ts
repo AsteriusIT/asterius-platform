@@ -1,4 +1,4 @@
-import { http, nextLink } from '../../lib/http.js';
+import { http, nextLink, sameOriginUrl } from '../../lib/http.js';
 import { evaluate } from '../../lib/expr.js';
 import { requireFields, str } from '../../actions/types.js';
 import { MAX_PAGES, type Source } from '../types.js';
@@ -28,7 +28,8 @@ export const httpSource: Source = {
   validate: (c) => requireFields(c, ['url'], 'http'),
   async *list(_kind, { config, log }) {
     const pagination = (config.pagination ?? {}) as { type?: string; nextUrl?: string };
-    let url: string | undefined = str(config.url);
+    const origin = str(config.url);
+    let url: string | undefined = origin;
     for (let page = 0; url && page < MAX_PAGES; page++) {
       const res: Awaited<ReturnType<typeof http>> = await http(url, {
         method: str(config.method || 'GET'),
@@ -39,10 +40,10 @@ export const httpSource: Source = {
       const items = v == null ? [] : Array.isArray(v) ? v : [v];
       log(`page ${page + 1}: ${items.length} items`);
       yield items;
-      if (pagination.type === 'link') url = nextLink(res.headers);
+      if (pagination.type === 'link') url = nextLink(res.headers, origin);
       else if (pagination.type === 'next' && pagination.nextUrl) {
         const next = await evaluate(pagination.nextUrl, res.data);
-        url = typeof next === 'string' && next ? new URL(next, url).toString() : undefined;
+        url = typeof next === 'string' && next ? sameOriginUrl(next, origin) : undefined;
       } else url = undefined;
     }
   },
@@ -73,5 +74,10 @@ export const webhookSource: Source = {
     },
   },
   push: true,
-  validate: () => undefined,
+  validate(c) {
+    if (!c.secret && c.allowUnauthenticated !== true)
+      throw new Error(
+        'webhook integrations need a `secret` (e.g. ${secret:INGEST_TOKEN}); set `allowUnauthenticated: true` only for endpoints that must accept anonymous calls',
+      );
+  },
 };

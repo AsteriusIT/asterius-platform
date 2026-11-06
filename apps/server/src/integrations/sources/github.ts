@@ -41,7 +41,7 @@ export const githubSource: Source = {
       const items = kind === 'pull-request' ? ((res.data as { items?: unknown[] }).items ?? []) : (res.data as unknown[]);
       if (page === 0) log(`${kind}: fetching from ${new URL(url).pathname}`);
       yield items;
-      url = nextLink(res.headers);
+      url = url && nextLink(res.headers, url);
     }
   },
 };

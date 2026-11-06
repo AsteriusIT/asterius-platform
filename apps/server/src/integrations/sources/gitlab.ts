@@ -37,7 +37,7 @@ export const gitlabSource: Source = {
       const res: Awaited<ReturnType<typeof http<unknown[]>>> = await http<unknown[]>(url, { headers: { 'private-token': str(config.token) } });
       if (page === 0) log(`${kind}: fetching ${res.headers.get('x-total') ?? '?'} items`);
       yield res.data;
-      url = nextLink(res.headers);
+      url = url && nextLink(res.headers, url);
     }
   },
 };

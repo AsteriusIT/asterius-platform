@@ -9,6 +9,9 @@ process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'asterius-test-'));
 process.env.CONFIG_DIR = path.join(process.env.DATA_DIR, 'config');
 fs.mkdirSync(process.env.CONFIG_DIR);
 
+// Tests talk to fake servers on loopback: allow it (the SSRF guard blocks it by default).
+process.env.OUTBOUND_ALLOW = '127.0.0.0/8,::1';
+
 // …or, with TEST_DATABASE_URL=postgres://…, its own Postgres schema.
 const pgUrl = process.env.TEST_DATABASE_URL;
 if (pgUrl) {

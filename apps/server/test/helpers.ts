@@ -46,7 +46,9 @@ export interface Received {
 }
 
 /** A local HTTP server standing in for external systems (webhook endpoints, CI APIs). */
-export async function fakeServer(handler: (r: Received) => { status?: number; body?: unknown } = () => ({ status: 200, body: { ok: true } })) {
+export async function fakeServer(
+  handler: (r: Received) => { status?: number; body?: unknown; headers?: Record<string, string> } = () => ({ status: 200, body: { ok: true } }),
+) {
   const received: Received[] = [];
   const server = http.createServer((req, res) => {
     let body = '';
@@ -55,7 +57,7 @@ export async function fakeServer(handler: (r: Received) => { status?: number; bo
       const r = { method: req.method ?? '', url: req.url ?? '', headers: req.headers, body };
       received.push(r);
       const out = handler(r);
-      res.writeHead(out.status ?? 200, { 'content-type': 'application/json' });
+      res.writeHead(out.status ?? 200, { 'content-type': 'application/json', ...out.headers });
       res.end(JSON.stringify(out.body ?? {}));
     });
   });
