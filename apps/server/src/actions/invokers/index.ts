@@ -10,6 +10,8 @@ import { kubernetesJobInvoker } from './kubernetes-job.js';
 import { catalogInvoker } from './catalog.js';
 import { externalInvoker } from './external.js';
 import { argoWorkflowsInvoker, jenkinsInvoker, terraformCloudInvoker } from './orchestrators.js';
+import { scaffolderInvoker } from './scaffolder.js';
+import { tektonInvoker } from './tekton.js';
 import { jiraInvoker, lambdaInvoker, stepFunctionsInvoker } from './services.js';
 
 const registry = new Map<string, Invoker>();
@@ -33,6 +35,8 @@ for (const inv of [
   jiraInvoker,
   lambdaInvoker,
   stepFunctionsInvoker,
+  tektonInvoker,
+  scaffolderInvoker,
 ])
   registerInvoker(inv);
 
