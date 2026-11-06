@@ -9,7 +9,8 @@ import type { Entity, PluginInfo } from '@asterius/shared';
 
 /** Data available to `{{ }}` templates of the invoker configuration. */
 export interface RunContext {
-  run: { id: string; url: string; callback: { url: string; token: string } };
+  /** `idempotencyKey` is stable per run and step (same across retries): receivers can deduplicate repeated starts. */
+  run: { id: string; url: string; idempotencyKey: string; callback: { url: string; token: string } };
   action: { identifier: string; title: string; blueprint: string | null };
   inputs: Record<string, unknown>;
   entity: Entity | null;

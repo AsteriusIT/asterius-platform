@@ -136,6 +136,7 @@ function classify(err: unknown): StepError {
 export async function runAgent(
   step: AgentStepDef & { prompt: string; system?: string; apiKey?: string },
   log: (message: string, level?: 'info' | 'warn' | 'error') => Promise<void>,
+  signal?: AbortSignal,
 ): Promise<AgentRun> {
   const apiKey = step.apiKey || config.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new StepError('No Claude API key: set ANTHROPIC_API_KEY on the platform or `apiKey: ${secret:NAME}` on the step', false);
@@ -150,21 +151,26 @@ export async function runAgent(
   await log(`Calling ${model} (effort ${step.effort}${tools ? ', catalog tools' : ''}${step.output ? ', structured output' : ''})`);
   try {
     for (let turn = 1; turn <= step.maxTurns; turn++) {
+      // Cancellation / lost lease: stop between turns (and abort the call in flight) instead of billing on.
+      if (signal?.aborted) throw new StepError('The step was stopped (run cancelled or lease lost)', false);
       usage.turns = turn;
-      const response = await client.beta.messages.create({
-        model,
-        max_tokens: step.maxTokens,
-        ...(step.system ? { system: step.system } : {}),
-        messages,
-        ...(tools ? { tools } : {}),
-        // Thinking is adaptive by default on current models; effort sets its depth and the token spend.
-        output_config: {
-          effort: step.effort,
-          ...(step.output ? { format: { type: 'json_schema' as const, schema: outputJsonSchema(step.output as ObjectSchema) } } : {}),
+      const response = await client.beta.messages.create(
+        {
+          model,
+          max_tokens: step.maxTokens,
+          ...(step.system ? { system: step.system } : {}),
+          messages,
+          ...(tools ? { tools } : {}),
+          // Thinking is adaptive by default on current models; effort sets its depth and the token spend.
+          output_config: {
+            effort: step.effort,
+            ...(step.output ? { format: { type: 'json_schema' as const, schema: outputJsonSchema(step.output as ObjectSchema) } } : {}),
+          },
+          // On a safety decline, the API re-runs the request on a fallback model chosen by refusal category.
+          ...(fallback ? { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' as const } : {}),
         },
-        // On a safety decline, the API re-runs the request on a fallback model chosen by refusal category.
-        ...(fallback ? { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' as const } : {}),
-      });
+        { signal },
+      );
       usage.inputTokens += response.usage.input_tokens;
       usage.outputTokens += response.usage.output_tokens;
       usage.cacheReadTokens += response.usage.cache_read_input_tokens ?? 0;

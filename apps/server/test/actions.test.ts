@@ -160,7 +160,7 @@ describe('approvals', () => {
     expect((await bob.post(`/api/v1/runs/${run.data.id}/approve`, {})).status).toBe(403); // not in the team
     expect((await carol.get('/api/v1/approvals')).data.map((r: { id: string }) => r.id)).toEqual([run.data.id]);
     const approved = await carol.post(`/api/v1/runs/${run.data.id}/approve`, { comment: 'lgtm' });
-    expect(approved.data.status).toBe('QUEUED');
+    expect(['QUEUED', 'IN_PROGRESS', 'SUCCESS']).toContain(approved.data.status); // a worker may already have picked it up
     expect((await runStatus(alice, run.data.id, ['SUCCESS', 'FAILURE'])).approvals[0]).toMatchObject({
       userName: 'carol',
       decision: 'approved',

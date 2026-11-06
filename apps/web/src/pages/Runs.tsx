@@ -147,9 +147,16 @@ export function Approvals() {
 
 export function RunPage() {
   const { id = '' } = useParams();
+  const qc = useQueryClient();
   const q = useQuery({
     queryKey: ['run', id],
-    queryFn: () => api.run(id),
+    // Poll incrementally: fetch only the log lines past the last one we hold and append them.
+    queryFn: async () => {
+      const prev = qc.getQueryData<Run>(['run', id]);
+      const after = prev?.logs?.length ? prev.logs[prev.logs.length - 1].seq : undefined;
+      const r = await api.run(id, after);
+      return after === undefined ? r : { ...r, logs: [...(prev?.logs ?? []), ...(r.logs ?? [])] };
+    },
     refetchInterval: (query) => (query.state.data && !ACTIVE.includes(query.state.data.status) ? false : 2_500),
   });
   return <QueryView q={q}>{(r) => <RunView r={r} />}</QueryView>;

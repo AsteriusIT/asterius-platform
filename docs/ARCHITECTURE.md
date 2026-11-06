@@ -46,7 +46,11 @@ PENDING ──deps terminal──▶ if false ───────────�
 run: all steps terminal → SUCCESS, or FAILURE if a step failed without continueOnError; result = outputs by step id
 ```
 
-Every transition is a conditional `UPDATE … WHERE status IN (…)`: the engine (`actions/engine.ts`) can be called concurrently by workers, callbacks and API pods. Each step has a lease while executing and a deadline (`timeoutMinutes`; approvals 7 days, others `RUN_TIMEOUT_HOURS`). Housekeeping fails steps whose worker died mid-start (invokers are not retried: the external call may have happened), times out steps, and resumes interrupted runs. Runs keep a snapshot of the workflow: editing an action never changes runs in flight.
+Every transition is a conditional `UPDATE … WHERE status IN (…)`: the engine (`actions/engine.ts`) can be called concurrently by workers, callbacks and API pods. Workers claim runs, steps and polls with a single `UPDATE … WHERE id IN (SELECT … FOR UPDATE SKIP LOCKED LIMIT n) RETURNING *` (SQLite: the same statement without the lock hint), so replicas never race for the same rows; everything in flight counts against `WORKER_CONCURRENCY`, and an idle worker backs off up to `WORKER_IDLE_MAX_MS`, woken at once by new work (in-process, or Postgres `LISTEN/NOTIFY` across replicas).
+
+Each claimed step has a **lease** (`locked_until`, by type) that its executor renews with a heartbeat while it runs; the heartbeat also notices a cancelled run or a lost lease and stops the step (agent loops stop between turns and abort the API call). A claim increments `attempt`, which is a fencing token: a worker that lost its lease can no longer write the step's result. Deadlines: a step times out after its `timeoutMinutes` (approvals 7 days, others `STEP_TIMEOUT_MINUTES`); a **run** is failed after `RUN_TIMEOUT_HOURS` from its start, extended by the timeouts of its approval steps (`runs.deadline_at`). **Housekeeping** (every 30 s, one replica at a time under an advisory lock) only visits work that is due: stale leases (the worker died mid-start; invokers are not retried because the external call may have happened), passed step and run deadlines, interrupted cancellations, and runs nothing drives anymore. Healthy in-flight runs, including ones waiting days for an approval, are never touched. Runs keep a snapshot of the workflow: editing an action never changes runs in flight.
+
+Cancelling is two-phase: the run gets `cancel_requested` (workers stop starting and continuing steps), its steps are cancelled and external jobs asked to stop (also a job that was still starting), and then the run turns `CANCELLED`. Approvals insert, count and transition under a row lock in one transaction, so concurrent approvers cannot leave a run below `minApprovals`. `POST /actions/:id/runs` accepts an `Idempotency-Key` header (same key and request returns the original run); the webhook invoker sends `Idempotency-Key: <run>/<step>`, stable across retries. Run logs are capped (`RUN_LOG_MAX_LINES`); `GET /runs/:id` returns the newest lines (`?after=<seq>` for incremental polling) and `GET /runs/:id/logs?after=&limit=` pages through the rest.
 
 **Agent steps** (`actions/agent.ts`) call Claude through the official SDK (`@anthropic-ai/sdk`): default model `claude-opus-5-5` (adaptive thinking, `effort` per step), structured output via `output_config.format` (the step's output fields as a JSON Schema; constraints the API doesn't support are checked locally with Ajv), and optional read-only catalog tools (`list_blueprints`, `search_catalog`, `get_entity`) in a bounded tool loop (`maxTurns`). Refusals use the server-side fallback where supported. Tokens and an estimated cost are logged per step and exported as `asterius_llm_tokens_total`. Rate limits, overload and network errors are retryable; authentication and invalid requests are not.
 
@@ -70,7 +74,7 @@ worker: UPDATE … SET status='IN_PROGRESS' WHERE id=? AND status='QUEUED'      
 Guarantees:
 - **One transition per run.** Every transition is a conditional `UPDATE … WHERE status = <expected>`.
 - **No duplicate external calls.** A run is claimed before its invoker starts. If the worker dies between the claim and the invoker's answer, the run is failed rather than retried, because the external call may already have happened. The user can simply run it again.
-- **Runs always end.** `RUN_TIMEOUT_HOURS` fails runs that never report a final status.
+- **Runs always end.** A run deadline (`RUN_TIMEOUT_HOURS` plus its approval timeouts) fails runs that never report a final status; step deadlines (`STEP_TIMEOUT_MINUTES`, `timeoutMinutes`) bound each step.
 - **Secrets stay out of logs.** Secret values and the callback token are redacted from run logs. Non-admins only see an action's invoker type, never its configuration.
 
 ## Ingestion
@@ -85,7 +89,7 @@ Guarantees:
 | Concern | Choice |
 |---|---|
 | Statelessness | No in-memory state shared between requests. The UI polls (2.5 s on active runs, 15–30 s elsewhere), so there are no sticky sessions or pub/sub. |
-| Work distribution | Conditional UPDATEs and leases in PostgreSQL for runs, polls, syncs and deliveries. A cluster-wide advisory lock covers the rare singleton tasks (migrations, config apply, housekeeping). |
+| Work distribution | Conditional UPDATEs and leases in PostgreSQL for runs, polls, syncs and deliveries. A cluster-wide advisory lock covers the rare singleton tasks (migrations, config apply, housekeeping). `/healthz` fails when a worker loop (runs, syncs, deliveries) stops iterating, so the orchestrator restarts a replica whose scheduler is stuck. |
 | Load | At 500 users and tens of thousands of entities, the busiest paths are catalog list pages: indexed by `(blueprint, title)` with a `search` column and paging. A 2-vCPU PostgreSQL is enough. |
 | Failure | A pod restart loses no event (outbox) and no run state. Runs are failed explicitly when their state is unknown. |
 | Retention | `RETENTION_DAYS` purges finished runs, deliveries, audit entries and old sync history every hour (one replica). |
@@ -105,3 +109,13 @@ Guarantees:
 - `/healthz` (liveness), `/readyz` (database), `/metrics` (Prometheus; optional `METRICS_TOKEN`).
 - Metrics: `asterius_runs_finished_total{action,status}`, `asterius_run_duration_seconds{invoker}`, `asterius_syncs_total{integration,status}`, `asterius_sync_entities_total`, `asterius_webhook_deliveries_total{result}`, `asterius_events_total{type}`. Cluster-wide gauges: `asterius_queue_runs{status}`, `asterius_queue_deliveries_pending`, `asterius_catalog_entities{blueprint}`.
 - OpenTelemetry tracing (`OTEL_EXPORTER_OTLP_ENDPOINT`): `action.run`, `integration.sync` and `webhook.deliver` spans, with outgoing HTTP calls as children.
+
+## Database migrations
+
+Migrations (`MIGRATIONS` in `db.ts`) are numbered, additive and each runs in its own transaction together with its `schema_migrations` row. By default every pod applies pending ones at startup under an advisory lock. Because rolling updates run old and new pods side by side, write them **expand/contract**:
+
+1. *Expand* (release N): add nullable columns, new tables and indexes only; code reads and writes both old and new shapes. Never rename, drop or tighten a column in the same release that stops using it.
+2. *Migrate data* in the background or in the same additive migration if small.
+3. *Contract* (release N+1 or later, once no old pod runs): drop the unused column or add the `NOT NULL`/constraint.
+
+For large tables or stricter change control set `migrations.job.enabled=true` in the Helm chart: a hook Job (`node dist/migrate.js`, also `npm run migrate`) migrates before the upgrade and pods start with `MIGRATE_ON_START=false`, waiting for the schema instead of migrating themselves.

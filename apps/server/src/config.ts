@@ -1,6 +1,12 @@
 import { z } from 'zod';
 import path from 'node:path';
 
+const bool = (def: boolean) =>
+  z
+    .string()
+    .optional()
+    .transform((v) => (v === undefined || v === '' ? def : v === 'true' || v === '1'));
+
 const list = z
   .string()
   .default('')
@@ -71,8 +77,16 @@ const schema = z.object({
   WORKER_CONCURRENCY: z.coerce.number().int().min(1).default(8),
   /** Seconds between status polls of running pipelines / jobs. */
   RUN_POLL_SECONDS: z.coerce.number().int().min(2).default(15),
-  /** Runs still IN_PROGRESS after this many hours are failed. */
+  /** A run still IN_PROGRESS this many hours after it started is failed (extended by the timeouts of its approval steps). */
   RUN_TIMEOUT_HOURS: z.coerce.number().default(24),
+  /** Default timeout of one step (non-approval) when the step sets no `timeoutMinutes`. */
+  STEP_TIMEOUT_MINUTES: z.coerce.number().int().min(1).default(1440),
+  /** Longest sleep of an idle worker loop; it wakes sooner on new work (in-process, or Postgres NOTIFY). */
+  WORKER_IDLE_MAX_MS: z.coerce.number().int().min(100).default(5000),
+  /** Max log lines kept per run; further lines are dropped (a notice is added once). */
+  RUN_LOG_MAX_LINES: z.coerce.number().int().min(100).default(5000),
+  /** Apply schema migrations at startup. Set false when a pre-upgrade job runs them (`npm run migrate`). */
+  MIGRATE_ON_START: bool(true),
   /** Outbound HTTP timeout for invokers, sources and webhooks. */
   HTTP_TIMEOUT_SECONDS: z.coerce.number().default(30),
   /** Keep run logs, sync runs, deliveries and audit entries for N days. */

@@ -1,4 +1,4 @@
-import { all, json, newId, now, run } from './db.js';
+import { all, json, newId, now, run, type Driver } from './db.js';
 import { metrics } from './metrics.js';
 
 /**
@@ -41,22 +41,37 @@ export const eventMatches = (sub: Pick<Sub, 'events' | 'blueprints'>, type: stri
   sub.events.some((e) => e === '*' || e === type || (e.endsWith('.*') && type.startsWith(e.slice(0, -1)))) &&
   (!sub.blueprints.length || (blueprint !== null && sub.blueprints.includes(blueprint)));
 
-export async function emit(e: DomainEvent) {
+/**
+ * Resolve the matching webhooks now (a read, done before a transaction opens so it never needs a second pooled
+ * connection while holding one) and return the function that writes the outbox rows.
+ * Called with `d` (the caller's transaction) the inserts commit or roll back together with the write that caused the
+ * event, and a failure propagates so that write fails too: the outbox exists so that no committed change loses its event.
+ * Called without `d` (state already committed, e.g. run updates) enqueueing is best effort and failures are only logged.
+ */
+export async function prepareEvent(e: DomainEvent): Promise<(d?: Driver) => Promise<void>> {
   metrics.event(e.type);
+  const subs = (await subscriptions()).filter((s) => eventMatches(s, e.type, e.blueprint));
+  const payload = JSON.stringify({ id: newId(), type: e.type, at: now(), blueprint: e.blueprint, actor: e.actor?.email ?? null, data: e.data });
+  const sql = "INSERT INTO deliveries (id, webhook, event, payload, status, next_attempt_at, created_at) VALUES (?, ?, ?, ?, 'pending', ?, ?)";
+  return async (d) => {
+    try {
+      for (const s of subs) {
+        const params = [newId(), s.identifier, e.type, payload, now(), now()];
+        if (d) await d.query(sql, params);
+        else await run(sql, ...params);
+      }
+    } catch (err) {
+      if (d) throw err;
+      console.error('[events] could not enqueue', e.type, err);
+    }
+  };
+}
+
+export async function emit(e: DomainEvent) {
   try {
-    const subs = (await subscriptions()).filter((s) => eventMatches(s, e.type, e.blueprint));
-    if (!subs.length) return;
-    const payload = JSON.stringify({ id: newId(), type: e.type, at: now(), blueprint: e.blueprint, actor: e.actor?.email ?? null, data: e.data });
-    for (const s of subs)
-      await run(
-        "INSERT INTO deliveries (id, webhook, event, payload, status, next_attempt_at, created_at) VALUES (?, ?, ?, ?, 'pending', ?, ?)",
-        newId(),
-        s.identifier,
-        e.type,
-        payload,
-        now(),
-        now(),
-      );
+    await (
+      await prepareEvent(e)
+    )();
   } catch (err) {
     console.error('[events] could not enqueue', e.type, err);
   }

@@ -13,6 +13,7 @@ export default defineConfig({
       ALLOW_REGISTRATION: 'true',
       ADMIN_EMAILS: 'admin@example.com',
       RUN_POLL_SECONDS: '2',
+      WORKER_IDLE_MAX_MS: '500',
       LOG_LEVEL: 'silent',
     },
     pool: 'forks',

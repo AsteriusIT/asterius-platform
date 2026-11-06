@@ -398,16 +398,59 @@ export const MIGRATIONS: Migration[] = [
     name: 'outbound webhooks: secondary signing secret for rotation',
     up: (d) => d.exec('ALTER TABLE webhooks ADD COLUMN secondary_secret TEXT'),
   },
+  {
+    id: 8,
+    name: 'engine hardening: run deadline, cancel request, idempotency keys, lease owner, partial indexes',
+    up: (d) =>
+      d.exec(`
+        ALTER TABLE runs ADD COLUMN deadline_at TEXT;
+        ALTER TABLE runs ADD COLUMN cancel_requested INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE runs ADD COLUMN idempotency_key TEXT;
+        CREATE UNIQUE INDEX runs_idempotency ON runs(triggered_by, action, idempotency_key);
+        CREATE INDEX runs_deadline ON runs(deadline_at) WHERE status = 'IN_PROGRESS';
+        ALTER TABLE integrations ADD COLUMN lock_owner TEXT;
+        CREATE INDEX run_steps_lease ON run_steps(locked_until) WHERE status = 'RUNNING' AND locked_until IS NOT NULL;
+        CREATE INDEX run_steps_deadline ON run_steps(deadline_at) WHERE deadline_at IS NOT NULL AND status IN ('QUEUED', 'RUNNING', 'WAITING_APPROVAL');
+      `),
+  },
 ];
 
-/** Apply pending numbered migrations (idempotent; serialized across replicas by an advisory lock on Postgres). */
+/**
+ * Apply pending numbered migrations (idempotent; serialized across replicas by an advisory lock on Postgres).
+ * Each migration and its bookkeeping row commit atomically (DDL is transactional on both Postgres and SQLite), so a
+ * failure half way never leaves a partly applied migration behind.
+ */
 export async function migrate(d: Driver, migrations = MIGRATIONS) {
   await d.exec('CREATE TABLE IF NOT EXISTS schema_migrations (id INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)');
   const done = new Set((await d.query<{ id: number }>('SELECT id FROM schema_migrations')).rows.map((r) => Number(r.id)));
   for (const m of migrations) {
     if (done.has(m.id)) continue;
-    await m.up(d);
-    await d.query('INSERT INTO schema_migrations (id, name, applied_at) VALUES (?, ?, ?)', [m.id, m.name, new Date().toISOString()]);
+    await d.exec('BEGIN');
+    try {
+      await m.up(d);
+      await d.query('INSERT INTO schema_migrations (id, name, applied_at) VALUES (?, ?, ?)', [m.id, m.name, new Date().toISOString()]);
+      await d.exec('COMMIT');
+    } catch (err) {
+      await d.exec('ROLLBACK').catch(() => undefined);
+      throw err;
+    }
+  }
+}
+
+/** Wait (bounded) for the migration job to bring the schema to this build's version, then fail so the pod restarts. */
+async function assertMigrated(d: Driver) {
+  for (let attempt = 1; ; attempt++) {
+    const done = new Set<number>();
+    try {
+      for (const r of (await d.query<{ id: number }>('SELECT id FROM schema_migrations')).rows) done.add(Number(r.id));
+    } catch {
+      // table missing: nothing applied yet
+    }
+    const missing = MIGRATIONS.filter((m) => !done.has(m.id));
+    if (!missing.length) return;
+    if (attempt >= 100) throw new Error(`Database schema is behind: pending migrations ${missing.map((m) => m.id).join(', ')} (run the migration job)`);
+    if (attempt === 1) console.warn(`[db] waiting for the migration job (pending: ${missing.map((m) => m.id).join(', ')})`);
+    await new Promise((r) => setTimeout(r, 3000));
   }
 }
 
@@ -416,7 +459,7 @@ let pool: pg.Pool | undefined;
 async function open(): Promise<Driver> {
   if (!config.DATABASE_URL?.startsWith('postgres')) {
     const d = sqliteDriver(paths.db);
-    await migrate(d);
+    await migrate(d); // SQLite is single-process: always migrate on open
     return d;
   }
   pool = new pg.Pool({ connectionString: config.DATABASE_URL, max: config.DATABASE_POOL_SIZE });
@@ -433,8 +476,11 @@ async function open(): Promise<Driver> {
     }
   }
   try {
-    await client.query('SELECT pg_advisory_lock(726201)');
-    await migrate(postgresDriver(client));
+    // MIGRATE_ON_START=false: a pre-upgrade job (`npm run migrate`) owns the schema, pods only verify nothing is pending.
+    if (config.MIGRATE_ON_START) {
+      await client.query('SELECT pg_advisory_lock(726201)');
+      await migrate(postgresDriver(client));
+    } else await assertMigrated(postgresDriver(client)); // no lock held while waiting
   } finally {
     await client.query('SELECT pg_advisory_unlock(726201)').catch(() => undefined);
     client.release();
@@ -444,6 +490,8 @@ async function open(): Promise<Driver> {
 
 export const driver = await open();
 export const dialect = driver.dialect;
+/** Row lock suffix for `SELECT … FOR UPDATE` inside `tx` (SQLite serializes transactions in-process instead). */
+export const forUpdate = dialect === 'postgres' ? ' FOR UPDATE' : '';
 
 let sqliteChain: Promise<unknown> = Promise.resolve();
 
@@ -492,6 +540,75 @@ export async function withAdvisoryLock<T>(key: number, fn: () => Promise<T>): Pr
     await client.query('SELECT pg_advisory_unlock($1)', [key]).catch(() => undefined);
     client.release();
   }
+}
+
+/**
+ * Run `fn` when this replica wins a Postgres session advisory lock, skip (return undefined) when another replica holds
+ * it. Use for periodic jobs where one replica per period is enough. In-process guard on SQLite.
+ */
+const localLocks = new Set<number>();
+export async function tryAdvisoryLock<T>(key: number, fn: () => Promise<T>): Promise<T | undefined> {
+  if (!pool) {
+    if (localLocks.has(key)) return undefined;
+    localLocks.add(key);
+    try {
+      return await fn();
+    } finally {
+      localLocks.delete(key);
+    }
+  }
+  const client = await pool.connect();
+  try {
+    const { rows } = await client.query<{ ok: boolean }>('SELECT pg_try_advisory_lock($1) AS ok', [key]);
+    if (!rows[0]?.ok) return undefined;
+    try {
+      return await fn();
+    } finally {
+      await client.query('SELECT pg_advisory_unlock($1)', [key]).catch(() => undefined);
+    }
+  } finally {
+    client.release();
+  }
+}
+
+/** Wake sleeping workers on other replicas (Postgres LISTEN/NOTIFY); no-op on SQLite, where everything is in-process. */
+export async function notify(channel: string) {
+  if (pool) await pool.query('SELECT pg_notify($1, $2)', [channel, '']).catch(() => undefined);
+}
+
+/** LISTEN on a dedicated connection, reconnecting after failures. Returns a stop function. */
+export function listen(channel: string, onMessage: () => void): () => Promise<void> {
+  if (!pool || !config.DATABASE_URL) return async () => undefined;
+  let stopped = false;
+  let client: pg.Client | undefined;
+  const connect = async () => {
+    if (stopped) return;
+    const c = new pg.Client({ connectionString: config.DATABASE_URL });
+    c.on('notification', (m) => m.channel === channel && onMessage());
+    const retry = () => {
+      if (client === c) client = undefined;
+      c.removeAllListeners();
+      c.end().catch(() => undefined);
+      if (!stopped) setTimeout(() => void connect(), 5000).unref();
+    };
+    c.on('error', retry);
+    c.on('end', retry);
+    try {
+      await c.connect();
+      await c.query(`LISTEN ${channel}`);
+      client = c;
+    } catch {
+      retry();
+    }
+  };
+  void connect();
+  return async () => {
+    stopped = true;
+    const c = client;
+    client = undefined;
+    c?.removeAllListeners();
+    await c?.end().catch(() => undefined);
+  };
 }
 
 export const newId = () => randomUUID();

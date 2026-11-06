@@ -1,7 +1,7 @@
 import type { Blueprint, Entity, EntityPage, RelatedEntities, RelationValue } from '@asterius/shared';
 import { all, dialect, json, likeEscape, now, one, tx, type Driver, type SqlValue } from '../db.js';
 import { badRequest, notFound } from '../lib/errors.js';
-import { emit } from '../events.js';
+import { prepareEvent } from '../events.js';
 import { entityInput, type EntityInput } from '../schemas.js';
 import { getBlueprintCached } from './blueprints.js';
 import { compact, validate } from './validation.js';
@@ -179,6 +179,24 @@ export async function upsertEntity(blueprint: string, raw: unknown, opts: Upsert
   if (!changed) return { entity: existing!, created: false, changed: false };
 
   const t = now();
+  const entity: Entity = {
+    blueprint,
+    identifier: input.identifier,
+    title,
+    team,
+    properties,
+    relations,
+    source: opts.source,
+    createdAt: existing?.createdAt ?? t,
+    updatedAt: t,
+  };
+  // The entity write and its outbox events commit together: a crash or a failing outbox insert never loses an event.
+  const outbox = await prepareEvent({
+    type: existing ? 'entity.updated' : 'entity.created',
+    blueprint,
+    data: { entity, before: existing ?? null },
+    actor: opts.actor,
+  });
   await tx(async (d) => {
     const vals = [title, team, JSON.stringify(properties), JSON.stringify(relations), opts.source, `${input.identifier} ${title}`.toLowerCase(), t];
     if (existing)
@@ -192,9 +210,8 @@ export async function upsertEntity(blueprint: string, raw: unknown, opts: Upsert
         [...vals, t, blueprint, input.identifier],
       );
     await writeRelations(d, bp, input.identifier, relations);
+    await outbox(d);
   });
-  const entity = await getEntity(blueprint, input.identifier);
-  await emit({ type: existing ? 'entity.updated' : 'entity.created', blueprint, data: { entity, before: existing ?? null }, actor: opts.actor });
   return { entity, created: !existing, changed: true };
 }
 
@@ -213,7 +230,10 @@ async function writeRelations(d: Driver, bp: Blueprint, identifier: string, rela
 
 export async function deleteEntity(blueprint: string, identifier: string, actor?: Actor) {
   const entity = await getEntity(blueprint, identifier);
-  await tx((d) => d.query('DELETE FROM entities WHERE blueprint = ? AND identifier = ?', [blueprint, identifier]));
-  await emit({ type: 'entity.deleted', blueprint, data: { entity }, actor });
+  const outbox = await prepareEvent({ type: 'entity.deleted', blueprint, data: { entity }, actor });
+  await tx(async (d) => {
+    await d.query('DELETE FROM entities WHERE blueprint = ? AND identifier = ?', [blueprint, identifier]);
+    await outbox(d);
+  });
   return entity;
 }

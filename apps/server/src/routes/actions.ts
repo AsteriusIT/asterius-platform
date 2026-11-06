@@ -5,7 +5,7 @@ import { audit } from '../audit.js';
 import { actorOf, authenticate, bearer, isAdmin, requireAdmin, requireUser } from '../auth/users.js';
 import { getEntity } from '../catalog/entities.js';
 import { canTrigger, isRunnable, deleteAction, forViewer, getAction, listActions, upsertAction } from '../actions/actions.js';
-import { addLog, cancelRun, decide, getRun, getRunRow, listRuns, pendingApprovals, triggerRun } from '../actions/runs.js';
+import { addLog, cancelRun, decide, getRun, getRunLogs, getRunRow, listRuns, pendingApprovals, triggerRun } from '../actions/runs.js';
 import { cancelSteps, decideStep, runningInvokeStep, updateStep } from '../actions/engine.js';
 import { checkRunToken, checkStepToken } from '../secrets.js';
 import { conflict, forbidden } from '../lib/errors.js';
@@ -129,7 +129,9 @@ export async function actionRoutes(app: FastifyInstance) {
     scoped.post('/actions/:id/runs', { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async (req, reply) => {
       const { id } = idParam.parse(req.params);
       const body = z.object({ entity: z.string().nullish(), inputs: z.record(z.string(), z.unknown()).default({}) }).parse(req.body ?? {});
-      return reply.code(201).send(await triggerRun(req.principal, id, body));
+      const key = z.string().min(1).max(200).optional().parse(req.headers['idempotency-key']);
+      const { run, created } = await triggerRun(req.principal, id, body, key);
+      return reply.code(created ? 201 : 200).send(run);
     });
 
     scoped.get('/runs', async (req) => {
@@ -145,7 +147,16 @@ export async function actionRoutes(app: FastifyInstance) {
       const status = q.status ? z.array(z.enum(RUN_STATUSES)).parse(q.status.split(',')) : undefined;
       return listRuns({ ...q, status, mine: q.mine === 'true' ? req.principal.id : undefined }, req.principal);
     });
-    scoped.get('/runs/:id', async (req) => getRun(idParam.parse(req.params).id, req.principal));
+    scoped.get('/runs/:id', async (req) => {
+      const q = z.object({ after: z.coerce.number().int().min(0).optional() }).parse(req.query);
+      return getRun(idParam.parse(req.params).id, req.principal, q);
+    });
+    scoped.get('/runs/:id/logs', async (req) => {
+      const q = z
+        .object({ after: z.coerce.number().int().min(0).default(0), limit: z.coerce.number().int().min(1).max(2000).default(500), step: z.string().optional() })
+        .parse(req.query);
+      return getRunLogs(idParam.parse(req.params).id, req.principal, q);
+    });
     scoped.get('/approvals', async (req) => pendingApprovals(req.principal));
 
     const comment = z.object({ comment: z.string().max(2000).default('') });
