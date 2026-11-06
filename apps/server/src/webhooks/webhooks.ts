@@ -4,6 +4,7 @@ import type { Delivery, Webhook } from '@asterius/shared';
 import { all, bool, json, later, now, one, run } from '../db.js';
 import { errorMessage, managedError, notFound } from '../lib/errors.js';
 import { http, UpstreamError } from '../lib/http.js';
+import { decodeCursor, encodeCursor } from '../lib/cursor.js';
 import { invalidateWebhookCache } from '../events.js';
 import { resolveValue } from '../secrets.js';
 import { webhookDef, type WebhookDef } from '../schemas.js';
@@ -95,9 +96,18 @@ interface DeliveryRow {
   delivered_at: string | null;
 }
 
-export async function listDeliveries(webhook: string, limit = 50): Promise<Delivery[]> {
-  const rows = await all<DeliveryRow>('SELECT * FROM deliveries WHERE webhook = ? ORDER BY created_at DESC LIMIT ?', webhook, limit);
-  return rows.map((r) => ({
+export async function listDeliveries(webhook: string, limit = 50, cursor?: string): Promise<{ deliveries: Delivery[]; nextCursor?: string }> {
+  const after = cursor ? decodeCursor(cursor, { s: 'deliveries', d: 'desc', n: 2 }) : undefined;
+  const rows = await all<DeliveryRow>(
+    `SELECT * FROM deliveries WHERE webhook = ? ${after ? 'AND (created_at, id) < (?, ?)' : ''} ORDER BY created_at DESC, id DESC LIMIT ?`,
+    webhook,
+    ...(after ?? []),
+    limit + 1,
+  );
+  const more = rows.length > limit;
+  if (more) rows.pop();
+  const last = rows.at(-1);
+  const deliveries = rows.map((r) => ({
     id: r.id,
     webhook: r.webhook,
     event: r.event,
@@ -108,6 +118,7 @@ export async function listDeliveries(webhook: string, limit = 50): Promise<Deliv
     createdAt: r.created_at,
     deliveredAt: r.delivered_at,
   }));
+  return { deliveries, nextCursor: more && last ? encodeCursor({ s: 'deliveries', d: 'desc', v: [last.created_at, last.id] }) : undefined };
 }
 
 export async function redeliver(id: string) {

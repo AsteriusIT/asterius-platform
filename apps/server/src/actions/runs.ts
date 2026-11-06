@@ -9,7 +9,8 @@ import { getEntity } from '../catalog/entities.js';
 import { compact, validate } from '../catalog/validation.js';
 import { canTrigger, getAction } from './actions.js';
 import { metrics } from '../metrics.js';
-import { canApproveStep, loadSteps, runStepsView, stepApprovalsOf, stepDefs, stepMessage } from './steps.js';
+import { canApproveStep, loadSteps, runStepsView, stepApprovalsOf, stepDefs, stepMessage, type StepRow } from './steps.js';
+import { decodeCursor, encodeCursor } from '../lib/cursor.js';
 
 /**
  * Run lifecycle:
@@ -122,6 +123,10 @@ export interface RunQuery {
   entity?: string;
   limit: number;
   offset: number;
+  /** Keyset cursor from a previous page (newest first). */
+  cursor?: string;
+  /** false: skip the second count(*) query. Default: counted unless paging by cursor. */
+  count?: boolean;
 }
 
 export async function listRuns(q: RunQuery): Promise<RunPage> {
@@ -139,36 +144,106 @@ export async function listRuns(q: RunQuery): Promise<RunPage> {
     where.push(`r.status IN (${q.status.map(() => '?').join(',')})`);
     params.push(...q.status);
   }
-  const w = where.length ? `WHERE ${where.join(' AND ')}` : '';
-  const [total] = await all<{ n: number }>(`SELECT count(*) AS n FROM runs r ${w}`, ...params);
-  const rows = await all<RunRow>(`${SELECT} ${w} ORDER BY r.created_at DESC LIMIT ? OFFSET ?`, ...params, q.limit, q.offset);
+  const base = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  const listWhere = [...where];
+  const listParams = [...params];
+  if (q.cursor) {
+    const [at, id] = decodeCursor(q.cursor, { s: 'created', d: 'desc', n: 2 });
+    listWhere.push('(r.created_at, r.id) < (?, ?)');
+    listParams.push(at!, id!);
+  }
+  const w = listWhere.length ? `WHERE ${listWhere.join(' AND ')}` : '';
+  const rows = await all<RunRow>(`${SELECT} ${w} ORDER BY r.created_at DESC, r.id DESC LIMIT ? OFFSET ?`, ...listParams, q.limit + 1, q.cursor ? 0 : q.offset);
+  const more = rows.length > q.limit;
+  if (more) rows.pop();
   const approvals = await approvalsOf(rows.map((r) => r.id));
-  return { items: rows.map((r) => toRun(r, approvals.get(r.id) ?? [])), total: Number(total?.n ?? 0) };
-}
-
-/** Decisions waiting for this principal: run-level approvals and approval steps of running workflows. */
-export async function pendingApprovals(p: Principal): Promise<Run[]> {
-  const rows = await all<RunRow>(`${SELECT} WHERE r.status = 'PENDING_APPROVAL' ORDER BY r.created_at LIMIT 500`);
-  const approvals = await approvalsOf(rows.map((r) => r.id));
-  const out: Run[] = rows
-    .filter((r) => canApprove(p, r, approvals.get(r.id) ?? []))
-    .map((r) => ({ ...toRun(r, approvals.get(r.id) ?? []), canApprove: true, pendingStep: null }));
-  const waiting = await all<RunRow & { step_id: string }>(
-    `${SELECT.replace('SELECT r.*', 'SELECT DISTINCT r.*, s.step_id')} JOIN run_steps s ON s.run_id = r.id
-     WHERE s.status = 'WAITING_APPROVAL' AND r.status = 'IN_PROGRESS' ORDER BY r.created_at LIMIT 500`,
-  );
-  const stepApprovals = await stepApprovalsOf([...new Set(waiting.map((w) => w.id))]);
-  for (const w of waiting) {
-    const def = stepDefs(w).find((d) => d.id === w.step_id);
-    const row = (await loadSteps(w.id)).find((s) => s.step_id === w.step_id);
-    if (!def || !row || !canApproveStep(p, w, def, row, stepApprovals.get(`${w.id}/${w.step_id}`) ?? [])) continue;
-    out.push({ ...toRun(w, []), pendingStep: { id: row.step_id, name: row.name, message: stepMessage(row) } });
+  const out: RunPage = { items: rows.map((r) => toRun(r, approvals.get(r.id) ?? [])) };
+  const last = rows.at(-1);
+  if (more && last) out.nextCursor = encodeCursor({ s: 'created', d: 'desc', v: [last.created_at, last.id] });
+  if (q.count ?? !q.cursor) {
+    const [total] = await all<{ n: number }>(`SELECT count(*) AS n FROM runs r ${base}`, ...params);
+    out.total = Number(total?.n ?? 0);
   }
   return out;
 }
 
+const APPROVAL_SCAN = 200;
+
+/**
+ * Decisions waiting for this principal: run-level approvals and approval steps of running workflows.
+ * Candidates are read by keyset (oldest first) in batches of 200 with the cheap exclusions in SQL (own earlier
+ * decisions); the policy check (roles, teams, self-approval) runs in memory on the batch, whose steps and approvals are
+ * loaded with one query each. No row cap: stops once `limit` items were collected and returns a cursor for the rest.
+ */
+export async function pendingApprovals(
+  p: Principal,
+  opts: { limit?: number; cursor?: string; scanLimit?: number } = {},
+): Promise<{ items: Run[]; nextCursor?: string }> {
+  const limit = opts.limit ?? 200;
+  const scanMax = opts.scanLimit ?? Infinity;
+  const items: Run[] = [];
+  let after = opts.cursor ? decodeCursor(opts.cursor, { s: 'approvals', d: 'asc', n: 2 }) : undefined;
+  let scanned = 0;
+  for (;;) {
+    const rows = await all<RunRow>(
+      `${SELECT} WHERE (r.status = 'PENDING_APPROVAL' AND NOT EXISTS (SELECT 1 FROM run_approvals a WHERE a.run_id = r.id AND a.user_id = ?)
+          OR r.status = 'IN_PROGRESS' AND EXISTS (SELECT 1 FROM run_steps s WHERE s.run_id = r.id AND s.status = 'WAITING_APPROVAL'))
+        ${after ? 'AND (r.created_at, r.id) > (?, ?)' : ''} ORDER BY r.created_at, r.id LIMIT ?`,
+      p.id,
+      ...(after ?? []),
+      APPROVAL_SCAN,
+    );
+    if (!rows.length) return { items };
+    scanned += rows.length;
+    const approvals = await approvalsOf(rows.filter((r) => r.status === 'PENDING_APPROVAL').map((r) => r.id));
+    const inProgress = rows.filter((r) => r.status === 'IN_PROGRESS');
+    const stepRows = inProgress.length
+      ? await all<StepRow>(
+          `SELECT * FROM run_steps WHERE status = 'WAITING_APPROVAL' AND run_id IN (${inProgress.map(() => '?').join(',')}) ORDER BY run_id, position`,
+          ...inProgress.map((r) => r.id),
+        )
+      : [];
+    const stepApprovals = await stepApprovalsOf(inProgress.map((r) => r.id));
+    for (const [i, r] of rows.entries()) {
+      if (r.status === 'PENDING_APPROVAL') {
+        if (canApprove(p, r, approvals.get(r.id) ?? [])) items.push({ ...toRun(r, approvals.get(r.id) ?? []), canApprove: true, pendingStep: null });
+      } else {
+        for (const row of stepRows.filter((sr) => sr.run_id === r.id)) {
+          const def = stepDefs(r).find((d) => d.id === row.step_id);
+          if (def && canApproveStep(p, r, def, row, stepApprovals.get(`${r.id}/${row.step_id}`) ?? []))
+            items.push({ ...toRun(r, []), pendingStep: { id: row.step_id, name: row.name, message: stepMessage(row) } });
+        }
+      }
+      if (items.length >= limit && i < rows.length - 1) return { items, nextCursor: encodeCursor({ s: 'approvals', d: 'asc', v: [r.created_at, r.id] }) };
+    }
+    const last = rows[rows.length - 1]!;
+    after = [last.created_at, last.id];
+    if (items.length >= limit || scanned >= scanMax)
+      return rows.length === APPROVAL_SCAN ? { items, nextCursor: encodeCursor({ s: 'approvals', d: 'asc', v: after }) } : { items };
+    if (rows.length < APPROVAL_SCAN) return { items };
+  }
+}
+
+/** Number of decisions waiting for this principal (home badge); counts at most `max` and reports whether more exist. */
+export async function countPendingApprovals(p: Principal, max = 99): Promise<number> {
+  const { items, nextCursor } = await pendingApprovals(p, { limit: max + 1 });
+  return nextCursor ? max + 1 : items.length;
+}
+
 export async function addLog(runId: string, message: string, level: RunLog['level'] = 'info', stepId: string | null = null) {
-  await run('INSERT INTO run_logs (run_id, at, level, message, step_id) VALUES (?, ?, ?, ?, ?)', runId, now(), level, message.slice(0, 8000), stepId);
+  // Atomic per-run budget (cross-replica): the counter is bumped first, the line is only stored while under the limit.
+  const max = config.RUN_LOG_MAX_LINES;
+  const [r] = await all<{ log_count: number }>('UPDATE runs SET log_count = log_count + 1 WHERE id = ? AND log_count <= ? RETURNING log_count', runId, max);
+  if (!r) return;
+  const truncated = Number(r.log_count) > max;
+  await run(
+    'INSERT INTO run_logs (run_id, at, level, message, step_id) VALUES (?, ?, ?, ?, ?)',
+    runId,
+    now(),
+    truncated ? 'warn' : level,
+    truncated ? `Log limit of ${max} lines reached: further lines are dropped` : message.slice(0, 8000),
+    stepId,
+  );
 }
 
 export async function emitRun(id: string, type: 'run.created' | 'run.updated') {

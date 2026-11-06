@@ -40,6 +40,7 @@ const entity = (team: string | null): Entity => ({
   properties: {},
   relations: {},
   source: 'ui',
+  version: 1,
   createdAt: '',
   updatedAt: '',
 });

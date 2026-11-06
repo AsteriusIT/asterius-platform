@@ -108,13 +108,50 @@ export interface Entity {
   relations: Record<string, RelationValue>;
   /** Who writes this entity: an integration identifier, `api`, `ui` or `config`. */
   source: string;
+  /** Incremented on every write; served as the ETag and checked against If-Match. */
+  version: number;
   createdAt: string;
   updatedAt: string;
 }
 
 export interface EntityPage {
   items: Entity[];
-  total: number;
+  /** Omitted when the client opted out of counting (`count=false`) or paged by cursor without asking for it. */
+  total?: number;
+  /** Opaque cursor for the next page (keyset pagination); absent on the last page. */
+  nextCursor?: string;
+}
+
+export type FilterOp = 'eq' | 'neq' | 'in' | 'contains' | 'gt' | 'gte' | 'lt' | 'lte' | 'between' | 'exists';
+
+export interface PropertyFilter {
+  property: string;
+  op: FilterOp;
+  /** eq/neq/contains/gt/gte/lt/lte: scalar; in/between: array; exists: boolean (default true). */
+  value?: string | number | boolean | Array<string | number | boolean>;
+}
+
+export interface RelationFilter {
+  relation: string;
+  /** Entities whose relation points at one of these identifiers. */
+  target: string | string[];
+}
+
+/** Body of POST /entities/query and the parsed form of the `filter.*` / `relation.*` query parameters. */
+export interface EntityQueryBody {
+  blueprint?: string;
+  search?: string;
+  team?: string;
+  source?: string;
+  filters?: PropertyFilter[];
+  relations?: RelationFilter[];
+  /** title | updated | identifier | relevance | prop:<name> */
+  sort?: string;
+  dir?: 'asc' | 'desc';
+  limit?: number;
+  offset?: number;
+  cursor?: string;
+  count?: boolean;
 }
 
 export interface RelatedEntities {
@@ -304,7 +341,9 @@ export interface Run {
 
 export interface RunPage {
   items: Run[];
-  total: number;
+  /** Omitted with `count=false` and on cursor pages. */
+  total?: number;
+  nextCursor?: string;
 }
 
 // ---------- integrations ----------

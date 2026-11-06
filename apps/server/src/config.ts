@@ -63,6 +63,8 @@ const schema = z.object({
   /** Outbound HTTP timeout for invokers, sources and webhooks. */
   HTTP_TIMEOUT_SECONDS: z.coerce.number().default(30),
   /** Keep run logs, sync runs, deliveries and audit entries for N days. */
+  /** Max log lines stored per run (the rest is dropped after one truncation notice). */
+  RUN_LOG_MAX_LINES: z.coerce.number().int().min(100).default(5000),
   RETENTION_DAYS: z.coerce.number().int().min(1).default(90),
   KUBECONFIG_PATH: z.string().optional(),
 

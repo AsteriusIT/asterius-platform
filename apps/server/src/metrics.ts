@@ -52,6 +52,12 @@ const c = {
     labelNames: ['model', 'kind'],
     registers: [registry],
   }),
+  purged: new client.Counter({
+    name: 'asterius_retention_purged_total',
+    help: 'Rows removed or expired by the retention job, by table',
+    labelNames: ['table'],
+    registers: [registry],
+  }),
   events: new client.Counter({ name: 'asterius_events_total', help: 'Domain events emitted', labelNames: ['type'], registers: [registry] }),
 };
 
@@ -101,6 +107,7 @@ export const metrics = {
     if (deleted) c.syncEntities.inc({ integration, op: 'delete' }, deleted);
   },
   delivery: (result: 'success' | 'retry' | 'failed') => c.deliveries.inc({ result }),
+  purged: (table: string, rows: number) => rows && c.purged.inc({ table }, rows),
   event: (type: string) => c.events.inc({ type }),
   stepFinished: (type: string, status: string) => c.steps.inc({ type, status }),
   llmTokens: (model: string, input: number, output: number) => {

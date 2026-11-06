@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { audit, listAudit } from '../audit.js';
+import { nextPageHeaders } from '../lib/cursor.js';
 import {
   actorOf,
   createApiToken,
@@ -125,13 +126,24 @@ export async function adminRoutes(app: FastifyInstance, opts: { reloadConfig: ()
       await audit(actorOf(req.principal), 'webhook.deleted', id);
       return { ok: true };
     });
-    admin.get('/webhooks/:id/deliveries', async (req) => listDeliveries(idParam.parse(req.params).id));
+    admin.get('/webhooks/:id/deliveries', async (req, reply) => {
+      const q = z.object({ limit: z.coerce.number().int().min(1).max(500).default(50), cursor: z.string().max(500).optional() }).parse(req.query);
+      const { deliveries, nextCursor } = await listDeliveries(idParam.parse(req.params).id, q.limit, q.cursor);
+      nextPageHeaders(req, reply, nextCursor);
+      return deliveries;
+    });
     admin.post('/deliveries/:id/redeliver', async (req) => {
       await redeliver(idParam.parse(req.params).id);
       return { ok: true };
     });
 
-    admin.get('/audit', async (req) => listAudit(page.extend({ search: z.string().max(200).optional() }).parse(req.query)));
+    admin.get('/audit', async (req, reply) => {
+      const { entries, nextCursor } = await listAudit(
+        page.extend({ search: z.string().max(200).optional(), cursor: z.string().max(500).optional() }).parse(req.query),
+      );
+      nextPageHeaders(req, reply, nextCursor);
+      return entries;
+    });
 
     admin.get('/config', async () => ({ dir: config.CONFIG_DIR, managed: await managedCounts() }));
     admin.get('/config/export', async (_req, reply) => reply.type('text/yaml; charset=utf-8').send(await exportConfig()));

@@ -1,4 +1,4 @@
-import { all, json, newId, now, run } from './db.js';
+import { all, json, newId, now, run, type SqlValue } from './db.js';
 import { metrics } from './metrics.js';
 
 /**
@@ -42,22 +42,31 @@ export const eventMatches = (sub: Pick<Sub, 'events' | 'blueprints'>, type: stri
   (!sub.blueprints.length || (blueprint !== null && sub.blueprints.includes(blueprint)));
 
 export async function emit(e: DomainEvent) {
-  metrics.event(e.type);
+  await emitMany([e]);
+}
+
+const OUTBOX_CHUNK = 100;
+
+/** Enqueue several events with one subscription lookup and multi-row INSERTs. Never throws: events are best-effort. */
+export async function emitMany(events: DomainEvent[]) {
+  for (const e of events) metrics.event(e.type);
   try {
-    const subs = (await subscriptions()).filter((s) => eventMatches(s, e.type, e.blueprint));
-    if (!subs.length) return;
-    const payload = JSON.stringify({ id: newId(), type: e.type, at: now(), blueprint: e.blueprint, actor: e.actor?.email ?? null, data: e.data });
-    for (const s of subs)
+    const subs = await subscriptions();
+    const rows: SqlValue[][] = [];
+    for (const e of events) {
+      const matching = subs.filter((s) => eventMatches(s, e.type, e.blueprint));
+      if (!matching.length) continue;
+      const payload = JSON.stringify({ id: newId(), type: e.type, at: now(), blueprint: e.blueprint, actor: e.actor?.email ?? null, data: e.data });
+      for (const s of matching) rows.push([newId(), s.identifier, e.type, payload, 'pending', now(), now()]);
+    }
+    for (let i = 0; i < rows.length; i += OUTBOX_CHUNK) {
+      const chunk = rows.slice(i, i + OUTBOX_CHUNK);
       await run(
-        "INSERT INTO deliveries (id, webhook, event, payload, status, next_attempt_at, created_at) VALUES (?, ?, ?, ?, 'pending', ?, ?)",
-        newId(),
-        s.identifier,
-        e.type,
-        payload,
-        now(),
-        now(),
+        `INSERT INTO deliveries (id, webhook, event, payload, status, next_attempt_at, created_at) VALUES ${chunk.map(() => '(?, ?, ?, ?, ?, ?, ?)').join(', ')}`,
+        ...chunk.flat(),
       );
+    }
   } catch (err) {
-    console.error('[events] could not enqueue', e.type, err);
+    console.error('[events] could not enqueue', events[0]?.type, err);
   }
 }
