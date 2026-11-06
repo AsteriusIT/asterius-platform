@@ -5,7 +5,7 @@ import { githubSource } from './github.js';
 import { azureDevOpsSource } from './azure-devops.js';
 import { gitlabSource } from './gitlab.js';
 import { kubernetesSource } from './kubernetes.js';
-import { httpSource, webhookSource } from './http.js';
+import { graphqlSource, httpSource, webhookSource } from './http.js';
 
 const registry = new Map<string, Source>();
 
@@ -14,7 +14,7 @@ export function registerSource(s: Source) {
   registry.set(s.info.type, s);
 }
 
-for (const s of [githubSource, azureDevOpsSource, gitlabSource, kubernetesSource, httpSource, webhookSource]) registerSource(s);
+for (const s of [githubSource, azureDevOpsSource, gitlabSource, kubernetesSource, httpSource, graphqlSource, webhookSource]) registerSource(s);
 
 export function getSource(type: string): Source {
   const s = registry.get(type);

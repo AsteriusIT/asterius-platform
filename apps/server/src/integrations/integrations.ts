@@ -132,7 +132,7 @@ export async function upsertIntegration(input: unknown, opts: { managed?: boolea
   const kinds = source.info.kinds ?? [];
   for (const m of def.mappings) {
     checkMapping(m);
-    if (!source.push && def.type !== 'kubernetes' && def.type !== 'http' && !kinds.includes(m.kind))
+    if (!source.push && !['kubernetes', 'http', 'graphql'].includes(def.type) && !kinds.includes(m.kind))
       throw badRequest(`${def.type}: unknown kind "${m.kind}" (available: ${kinds.join(', ')})`);
     if (!(await one('SELECT identifier FROM blueprints WHERE identifier = ?', m.entity.blueprint)))
       throw badRequest(`Blueprint "${m.entity.blueprint}" does not exist`);
