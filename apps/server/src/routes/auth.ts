@@ -20,6 +20,7 @@ import {
 } from '../auth/users.js';
 import { entraRoutes } from '../auth/entra.js';
 import { invokerInfos } from '../actions/invokers/index.js';
+import { MODELS } from '../actions/models.js';
 import { sourceInfos } from '../integrations/sources/index.js';
 
 const VERSION = process.env.APP_VERSION ?? '0.1.0';
@@ -45,6 +46,7 @@ export async function authRoutes(app: FastifyInstance) {
     allowRegistration: config.AUTH_PROVIDERS.includes('local') && config.ALLOW_REGISTRATION,
     invokers: invokerInfos(),
     sources: sourceInfos(),
+    models: MODELS,
   }));
 
   const rateLimit = { rateLimit: { max: 10, timeWindow: '1 minute' } };

@@ -4,6 +4,7 @@ import {
   ActionIcon,
   Alert,
   Badge,
+  Code,
   Button,
   Box,
   Card,
@@ -48,6 +49,8 @@ import { newFormTrigger, TriggerEditor, TRIGGER_TYPES, triggerSummary } from './
 import { Empty } from '../ui';
 import { fieldProblems, fieldsToSchema, nameFromLabel, schemaToFields, type FieldDraft } from './fields';
 import { FieldsEditor, type FieldsMode } from './FieldsEditor';
+import { DryRunPanel, ExpressionStatus } from './ExpressionTools';
+import { WorkflowGraph } from '../WorkflowGraph';
 import { JsonEditor, KeyValueEditor, MONO_INPUT, PluginFieldInput, SubjectsEditor, VariableChips } from './blocks';
 
 /**
@@ -56,15 +59,14 @@ import { JsonEditor, KeyValueEditor, MONO_INPUT, PluginFieldInput, SubjectsEdito
  * The selected node is edited on the right: settings, condition, dependencies, retries and timeout.
  */
 
+const SAMPLE_CONTEXT = { inputs: {}, entity: null, steps: {} };
 const STEP_ID = /^[A-Za-z_][A-Za-z0-9_]{0,40}$/;
 const TYPE_ICON = { invoke: IconBolt, approval: IconShieldCheck, agent: IconRobot, transform: IconCode } as const;
 
-export const AGENT_MODELS = [
-  { value: 'claude-opus-5-5', label: 'Claude Opus 5.5', description: 'Default · best reasoning · $4 / $20 per M tokens' },
-  { value: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5', description: 'Fast and capable · $2 / $10 per M tokens' },
-  { value: 'claude-haiku-5-5', label: 'Claude Haiku 5.5', description: 'Fastest, cheapest · $0.10 / $0.50 per M tokens' },
-  { value: 'claude-fable-5-1', label: 'Claude Fable 5.1', description: 'Most capable · $10 / $50 per M tokens' },
-];
+/** Offline fallback; the real list (with prices) comes from /api/meta. */
+export const AGENT_MODELS = [{ value: 'claude-opus-5-5', label: 'Claude Opus 5.5', description: 'Default' }];
+const priceText = (m: { inputPrice?: number; outputPrice?: number }) =>
+  m.inputPrice !== undefined ? ` · $${m.inputPrice} / $${m.outputPrice} per M tokens` : '';
 
 function uniqueId(base: string, steps: WorkflowStep[]) {
   const clean = nameFromLabel(base) || 'step';
@@ -154,9 +156,13 @@ export function WorkflowEditor(props: {
     const neighbour = next[Math.max(0, index - 1)];
     setSelected(neighbour ? { kind: 'step', id: neighbour.id } : trigger ? { kind: 'trigger' } : null);
   };
-  const move = (d: -1 | 1) => {
+  const move = (d: -1 | 1) => moveTo(index, index + d);
+  const [dragged, setDragged] = useState<number | null>(null);
+  const moveTo = (from: number, to: number) => {
+    if (from === to || to < 0 || to >= steps.length) return;
     const next = [...steps];
-    [next[index], next[index + d]] = [next[index + d], next[index]];
+    const [item] = next.splice(from, 1);
+    next.splice(to, 0, item);
     // A step may only depend on earlier steps: drop dependencies that would now point forward.
     const ids = next.map((s) => s.id);
     onChange(next.map((s, i) => (s.needs ? { ...s, needs: s.needs.filter((n) => ids.indexOf(n) < i) } : s)));
@@ -230,7 +236,19 @@ export function WorkflowEditor(props: {
             const needs = needsOf(steps, i);
             const sequential = s.needs === undefined;
             return (
-              <Stack key={`${s.id}:${i}`} gap={0}>
+              <Stack
+                key={`${s.id}:${i}`}
+                gap={0}
+                draggable
+                onDragStart={() => setDragged(i)}
+                onDragOver={(e) => dragged !== null && e.preventDefault()}
+                onDrop={() => {
+                  if (dragged !== null) moveTo(dragged, i);
+                  setDragged(null);
+                }}
+                onDragEnd={() => setDragged(null)}
+                style={{ opacity: dragged === i ? 0.5 : 1 }}
+              >
                 <Connector onAdd={(t) => insert(t, i)} label={`Insert a step before ${s.name || s.id}`} />
                 <CanvasNode
                   icon={Icon}
@@ -250,6 +268,18 @@ export function WorkflowEditor(props: {
       </Grid.Col>
 
       <Grid.Col span={{ base: 12, md: 8 }}>
+        {steps.length > 1 && (
+          <Card padding="sm" shadow="none" withBorder mb="md" aria-label="Workflow graph">
+            <Text fz="xs" c="dimmed" mb={4}>
+              Execution graph: steps in the same column run in parallel
+            </Text>
+            <WorkflowGraph
+              steps={steps.map((s, i) => ({ id: s.id, name: s.name, type: s.type, needs: needsOf(steps, i), conditional: !!s.if }))}
+              selected={selected?.kind === 'step' ? selected.id : null}
+              onSelect={selectStep}
+            />
+          </Card>
+        )}
         {selected?.kind === 'trigger' && trigger ? (
           <Card padding="lg" shadow="none" withBorder>
             <Group gap="xs" mb="md">
@@ -317,6 +347,16 @@ export function WorkflowEditor(props: {
               ? 'Click + under the trigger to add what the workflow does: call an integration, ask for an approval, run an AI agent…'
               : 'A workflow is a trigger followed by steps. Add a trigger (a form users submit), then add steps one by one.'}
           </Empty>
+        )}
+        {steps.length > 0 && (
+          <Accordion variant="contained" radius="lg" mt="md">
+            <Accordion.Item value="dry-run">
+              <Accordion.Control>Test run · simulate with sample inputs</Accordion.Control>
+              <Accordion.Panel>
+                <DryRunPanel steps={steps} />
+              </Accordion.Panel>
+            </Accordion.Item>
+          </Accordion>
         )}
       </Grid.Col>
     </Grid>
@@ -564,6 +604,8 @@ function ApprovalEditor({ step, onEntity, onChange }: { step: ApprovalStep; onEn
 }
 
 function AgentEditor({ step, onChange }: { step: AgentStep; onChange: (p: Partial<AgentStep>) => void }) {
+  const meta = useQuery({ queryKey: ['meta'], queryFn: api.meta, staleTime: Infinity });
+  const models: { value: string; label: string; description: string; inputPrice?: number; outputPrice?: number }[] = meta.data?.models ?? AGENT_MODELS;
   const [fields, setFields] = useState<FieldDraft[]>(() => schemaToFields(step.output));
   const mode: FieldsMode = {
     templatePath: (n) => `steps.${step.id}.output.${n}`,
@@ -582,10 +624,13 @@ function AgentEditor({ step, onChange }: { step: AgentStep; onChange: (p: Partia
         <Select
           label="Model"
           allowDeselect={false}
-          data={AGENT_MODELS.map((m) => ({ value: m.value, label: m.label }))}
+          data={models.map((m) => ({ value: m.value, label: m.label }))}
           value={step.model ?? 'claude-opus-5-5'}
           onChange={(m) => onChange({ model: m ?? undefined })}
-          description={AGENT_MODELS.find((m) => m.value === (step.model ?? 'claude-opus-5-5'))?.description}
+          description={(() => {
+            const m = models.find((x) => x.value === (step.model ?? 'claude-opus-5-5'));
+            return m ? `${m.description}${priceText(m)}` : undefined;
+          })()}
         />
         <Input.Wrapper label="Effort" description="Depth of reasoning: higher is more thorough, slower and costlier">
           <SegmentedControl
@@ -680,6 +725,14 @@ function TransformEditor({ step, onChange }: { step: TransformStep; onChange: (p
         keyPlaceholder="key"
         valuePlaceholder="JSONata expression"
       />
+      <Stack gap={2} mt="xs">
+        {Object.entries(step.output).map(([k, expr]) => (
+          <Group key={k} gap="xs" align="flex-start" wrap="nowrap">
+            <Code fz="xs">{k}</Code>
+            <ExpressionStatus expression={expr} context={SAMPLE_CONTEXT} />
+          </Group>
+        ))}
+      </Stack>
     </Input.Wrapper>
   );
 }
@@ -725,6 +778,7 @@ function FlowEditor({ steps, index, onChange }: { steps: WorkflowStep[]; index: 
               onChange={(e) => onChange({ if: e.currentTarget.value || undefined })}
               styles={MONO_INPUT}
             />
+            <ExpressionStatus expression={step.if ?? ''} context={SAMPLE_CONTEXT} />
             <SimpleGrid cols={{ base: 1, sm: 3 }}>
               <NumberInput
                 label="Retries"

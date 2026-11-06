@@ -19,6 +19,10 @@ import type {
   Webhook,
 } from '@asterius/shared';
 
+export interface DryRunResult {
+  steps: { id: string; type: string; skipped: boolean; error?: string; preview?: unknown }[];
+}
+
 /** Typed client for the platform API (/api/v1). The session token lives in localStorage. */
 
 const TOKEN_KEY = 'asterius.token';
@@ -81,6 +85,9 @@ const qs = (o: Record<string, string | number | boolean | undefined | null>) => 
 export type ActionView = Action & { allowedForMe?: boolean };
 
 export const api = {
+  checkExpression: (expression: string, context?: unknown) =>
+    request<{ ok: boolean; value?: unknown; error?: string }>('POST', v1('/expressions/check'), { expression, context }),
+  dryRun: (steps: unknown[], inputs: Record<string, unknown>) => request<DryRunResult>('POST', v1('/actions/dry-run'), { steps, inputs }),
   meta: () => request<Meta>('GET', '/api/meta'),
   login: (email: string, password: string) => request<{ token: string; user: PublicUser }>('POST', '/api/auth/login', { email, password }),
   register: (email: string, name: string, password: string) =>

@@ -9,6 +9,8 @@ import { addLog, cancelRun, decide, getRun, getRunRow, listRuns, pendingApproval
 import { cancelSteps, decideStep, runningInvokeStep, updateStep } from '../actions/engine.js';
 import { checkRunToken, checkStepToken } from '../secrets.js';
 import { conflict, forbidden } from '../lib/errors.js';
+import { dryRun, previewExpression } from '../actions/dryrun.js';
+import { workflowStep } from '../schemas.js';
 import { entityParam, idParam, page } from './util.js';
 
 const RUN_STATUSES = ['PENDING_APPROVAL', 'QUEUED', 'IN_PROGRESS', 'SUCCESS', 'FAILURE', 'REJECTED', 'CANCELLED'] as const;
@@ -107,6 +109,17 @@ export async function actionRoutes(app: FastifyInstance) {
       const { action, created } = await upsertAction({ ...(req.body as object), identifier: id });
       await audit(actorOf(req.principal), created ? 'action.created' : 'action.updated', id);
       return action;
+    });
+    /** Editor helpers (admin): check/preview a JSONata expression, simulate a workflow on sample inputs. Nothing is executed. */
+    scoped.post('/expressions/check', { preHandler: requireAdmin }, async (req) => {
+      const b = z.object({ expression: z.string().max(4000), context: z.unknown().optional() }).parse(req.body);
+      return previewExpression(b.expression, b.context ?? {});
+    });
+    scoped.post('/actions/dry-run', { preHandler: requireAdmin }, async (req) => {
+      const b = z
+        .object({ steps: z.array(workflowStep).max(40), inputs: z.record(z.string(), z.unknown()).default({}), entity: z.unknown().optional() })
+        .parse(req.body);
+      return { steps: await dryRun(b.steps, { inputs: b.inputs, entity: b.entity }) };
     });
     scoped.delete('/actions/:id', { preHandler: requireAdmin }, async (req) => {
       const { id } = idParam.parse(req.params);

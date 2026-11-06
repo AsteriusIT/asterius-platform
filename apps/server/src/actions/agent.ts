@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { PRICES } from './models.js';
 import type { ObjectSchema, PropertySchema } from '@asterius/shared';
 import { config } from '../config.js';
 import { listBlueprints } from '../catalog/blueprints.js';
@@ -26,13 +27,6 @@ export class StepError extends Error {
   }
 }
 
-/** $ per million tokens (input, output), for the cost estimate in the step log. */
-const PRICES: Record<string, [number, number]> = {
-  'claude-fable-5-1': [10, 50],
-  'claude-opus-5-5': [4, 20],
-  'claude-sonnet-5-5': [2, 10],
-  'claude-haiku-5-5': [0.1, 0.5],
-};
 /** Models accepting the server-side refusal fallback in its "default" form. */
 const FALLBACK_MODELS = new Set(['claude-fable-5-1', 'claude-opus-5-5', 'claude-opus-5', 'claude-sonnet-5-5']);
 
