@@ -3,11 +3,14 @@ import fastifyStatic from '@fastify/static';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import fs from 'node:fs';
+import { context, SpanStatusCode, trace, type Span } from '@opentelemetry/api';
 import path from 'node:path';
 import { ZodError } from 'zod';
 import { config } from './config.js';
 import { HttpError } from './lib/errors.js';
 import { ready } from './health.js';
+import { loggerOptions } from './logger.js';
+import { startRequestSpan } from './tracing.js';
 import { metrics, registry } from './metrics.js';
 import { authRoutes } from './routes/auth.js';
 import { catalogRoutes } from './routes/catalog.js';
@@ -23,15 +26,31 @@ export interface AppOptions {
 /** HTTP application (no listen, no background workers): used by index.ts and by tests through `inject`. */
 export async function buildApp(opts: AppOptions = {}): Promise<FastifyInstance> {
   const app = Fastify({
-    logger: opts.logger === false ? false : { level: config.LOG_LEVEL, redact: ['req.headers.authorization', 'req.headers["x-asterius-token"]'] },
+    logger: opts.logger === false ? false : loggerOptions,
     bodyLimit: 5 * 1024 * 1024,
     trustProxy: true, // behind the ingress controller: client IPs for rate limiting
   });
 
   // HTTP metrics: route pattern (never the raw URL) keeps label cardinality bounded.
   const SKIP = new Set(['/metrics', '/healthz', '/readyz']);
+  // Tracing: one server span per request (continues an inbound traceparent); handlers and logs run inside it.
+  const spans = new WeakMap<object, Span>();
+  app.addHook('onRequest', (req, _reply, done) => {
+    const route = req.url.split('?')[0] ?? '';
+    if (SKIP.has(route)) return done();
+    const span = startRequestSpan(req.method, route, req.headers);
+    spans.set(req, span);
+    context.with(trace.setSpan(context.active(), span), done);
+  });
   app.addHook('onResponse', async (req, reply) => {
     const route = req.routeOptions.url ?? 'unmatched';
+    const span = spans.get(req);
+    if (span) {
+      span.updateName(`${req.method} ${route}`);
+      span.setAttributes({ 'http.route': route, 'http.response.status_code': reply.statusCode });
+      if (reply.statusCode >= 500) span.setStatus({ code: SpanStatusCode.ERROR });
+      span.end();
+    }
     if (SKIP.has(route)) return;
     metrics.httpRequest(req.method, route, reply.statusCode, reply.elapsedTime / 1000);
   });

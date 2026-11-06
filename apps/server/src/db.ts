@@ -4,6 +4,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { config, paths } from './config.js';
+import { dbSpan } from './tracing.js';
 
 /**
  * Storage: Postgres in production (DATABASE_URL, any number of replicas) or SQLite for local development.
@@ -48,6 +49,16 @@ const toPg = (sql: string) => {
   let i = 0;
   return sql.replace(/\?/g, () => `$${++i}`);
 };
+
+/** Every query becomes a `db.<OP>` span (no-op unless tracing is enabled). */
+function traced(d: Driver): Driver {
+  return {
+    dialect: d.dialect,
+    query: (sql, params) => dbSpan(d.dialect, sql, () => d.query(sql, params)),
+    exec: (sql) => d.exec(sql),
+    close: () => d.close(),
+  };
+}
 
 export function postgresDriver(conn: pg.Pool | pg.PoolClient): Driver {
   return {
@@ -408,7 +419,7 @@ async function open(): Promise<Driver> {
 /** Connection pool occupancy (Postgres only), for the metrics endpoint. */
 export const poolStats = () => (pool ? { total: pool.totalCount, idle: pool.idleCount, waiting: pool.waitingCount } : undefined);
 
-export const driver = await open();
+export const driver = traced(await open());
 export const dialect = driver.dialect;
 
 let sqliteChain: Promise<unknown> = Promise.resolve();
@@ -436,7 +447,7 @@ export async function tx<T>(fn: (d: Driver) => Promise<T>): Promise<T> {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const r = await fn(postgresDriver(client));
+    const r = await fn(traced(postgresDriver(client)));
     await client.query('COMMIT');
     return r;
   } catch (err) {

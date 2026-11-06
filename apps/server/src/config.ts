@@ -35,6 +35,8 @@ const schema = z.object({
   /** Serve the built web UI from the API process (production image). */
   WEB_DIST_DIR: z.string().optional(),
   LOG_LEVEL: z.string().default('info'),
+  /** json (default, one object per line) | pretty (human readable, local development; needs pino-pretty). */
+  LOG_FORMAT: z.enum(['json', 'pretty']).default('json'),
 
   // ---- sign-in ----
   AUTH_PROVIDERS: z

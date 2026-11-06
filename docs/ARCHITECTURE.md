@@ -110,4 +110,4 @@ Guarantees:
   - `asterius_webhook_delivery_latency_seconds` histogram from event creation to successful delivery.
   - `asterius_db_pool_connections`, `asterius_db_pool_idle_connections`, `asterius_db_pool_waiting_requests` (per process; waiting > 0 means pool saturation, see `DATABASE_POOL_SIZE`).
   - `asterius_upstream_responses_total{host,class}` and `asterius_upstream_rate_limited_total{host}` (429s from GitHub, GitLab, ADO, webhook targets).
-- OpenTelemetry tracing (`OTEL_EXPORTER_OTLP_ENDPOINT`): `action.run`, `integration.sync` and `webhook.deliver` spans, with outgoing HTTP calls as children.
+- OpenTelemetry tracing (`OTEL_EXPORTER_OTLP_ENDPOINT`): one `http.server` span per request (named `METHOD route`, continues an inbound `traceparent`), `db.<OP>` spans per query, `action.run`, `integration.sync` and `webhook.deliver` spans, with outgoing HTTP calls as children. Outgoing calls (CI pipelines, outbound webhooks, sources) carry a W3C `traceparent` header so a run can be followed into the CI system. Log lines include `trace_id` and `span_id` while a span is active.
