@@ -96,7 +96,16 @@ export const api = {
   saveBlueprint: (bp: string, body: unknown) => request<Blueprint>('PUT', v1(`/blueprints/${enc(bp)}`), body),
   deleteBlueprint: (bp: string) => request('DELETE', v1(`/blueprints/${enc(bp)}`)),
 
-  entities: (q: { blueprint?: string; search?: string; team?: string; sort?: string; limit?: number; offset?: number; filters?: Record<string, string> }) => {
+  entities: (q: {
+    blueprint?: string;
+    search?: string;
+    team?: string;
+    sort?: string;
+    order?: 'asc' | 'desc';
+    limit?: number;
+    offset?: number;
+    filters?: Record<string, string>;
+  }) => {
     const { blueprint, filters, ...rest } = q;
     const f = Object.fromEntries(Object.entries(filters ?? {}).map(([k, v]) => [`filter.${k}`, v]));
     return request<EntityPage>('GET', v1(`${blueprint ? `/blueprints/${enc(blueprint)}` : ''}/entities${qs({ ...rest, ...f })}`));
