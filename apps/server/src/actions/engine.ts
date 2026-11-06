@@ -15,7 +15,7 @@ import type { InvokeEnv, InvokeResult, RunContext } from './types.js';
 import { addLog, emitRun, getRunRow, runUrl, updateRun, type RunRow } from './runs.js';
 import { canApproveStep, isTerminal, loadSteps, stepApprovalsOf, stepDefs, type StepRow } from './steps.js';
 import { needsOf, type Step } from './workflow.js';
-import { runAgent, StepError } from './agent.js';
+import { runAgent, StepError, wrapUntrusted } from './agent.js';
 
 /**
  * Workflow engine. A run's steps form a graph (see workflow.ts); the engine moves each step through
@@ -286,9 +286,11 @@ export async function executeStep(runId: string, stepId: string) {
         await applyInvokeResult(runId, stepId, await inv.start(built.env), !!inv.poll);
       } else if (def.type === 'agent') {
         const ctx = await buildContext(r, rows, stepId);
-        const rendered = await render({ prompt: def.prompt, system: def.system, apiKey: def.apiKey }, ctx, resolveRef);
-        secrets = rendered.secrets;
-        const v = rendered.value as { prompt: unknown; system?: unknown; apiKey?: unknown };
+        // Text sent to the model: interpolated values are fenced as untrusted data and secrets cannot be referenced.
+        const text = await render({ prompt: def.prompt, system: def.system }, ctx, resolveRef, { wrap: (t, expr) => wrapUntrusted(t, expr), noRefs: true });
+        const key = await render({ apiKey: def.apiKey }, ctx, resolveRef);
+        secrets = key.secrets;
+        const v = { ...(text.value as { prompt: unknown; system?: unknown }), apiKey: (key.value as { apiKey?: unknown }).apiKey };
         const prompt = typeof v.prompt === 'string' ? v.prompt : JSON.stringify(v.prompt);
         const result = await runAgent(
           { ...def, prompt, system: typeof v.system === 'string' ? v.system : undefined, apiKey: typeof v.apiKey === 'string' ? v.apiKey : undefined },

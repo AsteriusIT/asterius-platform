@@ -1,5 +1,5 @@
 import { badRequest } from '../lib/errors.js';
-import { checkExpression, checkTemplate } from '../lib/expr.js';
+import { checkExpression, checkTemplate, hasRefs } from '../lib/expr.js';
 import { validator } from '../catalog/validation.js';
 import { validateInvoker } from './invokers/index.js';
 import type { ActionDef, WorkflowStepDef } from '../schemas.js';
@@ -51,6 +51,9 @@ export function validateWorkflow(steps: Step[]) {
           break;
         case 'agent':
           checkTemplate([s.prompt, s.system ?? '', s.apiKey ?? '']);
+          // Secret values must never reach the model: only `apiKey` may reference secrets.
+          if (hasRefs([s.prompt, s.system ?? '']))
+            throw badRequest('prompt and system cannot reference secrets or environment variables (they are sent to the model)');
           if (s.output) validator(s.output as never);
           break;
         case 'transform':

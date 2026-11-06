@@ -43,7 +43,7 @@ import type {
   WorkflowStepType,
 } from '@asterius/shared';
 import { api } from '../../lib/api';
-import { needsOf, STEP_TYPES } from '../../lib/workflow';
+import { needsOf, STEP_TYPES, stepWarnings } from '../../lib/workflow';
 import { newFormTrigger, TriggerEditor, TRIGGER_TYPES, triggerSummary } from './TriggerEditor';
 import { Empty } from '../ui';
 import { fieldProblems, fieldsToSchema, nameFromLabel, schemaToFields, type FieldDraft } from './fields';
@@ -125,6 +125,7 @@ export function WorkflowEditor(props: {
   const { steps, onChange, trigger } = props;
   const meta = useQuery({ queryKey: ['meta'], queryFn: api.meta, staleTime: Infinity });
   const invokers = meta.data?.invokers ?? [];
+  const warnings = useMemo(() => stepWarnings(steps), [steps]);
   const [selected, setSelected] = useState<Selection>(() => (trigger ? { kind: 'trigger' } : steps[0] ? { kind: 'step', id: steps[0].id } : null));
   const index = selected?.kind === 'step' ? steps.findIndex((s) => s.id === selected.id) : -1;
   const step = index >= 0 ? steps[index] : null;
@@ -308,6 +309,13 @@ export function WorkflowEditor(props: {
               {step.type === 'approval' && <ApprovalEditor step={step} onEntity={onEntity} onChange={update} />}
               {step.type === 'agent' && <AgentEditor step={step} onChange={update} />}
               {step.type === 'transform' && <TransformEditor step={step} onChange={update} />}
+              {warnings
+                .filter((w) => w.startsWith(`Step "${step.name || step.id}"`))
+                .map((w) => (
+                  <Alert key={w} color="yellow" variant="light" title="Review the AI output before acting on it">
+                    {w}
+                  </Alert>
+                ))}
               <FlowEditor steps={steps} index={index} onChange={update} />
             </Stack>
           </Card>
