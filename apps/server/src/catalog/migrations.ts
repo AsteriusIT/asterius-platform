@@ -112,4 +112,21 @@ export const CATALOG_MIGRATIONS: CatalogMigration[] = [
         );
       `),
   },
+  {
+    id: 24,
+    name: 'entity tombstones',
+    up: (d) =>
+      d.exec(`
+        CREATE TABLE entity_tombstones (
+          blueprint TEXT NOT NULL,
+          identifier TEXT NOT NULL,
+          snapshot TEXT NOT NULL,        -- title, team, properties, relations and source at deletion
+          deleted_by TEXT,
+          deleted_at TEXT NOT NULL,
+          expires_at TEXT NOT NULL,
+          PRIMARY KEY (blueprint, identifier)
+        );
+        CREATE INDEX entity_tombstones_expires ON entity_tombstones(expires_at);
+      `),
+  },
 ];

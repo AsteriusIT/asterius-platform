@@ -1,5 +1,6 @@
-import type { Blueprint, Entity, EntityPage, RelatedEntities, RelationValue } from '@asterius/shared';
-import { all, dialect, json, likeEscape, now, one, tx, type Driver, type SqlValue } from '../db.js';
+import type { Blueprint, Entity, EntityPage, RelatedEntities, RelationValue, Tombstone } from '@asterius/shared';
+import { config } from '../config.js';
+import { all, dialect, json, later, likeEscape, now, one, run, tx, type Driver, type SqlValue } from '../db.js';
 import { badRequest, conflict, notFound } from '../lib/errors.js';
 import { emit } from '../events.js';
 import { entityInput, type EntityInput } from '../schemas.js';
@@ -183,7 +184,7 @@ export interface UpsertOpts {
   /** With `merge`: relations replace the existing ones instead of being merged key by key (detaching removes keys). */
   replaceRelations?: boolean;
   /** History label of the change (a revert is recorded as such). */
-  op?: 'revert';
+  op?: 'revert' | 'restore';
 }
 
 /**
@@ -230,6 +231,7 @@ export async function upsertEntity(blueprint: string, raw: unknown, opts: Upsert
         [...vals, t, blueprint, input.identifier],
       );
     await writeRelations(d, bp, input.identifier, relations);
+    if (!existing) await d.query('DELETE FROM entity_tombstones WHERE blueprint = ? AND identifier = ?', [blueprint, input.identifier]);
     await recordVersion(d, {
       blueprint,
       entity: input.identifier,
@@ -334,9 +336,80 @@ async function deleteOne(entity: Entity, actor?: Actor) {
   const { blueprint, identifier } = entity;
   await tx(async (d) => {
     await d.query('DELETE FROM entities WHERE blueprint = ? AND identifier = ?', [blueprint, identifier]);
+    if (config.TOMBSTONE_DAYS > 0)
+      await d.query(
+        `INSERT INTO entity_tombstones (blueprint, identifier, snapshot, deleted_by, deleted_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT (blueprint, identifier) DO UPDATE SET snapshot = excluded.snapshot, deleted_by = excluded.deleted_by, deleted_at = excluded.deleted_at, expires_at = excluded.expires_at`,
+        [
+          blueprint,
+          identifier,
+          JSON.stringify({ ...snapshotOf(entity), source: entity.source }),
+          actor?.email ?? null,
+          now(),
+          later(config.TOMBSTONE_DAYS * 86400_000),
+        ],
+      );
     await recordVersion(d, { blueprint, entity: identifier, op: 'delete', actor, source: actor ? 'user' : 'system', before: snapshotOf(entity), after: null });
   });
   await removeEntityResults(blueprint, identifier);
   await refreshAfterWrite(blueprint, identifier, entity.relations, null, (await getBlueprintCached(blueprint)).relations);
   await emit({ type: 'entity.deleted', blueprint, data: { entity }, actor });
 }
+
+// ---------- tombstones ----------
+interface TombstoneRow {
+  blueprint: string;
+  identifier: string;
+  snapshot: string;
+  deleted_by: string | null;
+  deleted_at: string;
+  expires_at: string;
+}
+
+const toTombstone = (r: TombstoneRow): Tombstone => {
+  const s = json<{ title?: string; team?: string | null; source?: string }>(r.snapshot, {});
+  return {
+    blueprint: r.blueprint,
+    identifier: r.identifier,
+    title: s.title ?? r.identifier,
+    team: s.team ?? null,
+    source: s.source ?? 'ui',
+    deletedBy: r.deleted_by,
+    deletedAt: r.deleted_at,
+    expiresAt: r.expires_at,
+  };
+};
+
+export async function listTombstones(q: { blueprint?: string; limit: number; offset: number }): Promise<{ items: Tombstone[]; total: number }> {
+  const w = q.blueprint ? 'WHERE blueprint = ?' : '';
+  const p: SqlValue[] = q.blueprint ? [q.blueprint] : [];
+  const rows = await all<TombstoneRow>(`SELECT * FROM entity_tombstones ${w} ORDER BY deleted_at DESC LIMIT ? OFFSET ?`, ...p, q.limit, q.offset);
+  const total = await one<{ n: number }>(`SELECT count(*) AS n FROM entity_tombstones ${w}`, ...p);
+  return { items: rows.map(toTombstone), total: Number(total?.n ?? 0) };
+}
+
+/** Put a deleted entity back (with the state it had when it was deleted). */
+export async function restoreEntity(blueprint: string, identifier: string, actor?: Actor): Promise<Entity> {
+  const r = await one<TombstoneRow>('SELECT * FROM entity_tombstones WHERE blueprint = ? AND identifier = ?', blueprint, identifier);
+  if (!r) throw notFound(`Deleted entity ${blueprint}/${identifier}`);
+  const snap = json<{ title: string; team: string | null; properties: Record<string, unknown>; relations: Record<string, string | string[]>; source?: string }>(
+    r.snapshot,
+    {
+      title: identifier,
+      team: null,
+      properties: {},
+      relations: {},
+    },
+  );
+  const { source, ...state } = snap;
+  const { entity } = await upsertEntity(blueprint, { identifier, ...state }, { source: source ?? 'ui', actor, createOnly: true, op: 'restore' });
+  return entity;
+}
+
+export async function purgeTombstone(blueprint: string, identifier: string) {
+  if (!(await run('DELETE FROM entity_tombstones WHERE blueprint = ? AND identifier = ?', blueprint, identifier)).changes)
+    throw notFound(`Deleted entity ${blueprint}/${identifier}`);
+}
+
+/** Maintenance: tombstones past their period are gone for good. */
+export const purgeExpiredTombstones = () => run('DELETE FROM entity_tombstones WHERE expires_at < ?', now());

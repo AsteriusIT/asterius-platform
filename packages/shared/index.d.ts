@@ -136,7 +136,7 @@ export interface EntityVersionDiff {
 
 export interface EntityVersion {
   version: number;
-  op: 'create' | 'update' | 'delete' | 'revert';
+  op: 'create' | 'update' | 'delete' | 'revert' | 'restore';
   actor: string | null;
   source: string;
   /** The complete entity state after the change (before it, for a delete). */
@@ -568,4 +568,17 @@ export interface ValidationReport {
   samples: InvalidEntity[];
   startedAt: string;
   finishedAt: string | null;
+}
+
+/** A deleted entity that can still be restored. */
+export interface Tombstone {
+  blueprint: string;
+  identifier: string;
+  title: string;
+  team: string | null;
+  source: string;
+  deletedBy: string | null;
+  deletedAt: string;
+  /** After this date the entity is purged for good. */
+  expiresAt: string;
 }

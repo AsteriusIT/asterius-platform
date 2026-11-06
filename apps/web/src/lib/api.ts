@@ -22,6 +22,7 @@ import type {
   SecretInfo,
   SyncRun,
   Team,
+  Tombstone,
   Webhook,
 } from '@asterius/shared';
 
@@ -126,6 +127,9 @@ export const api = {
   history: (bp: string, id: string) => request<{ items: EntityVersion[]; total: number }>('GET', v1(`/blueprints/${enc(bp)}/entities/${enc(id)}/history`)),
   revertEntity: (bp: string, id: string, version: number) =>
     request<Entity>('POST', v1(`/blueprints/${enc(bp)}/entities/${enc(id)}/history/${version}/revert`), {}),
+  deletedEntities: (q: { limit?: number; offset?: number } = {}) => request<{ items: Tombstone[]; total: number }>('GET', v1(`/deleted-entities${qs(q)}`)),
+  restoreEntity: (bp: string, id: string) => request<Entity>('POST', v1(`/blueprints/${enc(bp)}/entities/${enc(id)}/restore`), {}),
+  purgeEntity: (bp: string, id: string) => request('DELETE', v1(`/deleted-entities/${enc(bp)}/${enc(id)}`)),
   entityActions: (bp: string, id: string) => request<ActionView[]>('GET', v1(`/blueprints/${enc(bp)}/entities/${enc(id)}/actions`)),
 
   actions: (q: { blueprint?: string; trigger?: string } = {}) => request<ActionView[]>('GET', v1(`/actions${qs(q)}`)),

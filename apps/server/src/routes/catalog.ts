@@ -4,7 +4,17 @@ import type { HomeSummary, ObjectSchema } from '@asterius/shared';
 import { audit } from '../audit.js';
 import { actorOf, canEditEntity, isAdmin, requireAdmin, requireUser, type Principal } from '../auth/users.js';
 import { deleteBlueprint, getBlueprint, listBlueprints, repairRelationIndex, upsertBlueprint } from '../catalog/blueprints.js';
-import { deleteEntity, findEntity, getEntity, related, searchEntities, upsertEntity } from '../catalog/entities.js';
+import {
+  deleteEntity,
+  listTombstones,
+  purgeTombstone,
+  restoreEntity,
+  findEntity,
+  getEntity,
+  related,
+  searchEntities,
+  upsertEntity,
+} from '../catalog/entities.js';
 import { badRequest, forbidden } from '../lib/errors.js';
 import { getVersion, listVersions } from '../catalog/history.js';
 import { checkEntities, getReport, migrateEntities, migrationList } from '../catalog/impact.js';
@@ -173,6 +183,21 @@ export async function catalogRoutes(app: FastifyInstance) {
     );
     await audit(actorOf(req.principal), 'entity.reverted', `${bp}/${id}`, { toVersion: version });
     return entity;
+  });
+
+  // ---- deleted entities (tombstones, admins) ----
+  app.get('/deleted-entities', { preHandler: requireAdmin }, async (req) => listTombstones(page.extend({ blueprint: z.string().optional() }).parse(req.query)));
+  app.post('/blueprints/:bp/entities/:id/restore', { preHandler: requireAdmin }, async (req) => {
+    const { bp, id } = entityParam.parse(req.params);
+    const entity = await restoreEntity(bp, id, actorOf(req.principal));
+    await audit(actorOf(req.principal), 'entity.restored', `${bp}/${id}`);
+    return entity;
+  });
+  app.delete('/deleted-entities/:bp/:id', { preHandler: requireAdmin }, async (req) => {
+    const { bp, id } = entityParam.parse(req.params);
+    await purgeTombstone(bp, id);
+    await audit(actorOf(req.principal), 'entity.purged', `${bp}/${id}`);
+    return { ok: true };
   });
 
   app.post('/blueprints/:bp/entities', async (req, reply) => {

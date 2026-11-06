@@ -99,6 +99,7 @@ const router = createBrowserRouter([
                   { path: 'teams', element: page(access, 'TeamsAdmin') },
                   { path: 'users', element: page(access, 'UsersAdmin') },
                   { path: 'secrets', element: page(access, 'SecretsAdmin') },
+                  { path: 'deleted', element: page(system, 'DeletedAdmin') },
                   { path: 'audit', element: page(system, 'AuditAdmin') },
                   { path: 'config', element: page(system, 'ConfigAdmin') },
                 ],

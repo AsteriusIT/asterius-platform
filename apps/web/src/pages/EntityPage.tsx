@@ -51,7 +51,12 @@ function EntityView({ bp, e }: { bp: Blueprint; e: Entity }) {
   const remove = () =>
     modals.openConfirmModal({
       title: `Delete ${e.title}?`,
-      children: <Text fz="sm">This removes the entity from the catalog only. Use a decommission action to also remove the real resources.</Text>,
+      children: (
+        <Text fz="sm">
+          This removes the entity from the catalog only (an admin can restore it for a limited time). Use a decommission action to also remove the real
+          resources.
+        </Text>
+      ),
       labels: { confirm: 'Delete', cancel: 'Cancel' },
       confirmProps: { color: 'red' },
       onConfirm: async () => {

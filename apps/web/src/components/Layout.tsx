@@ -28,6 +28,7 @@ import {
   IconDots,
   IconHistory,
   IconMedal,
+  IconTrashX,
   IconHome,
   IconKey,
   IconLock,
@@ -214,6 +215,7 @@ export function Layout() {
               {link('/admin/teams', 'Teams', <IconUsersGroup size={18} stroke={1.6} />)}
               {link('/admin/users', 'Users & service accounts', <IconKey size={18} stroke={1.6} />)}
               {link('/admin/secrets', 'Secrets', <IconLock size={18} stroke={1.6} />)}
+              {link('/admin/deleted', 'Deleted entities', <IconTrashX size={18} stroke={1.6} />)}
               {link('/admin/audit', 'Audit log', <IconHistory size={18} stroke={1.6} />)}
               {link('/admin/config', 'Configuration', <IconSettingsAutomation size={18} stroke={1.6} />)}
             </div>

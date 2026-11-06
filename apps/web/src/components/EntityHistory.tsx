@@ -7,7 +7,7 @@ import { api, errorText } from '../lib/api';
 import { Empty, QueryView, TimeAgo } from './ui';
 
 const show = (v: unknown) => (v === null || v === undefined ? '∅' : typeof v === 'string' ? v : JSON.stringify(v));
-const OP_COLORS: Record<EntityVersion['op'], string> = { create: 'green', update: 'blue', delete: 'red', revert: 'orange' };
+const OP_COLORS: Record<EntityVersion['op'], string> = { create: 'green', update: 'blue', delete: 'red', revert: 'orange', restore: 'teal' };
 
 /** History tab of an entity: one card per version with the field-level diff and a revert button. */
 export function EntityHistory({ blueprint, identifier, canEdit }: { blueprint: string; identifier: string; canEdit: boolean }) {

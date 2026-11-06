@@ -8,7 +8,7 @@ import { notFound } from '../lib/errors.js';
  * writing an old snapshot back, which creates a new version.
  */
 
-export type VersionOp = 'create' | 'update' | 'delete' | 'revert';
+export type VersionOp = 'create' | 'update' | 'delete' | 'revert' | 'restore';
 
 export interface Snapshot {
   title: string;

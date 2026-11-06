@@ -181,6 +181,7 @@ export async function deleteBlueprint(id: string, opts: { managed?: boolean } = 
   for (const other of await listBlueprints())
     if (other.identifier !== id && Object.values(other.relations).some((r) => r.target === id))
       throw conflict(`Blueprint "${other.identifier}" has a relation to "${id}"`);
+  await run('DELETE FROM entity_tombstones WHERE blueprint = ?', id);
   await run('DELETE FROM blueprints WHERE identifier = ?', id);
   cache.delete(id);
   invalidateComputed();

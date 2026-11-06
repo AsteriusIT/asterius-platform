@@ -66,6 +66,8 @@ const schema = z.object({
   RETENTION_DAYS: z.coerce.number().int().min(1).default(90),
   /** Keep entity history (versions, diffs) for N days; the latest version of every entity is always kept. */
   HISTORY_RETENTION_DAYS: z.coerce.number().int().min(1).default(365),
+  /** Deleted entities stay restorable for N days (tombstones). 0: delete for good immediately. */
+  TOMBSTONE_DAYS: z.coerce.number().int().min(0).default(30),
   KUBECONFIG_PATH: z.string().optional(),
 
   // ---- AI agent steps (Claude) ----
