@@ -7,6 +7,7 @@ import { timingSafeEqual } from 'node:crypto';
 import path from 'node:path';
 import { ZodError } from 'zod';
 import { config } from './config.js';
+import { DatabaseRateLimitStore } from './lib/rate-limit-store.js';
 import { HttpError } from './lib/errors.js';
 import { ready, stuckLoops } from './health.js';
 import { registry } from './metrics.js';
@@ -79,7 +80,12 @@ export async function buildApp(opts: AppOptions = {}): Promise<FastifyInstance> 
       },
     },
   });
-  await app.register(rateLimit, { global: true, max: 600, timeWindow: '1 minute' });
+  await app.register(rateLimit, {
+    global: true,
+    max: 600,
+    timeWindow: '1 minute',
+    ...(config.RATE_LIMIT_STORE === 'database' ? { store: DatabaseRateLimitStore as never } : {}),
+  });
 
   app.get('/healthz', { config: { rateLimit: false } }, async (_req, reply) => {
     const stuck = stuckLoops(); // a worker loop that stopped iterating: let the orchestrator restart the pod

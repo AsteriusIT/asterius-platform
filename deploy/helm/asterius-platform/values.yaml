@@ -112,6 +112,8 @@ migrations:
   job:
     enabled: false
     timeoutSeconds: 600
+  # memory: per-pod counters (fine for one replica). database: shared across API replicas, one upsert per request.
+  rateLimitStore: database
 # Extra non-secret environment variables.
 extraEnv: {}
 

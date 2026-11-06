@@ -5,7 +5,7 @@ import { all, bool, json, later, newId, now, run } from '../db.js';
 import { errorMessage } from '../lib/errors.js';
 import { redact, render } from '../lib/expr.js';
 import { resolveRef } from '../secrets.js';
-import { deleteEntity, upsertEntity } from '../catalog/entities.js';
+import { deleteEntities, upsertEntities } from '../catalog/entities.js';
 import { metrics } from '../metrics.js';
 import { beat, registerLoop } from '../health.js';
 import { withSpan } from '../tracing.js';
@@ -42,35 +42,64 @@ export async function renderConfig(r: IntegrationRow) {
   return (await renderConfigWithSecrets(r)).config;
 }
 
-async function applyMapped(integration: string, m: Mapped, merge: boolean, stats: SyncStats, log: SyncLog, seen?: Set<string>) {
-  try {
-    if (m.delete) {
-      await deleteEntity(m.blueprint, m.identifier, SYSTEM_ACTOR).then(
-        () => stats.deleted++,
-        () => stats.skipped++, // already absent
+/** Mapped entities of the current page/payload, applied in batches (grouped by blueprint and merge mode). */
+interface Batch {
+  upserts: { m: Mapped; merge: boolean }[];
+  deletes: Mapped[];
+}
+const newBatch = (): Batch => ({ upserts: [], deletes: [] });
+
+async function applyBatch(integration: string, batch: Batch, stats: SyncStats, log: SyncLog, seen?: Set<string>) {
+  const groups = new Map<string, { m: Mapped; merge: boolean }[]>();
+  for (const u of batch.upserts) {
+    const key = `${u.m.blueprint}\u0000${u.merge}`;
+    groups.set(key, [...(groups.get(key) ?? []), u]);
+  }
+  for (const group of groups.values()) {
+    const { blueprint } = group[0]!.m;
+    try {
+      const results = await upsertEntities(
+        blueprint,
+        group.map(({ m }) => ({ identifier: m.identifier, title: m.title, team: m.team, properties: m.properties, relations: m.relations })),
+        { source: entitySource(integration), actor: SYSTEM_ACTOR, merge: group[0]!.merge },
       );
-      return;
+      for (const [i, r] of results.entries()) {
+        const m = group[i]!.m;
+        seen?.add(`${m.blueprint}/${m.identifier}`); // invalid now, but not gone: never delete on validation errors
+        if (!r.ok) {
+          stats.failed++;
+          log.error(`${m.blueprint}/${m.identifier}: ${r.error}`);
+        } else if (r.changed) stats.upserted++;
+        else stats.skipped++;
+      }
+    } catch (err) {
+      for (const { m } of group) {
+        stats.failed++;
+        seen?.add(`${m.blueprint}/${m.identifier}`);
+      }
+      log.error(`${blueprint}: ${errorMessage(err)}`);
     }
-    const res = await upsertEntity(
-      m.blueprint,
-      { identifier: m.identifier, title: m.title, team: m.team, properties: m.properties, relations: m.relations },
-      { source: entitySource(integration), actor: SYSTEM_ACTOR, merge },
-    );
-    seen?.add(`${m.blueprint}/${m.identifier}`);
-    if (res.changed) stats.upserted++;
-    else stats.skipped++;
-  } catch (err) {
-    stats.failed++;
-    seen?.add(`${m.blueprint}/${m.identifier}`); // invalid now, but not gone: never delete on validation errors
-    log.error(`${m.blueprint}/${m.identifier}: ${errorMessage(err)}`);
+  }
+  if (batch.deletes.length) {
+    try {
+      const deleted = await deleteEntities(batch.deletes, SYSTEM_ACTOR);
+      stats.deleted += deleted;
+      stats.skipped += batch.deletes.length - deleted; // already absent
+    } catch (err) {
+      stats.failed += batch.deletes.length;
+      log.error(`delete: ${errorMessage(err)}`);
+    }
   }
 }
 
-async function processItem(r: IntegrationRow, mapping: MappingDef, item: unknown, bindings: Bindings, stats: SyncStats, log: SyncLog, seen?: Set<string>) {
+async function processItem(mapping: MappingDef, item: unknown, bindings: Bindings, stats: SyncStats, log: SyncLog, batch: Batch) {
   try {
     const { mapped, skipped } = await mapItem(mapping, item, bindings);
     stats.skipped += skipped;
-    for (const m of mapped) await applyMapped(r.identifier, m, mapping.merge, stats, log, seen);
+    for (const m of mapped) {
+      if (m.delete) batch.deletes.push(m);
+      else batch.upserts.push({ m, merge: mapping.merge });
+    }
   } catch (err) {
     stats.failed++;
     log.error(`mapping ${mapping.kind} → ${mapping.entity.blueprint}: ${errorMessage(err)}`);
@@ -113,7 +142,9 @@ export async function runSync(identifier: string, trigger: SyncRun['trigger']): 
       for (const kind of [...new Set(mappings.map((m) => m.kind))]) {
         const forKind = mappings.filter((m) => m.kind === kind);
         for await (const page of source.list(kind, { config, log: log.add })) {
-          for (const item of page) for (const m of forKind) await processItem(r, m, item, bindings, stats, log, seen);
+          const batch = newBatch();
+          for (const item of page) for (const m of forKind) await processItem(m, item, bindings, stats, log, batch);
+          await applyBatch(r.identifier, batch, stats, log, seen);
           n += page.length;
           const renewed = await run('UPDATE integrations SET locked_until = ? WHERE identifier = ? AND lock_owner = ?', later(LEASE_MS), identifier, owner);
           if (!renewed.changes) throw new Error('The sync lease was lost to another worker; stopping'); // renew the lease
@@ -173,10 +204,7 @@ async function deleteMissing(r: IntegrationRow, mappings: MappingDef[], seen: Se
     log.add(`SKIPPED deleting ${stale.length} entities: the source returned nothing`);
     return;
   }
-  for (const e of stale) {
-    await deleteEntity(e.blueprint, e.identifier, SYSTEM_ACTOR);
-    stats.deleted++;
-  }
+  stats.deleted += await deleteEntities(stale, SYSTEM_ACTOR);
   log.add(`${stale.length} entities no longer in the source were deleted`);
 }
 
@@ -234,7 +262,9 @@ export async function ingest(r: IntegrationRow, payload: unknown, headers: Recor
   );
   const bindings: Bindings = { integration: { identifier: r.identifier, config: json(r.config, {}) }, headers };
   const items = Array.isArray(payload) ? payload : [payload];
-  for (const item of items) for (const m of json<MappingDef[]>(r.mappings, [])) await processItem(r, m, item, bindings, stats, log);
+  const batch = newBatch();
+  for (const item of items) for (const m of json<MappingDef[]>(r.mappings, [])) await processItem(m, item, bindings, stats, log, batch);
+  await applyBatch(r.identifier, batch, stats, log);
   const t = now();
   await run(
     'INSERT INTO sync_runs (id, integration, trigger, status, stats, logs, started_at, ended_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',

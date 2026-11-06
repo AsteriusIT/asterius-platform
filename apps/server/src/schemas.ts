@@ -283,3 +283,33 @@ export const configFile = z.object({
   entities: z.array(seedEntity).default([]),
 });
 export type ConfigFile = z.infer<typeof configFile>;
+
+// ---------- catalog queries (POST /entities/query, shared with the query-string parser) ----------
+const scalar = z.union([z.string().max(500), z.number(), z.boolean()]);
+export const SORT_RE = /^(title|updated|identifier|relevance|prop:[A-Za-z_][A-Za-z0-9_]{0,63})$/;
+export const entityQueryBody = z.object({
+  blueprint: z.string().max(64).optional(),
+  search: z.string().max(200).optional(),
+  team: z.string().max(200).optional(),
+  source: z.string().max(200).optional(),
+  filters: z
+    .array(
+      z.object({
+        property: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,63}$/, 'invalid property name'),
+        op: z.enum(['eq', 'neq', 'in', 'contains', 'gt', 'gte', 'lt', 'lte', 'between', 'exists']),
+        value: z.union([scalar, z.array(scalar).max(100)]).optional(),
+      }),
+    )
+    .max(20)
+    .optional(),
+  relations: z
+    .array(z.object({ relation: z.string().max(64), target: z.union([z.string().max(200), z.array(z.string().max(200)).max(100)]) }))
+    .max(10)
+    .optional(),
+  sort: z.string().regex(SORT_RE, 'title | updated | identifier | relevance | prop:<name>').optional(),
+  dir: z.enum(['asc', 'desc']).optional(),
+  limit: z.number().int().min(1).max(500).default(50),
+  offset: z.number().int().min(0).max(10_000).default(0),
+  cursor: z.string().max(2000).optional(),
+  count: z.boolean().optional(),
+});

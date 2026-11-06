@@ -195,7 +195,7 @@ describe('bounded run logs (ap-na0.10)', () => {
       for (let i = 0; i < 150; i++) await addLog(id, `line ${i}`);
       const n = Number((await one<{ n: number }>('SELECT count(*) AS n FROM run_logs WHERE run_id = ?', id))?.n);
       expect(n).toBe(101); // the cap plus one notice
-      expect(Number((await one<{ n: number }>("SELECT count(*) AS n FROM run_logs WHERE run_id = ? AND message LIKE 'Log limit reached%'", id))?.n)).toBe(1);
+      expect(Number((await one<{ n: number }>("SELECT count(*) AS n FROM run_logs WHERE run_id = ? AND message LIKE 'Log limit of %'", id))?.n)).toBe(1);
     } finally {
       config.RUN_LOG_MAX_LINES = cap;
     }

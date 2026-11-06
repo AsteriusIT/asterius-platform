@@ -1,3 +1,4 @@
+import { bumpConfigVersion } from '../lib/config-version.js';
 import type { Team } from '@asterius/shared';
 import { all, bool, now, one, run } from '../db.js';
 import { conflict, managedError, notFound } from '../lib/errors.js';
@@ -39,6 +40,7 @@ export async function upsertTeam(input: unknown, opts: { managed?: boolean } = {
       now(),
       def.identifier,
     );
+  await bumpConfigVersion();
   return { created: !existing };
 }
 
@@ -49,4 +51,5 @@ export async function deleteTeam(id: string, opts: { managed?: boolean } = {}) {
   const owned = await one<{ n: number }>('SELECT count(*) AS n FROM entities WHERE team = ?', id);
   if (Number(owned?.n) > 0) throw conflict(`Team "${id}" owns ${owned!.n} entities; reassign them first`);
   await run('DELETE FROM teams WHERE identifier = ?', id);
+  await bumpConfigVersion();
 }

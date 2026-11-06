@@ -89,6 +89,8 @@ const schema = z.object({
   MIGRATE_ON_START: bool(true),
   /** Outbound HTTP timeout for invokers, sources and webhooks. */
   HTTP_TIMEOUT_SECONDS: z.coerce.number().default(30),
+  /** `database` shares API rate-limit counters between replicas (one upsert per request); `memory` is per pod. */
+  RATE_LIMIT_STORE: z.enum(['memory', 'database']).default('memory'),
   /** Keep run logs, sync runs, deliveries and audit entries for N days. */
   RETENTION_DAYS: z.coerce.number().int().min(1).default(90),
   /**

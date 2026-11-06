@@ -5,6 +5,7 @@ import { audit } from '../audit.js';
 import { actorOf, authenticate, bearer, isAdmin, requireAdmin, requireUser } from '../auth/users.js';
 import { getEntity } from '../catalog/entities.js';
 import { canTrigger, isRunnable, deleteAction, forViewer, getAction, listActions, upsertAction } from '../actions/actions.js';
+import { nextPageHeaders } from '../lib/cursor.js';
 import { addLog, cancelRun, decide, getRun, getRunLogs, getRunRow, listRuns, pendingApprovals, triggerRun } from '../actions/runs.js';
 import { cancelSteps, decideStep, runningInvokeStep, updateStep } from '../actions/engine.js';
 import { checkRunToken, checkStepToken } from '../secrets.js';
@@ -134,7 +135,7 @@ export async function actionRoutes(app: FastifyInstance) {
       return reply.code(created ? 201 : 200).send(run);
     });
 
-    scoped.get('/runs', async (req) => {
+    scoped.get('/runs', async (req, reply) => {
       const q = page
         .extend({
           mine: z.enum(['true', 'false']).optional(),
@@ -142,10 +143,17 @@ export async function actionRoutes(app: FastifyInstance) {
           action: z.string().optional(),
           blueprint: z.string().optional(),
           entity: z.string().optional(),
+          cursor: z.string().max(500).optional(),
+          count: z
+            .enum(['true', 'false'])
+            .transform((v) => v === 'true')
+            .optional(),
         })
         .parse(req.query);
       const status = q.status ? z.array(z.enum(RUN_STATUSES)).parse(q.status.split(',')) : undefined;
-      return listRuns({ ...q, status, mine: q.mine === 'true' ? req.principal.id : undefined }, req.principal);
+      const result = await listRuns({ ...q, status, mine: q.mine === 'true' ? req.principal.id : undefined }, req.principal);
+      nextPageHeaders(req, reply, result.nextCursor);
+      return result;
     });
     scoped.get('/runs/:id', async (req) => {
       const q = z.object({ after: z.coerce.number().int().min(0).optional() }).parse(req.query);
@@ -157,7 +165,12 @@ export async function actionRoutes(app: FastifyInstance) {
         .parse(req.query);
       return getRunLogs(idParam.parse(req.params).id, req.principal, q);
     });
-    scoped.get('/approvals', async (req) => pendingApprovals(req.principal));
+    scoped.get('/approvals', async (req, reply) => {
+      const q = z.object({ limit: z.coerce.number().int().min(1).max(500).default(200), cursor: z.string().max(500).optional() }).parse(req.query);
+      const { items, nextCursor } = await pendingApprovals(req.principal, q);
+      nextPageHeaders(req, reply, nextCursor);
+      return items;
+    });
 
     const comment = z.object({ comment: z.string().max(2000).default('') });
     scoped.post('/runs/:id/approve', async (req) => decide(req.principal, idParam.parse(req.params).id, 'approved', comment.parse(req.body ?? {}).comment));

@@ -92,7 +92,18 @@ Guarantees:
 | Work distribution | Conditional UPDATEs and leases in PostgreSQL for runs, polls, syncs and deliveries. A cluster-wide advisory lock covers the rare singleton tasks (migrations, config apply, housekeeping). `/healthz` fails when a worker loop (runs, syncs, deliveries) stops iterating, so the orchestrator restarts a replica whose scheduler is stuck. |
 | Load | At 500 users and tens of thousands of entities, the busiest paths are catalog list pages: indexed by `(blueprint, title)` with a `search` column and paging. A 2-vCPU PostgreSQL is enough. |
 | Failure | A pod restart loses no event (outbox) and no run state. Runs are failed explicitly when their state is unknown. |
-| Retention | `RETENTION_DAYS` purges finished runs, deliveries, audit entries and old sync history every hour (one replica). |
+| Retention | `RETENTION_DAYS` purges finished runs, deliveries, audit entries and old sync history every hour (one replica), in chunks with short pauses. Pending deliveries older than 7 days are marked failed; `RUN_LOG_MAX_LINES` caps stored log lines per run. |
+| Caches | Blueprints, teams and webhook subscriptions are LRU caches invalidated across replicas through the `config_version` row (checked at most once per second per process). |
+| Rate limiting | `RATE_LIMIT_STORE=database` shares counters between API replicas (one upsert per request); account lockout is always stored in the database. |
+
+### Catalog queries
+
+`GET /entities` and `GET /blueprints/:bp/entities` take `search` (substring plus trigram fuzzy matching on PostgreSQL, ranked by relevance), `filter.<property>[op]=value`
+(`eq`, `neq`, `in`, `contains`, `gt`, `gte`, `lt`, `lte`, `between`, `exists`; lists are comma-separated), `relation.<name>=<target>[,<target>]`,
+`sort=title|updated|identifier|relevance|prop:<name>` with `dir`, `limit`, `offset` (capped at 10,000) or `cursor`, and `count=false`. `POST /entities/query` accepts the same
+structure as a JSON body (`EntityQueryBody` in `@asterius/shared`). Responses carry `nextCursor` (and `Link` / `X-Next-Cursor` headers on list endpoints); cursor pages skip the total.
+Entities carry a `version` served as the `ETag`; `PUT`/`PATCH` honour `If-Match` (412 on mismatch) and concurrent creates answer 409. `GET /blueprints/:bp/entities/:id/graph?depth=&direction=out|in|both`
+walks relations transitively (dependencies, or what depends on the entity for impact analysis).
 
 ## Security
 

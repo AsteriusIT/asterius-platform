@@ -4,6 +4,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { config, paths } from './config.js';
+import { entitySearchText } from './catalog/search.js';
 
 /**
  * Storage: Postgres in production (DATABASE_URL, any number of replicas) or SQLite for local development.
@@ -411,6 +412,73 @@ export const MIGRATIONS: Migration[] = [
         ALTER TABLE integrations ADD COLUMN lock_owner TEXT;
         CREATE INDEX run_steps_lease ON run_steps(locked_until) WHERE status = 'RUNNING' AND locked_until IS NOT NULL;
         CREATE INDEX run_steps_deadline ON run_steps(deadline_at) WHERE deadline_at IS NOT NULL AND status IN ('QUEUED', 'RUNNING', 'WAITING_APPROVAL');
+      `),
+  },
+  {
+    id: 9,
+    name: 'catalog performance: entity version, search backfill, indexes, trigram and full-text on Postgres',
+    up: async (d) => {
+      await d.exec(`
+        ALTER TABLE entities ADD COLUMN version INTEGER NOT NULL DEFAULT 1;
+        CREATE INDEX entities_blueprint_updated ON entities(blueprint, updated_at);
+        CREATE INDEX entities_title_key ON entities(title, blueprint, identifier);
+        CREATE INDEX entities_updated_key ON entities(updated_at, blueprint, identifier);
+        CREATE INDEX runs_action_created ON runs(action, created_at);
+        CREATE INDEX runs_status_started ON runs(status, started_at);
+        CREATE INDEX deliveries_status_created ON deliveries(status, created_at);
+        CREATE INDEX step_approvals_user ON step_approvals(user_id);
+        CREATE INDEX run_approvals_user ON run_approvals(user_id);
+        CREATE INDEX actions_blueprint ON actions(blueprint);
+      `);
+      // `search` now also holds string property values: rebuild it for existing rows, in chunks.
+      let after: [string, string] | undefined;
+      for (;;) {
+        const rows = (
+          await d.query<{ blueprint: string; identifier: string; title: string; properties: string }>(
+            `SELECT blueprint, identifier, title, properties FROM entities ${after ? 'WHERE (blueprint, identifier) > (?, ?)' : ''} ORDER BY blueprint, identifier LIMIT 500`,
+            after,
+          )
+        ).rows;
+        if (!rows.length) break;
+        for (const r of rows)
+          await d.query('UPDATE entities SET search = ? WHERE blueprint = ? AND identifier = ?', [
+            entitySearchText(r.identifier, r.title, json(r.properties, {})),
+            r.blueprint,
+            r.identifier,
+          ]);
+        const last = rows[rows.length - 1]!;
+        after = [last.blueprint, last.identifier];
+      }
+      if (d.dialect !== 'postgres') return;
+      await d.exec("ALTER TABLE entities ADD COLUMN search_tsv tsvector GENERATED ALWAYS AS (to_tsvector('simple', search)) STORED");
+      await d.exec('CREATE INDEX entities_search_tsv ON entities USING gin (search_tsv)');
+      await d.exec('CREATE INDEX entities_properties_gin ON entities USING gin ((properties::jsonb) jsonb_path_ops)');
+      try {
+        await d.exec('CREATE EXTENSION IF NOT EXISTS pg_trgm');
+        const ns = (
+          await d.query<{ nspname: string }>("SELECT n.nspname FROM pg_extension e JOIN pg_namespace n ON n.oid = e.extnamespace WHERE e.extname = 'pg_trgm'")
+        ).rows[0];
+        if (ns) await d.exec(`CREATE INDEX entities_search_trgm ON entities USING gin (search "${ns.nspname}".gin_trgm_ops)`);
+      } catch (err) {
+        console.warn(`[db] pg_trgm unavailable, search falls back to substring matching: ${(err as Error).message}`);
+      }
+    },
+  },
+  {
+    id: 10,
+    name: 'approvals scan index, blueprint stats',
+    up: (d) =>
+      d.exec(`
+        CREATE INDEX runs_status_created ON runs(status, created_at);
+        ALTER TABLE runs ADD COLUMN log_count INTEGER NOT NULL DEFAULT 0;
+        CREATE TABLE rate_limits (key TEXT PRIMARY KEY, count INTEGER NOT NULL, window_start BIGINT NOT NULL);
+        CREATE TABLE config_version (id INTEGER PRIMARY KEY, version INTEGER NOT NULL);
+        INSERT INTO config_version (id, version) VALUES (1, 0);
+        CREATE TABLE blueprint_stats (
+          blueprint TEXT PRIMARY KEY,
+          entity_count INTEGER NOT NULL DEFAULT 0,
+          updated_at TEXT NOT NULL
+        );
       `),
   },
 ];

@@ -3,6 +3,8 @@ import { all, bool, json, now, one, run } from '../db.js';
 import { badRequest, conflict, managedError, notFound } from '../lib/errors.js';
 import { blueprintDef, type BlueprintDef } from '../schemas.js';
 import { validator } from './validation.js';
+import { LRU } from '../lib/lru.js';
+import { bumpConfigVersion, onConfigChange, syncCaches } from '../lib/config-version.js';
 
 interface Row {
   identifier: string;
@@ -31,8 +33,40 @@ const toBlueprint = (r: Row): Blueprint => ({
 });
 
 export async function listBlueprints(): Promise<Blueprint[]> {
-  const rows = await all<Row>(`SELECT b.*, (SELECT count(*) FROM entities e WHERE e.blueprint = b.identifier) AS n FROM blueprints b ORDER BY b.title`);
+  // One grouped scan of the primary key instead of a correlated count per blueprint.
+  const rows = await all<Row>(
+    `SELECT b.*, COALESCE(c.n, 0) AS n FROM blueprints b LEFT JOIN (SELECT blueprint, count(*) AS n FROM entities GROUP BY blueprint) c ON c.blueprint = b.identifier ORDER BY b.title`,
+  );
   return rows.map(toBlueprint);
+}
+
+/**
+ * Blueprints with entity counts from the `blueprint_stats` table (refreshed every minute by the maintenance loop):
+ * the home page is the most requested endpoint and must not count entities. Live counts until the first refresh.
+ */
+export async function homeBlueprints(): Promise<Blueprint[]> {
+  const rows = await all<Row>(`SELECT b.*, s.entity_count AS n FROM blueprints b LEFT JOIN blueprint_stats s ON s.blueprint = b.identifier ORDER BY b.title`);
+  if (rows.some((r) => r.n === null || r.n === undefined)) return listBlueprints();
+  return rows.map(toBlueprint);
+}
+
+/** Recompute blueprint_stats (idempotent; skipped when another replica refreshed it in the last 30 s). */
+export async function refreshBlueprintStats(force = false) {
+  if (!force) {
+    const last = await one<{ at: string | null }>('SELECT max(updated_at) AS at FROM blueprint_stats');
+    if (last?.at && Date.parse(last.at) > Date.now() - 30_000) return;
+  }
+  const t = now();
+  const counts = await all<{ blueprint: string; n: number }>('SELECT blueprint, count(*) AS n FROM entities GROUP BY blueprint');
+  const known = new Map(counts.map((c) => [c.blueprint, Number(c.n)]));
+  for (const b of await all<{ identifier: string }>('SELECT identifier FROM blueprints'))
+    await run(
+      'INSERT INTO blueprint_stats (blueprint, entity_count, updated_at) VALUES (?, ?, ?) ON CONFLICT (blueprint) DO UPDATE SET entity_count = excluded.entity_count, updated_at = excluded.updated_at',
+      b.identifier,
+      known.get(b.identifier) ?? 0,
+      t,
+    );
+  await run('DELETE FROM blueprint_stats WHERE blueprint NOT IN (SELECT identifier FROM blueprints)');
 }
 
 export async function getBlueprint(id: string): Promise<Blueprint> {
@@ -42,12 +76,14 @@ export async function getBlueprint(id: string): Promise<Blueprint> {
 }
 
 // Entity writes look the blueprint up on every call (integration syncs write thousands): cache briefly.
-const cache = new Map<string, { at: number; bp: Blueprint }>();
+const cache = new LRU<string, Blueprint>(500, 5_000);
+onConfigChange(() => cache.clear());
 export async function getBlueprintCached(id: string): Promise<Blueprint> {
+  await syncCaches(); // another replica may have changed the definition
   const c = cache.get(id);
-  if (c && Date.now() - c.at < 5_000) return c.bp;
+  if (c) return c;
   const bp = await getBlueprint(id);
-  cache.set(id, { at: Date.now(), bp });
+  cache.set(id, bp);
   return bp;
 }
 
@@ -86,7 +122,7 @@ export async function upsertBlueprint(input: unknown, opts: WriteOpts = {}): Pro
       t,
       def.identifier,
     );
-  cache.delete(def.identifier);
+  await bumpConfigVersion();
   return { blueprint: await getBlueprint(def.identifier), created: !existing };
 }
 
@@ -101,5 +137,5 @@ export async function deleteBlueprint(id: string, opts: { managed?: boolean } = 
     if (other.identifier !== id && Object.values(other.relations).some((r) => r.target === id))
       throw conflict(`Blueprint "${other.identifier}" has a relation to "${id}"`);
   await run('DELETE FROM blueprints WHERE identifier = ?', id);
-  cache.delete(id);
+  await bumpConfigVersion();
 }
