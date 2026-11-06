@@ -16,6 +16,8 @@ import { ingest, renderConfig, verifyWebhook } from '../integrations/sync.js';
 import { getSource } from '../integrations/sources/index.js';
 import { mapItem } from '../integrations/mapping.js';
 import { mappingDef } from '../schemas.js';
+import { render } from '../lib/expr.js';
+import { resolveRef } from '../secrets.js';
 import { idParam } from './util.js';
 
 declare module 'fastify' {
@@ -70,6 +72,29 @@ export async function integrationRoutes(app: FastifyInstance) {
       await requestSync(id);
       await audit(actorOf(req.principal), 'integration.sync_requested', id);
       return reply.code(202).send({ queued: true });
+    });
+
+    /**
+     * Test connection (integration editor): validate the configuration, fetch the first page of `kind` and return up to
+     * three raw items, so mappings can be previewed against real data. Nothing is written.
+     */
+    admin.post('/integrations/test', async (req) => {
+      const body = z.object({ type: z.string(), config: z.record(z.string(), z.unknown()).default({}), kind: z.string().default('item') }).parse(req.body);
+      try {
+        const source = getSource(body.type);
+        const config = (await render(body.config, { integration: { identifier: 'test' } }, resolveRef)).value as Record<string, unknown>;
+        source.validate(config);
+        if (!source.list) return { ok: true, sample: [], note: 'This source receives pushed events: nothing to fetch.' };
+        const log: string[] = [];
+        const timeout = new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Timed out after 20 s')), 20_000).unref());
+        const first = (async () => {
+          for await (const page of source.list!(body.kind, { config, log: (l) => log.push(l) })) return page.slice(0, 3);
+          return [];
+        })();
+        return { ok: true, sample: await Promise.race([first, timeout]), log };
+      } catch (err) {
+        return { ok: false, sample: [], error: (err as Error).message };
+      }
     });
 
     /** Try a mapping on a sample item without writing anything (mapping editor). */

@@ -156,6 +156,9 @@ export const api = {
   saveIntegration: (id: string, body: unknown) => request<Integration>('PUT', v1(`/integrations/${enc(id)}`), body),
   deleteIntegration: (id: string, deleteEntities = false) => request('DELETE', v1(`/integrations/${enc(id)}${qs({ deleteEntities })}`)),
   syncNow: (id: string) => request('POST', v1(`/integrations/${enc(id)}/sync`), {}),
+  testIntegration: (body: { type: string; config: Record<string, unknown>; kind?: string }) =>
+    request<{ ok: boolean; sample: unknown[]; error?: string; note?: string }>('POST', v1('/integrations/test'), body),
+  testWebhook: (id: string) => request<{ queued: boolean }>('POST', v1(`/webhooks/${enc(id)}/test`), {}),
   previewMapping: (body: { mapping: unknown; item: unknown }) => request<{ mapped: unknown[]; skipped: number }>('POST', v1('/mappings/preview'), body),
 
   webhooks: () => request<Webhook[]>('GET', v1('/webhooks')),

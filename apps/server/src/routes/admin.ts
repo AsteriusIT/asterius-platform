@@ -16,7 +16,17 @@ import {
 } from '../auth/users.js';
 import { deleteTeam, listTeams, upsertTeam } from '../auth/teams.js';
 import { deleteSecret, listSecrets, setSecret } from '../secrets.js';
-import { deleteWebhook, getWebhook, listAllDeliveries, listDeliveries, listWebhooks, redeliver, redeliverMany, upsertWebhook } from '../webhooks/webhooks.js';
+import {
+  queueTestDelivery,
+  deleteWebhook,
+  getWebhook,
+  listAllDeliveries,
+  listDeliveries,
+  listWebhooks,
+  redeliver,
+  redeliverMany,
+  upsertWebhook,
+} from '../webhooks/webhooks.js';
 import { configDiff, configStatus, exportConfig, importConfig, managedCounts } from '../config-loader.js';
 import { config } from '../config.js';
 import { idParam, page } from './util.js';
@@ -124,6 +134,13 @@ export async function adminRoutes(app: FastifyInstance, opts: { reloadConfig: ()
       await deleteWebhook(id);
       await audit(actorOf(req.principal), 'webhook.deleted', id);
       return { ok: true };
+    });
+    /** Queue a `webhook.test` delivery for this webhook, whatever its event subscriptions. */
+    admin.post('/webhooks/:id/test', async (req) => {
+      const { id } = idParam.parse(req.params);
+      await getWebhook(id); // 404 when unknown
+      await queueTestDelivery(id);
+      return { queued: true };
     });
     admin.get('/webhooks/:id/deliveries', async (req) => listDeliveries(idParam.parse(req.params).id));
     admin.post('/deliveries/:id/redeliver', async (req) => {

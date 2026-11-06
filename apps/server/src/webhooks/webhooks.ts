@@ -1,7 +1,7 @@
 import { createHmac } from 'node:crypto';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Delivery, Webhook } from '@asterius/shared';
-import { all, bool, json, later, now, one, run } from '../db.js';
+import { all, bool, json, later, newId, now, one, run } from '../db.js';
 import { errorMessage, managedError, notFound } from '../lib/errors.js';
 import { http, UpstreamError } from '../lib/http.js';
 import { invalidateWebhookCache } from '../events.js';
@@ -221,4 +221,24 @@ export function startDeliveryWorker(log: FastifyBaseLogger) {
   const timer = setInterval(() => void tick(), 3_000);
   timer.unref();
   return () => clearInterval(timer);
+}
+
+export async function queueTestDelivery(webhook: string) {
+  const payload = JSON.stringify({
+    id: newId(),
+    type: 'webhook.test',
+    at: now(),
+    blueprint: null,
+    actor: null,
+    data: { message: 'Test delivery from Asterius' },
+  });
+  await run(
+    "INSERT INTO deliveries (id, webhook, event, payload, status, next_attempt_at, created_at) VALUES (?, ?, ?, ?, 'pending', ?, ?)",
+    newId(),
+    webhook,
+    'webhook.test',
+    payload,
+    now(),
+    now(),
+  );
 }
