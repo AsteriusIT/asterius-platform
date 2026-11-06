@@ -1,0 +1,11 @@
+{
+  "_comment": "Performance budget (milliseconds unless noted) for the profile in docs/PERFORMANCE.md: 100k entities, 500 users, 1k runs per hour. Initial values: tighten them from the first nightly results, never loosen them to make a regression pass.",
+  "catalog_browse_p95_ms": 400,
+  "catalog_search_p95_ms": 600,
+  "entity_detail_p95_ms": 300,
+  "run_trigger_p95_ms": 500,
+  "run_completion_p95_seconds": 30,
+  "bulk_ingest_p95_ms": 8000,
+  "webhook_delivery_p95_ms": 60000,
+  "error_rate_max": 0.01
+}

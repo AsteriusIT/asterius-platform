@@ -113,7 +113,7 @@ What the chart does:
 - **Database.** Bring your own PostgreSQL (`database.url` / `DATABASE_URL`), or let the chart create a **CloudNativePG** cluster (`database.cnpg.enabled=true`).
 - **Optional extras.** Least-privilege RBAC for the Kubernetes source (cluster read) and the Job invoker (per-namespace Role) bound to a worker-only ServiceAccount (the API pods get no Kubernetes token), a ServiceMonitor, a PrometheusRule (queue age, failed/stale syncs, delivery failures, worker loop age, database), a Grafana dashboard ConfigMap, CloudNativePG backups to an object store with scheduled base backups and point-in-time recovery (`database.cnpg.backup` / `database.cnpg.recovery`), `values.schema.json`, `extraVolumes` / `extraVolumeMounts` / `extraContainers`, OpenTelemetry tracing, and `helm test`.
 
-**Sizing (≈500 users, tens of thousands of entities):** 2–3 API pods and 2 worker pods at 100m CPU / 256 Mi each, plus a small PostgreSQL instance (2 vCPU, 4 GB) cover this comfortably. The UI polls instead of holding long-lived connections, so any replica can serve any request.
+**Sizing (≈500 users, tens of thousands of entities):** 2–3 API pods and 2 worker pods at 100m CPU / 256 Mi each, plus a small PostgreSQL instance (2 vCPU, 4 GB) cover this comfortably. The UI polls instead of holding long-lived connections, so any replica can serve any request. Reproducible load test and latency budgets: [docs/PERFORMANCE.md](docs/PERFORMANCE.md); backups and disaster recovery: [docs/OPERATIONS.md](docs/OPERATIONS.md).
 
 ## Development
 

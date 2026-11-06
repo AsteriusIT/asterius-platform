@@ -1,0 +1,74 @@
+name: Load test
+
+# Nightly: 100k entities, ~500 users, 1k runs per hour against PostgreSQL. Thresholds are in loadtest/budget.json;
+# crossing one fails the job (see docs/PERFORMANCE.md).
+on:
+  schedule:
+    - cron: '17 2 * * *'
+  workflow_dispatch:
+    inputs:
+      entities: { description: Entities to seed, default: '100000' }
+      users: { description: Concurrent browsing users, default: '500' }
+      duration: { description: Steady-state duration per scenario, default: '5m' }
+
+permissions:
+  contents: read
+
+jobs:
+  k6:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env: { POSTGRES_USER: ast, POSTGRES_PASSWORD: ast, POSTGRES_DB: ast }
+        ports: ['5432:5432']
+        options: --health-cmd pg_isready --health-interval 5s --health-retries 10
+    env:
+      BASE_URL: http://localhost:8080
+      SINK_URL: http://localhost:9099
+      ENTITIES: ${{ inputs.entities || '100000' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - uses: grafana/setup-k6-action@v1
+
+      - name: Start the platform (api+worker) and the webhook sink
+        run: |
+          export DATABASE_URL=postgres://ast:ast@localhost:5432/ast
+          export SECRETS_KEY=$(openssl rand -hex 32)
+          export DATA_DIR=$RUNNER_TEMP/data CONFIG_DIR=$RUNNER_TEMP/config
+          mkdir -p "$CONFIG_DIR"
+          (cd apps/server && AUTH_PROVIDERS=local ALLOW_REGISTRATION=true PUBLIC_URL=$BASE_URL LOG_LEVEL=warn \
+            DATABASE_POOL_SIZE=20 nohup node dist/index.js > "$RUNNER_TEMP/platform.log" 2>&1 &)
+          nohup npm run loadtest:sink > "$RUNNER_TEMP/sink.log" 2>&1 &
+          for i in $(seq 1 60); do curl -fs $BASE_URL/readyz >/dev/null && exit 0; sleep 2; done
+          cat "$RUNNER_TEMP/platform.log"; exit 1
+
+      - name: Seed the catalog
+        run: npm run --silent loadtest:seed 2>"$RUNNER_TEMP/seed.err" | grep '^TOKEN=' > "$RUNNER_TEMP/token.env"
+
+      - name: Run k6
+        run: |
+          set -a; . "$RUNNER_TEMP/token.env"; set +a
+          k6 run -e BASE_URL=$BASE_URL -e TOKEN=$TOKEN -e SINK_URL=$SINK_URL -e ENTITIES=$ENTITIES \
+            -e USERS=${{ inputs.users || '500' }} -e DURATION=${{ inputs.duration || '5m' }} \
+            --summary-export "$RUNNER_TEMP/k6-summary.json" loadtest/k6/scenarios.js
+
+      - name: Server-side view (metrics)
+        if: always()
+        run: curl -fs $BASE_URL/metrics | grep -E '^asterius_(http_request_duration_seconds_(sum|count)|db_pool|queue_oldest|webhook_delivery_latency_seconds_(sum|count))' | head -60 || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: load-test
+          path: |
+            ${{ runner.temp }}/k6-summary.json
+            ${{ runner.temp }}/platform.log
+            ${{ runner.temp }}/sink.log
