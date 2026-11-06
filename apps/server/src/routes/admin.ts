@@ -16,6 +16,7 @@ import {
   updateUser,
 } from '../auth/users.js';
 import { deleteTeam, listTeams, upsertTeam } from '../auth/teams.js';
+import { providerInfos } from '../secret-providers/index.js';
 import { deleteSecret, listSecrets, reencryptSecrets, setSecret } from '../secrets.js';
 import { deleteWebhook, getWebhook, listDeliveries, listWebhooks, redeliver, upsertWebhook } from '../webhooks/webhooks.js';
 import { exportConfig, managedCounts } from '../config-loader.js';
@@ -134,6 +135,8 @@ export async function adminRoutes(app: FastifyInstance, opts: { reloadConfig: ()
     });
 
     admin.get('/secrets', async () => listSecrets());
+    /** External secret managers available on this deployment (with a reference example each). */
+    admin.get('/secret-providers', async () => providerInfos());
     admin.post('/secrets/reencrypt', async (req) => {
       const r = await reencryptSecrets();
       await audit(actorOf(req.principal), 'secrets.reencrypted', null, { reencrypted: r.reencrypted, failed: r.failed.length });

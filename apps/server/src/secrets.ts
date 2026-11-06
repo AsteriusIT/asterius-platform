@@ -5,6 +5,7 @@ import { all, dialect, now, one, run } from './db.js';
 import { badRequest, notFound } from './lib/errors.js';
 import type { RefResolver } from './lib/expr.js';
 import type { SecretInfo } from '@asterius/shared';
+import { providerOf, resolveExternal } from './secret-providers/index.js';
 
 /**
  * Secrets used by invokers, integrations and webhooks are never stored in their configuration. Configurations hold
@@ -144,6 +145,7 @@ export async function deleteSecret(name: string) {
 const PLATFORM_SETTINGS = new Set(Object.keys(config));
 
 export const resolveRef: RefResolver = async (kind, name) => {
+  if (providerOf(kind)) return resolveExternal(kind, name);
   if (kind === 'env') {
     if (PLATFORM_SETTINGS.has(name)) throw new Error(`\${env:${name}} is a platform setting and cannot be referenced`);
     const v = process.env[name];
@@ -158,8 +160,8 @@ export const resolveRef: RefResolver = async (kind, name) => {
 /** Resolve a single value that may be a reference (`${secret:X}`) or a literal. */
 export async function resolveValue(v: unknown): Promise<string | undefined> {
   if (typeof v !== 'string' || !v) return undefined;
-  const m = /^\$\{(secret|env):([A-Za-z0-9_.-]+)\}$/.exec(v.trim());
-  return m ? resolveRef(m[1] as 'secret' | 'env', m[2]) : v;
+  const m = /^\$\{(secret|env|vault|awssm|azkv|gcpsm|k8s):([^}\s]+)\}$/.exec(v.trim());
+  return m ? resolveRef(m[1]!, m[2]!) : v;
 }
 
 /**

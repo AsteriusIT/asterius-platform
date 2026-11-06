@@ -14,6 +14,7 @@ import type {
   Run,
   RunPage,
   SecretInfo,
+  SecretProviderInfo,
   SyncRun,
   Team,
   Webhook,
@@ -152,6 +153,7 @@ export const api = {
   deleteToken: (id: string) => request('DELETE', v1(`/tokens/${enc(id)}`)),
 
   secrets: () => request<SecretInfo[]>('GET', v1('/secrets')),
+  secretProviders: () => request<SecretProviderInfo[]>('GET', v1('/secret-providers')),
   setSecret: (name: string, value: string, description: string) => request('PUT', v1(`/secrets/${enc(name)}`), { value, description }),
   deleteSecret: (name: string) => request('DELETE', v1(`/secrets/${enc(name)}`)),
 

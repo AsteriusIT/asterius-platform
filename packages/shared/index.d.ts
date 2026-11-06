@@ -415,6 +415,14 @@ export interface Delivery {
 }
 
 // ---------- admin ----------
+/** An external secret manager available on this deployment. */
+export interface SecretProviderInfo {
+  kind: string;
+  title: string;
+  enabled: boolean;
+  example: string;
+}
+
 export interface SecretInfo {
   name: string;
   description: string;

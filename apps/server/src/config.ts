@@ -109,6 +109,40 @@ const schema = z.object({
   RETENTION_DAYS: z.coerce.number().int().min(1).default(90),
   KUBECONFIG_PATH: z.string().optional(),
 
+  // ---- external secret managers (references ${vault:…} ${awssm:…} ${azkv:…} ${gcpsm:…} ${k8s:…}) ----
+  /** Seconds a resolved external secret is cached in memory (0: no cache). */
+  SECRET_CACHE_SECONDS: z.coerce.number().int().min(0).max(3600).default(30),
+  VAULT_ADDR: z.string().optional(),
+  VAULT_TOKEN: z.string().optional(),
+  VAULT_NAMESPACE: z.string().optional(),
+  /** Vault Kubernetes auth: role bound to the platform's service account (no static token needed). */
+  VAULT_K8S_ROLE: z.string().optional(),
+  VAULT_K8S_MOUNT: z.string().default('kubernetes'),
+  VAULT_K8S_JWT_PATH: z.string().optional(),
+  AWS_REGION: z.string().optional(),
+  AWS_ACCESS_KEY_ID: z.string().optional(),
+  AWS_SECRET_ACCESS_KEY: z.string().optional(),
+  AWS_SESSION_TOKEN: z.string().optional(),
+  /** IRSA / web identity (set by EKS): exchanged for temporary credentials. */
+  AWS_ROLE_ARN: z.string().optional(),
+  AWS_WEB_IDENTITY_TOKEN_FILE: z.string().optional(),
+  AWS_STS_ENDPOINT: z.string().optional(),
+  AWS_SECRETSMANAGER_ENDPOINT: z.string().optional(),
+  /** Azure Key Vault: enable explicitly; auth is workload identity (AZURE_* set by the webhook) or managed identity. */
+  AZURE_KEYVAULT_ENABLED: bool(false),
+  AZURE_KEYVAULT_URL_TEMPLATE: z.string().default('https://{vault}.vault.azure.net'),
+  AZURE_TENANT_ID: z.string().optional(),
+  AZURE_CLIENT_ID: z.string().optional(),
+  AZURE_FEDERATED_TOKEN_FILE: z.string().optional(),
+  AZURE_AUTHORITY_HOST: z.string().optional(),
+  AZURE_IMDS_ENDPOINT: z.string().optional(),
+  /** GCP Secret Manager: enable explicitly; auth is the metadata server's service account (GKE workload identity). */
+  GCP_SECRETMANAGER_ENABLED: bool(false),
+  GCP_SECRETMANAGER_URL: z.string().default('https://secretmanager.googleapis.com'),
+  GCP_METADATA_URL: z.string().default('http://metadata.google.internal'),
+  /** Namespaces whose Kubernetes Secrets can be referenced (default: the platform's own namespace). */
+  K8S_SECRET_NAMESPACES: list,
+
   // ---- AI agent steps (Claude) ----
   /** Default credential of agent steps (a step may reference another key with `apiKey: ${secret:…}`). */
   ANTHROPIC_API_KEY: z.string().optional(),
