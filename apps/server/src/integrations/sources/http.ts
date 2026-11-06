@@ -21,20 +21,37 @@ export const httpSource: Source = {
         headers: { Authorization: 'Bearer ${secret:CMDB_TOKEN}' },
         itemsPath: 'data',
         pagination: { type: 'next', nextUrl: 'links.next' },
+        // optional: incremental: { sinceParam: 'updated_since', etag: true },
       },
       mappings: [{ kind: 'item', entity: { blueprint: 'system', identifier: 'code', title: 'name', properties: { criticality: 'tier' } } }],
     },
   },
+  incremental: true,
   validate: (c) => requireFields(c, ['url'], 'http'),
-  async *list(_kind, { config, log }) {
+  async *list(_kind, { config, log, state, startedAt, setState, incomplete }) {
     const pagination = (config.pagination ?? {}) as { type?: string; nextUrl?: string };
+    // Opt-in incremental mode: `incremental: { sinceParam: "updated_since", etag: true }`
+    const inc = (config.incremental ?? {}) as { sinceParam?: string; etag?: boolean };
+    const prev = (state ?? {}) as { since?: string; etag?: string };
     let url: string | undefined = str(config.url);
-    for (let page = 0; url && page < MAX_PAGES; page++) {
-      const res: Awaited<ReturnType<typeof http>> = await http(url, {
-        method: str(config.method || 'GET'),
-        headers: (config.headers as Record<string, string>) ?? {},
-        body: config.body,
-      });
+    if (inc.sinceParam && prev.since) {
+      const u = new URL(url);
+      u.searchParams.set(inc.sinceParam, prev.since);
+      url = u.toString();
+    }
+    let etag: string | undefined;
+    let page = 0;
+    for (; url && page < MAX_PAGES; page++) {
+      const headers = { ...((config.headers as Record<string, string>) ?? {}) };
+      if (page === 0 && inc.etag && prev.etag) headers['if-none-match'] = prev.etag;
+      const res: Awaited<ReturnType<typeof http>> = await http(url, { method: str(config.method || 'GET'), headers, body: config.body });
+      if (res.status === 304) {
+        log('not modified (ETag)');
+        etag = prev.etag;
+        url = undefined;
+        break;
+      }
+      if (page === 0) etag = res.headers.get('etag') ?? undefined;
       const v = config.itemsPath ? await evaluate(str(config.itemsPath), res.data) : res.data;
       const items = v == null ? [] : Array.isArray(v) ? v : [v];
       log(`page ${page + 1}: ${items.length} items`);
@@ -45,6 +62,8 @@ export const httpSource: Source = {
         url = typeof next === 'string' && next ? new URL(next, url).toString() : undefined;
       } else url = undefined;
     }
+    if (url) incomplete(`stopped after ${MAX_PAGES} pages`);
+    if (inc.sinceParam || inc.etag) setState({ since: startedAt, ...(inc.etag && etag ? { etag } : {}) });
   },
 };
 

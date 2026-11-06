@@ -359,6 +359,8 @@ export interface Integration {
   mappings: Mapping[];
   intervalMinutes: number;
   deleteMissing: boolean;
+  deleteMaxPercent: number;
+  deleteDryRun: boolean;
   managed: boolean;
   lastSync: SyncRun | null;
   /** Webhook integrations: where third parties POST events. */

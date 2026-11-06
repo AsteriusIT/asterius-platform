@@ -16,6 +16,9 @@ export interface IntegrationRow {
   mappings: string;
   interval_minutes: number;
   delete_missing: number;
+  delete_max_percent: number | null;
+  delete_dry_run: number;
+  sync_state: string | null;
   managed: number;
   next_sync_at: string | null;
   locked_until: string | null;
@@ -56,6 +59,8 @@ export function toIntegration(r: IntegrationRow, lastSync: SyncRun | null): Inte
     mappings: json(r.mappings, []),
     intervalMinutes: Number(r.interval_minutes),
     deleteMissing: bool(r.delete_missing),
+    deleteMaxPercent: Number(r.delete_max_percent ?? 20),
+    deleteDryRun: bool(r.delete_dry_run),
     managed: bool(r.managed),
     lastSync,
     ...(r.type === 'webhook' ? { webhookUrl: webhookUrl(r.identifier) } : {}),
@@ -119,18 +124,20 @@ export async function upsertIntegration(input: unknown, opts: { managed?: boolea
     JSON.stringify(def.mappings),
     def.intervalMinutes,
     def.deleteMissing ? 1 : 0,
+    def.deleteMaxPercent,
+    def.deleteDryRun ? 1 : 0,
     opts.managed ? 1 : 0,
   ];
   if (existing)
     await run(
-      'UPDATE integrations SET title = ?, type = ?, enabled = ?, config = ?, mappings = ?, interval_minutes = ?, delete_missing = ?, managed = ?, updated_at = ? WHERE identifier = ?',
+      'UPDATE integrations SET title = ?, type = ?, enabled = ?, config = ?, mappings = ?, interval_minutes = ?, delete_missing = ?, delete_max_percent = ?, delete_dry_run = ?, managed = ?, sync_state = NULL, updated_at = ? WHERE identifier = ?',
       ...vals,
       t,
       def.identifier,
     );
   else
     await run(
-      'INSERT INTO integrations (title, type, enabled, config, mappings, interval_minutes, delete_missing, managed, created_at, updated_at, next_sync_at, identifier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO integrations (title, type, enabled, config, mappings, interval_minutes, delete_missing, delete_max_percent, delete_dry_run, managed, created_at, updated_at, next_sync_at, identifier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       ...vals,
       t,
       t,

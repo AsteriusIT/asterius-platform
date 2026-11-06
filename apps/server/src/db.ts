@@ -361,6 +361,16 @@ export const MIGRATIONS: Migration[] = [
         );
       `),
   },
+  {
+    id: 4,
+    name: 'integrations: incremental sync state, deletion guards',
+    up: (d) =>
+      d.exec(`
+        ALTER TABLE integrations ADD COLUMN sync_state TEXT;
+        ALTER TABLE integrations ADD COLUMN delete_max_percent INTEGER NOT NULL DEFAULT 20;
+        ALTER TABLE integrations ADD COLUMN delete_dry_run INTEGER NOT NULL DEFAULT 0;
+      `),
+  },
 ];
 
 /** Apply pending numbered migrations (idempotent; serialized across replicas by an advisory lock on Postgres). */

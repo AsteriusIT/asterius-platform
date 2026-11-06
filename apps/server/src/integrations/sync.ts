@@ -8,13 +8,32 @@ import { resolveRef } from '../secrets.js';
 import { deleteEntity, upsertEntity } from '../catalog/entities.js';
 import { metrics } from '../metrics.js';
 import { withSpan } from '../tracing.js';
+import { withCircuit } from '../lib/resilience.js';
 import type { MappingDef } from '../schemas.js';
 import { getSource } from './sources/index.js';
+import type { SourceEnv } from './types.js';
 import { mapItem, type Bindings, type Mapped } from './mapping.js';
 import { entitySource, getIntegrationRow, toSyncRun, type IntegrationRow } from './integrations.js';
 
 const LEASE_MS = 30 * 60_000;
 const MAX_LOG_LINES = 300;
+const DEFAULT_RECONCILE_HOURS = 24;
+export const DEFAULT_MAX_DELETE_PERCENT = 20;
+
+/** Incremental state of an integration, stored in `integrations.sync_state`. */
+interface SyncState {
+  kinds: Record<string, unknown>;
+  /** Last run that listed everything completely (the reference of the periodic full reconcile). */
+  lastFullAt?: string;
+}
+interface KindListing {
+  kind: string;
+  blueprints: string[];
+  items: number;
+  /** Listed incrementally (only what changed): cannot tell what disappeared. */
+  partial?: boolean;
+  incomplete?: string;
+}
 const SYSTEM_ACTOR = { id: null, email: 'integration' };
 
 class SyncLog {
@@ -87,31 +106,73 @@ export async function runSync(identifier: string, trigger: SyncRun['trigger']): 
   const log = new SyncLog();
   let ok = true;
 
-  await withSpan('integration.sync', { 'integration.id': identifier, 'integration.type': r.type }, async () => {
-    try {
-      const source = getSource(r.type);
-      if (!source.list) throw new Error(`${r.type} integrations are push-only`);
-      const mappings = json<MappingDef[]>(r.mappings, []);
-      const config = await renderConfig(r);
-      const bindings: Bindings = { integration: { identifier, config: json(r.config, {}) } };
-      const seen = new Set<string>();
-      let n = 0;
-      // One listing per kind, shared by the mappings of that kind.
-      for (const kind of [...new Set(mappings.map((m) => m.kind))]) {
-        const forKind = mappings.filter((m) => m.kind === kind);
-        for await (const page of source.list(kind, { config, log: log.add })) {
-          for (const item of page) for (const m of forKind) await processItem(r, m, item, bindings, stats, log, seen);
-          n += page.length;
-          await run('UPDATE integrations SET locked_until = ? WHERE identifier = ?', later(LEASE_MS), identifier); // renew the lease
+  let state = undefined as SyncState | undefined;
+  await withSpan('integration.sync', { 'integration.id': identifier, 'integration.type': r.type }, () =>
+    withCircuit(identifier, async () => {
+      try {
+        const source = getSource(r.type);
+        if (!source.list) throw new Error(`${r.type} integrations are push-only`);
+        const mappings = json<MappingDef[]>(r.mappings, []);
+        const config = await renderConfig(r);
+        const bindings: Bindings = { integration: { identifier, config: json(r.config, {}) } };
+        const seen = new Set<string>();
+        let n = 0;
+        // Incremental sources only list what changed since the stored state, except on the periodic full reconcile
+        // (the only run allowed to delete: a partial listing cannot tell what disappeared).
+        const prev = json<SyncState>(r.sync_state, { kinds: {} });
+        const reconcileMs = Math.max(0, Number(config.fullReconcileHours ?? DEFAULT_RECONCILE_HOURS)) * 3_600_000;
+        const full = !source.incremental || !prev.lastFullAt || Date.now() - Date.parse(prev.lastFullAt) >= reconcileMs;
+        if (source.incremental) log.add(full ? 'full sync' : `incremental sync (full reconcile after ${prev.lastFullAt})`);
+        const nextKinds: Record<string, unknown> = { ...prev.kinds };
+        const listings: KindListing[] = [];
+        // One listing per kind, shared by the mappings of that kind.
+        for (const kind of [...new Set(mappings.map((m) => m.kind))]) {
+          const forKind = mappings.filter((m) => m.kind === kind);
+          const listing: KindListing = { kind, blueprints: forKind.map((m) => m.entity.blueprint), items: 0 };
+          listing.partial = !full && prev.kinds[kind] !== undefined;
+          listings.push(listing);
+          let newState: unknown;
+          let stateSet = false;
+          const env: SourceEnv = {
+            config,
+            log: log.add,
+            startedAt: t,
+            state: full ? undefined : prev.kinds[kind],
+            setState: (s) => {
+              newState = s;
+              stateSet = true;
+            },
+            incomplete: (reason) => {
+              listing.incomplete ??= reason;
+              log.add(`WARNING ${kind}: incomplete listing (${reason})`);
+            },
+          };
+          for await (const page of source.list(kind, env)) {
+            for (const item of page) for (const m of forKind) await processItem(r, m, item, bindings, stats, log, seen);
+            n += page.length;
+            listing.items += page.length;
+            await run('UPDATE integrations SET locked_until = ? WHERE identifier = ?', later(LEASE_MS), identifier); // renew the lease
+          }
+          if (stateSet && !listing.incomplete) nextKinds[kind] = newState;
         }
+        log.add(`${n} items read`);
+        if (listings.some((l) => l.partial)) log.add('deletions of incrementally listed kinds are deferred to the next full reconcile');
+        if (bool(r.delete_missing))
+          await deleteMissing(r, listings, seen, stats, log, {
+            maxPercent: Number(r.delete_max_percent ?? DEFAULT_MAX_DELETE_PERCENT),
+            dryRun: bool(r.delete_dry_run),
+          });
+        if (source.incremental) {
+          const complete = listings.every((l) => !l.incomplete);
+          state = { kinds: nextKinds, ...(full && complete ? { lastFullAt: t } : prev.lastFullAt ? { lastFullAt: prev.lastFullAt } : {}) };
+        }
+      } catch (err) {
+        ok = false;
+        log.add(`FAILED ${errorMessage(err)}`);
       }
-      log.add(`${n} items read`);
-      if (bool(r.delete_missing)) await deleteMissing(r, mappings, seen, stats, log);
-    } catch (err) {
-      ok = false;
-      log.add(`FAILED ${errorMessage(err)}`);
-    }
-  });
+    }),
+  );
+  if (ok && state) await run('UPDATE integrations SET sync_state = ? WHERE identifier = ?', JSON.stringify(state), identifier);
 
   const status = ok ? 'success' : 'failure';
   const interval = Number(r.interval_minutes);
@@ -138,20 +199,60 @@ export async function runSync(identifier: string, trigger: SyncRun['trigger']): 
 }
 
 /**
- * Remove entities this integration wrote earlier and did not see in this complete listing.
- * Guard: an empty listing never wipes existing entities (an expired token often returns nothing).
+ * Remove entities this integration wrote earlier and did not see in this full listing. Guards:
+ *  - a kind whose listing was incomplete (page / result caps) or empty never deletes its blueprints;
+ *  - a blueprint also fed by an ineligible kind is left alone;
+ *  - more than `maxPercent` of the existing entities being stale cancels the whole deletion;
+ *  - `dryRun` only reports what would be deleted.
  */
-async function deleteMissing(r: IntegrationRow, mappings: MappingDef[], seen: Set<string>, stats: SyncStats, log: SyncLog) {
-  const blueprints = [...new Set(mappings.map((m) => m.entity.blueprint))];
+async function deleteMissing(
+  r: IntegrationRow,
+  listings: KindListing[],
+  seen: Set<string>,
+  stats: SyncStats,
+  log: SyncLog,
+  opts: { maxPercent: number; dryRun: boolean },
+) {
+  const blocked = new Map<string, string>(); // blueprint → why it is protected
+  for (const l of listings) {
+    const why = l.incomplete
+      ? `${l.kind} listing incomplete (${l.incomplete})`
+      : l.partial
+        ? `${l.kind} listed incrementally`
+        : l.items === 0
+          ? `${l.kind} returned nothing`
+          : undefined;
+    if (why) for (const bp of l.blueprints) blocked.set(bp, why);
+  }
+  const blueprints = [...new Set(listings.flatMap((l) => l.blueprints))];
+  if (!blueprints.length) return;
   const existing = await all<{ blueprint: string; identifier: string }>(
     `SELECT blueprint, identifier FROM entities WHERE source = ? AND blueprint IN (${blueprints.map(() => '?').join(',')})`,
     entitySource(r.identifier),
     ...blueprints,
   );
-  const stale = existing.filter((e) => !seen.has(`${e.blueprint}/${e.identifier}`));
+  const isStale = (e: { blueprint: string; identifier: string }) => !seen.has(`${e.blueprint}/${e.identifier}`);
+  for (const [bp, why] of blocked) {
+    const n = existing.filter((e) => e.blueprint === bp && isStale(e)).length;
+    if (n) log.add(`SKIPPED deleting ${n} entities of blueprint ${bp}: ${why}`);
+  }
+  const candidates = existing.filter((e) => !blocked.has(e.blueprint));
+  const stale = candidates.filter(isStale);
   if (!stale.length) return;
-  if (!seen.size) {
-    log.add(`SKIPPED deleting ${stale.length} entities: the source returned nothing`);
+  const percent = (stale.length / candidates.length) * 100;
+  if (opts.maxPercent < 100 && percent > opts.maxPercent) {
+    log.add(
+      `SKIPPED deleting ${stale.length} of ${candidates.length} entities (${Math.round(percent)}% > deleteMaxPercent ${opts.maxPercent}%): check the source, or raise deleteMaxPercent`,
+    );
+    return;
+  }
+  if (opts.dryRun) {
+    log.add(
+      `DRY RUN: would delete ${stale.length} entities: ${stale
+        .slice(0, 20)
+        .map((e) => `${e.blueprint}/${e.identifier}`)
+        .join(', ')}${stale.length > 20 ? ', …' : ''}`,
+    );
     return;
   }
   for (const e of stale) {
