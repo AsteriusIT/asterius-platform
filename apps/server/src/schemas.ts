@@ -151,6 +151,14 @@ export const scorecardDef = z
   });
 export type ScorecardDef = z.infer<typeof scorecardDef>;
 
+/** Data migrations offered when a blueprint changes: applied to the properties of its existing entities. */
+export const entityMigration = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('rename'), from: fieldName, to: fieldName }),
+  z.object({ type: z.literal('default'), property: fieldName, value: z.unknown() }),
+  z.object({ type: z.literal('remove'), property: fieldName }),
+]);
+export type EntityMigration = z.infer<typeof entityMigration>;
+
 export const invokerConfig = z.object({ type: z.string().min(1) }).passthrough();
 
 /** Step ids are used in templates (`steps.<id>.output`): JSONata-friendly names. */

@@ -4,6 +4,7 @@ import { badRequest, conflict, managedError, notFound } from '../lib/errors.js';
 import { blueprintDef, type BlueprintDef } from '../schemas.js';
 import { validator } from './validation.js';
 import { invalidateComputed, recomputeBlueprint } from './computed.js';
+import { validateStored } from './impact.js';
 import { checkExpression } from '../lib/expr.js';
 
 interface Row {
@@ -115,6 +116,9 @@ export async function upsertBlueprint(input: unknown, opts: WriteOpts = {}): Pro
   cache.delete(def.identifier);
   invalidateComputed();
   if (existing) await syncRelationIndex(def.identifier, def.relations);
+  // Existing entities are re-validated in the background; the report shows in the blueprint builder.
+  if (existing && (existing.schema !== JSON.stringify(def.schema) || existing.relations !== JSON.stringify(def.relations)))
+    void validateStored(def.identifier).catch((err) => console.error(`[impact] ${def.identifier}: ${(err as Error).message}`));
   // Materialised values follow the definitions: recompute in the background when they changed.
   if (JSON.stringify(def.computed) !== (existing?.computed ?? '{}'))
     void recomputeBlueprint(def.identifier).catch((err) => console.error(`[computed] ${def.identifier}: ${(err as Error).message}`));

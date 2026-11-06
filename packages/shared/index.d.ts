@@ -547,3 +547,25 @@ export interface ScorecardSummary {
   /** Daily snapshots of the distribution. */
   trend: { day: string; distribution: Record<string, number> }[];
 }
+
+// ---------- blueprint change impact ----------
+export type EntityMigration =
+  { type: 'rename'; from: string; to: string } | { type: 'default'; property: string; value: unknown } | { type: 'remove'; property: string };
+
+export interface InvalidEntity {
+  identifier: string;
+  title: string;
+  errors: string[];
+}
+
+export interface ValidationReport {
+  blueprint: string;
+  status: 'running' | 'done';
+  /** Entities checked. */
+  total: number;
+  invalid: number;
+  /** A sample of the invalid entities. */
+  samples: InvalidEntity[];
+  startedAt: string;
+  finishedAt: string | null;
+}

@@ -1,12 +1,13 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import type { HomeSummary } from '@asterius/shared';
+import type { HomeSummary, ObjectSchema } from '@asterius/shared';
 import { audit } from '../audit.js';
 import { actorOf, canEditEntity, isAdmin, requireAdmin, requireUser, type Principal } from '../auth/users.js';
 import { deleteBlueprint, getBlueprint, listBlueprints, repairRelationIndex, upsertBlueprint } from '../catalog/blueprints.js';
 import { deleteEntity, findEntity, getEntity, related, searchEntities, upsertEntity } from '../catalog/entities.js';
 import { badRequest, forbidden } from '../lib/errors.js';
 import { getVersion, listVersions } from '../catalog/history.js';
+import { checkEntities, getReport, migrateEntities, migrationList } from '../catalog/impact.js';
 import {
   deleteScorecard,
   evaluateAllEntities,
@@ -18,7 +19,7 @@ import {
   upsertScorecard,
 } from '../catalog/scorecards.js';
 import { listRuns, pendingApprovals } from '../actions/runs.js';
-import { entityInput } from '../schemas.js';
+import { blueprintDef, entityInput } from '../schemas.js';
 import { bpParam, entityParam, filtersOf, idParam, page } from './util.js';
 
 /** Humans write entities of their teams (admins: all); API tokens of service accounts follow the same rule. */
@@ -54,6 +55,24 @@ export async function catalogRoutes(app: FastifyInstance) {
     await audit(actorOf(req.principal), created ? 'blueprint.created' : 'blueprint.updated', bp);
     return blueprint;
   });
+  /** Dry run: how many existing entities would be invalid under a proposed definition (after optional migrations). */
+  app.post('/blueprints/:bp/impact', { preHandler: requireAdmin }, async (req) => {
+    const { bp } = bpParam.parse(req.params);
+    const body = z.object({ blueprint: z.unknown(), migrations: migrationList.default([]) }).parse(req.body);
+    const def = blueprintDef.parse({ ...(body.blueprint as object), identifier: bp });
+    await getBlueprint(bp);
+    return checkEntities(bp, { schema: def.schema as ObjectSchema, relations: def.relations }, body.migrations, 5000);
+  });
+  /** Apply data migrations (rename, default, remove) to the properties of every entity of the blueprint. */
+  app.post('/blueprints/:bp/migrate', { preHandler: requireAdmin }, async (req) => {
+    const { bp } = bpParam.parse(req.params);
+    const { migrations } = z.object({ migrations: migrationList.min(1) }).parse(req.body);
+    const result = await migrateEntities(bp, migrations, actorOf(req.principal));
+    await audit(actorOf(req.principal), 'blueprint.migrated', bp, { migrations, ...result });
+    return result;
+  });
+  /** Report of the last background validation (after a blueprint save). */
+  app.get('/blueprints/:bp/validation', { preHandler: requireAdmin }, async (req) => getReport(bpParam.parse(req.params).bp));
   app.post('/blueprints/:bp/repair-relations', { preHandler: requireAdmin }, async (req) => {
     const { bp } = bpParam.parse(req.params);
     const result = await repairRelationIndex(bp);

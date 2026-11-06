@@ -96,4 +96,20 @@ export const CATALOG_MIGRATIONS: CatalogMigration[] = [
       await d.exec("ALTER TABLE entities ADD COLUMN computed TEXT NOT NULL DEFAULT '{}'");
     },
   },
+  {
+    id: 23,
+    name: 'blueprint validation reports',
+    up: (d) =>
+      d.exec(`
+        CREATE TABLE blueprint_validation (
+          blueprint TEXT PRIMARY KEY,
+          status TEXT NOT NULL,          -- running | done
+          total INTEGER NOT NULL DEFAULT 0,
+          invalid INTEGER NOT NULL DEFAULT 0,
+          samples TEXT NOT NULL DEFAULT '[]',
+          started_at TEXT NOT NULL,
+          finished_at TEXT
+        );
+      `),
+  },
 ];

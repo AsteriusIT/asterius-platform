@@ -5,10 +5,12 @@ import type {
   Blueprint,
   Delivery,
   Entity,
+  EntityMigration,
   EntityPage,
   EntityVersion,
   HomeSummary,
   Integration,
+  InvalidEntity,
   Meta,
   PublicUser,
   RelatedEntities,
@@ -82,6 +84,13 @@ const qs = (o: Record<string, string | number | boolean | undefined | null>) => 
   return s ? `?${s}` : '';
 };
 
+export interface ImpactReport {
+  total: number;
+  invalid: number;
+  samples: InvalidEntity[];
+  truncated: boolean;
+}
+
 export type ActionView = Action & { allowedForMe?: boolean };
 
 export const api = {
@@ -98,6 +107,10 @@ export const api = {
   blueprints: () => request<Blueprint[]>('GET', v1('/blueprints')),
   blueprint: (bp: string) => request<Blueprint>('GET', v1(`/blueprints/${enc(bp)}`)),
   saveBlueprint: (bp: string, body: unknown) => request<Blueprint>('PUT', v1(`/blueprints/${enc(bp)}`), body),
+  blueprintImpact: (bp: string, blueprint: unknown, migrations: EntityMigration[] = []) =>
+    request<ImpactReport>('POST', v1(`/blueprints/${enc(bp)}/impact`), { blueprint, migrations }),
+  migrateBlueprint: (bp: string, migrations: EntityMigration[]) =>
+    request<{ migrated: number; total: number }>('POST', v1(`/blueprints/${enc(bp)}/migrate`), { migrations }),
   deleteBlueprint: (bp: string) => request('DELETE', v1(`/blueprints/${enc(bp)}`)),
 
   entities: (q: { blueprint?: string; search?: string; team?: string; sort?: string; limit?: number; offset?: number; filters?: Record<string, string> }) => {
