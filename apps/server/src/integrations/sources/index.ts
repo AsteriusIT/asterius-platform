@@ -6,6 +6,7 @@ import { azureDevOpsSource } from './azure-devops.js';
 import { gitlabSource } from './gitlab.js';
 import { kubernetesSource } from './kubernetes.js';
 import { sqlSource } from './sql.js';
+import { awsResourcesSource, azureResourceGraphSource, gcpAssetsSource } from './cloud.js';
 import { descriptorsSource } from './descriptors.js';
 import { externalSource } from './external.js';
 import { graphqlSource, httpSource, webhookSource } from './http.js';
@@ -26,6 +27,9 @@ for (const s of [
   graphqlSource,
   sqlSource,
   descriptorsSource,
+  awsResourcesSource,
+  azureResourceGraphSource,
+  gcpAssetsSource,
   externalSource,
   webhookSource,
 ])
