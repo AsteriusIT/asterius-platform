@@ -474,6 +474,8 @@ export interface Meta {
   authProviders: ('local' | 'entra' | 'oidc' | 'github' | 'saml')[];
   /** Labels of the generic OIDC / SAML sign-in buttons. */
   oidcTitle?: string;
+  /** Browser sessions use an httpOnly cookie and a CSRF header. */
+  sessionCookie?: boolean;
   samlTitle?: string;
   allowRegistration: boolean;
   invokers: PluginInfo[];

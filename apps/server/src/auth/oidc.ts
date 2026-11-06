@@ -2,8 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from 'jose';
 import { config } from '../config.js';
 import { audit } from '../audit.js';
-import { assertSecureUrl, consumeFlow, failUrl, newFlow, successUrl } from './oauth.js';
-import { createSession, upsertExternalUser } from './users.js';
+import { assertSecureUrl, consumeFlow, failUrl, newFlow, finishLogin } from './oauth.js';
+import { upsertExternalUser } from './users.js';
 
 /**
  * Generic OpenID Connect sign-in (Okta, Keycloak, Google, Auth0, …): discovery document, authorization-code flow with
@@ -112,8 +112,7 @@ export async function oidcRoutes(app: FastifyInstance) {
       const user = await upsertExternalUser('oidc', { ...id, adminGroups: config.OIDC_ADMIN_GROUPS });
       if (user.active !== 1) return reply.redirect(failUrl('Your account is disabled'));
       await audit({ id: user.id, email: user.email }, 'auth.login', null, { provider: 'oidc' });
-      const token = await createSession(user.id, { ip: req.ip, userAgent: req.headers['user-agent'] });
-      return reply.redirect(successUrl(token, st.return_to));
+      return finishLogin(req, reply, user.id, st.return_to);
     } catch (err) {
       req.log.warn({ err }, 'oidc sign-in failed');
       return reply.redirect(failUrl(`Sign-in failed: ${(err as Error).message.slice(0, 200)}`));

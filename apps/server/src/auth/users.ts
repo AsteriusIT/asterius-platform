@@ -1,4 +1,4 @@
-import { createHash, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { config } from '../config.js';
 import { all, json, later, newId, now, one, run, tx } from '../db.js';
@@ -453,9 +453,54 @@ export const bearer = (req: FastifyRequest) => {
   return h?.startsWith('Bearer ') ? h.slice(7).trim() : undefined;
 };
 
-/** Resolve the caller from a session or API token (Authorization: Bearer …). */
+// ---------- cookie sessions (SESSION_COOKIE) ----------
+export const SESSION_COOKIE = '__Host-asterius_session';
+const cookieName = () => (config.PUBLIC_URL.startsWith('https://') ? SESSION_COOKIE : 'asterius_session');
+
+function cookieOf(req: FastifyRequest, name: string) {
+  for (const part of (req.headers.cookie ?? '').split(';')) {
+    const i = part.indexOf('=');
+    if (i > 0 && part.slice(0, i).trim() === name) return decodeURIComponent(part.slice(i + 1).trim());
+  }
+  return undefined;
+}
+
+/** CSRF token bound to the session: only someone who holds the (httpOnly) session token can compute it. */
+export const csrfFor = (sessionToken: string) => createHmac('sha256', sessionToken).update('asterius-csrf-v1').digest('base64url');
+
+export function sessionCookie(token: string | null) {
+  const https = config.PUBLIC_URL.startsWith('https://');
+  const age = token ? config.SESSION_DAYS * 86400 : 0;
+  // __Host- prefix on https: no Domain, Path=/, Secure. SameSite=Lax lets the IdP redirect back while blocking cross-site POSTs.
+  return `${cookieName()}=${token ?? ''}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${age}${https ? '; Secure' : ''}`;
+}
+
+/** The session token of a request, from the Authorization header or the session cookie. */
+export const sessionToken = (req: FastifyRequest) => bearer(req) ?? (config.SESSION_COOKIE ? cookieOf(req, cookieName()) : undefined);
+
+/** Cookie-authenticated unsafe requests must prove they come from the app: same origin and the session-bound CSRF token. */
+function assertCsrf(req: FastifyRequest, token: string) {
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return;
+  const origin = req.headers.origin;
+  if (origin && origin !== new URL(config.PUBLIC_URL).origin) throw forbidden('Cross-origin request refused');
+  const sent = req.headers['x-csrf-token'];
+  const want = csrfFor(token);
+  if (typeof sent !== 'string' || sent.length !== want.length || !timingSafeEqual(Buffer.from(sent), Buffer.from(want)))
+    throw forbidden('Missing or invalid CSRF token');
+}
+
+/** Resolve the caller from a session or API token (Authorization: Bearer …, or the session cookie). */
 export async function authenticate(req: FastifyRequest): Promise<Principal | undefined> {
-  const token = bearer(req);
+  const header = bearer(req);
+  const cookie = !header && config.SESSION_COOKIE ? cookieOf(req, cookieName()) : undefined;
+  if (cookie && !cookie.startsWith(API_TOKEN_PREFIX)) {
+    const found = await userFromBearer(cookie, req.ip);
+    if (!found || found.user.active !== 1) return undefined;
+    assertCsrf(req, cookie);
+    req.principal = await principalOf(found.user);
+    return req.principal;
+  }
+  const token = header;
   const found = token ? await userFromBearer(token, req.ip) : undefined;
   if (!found || found.user.active !== 1) return undefined;
   const principal = await principalOf(found.user);

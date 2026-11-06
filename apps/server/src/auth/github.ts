@@ -1,8 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import { config } from '../config.js';
 import { audit } from '../audit.js';
-import { consumeFlow, failUrl, newFlow, successUrl } from './oauth.js';
-import { createSession, upsertExternalUser } from './users.js';
+import { consumeFlow, failUrl, newFlow, finishLogin } from './oauth.js';
+import { upsertExternalUser } from './users.js';
 
 /**
  * GitHub OAuth sign-in (authorization code + PKCE). Access is limited to members of GITHUB_ALLOWED_ORGS. Groups for
@@ -88,8 +88,7 @@ export async function githubRoutes(app: FastifyInstance) {
       });
       if (user.active !== 1) return reply.redirect(failUrl('Your account is disabled'));
       await audit({ id: user.id, email: user.email }, 'auth.login', null, { provider: 'github' });
-      const token = await createSession(user.id, { ip: req.ip, userAgent: req.headers['user-agent'] });
-      return reply.redirect(successUrl(token, st.return_to));
+      return finishLogin(req, reply, user.id, st.return_to);
     } catch (err) {
       req.log.warn({ err }, 'github sign-in failed');
       return reply.redirect(failUrl(`GitHub sign-in failed: ${(err as Error).message.slice(0, 200)}`));

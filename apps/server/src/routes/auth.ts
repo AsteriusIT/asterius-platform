@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import type { Meta } from '@asterius/shared';
 import { config } from '../config.js';
@@ -8,6 +8,9 @@ import { forbidden } from '../lib/errors.js';
 import {
   assertPassword,
   bearer,
+  csrfFor,
+  sessionCookie,
+  sessionToken,
   createLocalUser,
   createSession,
   deleteSession,
@@ -44,6 +47,14 @@ function failed(email: string) {
   failures.set(email, f);
 }
 
+/** Password / registration sign-in result: a token for API-style clients, an httpOnly cookie in SESSION_COOKIE mode. */
+async function localSession(req: FastifyRequest, reply: FastifyReply, user: UserRow) {
+  const token = await createSession(user.id, { ip: req.ip, userAgent: req.headers['user-agent'] });
+  if (!config.SESSION_COOKIE) return { token, user: await publicUser(user) };
+  reply.header('set-cookie', sessionCookie(token));
+  return { token: 'cookie', csrfToken: csrfFor(token), user: await publicUser(user) };
+}
+
 export async function authRoutes(app: FastifyInstance) {
   app.get('/api/meta', async (): Promise<Meta> => ({
     name: 'Asterius Platform',
@@ -54,6 +65,7 @@ export async function authRoutes(app: FastifyInstance) {
     allowRegistration: config.AUTH_PROVIDERS.includes('local') && config.ALLOW_REGISTRATION,
     invokers: invokerInfos(),
     sources: sourceInfos(),
+    sessionCookie: config.SESSION_COOKIE,
   }));
 
   const rateLimit = { rateLimit: { max: 10, timeWindow: '1 minute' } };
@@ -74,30 +86,32 @@ export async function authRoutes(app: FastifyInstance) {
     }
     failures.delete(email);
     await audit({ id: user.id, email: user.email }, 'auth.login', null, { provider: 'local' });
-    return { token: await createSession(user.id, { ip: req.ip, userAgent: req.headers['user-agent'] }), user: await publicUser(user) };
+    return localSession(req, reply, user);
   });
 
-  app.post('/api/auth/register', { config: rateLimit }, async (req) => {
+  app.post('/api/auth/register', { config: rateLimit }, async (req, reply) => {
     if (!config.AUTH_PROVIDERS.includes('local') || !config.ALLOW_REGISTRATION) throw forbidden('Registration is disabled');
     const body = z.object({ email: z.string().email(), name: z.string().min(1).max(100), password: z.string() }).parse(req.body);
     assertPassword(body.password);
     const user = await createLocalUser(body.email, body.name, body.password);
     await audit({ id: user.id, email: user.email }, 'auth.registered', null, { role: user.role });
-    return { token: await createSession(user.id, { ip: req.ip, userAgent: req.headers['user-agent'] }), user: await publicUser(user) };
+    return localSession(req, reply, user);
   });
 
-  app.post('/api/auth/logout', async (req) => {
-    const token = bearer(req);
+  app.post('/api/auth/logout', async (req, reply) => {
+    const token = sessionToken(req);
     if (token) await deleteSession(token);
+    if (config.SESSION_COOKIE) reply.header('set-cookie', sessionCookie(null));
     return { ok: true };
   });
 
   app.get('/api/auth/me', { preHandler: requireUser }, async (req) => ({
     ...(await publicUser((await getUser(req.principal.id))!)),
+    ...(config.SESSION_COOKIE && !bearer(req) ? { csrfToken: csrfFor(sessionToken(req)!) } : {}),
     permissions: await effectivePermissions(req.principal),
   }));
   // Sessions of the caller: list, revoke one, or sign out everywhere (keeping this one with ?others=true).
-  app.get('/api/auth/sessions', { preHandler: requireUser }, async (req) => listSessions(req.principal.id, bearer(req)));
+  app.get('/api/auth/sessions', { preHandler: requireUser }, async (req) => listSessions(req.principal.id, sessionToken(req)));
   app.delete('/api/auth/sessions/:id', { preHandler: requireUser }, async (req) => {
     const { id } = z.object({ id: z.string().min(8).max(64) }).parse(req.params);
     await revokeSession(req.principal.id, id);
@@ -106,7 +120,7 @@ export async function authRoutes(app: FastifyInstance) {
   });
   app.post('/api/auth/sessions/revoke-all', { preHandler: requireUser }, async (req) => {
     const { others } = z.object({ others: z.boolean().default(false) }).parse(req.body ?? {});
-    const revoked = await revokeAllSessions(req.principal.id, others ? bearer(req) : undefined);
+    const revoked = await revokeAllSessions(req.principal.id, others ? sessionToken(req) : undefined);
     await audit({ id: req.principal.id, email: req.principal.email }, 'auth.sessions_revoked', null, { revoked, keptCurrent: others });
     return { revoked };
   });

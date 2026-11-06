@@ -3,8 +3,8 @@ import { SAML, ValidateInResponseTo, type CacheItem, type CacheProvider, type Pr
 import { config } from '../config.js';
 import { audit } from '../audit.js';
 import { one, run } from '../db.js';
-import { failUrl, safeReturnTo, successUrl } from './oauth.js';
-import { createSession, upsertExternalUser } from './users.js';
+import { failUrl, safeReturnTo, finishLogin } from './oauth.js';
+import { upsertExternalUser } from './users.js';
 
 /**
  * SAML 2.0 service provider (HTTP-Redirect AuthnRequest, HTTP-POST response) on @node-saml/node-saml, which performs
@@ -108,8 +108,7 @@ export async function samlRoutes(app: FastifyInstance) {
       const user = await upsertExternalUser('saml', { ...id, adminGroups: config.SAML_ADMIN_GROUPS });
       if (user.active !== 1) return reply.redirect(failUrl('Your account is disabled'), 303);
       await audit({ id: user.id, email: user.email }, 'auth.login', null, { provider: 'saml' });
-      const token = await createSession(user.id, { ip: req.ip, userAgent: req.headers['user-agent'] });
-      return reply.redirect(successUrl(token, safeReturnTo(body.RelayState)), 303);
+      return finishLogin(req, reply, user.id, safeReturnTo(body.RelayState), 303);
     } catch (err) {
       req.log.warn({ err: (err as Error).message }, 'saml sign-in failed');
       await audit({ id: null, email: null }, 'auth.login_failed', null, { provider: 'saml', ip: req.ip, reason: (err as Error).message.slice(0, 200) });

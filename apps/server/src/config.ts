@@ -57,6 +57,12 @@ const schema = z.object({
   /** Users with these emails are admins (bootstrap). The first local user is admin too when no admin exists. */
   ADMIN_EMAILS: list.transform((v) => v.map((x) => x.toLowerCase())),
   SESSION_DAYS: z.coerce.number().default(7),
+  /**
+   * Browser sessions in an httpOnly cookie instead of a token kept by the web app (not readable by scripts, so an XSS
+   * cannot steal it). State-changing requests then need the CSRF token (X-CSRF-Token) and a same-origin Origin.
+   * API tokens and Authorization headers keep working unchanged.
+   */
+  SESSION_COOKIE: bool(false),
   /** Sign out sessions idle for this many minutes (0: only SESSION_DAYS applies). */
   SESSION_IDLE_MINUTES: z.coerce.number().int().min(0).default(0),
   /** Cap on API token lifetime in days; when set every token needs an expiry within it (0: no policy). */

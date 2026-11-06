@@ -1,5 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
+import type { FastifyReply, FastifyRequest } from 'fastify';
 import { config } from '../config.js';
+import { createSession, sessionCookie } from './users.js';
 import { one, run } from '../db.js';
 
 /** Helpers shared by the OAuth/OIDC sign-in flows (state, PKCE, redirects). */
@@ -46,4 +48,15 @@ export function assertSecureUrl(url: string, what: string) {
   const u = new URL(url);
   const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(u.hostname);
   if (u.protocol !== 'https:' && !(u.protocol === 'http:' && loopback)) throw new Error(`${what} must use https`);
+}
+
+/**
+ * End of an SSO flow: open the session and send the browser back to the app. Cookie mode sets the httpOnly cookie
+ * (nothing secret in the URL); otherwise the token travels in the URL fragment.
+ */
+export async function finishLogin(req: FastifyRequest, reply: FastifyReply, userId: string, returnTo: string, status: 302 | 303 = 302) {
+  const token = await createSession(userId, { ip: req.ip, userAgent: req.headers['user-agent'] });
+  if (!config.SESSION_COOKIE) return reply.redirect(successUrl(token, returnTo), status);
+  reply.header('set-cookie', sessionCookie(token));
+  return reply.redirect(successUrl('cookie', returnTo), status);
 }
