@@ -1,6 +1,6 @@
 import type { ApprovalPolicy, Run, RunApproval, RunLog, RunPage, RunStatus } from '@asterius/shared';
 import { config } from '../config.js';
-import { all, json, newId, now, one, run, type SqlValue } from '../db.js';
+import { all, forUpdate, json, newId, now, one, run, tx, type SqlValue } from '../db.js';
 import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
 import { emit } from '../events.js';
 import { audit } from '../audit.js';
@@ -231,32 +231,39 @@ export async function decide(p: Principal, runId: string, decision: 'approved' |
   if (r.status !== 'PENDING_APPROVAL') throw conflict('This run is not waiting for approval');
   if (!canApprove(p, r, approvals)) throw forbidden('You cannot approve this run');
   if (decision === 'rejected' && !comment.trim()) throw badRequest('Give a reason when rejecting');
-  await run('INSERT INTO run_approvals (run_id, user_id, decision, comment, at) VALUES (?, ?, ?, ?, ?)', runId, p.id, decision, comment, now());
+  const policy = json<ApprovalPolicy>(r.approval, { required: true });
+  // Insert the decision, count and transition in one transaction holding a row lock on the run: concurrent approvers
+  // are serialized, so the last one always sees every other approval (and a duplicate is a 409, not a key violation).
+  const outcome = await tx(async (d) => {
+    const cur = (await d.query<{ status: RunStatus }>(`SELECT status FROM runs WHERE id = ?${forUpdate}`, [runId])).rows[0];
+    if (cur?.status !== 'PENDING_APPROVAL') throw conflict('This run is not waiting for approval');
+    const decided = (await d.query<{ user_id: string; decision: string }>('SELECT user_id, decision FROM run_approvals WHERE run_id = ?', [runId])).rows;
+    if (decided.some((a) => a.user_id === p.id)) throw conflict('You already decided on this run');
+    await d.query('INSERT INTO run_approvals (run_id, user_id, decision, comment, at) VALUES (?, ?, ?, ?, ?)', [runId, p.id, decision, comment, now()]);
+    const approvedCount = decided.filter((a) => a.decision === 'approved').length + (decision === 'approved' ? 1 : 0);
+    let next: RunStatus | null = null;
+    if (decision === 'rejected') next = 'REJECTED';
+    else if (approvedCount >= (policy.minApprovals ?? 1)) next = 'QUEUED';
+    if (next) {
+      const t = now();
+      await d.query(`UPDATE runs SET status = ?, ended_at = ?, updated_at = ? WHERE id = ? AND status = 'PENDING_APPROVAL'`, [
+        next,
+        next === 'REJECTED' ? t : null,
+        t,
+        runId,
+      ]);
+    }
+    return next;
+  });
   await addLog(
     runId,
     `${decision === 'approved' ? 'Approved' : 'Rejected'} by ${p.name}${comment ? `: ${comment}` : ''}`,
     decision === 'approved' ? 'info' : 'warn',
   );
   await audit(actorOf(p), `run.${decision}`, r.action, { runId, comment });
-
-  const policy = json<ApprovalPolicy>(r.approval, { required: true });
-  const approvedCount = approvals.filter((a) => a.decision === 'approved').length + (decision === 'approved' ? 1 : 0);
-  let next: RunStatus | null = null;
-  if (decision === 'rejected') next = 'REJECTED';
-  else if (approvedCount >= (policy.minApprovals ?? 1)) next = 'QUEUED';
-  if (next) {
-    const t = now();
-    const { changes } = await run(
-      `UPDATE runs SET status = ?, ended_at = ?, updated_at = ? WHERE id = ? AND status = 'PENDING_APPROVAL'`,
-      next,
-      next === 'REJECTED' ? t : null,
-      t,
-      runId,
-    );
-    if (changes) {
-      await addLog(runId, next === 'QUEUED' ? 'Approved: queued for execution' : 'Run rejected');
-      if (next === 'REJECTED') metrics.runFinished(r.action, next, 'workflow', null);
-    }
+  if (outcome) {
+    await addLog(runId, outcome === 'QUEUED' ? 'Approved: queued for execution' : 'Run rejected');
+    if (outcome === 'REJECTED') metrics.runFinished(r.action, outcome, 'workflow', null);
   }
   await emitRun(runId, 'run.updated');
   return getRun(runId, p);

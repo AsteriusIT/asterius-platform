@@ -407,6 +407,8 @@ async function open(): Promise<Driver> {
 
 export const driver = await open();
 export const dialect = driver.dialect;
+/** Row lock suffix for `SELECT … FOR UPDATE` inside `tx` (SQLite serializes transactions in-process instead). */
+export const forUpdate = dialect === 'postgres' ? ' FOR UPDATE' : '';
 
 let sqliteChain: Promise<unknown> = Promise.resolve();
 

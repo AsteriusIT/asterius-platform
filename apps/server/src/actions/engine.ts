@@ -1,7 +1,7 @@
 import type { FastifyBaseLogger } from 'fastify';
 import type { InvokerConfig, RunLog } from '@asterius/shared';
 import { config } from '../config.js';
-import { all, json, later, now, one, run as exec } from '../db.js';
+import { all, forUpdate, json, later, now, one, run as exec, tx } from '../db.js';
 import { conflict, badRequest, errorMessage, forbidden } from '../lib/errors.js';
 import { evaluate, redact, render } from '../lib/expr.js';
 import { resolveRef, stepToken } from '../secrets.js';
@@ -376,15 +376,27 @@ export async function decideStep(p: Principal, runId: string, stepId: string, de
   const approvals = (await stepApprovalsOf([runId])).get(`${runId}/${stepId}`) ?? [];
   if (!canApproveStep(p, r, def, row, approvals)) throw forbidden('You cannot approve this step');
   if (decision === 'rejected' && !comment.trim()) throw badRequest('Give a reason when rejecting');
-  await exec(
-    'INSERT INTO step_approvals (run_id, step_id, user_id, decision, comment, at) VALUES (?, ?, ?, ?, ?, ?)',
-    runId,
-    stepId,
-    p.id,
-    decision,
-    comment,
-    now(),
-  );
+  // Insert, count and decide under a row lock on the step: concurrent approvers are serialized (see runs.decide).
+  const outcome = await tx(async (d) => {
+    const cur = (await d.query<{ status: string }>(`SELECT status FROM run_steps WHERE run_id = ? AND step_id = ?${forUpdate}`, [runId, stepId])).rows[0];
+    if (cur?.status !== 'WAITING_APPROVAL') throw conflict('This step is not waiting for approval');
+    const decided = (
+      await d.query<{ user_id: string; user_name: string; decision: string; comment: string }>(
+        'SELECT a.user_id, u.name AS user_name, a.decision, a.comment FROM step_approvals a JOIN users u ON u.id = a.user_id WHERE a.run_id = ? AND a.step_id = ? ORDER BY a.at',
+        [runId, stepId],
+      )
+    ).rows;
+    if (decided.some((a) => a.user_id === p.id)) throw conflict('You already decided on this step');
+    await d.query('INSERT INTO step_approvals (run_id, step_id, user_id, decision, comment, at) VALUES (?, ?, ?, ?, ?, ?)', [
+      runId,
+      stepId,
+      p.id,
+      decision,
+      comment,
+      now(),
+    ]);
+    return [...decided, { user_id: p.id, user_name: p.name, decision, comment }].filter((a) => a.decision === 'approved');
+  });
   await addLog(
     runId,
     `${decision === 'approved' ? 'Approved' : 'Rejected'} by ${p.name}${comment ? `: ${comment}` : ''}`,
@@ -392,8 +404,7 @@ export async function decideStep(p: Principal, runId: string, stepId: string, de
     stepId,
   );
   await audit(actorOf(p), `run.step_${decision}`, `${r.action} · ${row.name}`, { runId, step: stepId, comment });
-  const all = [...approvals, { userId: p.id, userName: p.name, decision, comment, at: now() }];
-  const approved = all.filter((a) => a.decision === 'approved');
+  const approved = outcome;
   if (decision === 'rejected')
     await complete(runId, stepId, ['WAITING_APPROVAL'], {
       status: 'FAILURE',
@@ -403,8 +414,8 @@ export async function decideStep(p: Principal, runId: string, stepId: string, de
   else if (approved.length >= def.minApprovals)
     await complete(runId, stepId, ['WAITING_APPROVAL'], {
       status: 'SUCCESS',
-      statusLabel: `Approved by ${approved.map((a) => a.userName).join(', ')}`,
-      output: { approved: true, by: approved.map((a) => a.userName), comments: approved.map((a) => a.comment).filter(Boolean) },
+      statusLabel: `Approved by ${approved.map((a) => a.user_name).join(', ')}`,
+      output: { approved: true, by: approved.map((a) => a.user_name), comments: approved.map((a) => a.comment).filter(Boolean) },
     });
   else {
     await setStep(runId, stepId, 'WAITING_APPROVAL', { status_label: `${approved.length}/${def.minApprovals} approval(s)` });
