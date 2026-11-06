@@ -106,7 +106,7 @@ export async function entraRoutes(app: FastifyInstance) {
       if (user.active !== 1) return reply.redirect(fail('Your account is disabled'));
       await audit({ id: user.id, email: user.email }, 'auth.login', null, { provider: 'entra' });
 
-      const token = await createSession(user.id);
+      const token = await createSession(user.id, { ip: req.ip, userAgent: req.headers['user-agent'] });
       // Fragment: never sent to servers or written to access logs.
       const hash = new URLSearchParams({ token, returnTo: st.return_to });
       return reply.redirect(`${config.PUBLIC_URL.replace(/\/$/, '')}/auth/callback#${hash}`);

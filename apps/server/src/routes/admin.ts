@@ -12,6 +12,7 @@ import {
   publicUser,
   requireAdmin,
   requireUser,
+  tokenLifetime,
   updateUser,
 } from '../auth/users.js';
 import { deleteTeam, listTeams, upsertTeam } from '../auth/teams.js';
@@ -20,7 +21,8 @@ import { deleteWebhook, getWebhook, listDeliveries, listWebhooks, redeliver, ups
 import { exportConfig, managedCounts } from '../config-loader.js';
 import { config } from '../config.js';
 import { idParam, page } from './util.js';
-import { badRequest } from '../lib/errors.js';
+import { badRequest, forbidden } from '../lib/errors.js';
+import { grants, ipAllowSchema, scopeSchema, SCOPES } from '../auth/scopes.js';
 import { roleName } from '../schemas.js';
 
 export async function adminRoutes(app: FastifyInstance, opts: { reloadConfig: () => Promise<void> }) {
@@ -36,9 +38,36 @@ export async function adminRoutes(app: FastifyInstance, opts: { reloadConfig: ()
       return listApiTokens(all ? undefined : req.principal.id);
     });
     user.post('/tokens', async (req, reply) => {
-      const body = z.object({ name: z.string().min(1).max(100), expiresInDays: z.number().int().min(1).max(730).nullish() }).parse(req.body);
-      const t = await createApiToken({ name: body.name, userId: req.principal.id, createdBy: req.principal.id, expiresInDays: body.expiresInDays ?? 90 });
-      await audit(actorOf(req.principal), 'token.created', body.name, { tokenId: t.id });
+      const body = z
+        .object({
+          name: z.string().min(1).max(100),
+          expiresInDays: z.number().int().min(1).max(730).nullish(),
+          scopes: z.array(scopeSchema).max(SCOPES.length).optional(),
+          blueprints: z.array(z.string().max(64)).max(100).optional(),
+          ipAllow: ipAllowSchema.optional(),
+        })
+        .parse(req.body);
+      // A restricted token cannot mint tokens (it would escape its own restrictions): only unrestricted callers or `admin` scope.
+      if (req.principal.token && (req.principal.token.blueprints || !req.principal.token.scopes?.includes('admin')))
+        throw forbidden('This API token cannot create tokens');
+      if (req.principal.token?.scopes && body.scopes?.some((s) => !grants(req.principal.token!.scopes!, s)))
+        throw forbidden('A token cannot grant scopes it lacks');
+      if (!isAdmin(req.principal) && body.scopes?.includes('admin')) throw forbidden('Only admins can create tokens with the admin scope');
+      const t = await createApiToken({
+        name: body.name,
+        userId: req.principal.id,
+        createdBy: req.principal.id,
+        expiresInDays: tokenLifetime(body.expiresInDays, 90),
+        scopes: body.scopes,
+        blueprints: body.blueprints,
+        ipAllow: body.ipAllow,
+      });
+      await audit(actorOf(req.principal), 'token.created', body.name, {
+        tokenId: t.id,
+        scopes: body.scopes ?? null,
+        blueprints: body.blueprints ?? null,
+        ipAllow: body.ipAllow ?? null,
+      });
       return reply.code(201).send(t);
     });
     user.delete('/tokens/:id', async (req) => {
@@ -81,7 +110,12 @@ export async function adminRoutes(app: FastifyInstance, opts: { reloadConfig: ()
         .parse(req.body);
       const sa = await createServiceAccount(body.name, body.role);
       if (body.teams.length) await updateUser(sa.id, { teams: body.teams });
-      const t = await createApiToken({ name: `${body.name} token`, userId: sa.id, createdBy: req.principal.id, expiresInDays: body.expiresInDays ?? null });
+      const t = await createApiToken({
+        name: `${body.name} token`,
+        userId: sa.id,
+        createdBy: req.principal.id,
+        expiresInDays: tokenLifetime(body.expiresInDays, null),
+      });
       await audit(actorOf(req.principal), 'service_account.created', body.name, { role: body.role });
       return reply.code(201).send({ user: await publicUser(sa), token: t.token });
     });

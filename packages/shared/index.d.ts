@@ -47,6 +47,10 @@ export interface ApiToken {
   createdAt: string;
   expiresAt: string | null;
   lastUsedAt: string | null;
+  /** Null: all rights of the owning user. */
+  scopes?: string[] | null;
+  blueprints?: string[] | null;
+  ipAllow?: string[] | null;
 }
 
 // ---------- catalog ----------

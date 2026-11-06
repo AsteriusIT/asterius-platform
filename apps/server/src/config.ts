@@ -57,6 +57,10 @@ const schema = z.object({
   /** Users with these emails are admins (bootstrap). The first local user is admin too when no admin exists. */
   ADMIN_EMAILS: list.transform((v) => v.map((x) => x.toLowerCase())),
   SESSION_DAYS: z.coerce.number().default(7),
+  /** Sign out sessions idle for this many minutes (0: only SESSION_DAYS applies). */
+  SESSION_IDLE_MINUTES: z.coerce.number().int().min(0).default(0),
+  /** Cap on API token lifetime in days; when set every token needs an expiry within it (0: no policy). */
+  API_TOKEN_MAX_DAYS: z.coerce.number().int().min(0).default(0),
   ENTRA_TENANT_ID: z.string().optional(),
   ENTRA_CLIENT_ID: z.string().optional(),
   ENTRA_CLIENT_SECRET: z.string().optional(),

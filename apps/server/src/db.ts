@@ -367,6 +367,20 @@ export const MIGRATIONS: Migration[] = [
     name: 'fine-grained RBAC: blueprint permissions, delegated roles',
     up: (d) => d.exec('ALTER TABLE blueprints ADD COLUMN permissions TEXT; ALTER TABLE users ADD COLUMN extra_roles TEXT'),
   },
+  {
+    id: 101,
+    name: 'API token scopes and IP allow-list, session metadata',
+    up: (d) =>
+      d.exec(`
+        ALTER TABLE api_tokens ADD COLUMN scopes TEXT;
+        ALTER TABLE api_tokens ADD COLUMN blueprints TEXT;
+        ALTER TABLE api_tokens ADD COLUMN ip_allow TEXT;
+        ALTER TABLE sessions ADD COLUMN created_at TEXT;
+        ALTER TABLE sessions ADD COLUMN last_seen_at TEXT;
+        ALTER TABLE sessions ADD COLUMN ip TEXT;
+        ALTER TABLE sessions ADD COLUMN user_agent TEXT;
+      `),
+  },
 ];
 
 /** Apply pending numbered migrations (idempotent; serialized across replicas by an advisory lock on Postgres). */

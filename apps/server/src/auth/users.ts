@@ -3,7 +3,9 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 import { config } from '../config.js';
 import { all, json, later, newId, now, one, run, tx } from '../db.js';
 import type { ApiToken, PublicUser, Role, Subjects, TeamRef, UserProvider } from '@asterius/shared';
-import { badRequest, conflict, notFound } from '../lib/errors.js';
+import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
+import { audit } from '../audit.js';
+import { blueprintOfPath, grants, ipAllowed, requiredScope, type Scope } from './scopes.js';
 
 // ---------- passwords & tokens ----------
 export function hashPassword(password: string) {
@@ -52,6 +54,8 @@ export interface Principal {
   roles: string[];
   provider: UserProvider;
   teams: string[];
+  /** Set when the request authenticated with an API token that carries restrictions. */
+  token?: { id: string; scopes: string[] | null; blueprints: string[] | null };
 }
 
 export async function teamsOf(userId: string): Promise<TeamRef[]> {
@@ -193,11 +197,70 @@ export async function updateUser(id: string, patch: { role?: Role; roles?: strin
 }
 
 // ---------- sessions ----------
-export async function createSession(userId: string) {
+export async function createSession(userId: string, ctx: { ip?: string; userAgent?: string } = {}) {
   const token = randomToken();
-  await run('INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)', sha256(token), userId, later(config.SESSION_DAYS * 86400_000));
+  const t = now();
+  await run(
+    'INSERT INTO sessions (token_hash, user_id, expires_at, created_at, last_seen_at, ip, user_agent) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    sha256(token),
+    userId,
+    later(config.SESSION_DAYS * 86400_000),
+    t,
+    t,
+    ctx.ip ?? null,
+    (ctx.userAgent ?? '').slice(0, 200) || null,
+  );
   await run('UPDATE users SET last_login_at = ? WHERE id = ?', now(), userId);
   return token;
+}
+
+export interface SessionInfo {
+  id: string;
+  createdAt: string | null;
+  lastSeenAt: string | null;
+  expiresAt: string;
+  ip: string | null;
+  userAgent: string | null;
+  current: boolean;
+}
+
+/** Session ids are a prefix of the stored token hash: enough to address a session, useless as a credential. */
+export async function listSessions(userId: string, currentToken?: string): Promise<SessionInfo[]> {
+  const current = currentToken ? sha256(currentToken) : '';
+  const rows = await all<{
+    token_hash: string;
+    created_at: string | null;
+    last_seen_at: string | null;
+    expires_at: string;
+    ip: string | null;
+    user_agent: string | null;
+  }>(
+    'SELECT token_hash, created_at, last_seen_at, expires_at, ip, user_agent FROM sessions WHERE user_id = ? AND expires_at > ? ORDER BY created_at DESC',
+    userId,
+    now(),
+  );
+  return rows.map((r) => ({
+    id: r.token_hash.slice(0, 16),
+    createdAt: r.created_at,
+    lastSeenAt: r.last_seen_at,
+    expiresAt: r.expires_at,
+    ip: r.ip,
+    userAgent: r.user_agent,
+    current: r.token_hash === current,
+  }));
+}
+
+export async function revokeSession(userId: string, id: string) {
+  const rows = await all<{ token_hash: string }>('SELECT token_hash FROM sessions WHERE user_id = ?', userId);
+  const hit = rows.find((r) => r.token_hash.slice(0, 16) === id);
+  if (!hit) throw notFound('Session');
+  await run('DELETE FROM sessions WHERE token_hash = ?', hit.token_hash);
+}
+
+/** Sign out everywhere, optionally keeping the session making the request. */
+export async function revokeAllSessions(userId: string, keepToken?: string) {
+  if (keepToken) return (await run('DELETE FROM sessions WHERE user_id = ? AND token_hash != ?', userId, sha256(keepToken))).changes;
+  return (await run('DELETE FROM sessions WHERE user_id = ?', userId)).changes;
 }
 
 export async function deleteSession(token: string) {
@@ -211,11 +274,31 @@ export async function purgeExpiredAuth() {
 }
 
 // ---------- API tokens ----------
-export async function createApiToken(p: { name: string; userId: string; createdBy: string; expiresInDays?: number | null }) {
+export interface TokenRestrictions {
+  /** Null: all rights of the user (tokens created before scopes existed). */
+  scopes?: string[] | null;
+  /** Null: every blueprint. Only combinable with catalog scopes. */
+  blueprints?: string[] | null;
+  ipAllow?: string[] | null;
+}
+
+/** Org policy: API_TOKEN_MAX_DAYS caps the lifetime and makes an expiry mandatory. */
+export function tokenLifetime(requested: number | null | undefined, fallback: number | null): number | null {
+  const max = config.API_TOKEN_MAX_DAYS;
+  const days = requested === undefined ? fallback : requested;
+  if (!max) return days;
+  if (days === null || days > max) throw badRequest(`API tokens expire after at most ${max} days`);
+  return days;
+}
+
+export async function createApiToken(p: { name: string; userId: string; createdBy: string; expiresInDays?: number | null } & TokenRestrictions) {
+  if (p.blueprints?.length && p.scopes?.some((s) => s.startsWith('runs:') || s === 'admin'))
+    throw badRequest('Tokens restricted to blueprints can only carry catalog scopes');
+  if (p.blueprints?.length && !p.scopes?.length) throw badRequest('Blueprint-restricted tokens need explicit catalog scopes');
   const token = `${API_TOKEN_PREFIX}${randomToken()}`;
   const id = newId();
   await run(
-    'INSERT INTO api_tokens (id, name, token_hash, prefix, user_id, created_by, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    'INSERT INTO api_tokens (id, name, token_hash, prefix, user_id, created_by, created_at, expires_at, scopes, blueprints, ip_allow) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
     id,
     p.name,
     sha256(token),
@@ -224,6 +307,9 @@ export async function createApiToken(p: { name: string; userId: string; createdB
     p.createdBy,
     now(),
     p.expiresInDays ? later(p.expiresInDays * 86400_000) : null,
+    p.scopes?.length ? JSON.stringify([...new Set(p.scopes)]) : null,
+    p.blueprints?.length ? JSON.stringify(p.blueprints) : null,
+    p.ipAllow?.length ? JSON.stringify(p.ipAllow) : null,
   );
   return { id, token };
 }
@@ -238,8 +324,11 @@ export async function listApiTokens(userId?: string): Promise<ApiToken[]> {
     created_at: string;
     expires_at: string | null;
     last_used_at: string | null;
+    scopes: string | null;
+    blueprints: string | null;
+    ip_allow: string | null;
   }>(
-    `SELECT t.id, t.name, t.prefix, t.user_id, u.name AS user_name, t.created_at, t.expires_at, t.last_used_at
+    `SELECT t.id, t.name, t.prefix, t.user_id, u.name AS user_name, t.created_at, t.expires_at, t.last_used_at, t.scopes, t.blueprints, t.ip_allow
      FROM api_tokens t JOIN users u ON u.id = t.user_id ${userId ? 'WHERE t.user_id = ?' : ''} ORDER BY t.created_at DESC`,
     ...(userId ? [userId] : []),
   );
@@ -252,6 +341,9 @@ export async function listApiTokens(userId?: string): Promise<ApiToken[]> {
     createdAt: r.created_at,
     expiresAt: r.expires_at,
     lastUsedAt: r.last_used_at,
+    scopes: json<string[] | null>(r.scopes, null),
+    blueprints: json<string[] | null>(r.blueprints, null),
+    ipAllow: json<string[] | null>(r.ip_allow, null),
   }));
 }
 
@@ -264,22 +356,51 @@ export async function deleteApiToken(id: string, userId?: string) {
 
 const lastUsedWrites = new Map<string, number>();
 
-async function userFromBearer(token: string): Promise<UserRow | undefined> {
+interface Resolved {
+  user: UserRow;
+  token?: NonNullable<Principal['token']> & { ipAllow: string[] | null };
+}
+
+async function userFromBearer(token: string, ip: string): Promise<Resolved | undefined> {
   const hash = sha256(token);
   if (token.startsWith(API_TOKEN_PREFIX)) {
-    const row = await one<UserRow & { token_id: string; token_expires: string | null }>(
-      'SELECT u.*, t.id AS token_id, t.expires_at AS token_expires FROM api_tokens t JOIN users u ON u.id = t.user_id WHERE t.token_hash = ?',
+    const row = await one<
+      UserRow & { token_id: string; token_expires: string | null; t_scopes: string | null; t_blueprints: string | null; t_ip: string | null }
+    >(
+      `SELECT u.*, t.id AS token_id, t.expires_at AS token_expires, t.scopes AS t_scopes, t.blueprints AS t_blueprints, t.ip_allow AS t_ip
+       FROM api_tokens t JOIN users u ON u.id = t.user_id WHERE t.token_hash = ?`,
       hash,
     );
     if (!row || (row.token_expires && row.token_expires < now())) return undefined;
-    // Record usage at most once a minute per token.
+    const ipAllow = json<string[] | null>(row.t_ip, null);
+    if (ipAllow?.length && !ipAllowed(ip, ipAllow)) return undefined; // same answer as an unknown token
+    // Record usage at most once a minute per token; admin tokens leave an audit trail.
     if ((lastUsedWrites.get(row.token_id) ?? 0) < Date.now() - 60_000) {
       lastUsedWrites.set(row.token_id, Date.now());
       void run('UPDATE api_tokens SET last_used_at = ? WHERE id = ?', now(), row.token_id).catch(() => undefined);
+      if (row.role === 'admin') void audit({ id: row.id, email: row.email }, 'token.used', row.token_id, { ip });
     }
-    return row;
+    return {
+      user: row,
+      token: { id: row.token_id, scopes: json<string[] | null>(row.t_scopes, null), blueprints: json<string[] | null>(row.t_blueprints, null), ipAllow },
+    };
   }
-  return one<UserRow>('SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires_at > ?', hash, now());
+  const s = await one<UserRow & { last_seen_at: string | null }>(
+    'SELECT u.*, s.last_seen_at FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires_at > ?',
+    hash,
+    now(),
+  );
+  if (!s) return undefined;
+  if (config.SESSION_IDLE_MINUTES && s.last_seen_at && Date.parse(s.last_seen_at) < Date.now() - config.SESSION_IDLE_MINUTES * 60_000) {
+    await run('DELETE FROM sessions WHERE token_hash = ?', hash);
+    return undefined;
+  }
+  // Refresh the idle clock at most once a minute per session.
+  if ((lastUsedWrites.get(hash) ?? 0) < Date.now() - 60_000) {
+    lastUsedWrites.set(hash, Date.now());
+    void run('UPDATE sessions SET last_seen_at = ? WHERE token_hash = ?', now(), hash).catch(() => undefined);
+  }
+  return { user: s };
 }
 
 declare module 'fastify' {
@@ -296,10 +417,31 @@ export const bearer = (req: FastifyRequest) => {
 /** Resolve the caller from a session or API token (Authorization: Bearer …). */
 export async function authenticate(req: FastifyRequest): Promise<Principal | undefined> {
   const token = bearer(req);
-  const user = token ? await userFromBearer(token) : undefined;
-  if (!user || user.active !== 1) return undefined;
-  req.principal = await principalOf(user);
+  const found = token ? await userFromBearer(token, req.ip) : undefined;
+  if (!found || found.user.active !== 1) return undefined;
+  const principal = await principalOf(found.user);
+  if (found.token && (found.token.scopes || found.token.blueprints)) {
+    principal.token = { id: found.token.id, scopes: found.token.scopes, blueprints: found.token.blueprints };
+    enforceTokenRestrictions(principal, req);
+  }
+  req.principal = principal;
   return req.principal;
+}
+
+/** Scope and blueprint restrictions of API tokens (403 with the missing scope named). */
+function enforceTokenRestrictions(p: Principal, req: FastifyRequest) {
+  const t = p.token!;
+  if (t.scopes) {
+    const needed: Scope = requiredScope(req.method, req.url);
+    if (!grants(t.scopes, needed)) throw forbidden(`This API token lacks the "${needed}" scope`);
+  }
+  if (t.blueprints) {
+    const bp = blueprintOfPath(req.url);
+    const queried = new URL(req.url, 'http://x').searchParams.get('blueprint');
+    const target = bp ?? queried;
+    // Cross-blueprint endpoints (home, global search) would reveal other blueprints: require an explicit one.
+    if (!target || !t.blueprints.includes(target)) throw forbidden('This API token is restricted to other blueprints');
+  }
 }
 
 /** preHandler: signed-in users and API tokens. */

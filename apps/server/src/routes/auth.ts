@@ -11,6 +11,9 @@ import {
   createLocalUser,
   createSession,
   deleteSession,
+  listSessions,
+  revokeAllSessions,
+  revokeSession,
   getUser,
   publicUser,
   requireUser,
@@ -62,7 +65,7 @@ export async function authRoutes(app: FastifyInstance) {
     }
     failures.delete(email);
     await audit({ id: user.id, email: user.email }, 'auth.login', null, { provider: 'local' });
-    return { token: await createSession(user.id), user: await publicUser(user) };
+    return { token: await createSession(user.id, { ip: req.ip, userAgent: req.headers['user-agent'] }), user: await publicUser(user) };
   });
 
   app.post('/api/auth/register', { config: rateLimit }, async (req) => {
@@ -71,7 +74,7 @@ export async function authRoutes(app: FastifyInstance) {
     assertPassword(body.password);
     const user = await createLocalUser(body.email, body.name, body.password);
     await audit({ id: user.id, email: user.email }, 'auth.registered', null, { role: user.role });
-    return { token: await createSession(user.id), user: await publicUser(user) };
+    return { token: await createSession(user.id, { ip: req.ip, userAgent: req.headers['user-agent'] }), user: await publicUser(user) };
   });
 
   app.post('/api/auth/logout', async (req) => {
@@ -84,6 +87,20 @@ export async function authRoutes(app: FastifyInstance) {
     ...(await publicUser((await getUser(req.principal.id))!)),
     permissions: await effectivePermissions(req.principal),
   }));
+  // Sessions of the caller: list, revoke one, or sign out everywhere (keeping this one with ?others=true).
+  app.get('/api/auth/sessions', { preHandler: requireUser }, async (req) => listSessions(req.principal.id, bearer(req)));
+  app.delete('/api/auth/sessions/:id', { preHandler: requireUser }, async (req) => {
+    const { id } = z.object({ id: z.string().min(8).max(64) }).parse(req.params);
+    await revokeSession(req.principal.id, id);
+    await audit({ id: req.principal.id, email: req.principal.email }, 'auth.session_revoked', id);
+    return { ok: true };
+  });
+  app.post('/api/auth/sessions/revoke-all', { preHandler: requireUser }, async (req) => {
+    const { others } = z.object({ others: z.boolean().default(false) }).parse(req.body ?? {});
+    const revoked = await revokeAllSessions(req.principal.id, others ? bearer(req) : undefined);
+    await audit({ id: req.principal.id, email: req.principal.email }, 'auth.sessions_revoked', null, { revoked, keptCurrent: others });
+    return { revoked };
+  });
   app.put('/api/auth/me/tour', { preHandler: requireUser }, async (req) => {
     const { completed } = z.object({ completed: z.boolean() }).parse(req.body);
     await setTourCompleted(req.principal.id, completed);
