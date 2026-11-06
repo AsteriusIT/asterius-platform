@@ -15,6 +15,7 @@ export function Login() {
   const [email, setEmail] = useState('');
   const [name, setName] = useState('');
   const [password, setPassword] = useState('');
+  const [bootstrapToken, setBootstrapToken] = useState('');
   const [error, setError] = useState<string | null>(params.get('error'));
   const [busy, setBusy] = useState(false);
   const from = (location.state as { from?: string } | null)?.from ?? '/';
@@ -27,7 +28,7 @@ export function Login() {
     setBusy(true);
     setError(null);
     try {
-      const r = mode === 'login' ? await api.login(email, password) : await api.register(email, name, password);
+      const r = mode === 'login' ? await api.login(email, password) : await api.register(email, name, password, bootstrapToken.trim() || undefined);
       signIn(r.token);
     } catch (err) {
       setError(errorText(err));
@@ -76,6 +77,15 @@ export function Login() {
                   autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
                   description={mode === 'register' ? 'At least 10 characters' : undefined}
                 />
+                {mode === 'register' && (
+                  <TextInput
+                    label="Bootstrap token"
+                    description="Only for the very first administrator (BOOTSTRAP_TOKEN); leave empty otherwise"
+                    value={bootstrapToken}
+                    onChange={(e) => setBootstrapToken(e.currentTarget.value)}
+                    autoComplete="off"
+                  />
+                )}
                 <Button type="submit" loading={busy}>
                   {mode === 'login' ? 'Sign in' : 'Create account'}
                 </Button>

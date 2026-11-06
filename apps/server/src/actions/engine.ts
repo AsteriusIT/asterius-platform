@@ -3,7 +3,7 @@ import type { InvokerConfig, RunLog } from '@asterius/shared';
 import { config } from '../config.js';
 import { all, json, later, now, one, run as exec } from '../db.js';
 import { conflict, badRequest, errorMessage, forbidden } from '../lib/errors.js';
-import { evaluate, redact, render } from '../lib/expr.js';
+import { evaluate, redact, redactDeep, render } from '../lib/expr.js';
 import { resolveRef, stepToken } from '../secrets.js';
 import { audit, SYSTEM } from '../audit.js';
 import { actorOf, type Principal } from '../auth/users.js';
@@ -253,7 +253,9 @@ async function invokeEnv(r: RunRow, def: Extract<Step, { type: 'invoke' }>, rows
   return { env, secrets };
 }
 
-async function applyInvokeResult(runId: string, stepId: string, res: InvokeResult, polls: boolean) {
+async function applyInvokeResult(runId: string, stepId: string, res: InvokeResult, polls: boolean, secrets: string[] = []) {
+  // Whatever the external system echoed back (webhook answers, job output) is stored: mask the secrets it may contain.
+  res = { ...res, result: redactDeep(res.result, secrets), statusLabel: res.statusLabel == null ? res.statusLabel : redact(res.statusLabel, secrets) };
   if (res.status === 'SUCCESS' || res.status === 'FAILURE')
     return complete(runId, stepId, ['RUNNING'], { status: res.status, output: res.result ?? null, link: res.link, statusLabel: res.statusLabel });
   const ok = await setStep(runId, stepId, 'RUNNING', {
@@ -283,7 +285,7 @@ export async function executeStep(runId: string, stepId: string) {
         const inv = getInvoker(def.invoker.type);
         const built = await invokeEnv(r, def, rows);
         secrets = built.secrets;
-        await applyInvokeResult(runId, stepId, await inv.start(built.env), !!inv.poll);
+        await applyInvokeResult(runId, stepId, await inv.start(built.env), !!inv.poll, secrets);
       } else if (def.type === 'agent') {
         const ctx = await buildContext(r, rows, stepId);
         const rendered = await render({ prompt: def.prompt, system: def.system, apiKey: def.apiKey }, ctx, resolveRef);
@@ -328,7 +330,7 @@ export async function pollStep(runId: string, stepId: string) {
     if (!inv.poll) return;
     const built = await invokeEnv(r, def, rows);
     secrets = built.secrets;
-    await applyInvokeResult(runId, stepId, await inv.poll(built.env, json(row.state, {})), true);
+    await applyInvokeResult(runId, stepId, await inv.poll(built.env, json(row.state, {})), true, secrets);
   } catch (err) {
     await addLog(runId, redact(`Status check failed: ${errorMessage(err)}`, secrets), 'warn', stepId);
     await setStep(runId, stepId, 'RUNNING', { next_at: later(config.RUN_POLL_SECONDS * 2000) });
@@ -344,10 +346,31 @@ export interface StepUpdate {
   logs?: { message: string; level?: RunLog['level'] }[];
 }
 
+/** Secret values a step was given (rendered invoker config + its callback token): used to mask what it reports back. */
+export async function stepSecrets(runId: string, stepId: string): Promise<string[]> {
+  try {
+    const r = await getRunRow(runId);
+    const def = stepDefs(r).find((d) => d.id === stepId);
+    if (!def) return [];
+    if (def.type === 'invoke') return (await invokeEnv(r, def, await loadSteps(runId))).secrets;
+    return [stepToken(runId, stepId)];
+  } catch {
+    return [stepToken(runId, stepId)];
+  }
+}
+
 export async function updateStep(runId: string, stepId: string, u: StepUpdate): Promise<boolean> {
   const row = await one<StepRow>('SELECT * FROM run_steps WHERE run_id = ? AND step_id = ?', runId, stepId);
   if (!row || row.status !== 'RUNNING') return false;
-  for (const l of u.logs ?? []) await addLog(runId, l.message, l.level ?? 'info', stepId);
+  // The external system may echo credentials (a pipeline printing its environment): mask before anything is stored.
+  const secrets = await stepSecrets(runId, stepId);
+  for (const l of u.logs ?? []) await addLog(runId, redact(l.message, secrets), l.level ?? 'info', stepId);
+  u = {
+    ...u,
+    result: redactDeep(u.result, secrets),
+    statusLabel: u.statusLabel == null ? u.statusLabel : redact(u.statusLabel, secrets),
+    link: u.link == null ? u.link : redact(u.link, secrets),
+  };
   if (u.status === 'SUCCESS' || u.status === 'FAILURE')
     return complete(runId, stepId, ['RUNNING'], { status: u.status, output: u.result, link: u.link, statusLabel: u.statusLabel });
   if (u.statusLabel !== undefined || u.link !== undefined) {

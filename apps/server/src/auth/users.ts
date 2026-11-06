@@ -1,9 +1,10 @@
 import { createHash, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import type { FastifyReply, FastifyRequest } from 'fastify';
-import { config } from '../config.js';
+import { config, isLocalUrl } from '../config.js';
 import { all, json, later, newId, now, one, run, tx } from '../db.js';
 import type { ApiToken, PublicUser, Role, Subjects, TeamRef, UserProvider } from '@asterius/shared';
 import { badRequest, conflict, notFound } from '../lib/errors.js';
+import { purgeLoginFailures } from './lockout.js';
 
 // ---------- passwords & tokens ----------
 export function hashPassword(password: string) {
@@ -36,6 +37,8 @@ export interface UserRow {
   role: Role;
   active: number;
   groups: string;
+  /** 1: an admin (or the bootstrap rule) set the role by hand; Entra claims no longer change it. */
+  role_override: number;
   last_login_at: string | null;
   tour_completed_at: string | null;
   created_at: string;
@@ -76,14 +79,26 @@ export async function publicUser(u: UserRow): Promise<PublicUser> {
 
 export const getUser = (id: string) => one<UserRow>('SELECT * FROM users WHERE id = ?', id);
 
-/** Admin bootstrap: ADMIN_EMAILS, or the very first human account when no admin exists yet. */
-async function initialRole(email: string): Promise<Role> {
+/**
+ * Admin bootstrap, in order: ADMIN_EMAILS; the one-time BOOTSTRAP_TOKEN (only while no admin exists); and, as a
+ * development fallback only (local PUBLIC_URL, no ADMIN_EMAILS, no BOOTSTRAP_TOKEN), the very first human account.
+ */
+async function initialRole(email: string, bootstrapToken?: string): Promise<Role> {
   if (config.ADMIN_EMAILS.includes(email.toLowerCase())) return 'admin';
   const admin = await one("SELECT id FROM users WHERE role = 'admin' AND provider != 'service' LIMIT 1");
-  return admin ? 'member' : 'admin';
+  if (admin) return 'member';
+  if (config.BOOTSTRAP_TOKEN && bootstrapToken && sameSecret(bootstrapToken, config.BOOTSTRAP_TOKEN)) return 'admin';
+  if (!config.BOOTSTRAP_TOKEN && !config.ADMIN_EMAILS.length && isLocalUrl(config.PUBLIC_URL)) {
+    console.warn(`[auth] no admin exists: ${email} becomes the first admin (development fallback). Set ADMIN_EMAILS or BOOTSTRAP_TOKEN for real installs.`);
+    return 'admin';
+  }
+  console.warn(`[auth] no admin exists and ${email} is not allowed to bootstrap one: set ADMIN_EMAILS, ENTRA_ADMIN_GROUPS or BOOTSTRAP_TOKEN`);
+  return 'member';
 }
 
-export async function createLocalUser(email: string, name: string, password: string) {
+const sameSecret = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
+
+export async function createLocalUser(email: string, name: string, password: string, bootstrapToken?: string) {
   email = email.toLowerCase();
   if (await one("SELECT id FROM users WHERE provider = 'local' AND email = ?", email)) throw conflict('An account already exists for this email');
   const id = newId();
@@ -93,38 +108,51 @@ export async function createLocalUser(email: string, name: string, password: str
     email,
     name,
     hashPassword(password),
-    await initialRole(email),
+    await initialRole(email, bootstrapToken),
     now(),
   );
   return (await getUser(id))!;
 }
 
+/**
+ * Role of an Entra user, recomputed from the claims on every sign-in and re-sync: admin when a group in
+ * ENTRA_ADMIN_GROUPS (or ADMIN_EMAILS) matches, member otherwise, so removing someone from the group demotes them.
+ * Only a role set by hand (role_override) is kept.
+ */
+export function entraRole(user: Pick<UserRow, 'role' | 'role_override'> | undefined, email: string, groups: string[]): Role {
+  if (groups.some((g) => config.ENTRA_ADMIN_GROUPS.includes(g)) || config.ADMIN_EMAILS.includes(email.toLowerCase())) return 'admin';
+  if (user && Number(user.role_override) === 1) return user.role;
+  return 'member';
+}
+
 /** Entra ID sign-in: upsert the user, then synchronise team memberships and admin role from group claims. */
 export async function upsertEntraUser(p: { externalId: string; email: string; name: string; groups: string[] }) {
   let user = await one<UserRow>("SELECT * FROM users WHERE provider = 'entra' AND external_id = ?", p.externalId);
-  const groupAdmin = p.groups.some((g) => config.ENTRA_ADMIN_GROUPS.includes(g));
   if (user) {
-    const role: Role = groupAdmin || config.ADMIN_EMAILS.includes(p.email) ? 'admin' : user.role;
     await run(
       'UPDATE users SET email = ?, name = ?, groups = ?, role = ?, last_login_at = ? WHERE id = ?',
       p.email,
       p.name,
       JSON.stringify(p.groups),
-      role,
+      entraRole(user, p.email, p.groups),
       now(),
       user.id,
     );
   } else {
     const id = newId();
-    const role: Role = groupAdmin ? 'admin' : await initialRole(p.email);
+    const fromClaims = entraRole(undefined, p.email, p.groups) === 'admin';
+    // Bootstrap (no admin yet): the first account becomes admin and keeps it until an admin changes it.
+    const role: Role = fromClaims ? 'admin' : await initialRole(p.email);
+    const override = !fromClaims && role === 'admin' ? 1 : 0;
     await run(
-      "INSERT INTO users (id, provider, external_id, email, name, groups, role, last_login_at, created_at) VALUES (?, 'entra', ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO users (id, provider, external_id, email, name, groups, role, role_override, last_login_at, created_at) VALUES (?, 'entra', ?, ?, ?, ?, ?, ?, ?, ?)",
       id,
       p.externalId,
       p.email,
       p.name,
       JSON.stringify(p.groups),
       role,
+      override,
       now(),
       now(),
     );
@@ -161,7 +189,7 @@ export async function listUsers(): Promise<PublicUser[]> {
 export async function updateUser(id: string, patch: { role?: Role; active?: boolean; teams?: string[] }) {
   const u = await getUser(id);
   if (!u) throw notFound('User');
-  if (patch.role) await run('UPDATE users SET role = ? WHERE id = ?', patch.role, id);
+  if (patch.role) await run('UPDATE users SET role = ?, role_override = 1 WHERE id = ?', patch.role, id);
   if (patch.active !== undefined) {
     await run('UPDATE users SET active = ? WHERE id = ?', patch.active ? 1 : 0, id);
     if (!patch.active) await run('DELETE FROM sessions WHERE user_id = ?', id);
@@ -195,6 +223,7 @@ export async function purgeExpiredAuth() {
   const t = now();
   await run('DELETE FROM sessions WHERE expires_at < ?', t);
   await run('DELETE FROM oauth_states WHERE expires_at < ?', t);
+  await purgeLoginFailures();
 }
 
 // ---------- API tokens ----------

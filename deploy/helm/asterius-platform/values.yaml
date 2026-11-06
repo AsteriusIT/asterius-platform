@@ -68,12 +68,15 @@ secrets:
 auth:
   providers: entra # local | entra | local,entra
   allowRegistration: false
-  adminEmails: [] # bootstrap admins
+  adminEmails: [] # bootstrap admins (alternatively put a one-time BOOTSTRAP_TOKEN in the Secret: the first account registered with it becomes admin)
   sessionDays: 7
   entra:
     tenantId: ""
     clientId: ""
     adminGroups: [] # Entra group object ids whose members are platform admins
+    # Re-sync roles/teams of signed-in users every N minutes (0: at sign-in only). Needs the Graph application
+    # permission GroupMember.Read.All on the app registration (also resolves the >200 groups overage).
+    resyncMinutes: 60
 
 # ---------- configuration as code ----------
 # Files mounted at /etc/asterius/config (blueprints, actions, integrations, webhooks, teams).
@@ -85,6 +88,13 @@ config:
   # Use the example configuration baked in the image (demo / first steps).
   useImageDefaults: false
 
+# ---------- outbound HTTP (SSRF guard) ----------
+# Invokers, pull sources and outbound webhooks cannot reach loopback, private (10/8, 172.16/12, 192.168/16),
+# link-local or cloud metadata (169.254.169.254) addresses unless allowed here (hostnames, *.suffix, IPs, CIDRs).
+outbound:
+  allow: [] # e.g. ["*.internal.example.com", "10.20.0.0/16"]
+  deny: [] # never reachable, wins over allow
+
 # ---------- settings ----------
 settings:
   logLevel: info
@@ -92,6 +102,9 @@ settings:
   runTimeoutHours: 24
   httpTimeoutSeconds: 30
   retentionDays: 90
+  # Proxies whose X-Forwarded-For is trusted for client IPs (rate limit, login lockout): the ingress controller's
+  # CIDR is best, e.g. "10.42.0.0/16". Default: private ranges only (never a client-supplied header from the internet).
+  trustProxy: "loopback,linklocal,uniquelocal"
 # Extra non-secret environment variables.
 extraEnv: {}
 
@@ -139,6 +152,10 @@ rbac:
         verbs: [get, list]
   # Namespaces where the Kubernetes Job invoker may create jobs (and read their pods' logs).
   jobNamespaces: []
+  # Service accounts an action may run its jobs as (empty: any service account of the namespace).
+  jobServiceAccounts: []
+  # Other kubeconfig contexts the Job invoker may target (default: only the in-cluster one).
+  jobContexts: []
 
 serviceAccount:
   create: true
@@ -147,6 +164,9 @@ serviceAccount:
 
 # ---------- observability ----------
 metrics:
+  # /metrics is protected by a METRICS_TOKEN (generated in the chart-managed Secret and used by the ServiceMonitor).
+  # With secrets.existingSecret, put METRICS_TOKEN in it and set this to true so the ServiceMonitor sends it.
+  tokenInExistingSecret: false
   serviceMonitor:
     enabled: false
     interval: 30s

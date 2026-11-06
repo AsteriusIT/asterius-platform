@@ -1,4 +1,5 @@
-import { kube, type k8s } from '../../lib/kube.js';
+import { config as platform } from '../../config.js';
+import { k8s, kube } from '../../lib/kube.js';
 import { requireFields, str, stringValues, type Invoker } from '../types.js';
 
 /**
@@ -10,6 +11,35 @@ const MANAGED_BY = { 'app.kubernetes.io/managed-by': 'asterius-platform' };
 /** Pod states that will not resolve by waiting: fail the run with Kubernetes' explanation. */
 const STUCK = new Set(['CreateContainerConfigError', 'CreateContainerError', 'ErrImagePull', 'ImagePullBackOff', 'InvalidImageName']);
 const jobName = (runId: string) => `asterius-run-${runId.replace(/-/g, '').slice(0, 16)}`;
+
+/** Pod security context fields an action author may set; everything else (privileged, host*, sysctls, runAsNonRoot: false…) is refused. */
+const POD_SECURITY_FIELDS = new Set(['runAsUser', 'runAsGroup', 'fsGroup', 'supplementalGroups', 'fsGroupChangePolicy', 'seccompProfile', 'runAsNonRoot']);
+const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+export function checkSecurityContext(sc: unknown) {
+  if (sc == null) return;
+  if (typeof sc !== 'object' || Array.isArray(sc)) throw new Error('kubernetes-job: securityContext must be an object');
+  const c = sc as Record<string, unknown>;
+  for (const k of Object.keys(c))
+    if (!POD_SECURITY_FIELDS.has(k)) throw new Error(`kubernetes-job: securityContext.${k} is not allowed (allowed: ${[...POD_SECURITY_FIELDS].join(', ')})`);
+  if (c.runAsNonRoot === false) throw new Error('kubernetes-job: containers must run as non-root (runAsNonRoot cannot be false)');
+  if (c.runAsUser === 0 || c.runAsGroup === 0) throw new Error('kubernetes-job: runAsUser / runAsGroup 0 (root) is not allowed');
+  const t = (c.seccompProfile as { type?: string } | undefined)?.type;
+  if (c.seccompProfile !== undefined && t !== 'RuntimeDefault' && t !== 'Localhost')
+    throw new Error('kubernetes-job: seccompProfile must be RuntimeDefault or Localhost');
+}
+
+const inList = (list: string[], v: string) => !list.length || list.includes(v);
+/** Admin allow-lists (KUBE_JOB_*): where jobs may run and as which service account. */
+export function checkTarget(namespace: string | undefined, serviceAccount: string | undefined, context: string | undefined) {
+  if (namespace && !inList(platform.KUBE_JOB_NAMESPACES, namespace))
+    throw new Error(`kubernetes-job: namespace "${namespace}" is not allowed (KUBE_JOB_NAMESPACES)`);
+  if (serviceAccount && !inList(platform.KUBE_JOB_SERVICE_ACCOUNTS, serviceAccount))
+    throw new Error(`kubernetes-job: service account "${serviceAccount}" is not allowed (KUBE_JOB_SERVICE_ACCOUNTS)`);
+  if (context && !platform.KUBE_JOB_CONTEXTS.includes(context))
+    throw new Error(`kubernetes-job: kubeconfig context "${context}" is not allowed (KUBE_JOB_CONTEXTS)`);
+}
+const literal = (v: unknown) => (typeof v === 'string' && v && !v.includes('{{') && !v.includes('${') ? v : undefined);
 
 export const kubernetesJobInvoker: Invoker = {
   info: {
@@ -39,16 +69,28 @@ export const kubernetesJobInvoker: Invoker = {
       securityContext: { runAsUser: 10001 },
     },
   },
-  validate: (c) => requireFields(c, ['namespace', 'image'], 'kubernetes-job'),
+  validate(c) {
+    requireFields(c, ['namespace', 'image'], 'kubernetes-job');
+    checkSecurityContext(c.securityContext);
+    // Templated values are checked again when the job starts.
+    checkTarget(literal(c.namespace), literal(c.serviceAccountName), literal(c.context));
+  },
   async start({ ctx, config, log }) {
     const name = jobName(ctx.run.id);
     const namespace = str(config.namespace);
-    const env = Object.entries({
+    const serviceAccount = config.serviceAccountName ? str(config.serviceAccountName) : undefined;
+    const context = config.context ? str(config.context) : undefined;
+    checkTarget(namespace, serviceAccount, context);
+    checkSecurityContext(config.securityContext);
+    // Rendered secrets and the callback token never go in the Job spec (readable by anyone who can `get jobs`):
+    // they live in a per-run Secret, referenced with envFrom and garbage-collected with the Job.
+    const vars = {
       ...stringValues(config.env),
       ASTERIUS_RUN: JSON.stringify({ ...ctx, run: { id: ctx.run.id, url: ctx.run.url } }),
       ASTERIUS_CALLBACK_URL: ctx.run.callback.url,
       ASTERIUS_CALLBACK_TOKEN: ctx.run.callback.token,
-    }).map(([n, value]) => ({ name: n, value }));
+    };
+    for (const n of Object.keys(vars)) if (!ENV_NAME.test(n)) throw new Error(`kubernetes-job: invalid environment variable name "${n}"`);
     const job: k8s.V1Job = {
       apiVersion: 'batch/v1',
       kind: 'Job',
@@ -61,13 +103,13 @@ export const kubernetesJobInvoker: Invoker = {
           metadata: { labels: { ...MANAGED_BY, 'asterius.io/run-id': ctx.run.id } },
           spec: {
             restartPolicy: 'Never',
-            serviceAccountName: config.serviceAccountName ? str(config.serviceAccountName) : undefined,
+            serviceAccountName: serviceAccount,
             automountServiceAccountToken: !!config.serviceAccountName,
             // Hardened by default; images that run as root need e.g. `securityContext: { runAsUser: 65534 }`.
             securityContext: {
-              runAsNonRoot: true,
               seccompProfile: { type: 'RuntimeDefault' },
               ...((config.securityContext as k8s.V1PodSecurityContext) ?? {}),
+              runAsNonRoot: true, // not overridable
             },
             containers: [
               {
@@ -75,7 +117,7 @@ export const kubernetesJobInvoker: Invoker = {
                 image: str(config.image),
                 command: Array.isArray(config.command) ? config.command.map(str) : undefined,
                 args: Array.isArray(config.args) ? config.args.map(str) : undefined,
-                env,
+                envFrom: [{ secretRef: { name } }],
                 resources: (config.resources as k8s.V1ResourceRequirements) ?? { requests: { cpu: '100m', memory: '128Mi' }, limits: { memory: '1Gi' } },
                 securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: ['ALL'] } },
               },
@@ -84,7 +126,26 @@ export const kubernetesJobInvoker: Invoker = {
         },
       },
     };
-    await kube(config.context ? str(config.context) : undefined).batch.createNamespacedJob({ namespace, body: job });
+    const k = kube(context);
+    const secret: k8s.V1Secret = {
+      apiVersion: 'v1',
+      kind: 'Secret',
+      metadata: { name, namespace, labels: { ...MANAGED_BY, 'asterius.io/run-id': ctx.run.id } },
+      type: 'Opaque',
+      stringData: vars,
+    };
+    await k.core.createNamespacedSecret({ namespace, body: secret });
+    try {
+      const created = await k.batch.createNamespacedJob({ namespace, body: job });
+      // The Secret is deleted with the Job (TTL, cancel, failure cleanup).
+      await k.core.patchNamespacedSecret(
+        { name, namespace, body: { metadata: { ownerReferences: [{ apiVersion: 'batch/v1', kind: 'Job', name, uid: created.metadata!.uid! }] } } },
+        k8s.setHeaderOptions('Content-Type', k8s.PatchStrategy.MergePatch),
+      );
+    } catch (err) {
+      await k.core.deleteNamespacedSecret({ name, namespace }).catch(() => undefined);
+      throw err;
+    }
     await log(`Job ${namespace}/${name} created (${config.image})`);
     return { status: 'IN_PROGRESS', state: { name, namespace }, statusLabel: 'job created' };
   },

@@ -14,6 +14,7 @@ data:
   RUN_POLL_SECONDS: {{ $v.settings.runPollSeconds | quote }}
   RUN_TIMEOUT_HOURS: {{ $v.settings.runTimeoutHours | quote }}
   HTTP_TIMEOUT_SECONDS: {{ $v.settings.httpTimeoutSeconds | quote }}
+  TRUST_PROXY: {{ $v.settings.trustProxy | quote }}
   RETENTION_DAYS: {{ $v.settings.retentionDays | quote }}
   AUTH_PROVIDERS: {{ $v.auth.providers | quote }}
   ALLOW_REGISTRATION: {{ $v.auth.allowRegistration | quote }}
@@ -26,6 +27,12 @@ data:
   ENTRA_CLIENT_ID: {{ . | quote }}
   {{- end }}
   ENTRA_ADMIN_GROUPS: {{ join "," $v.auth.entra.adminGroups | quote }}
+  ENTRA_RESYNC_MINUTES: {{ $v.auth.entra.resyncMinutes | quote }}
+  KUBE_JOB_NAMESPACES: {{ join "," $v.rbac.jobNamespaces | quote }}
+  KUBE_JOB_SERVICE_ACCOUNTS: {{ join "," $v.rbac.jobServiceAccounts | quote }}
+  KUBE_JOB_CONTEXTS: {{ join "," $v.rbac.jobContexts | quote }}
+  OUTBOUND_ALLOW: {{ join "," $v.outbound.allow | quote }}
+  OUTBOUND_DENY: {{ join "," $v.outbound.deny | quote }}
   {{- with $v.tracing.otlpEndpoint }}
   OTEL_EXPORTER_OTLP_ENDPOINT: {{ . | quote }}
   OTEL_SERVICE_NAME: asterius-platform
@@ -51,6 +58,8 @@ data:
 {{- $name := include "ap.secretName" . }}
 {{- $existing := lookup "v1" "Secret" .Release.Namespace $name }}
 {{- $key := $v.secrets.values.SECRETS_KEY | default (and $existing (index $existing.data "SECRETS_KEY" | default "" | b64dec)) | default (randBytes 32) }}
+{{- /* /metrics is reachable through the ingress (same service): always protect it with a token, generated once and kept. */ -}}
+{{- $metricsToken := $v.secrets.values.METRICS_TOKEN | default (and $existing (index $existing.data "METRICS_TOKEN" | default "" | b64dec)) | default (randAlphaNum 40) }}
 apiVersion: v1
 kind: Secret
 metadata:
@@ -61,10 +70,11 @@ metadata:
 type: Opaque
 stringData:
   SECRETS_KEY: {{ $key | quote }}
+  METRICS_TOKEN: {{ $metricsToken | quote }}
   {{- with $v.database.url }}
   DATABASE_URL: {{ . | quote }}
   {{- end }}
-  {{- range $k, $val := omit $v.secrets.values "SECRETS_KEY" }}
+  {{- range $k, $val := omit $v.secrets.values "SECRETS_KEY" "METRICS_TOKEN" }}
   {{ $k }}: {{ $val | quote }}
   {{- end }}
 {{- end }}

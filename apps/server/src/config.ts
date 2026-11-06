@@ -1,12 +1,6 @@
 import { z } from 'zod';
 import path from 'node:path';
 
-const bool = (def: boolean) =>
-  z
-    .string()
-    .optional()
-    .transform((v) => (v === undefined || v === '' ? def : v === 'true' || v === '1'));
-
 const list = z
   .string()
   .default('')
@@ -23,6 +17,12 @@ const schema = z.object({
   PLATFORM_ROLE: z.enum(['all', 'api', 'worker']).default('all'),
   /** SQLite file location when DATABASE_URL is empty (local development, single instance). */
   DATA_DIR: z.string().default(path.resolve(process.cwd(), '../../data')),
+  /**
+   * Proxies whose X-Forwarded-For is believed (client IPs for rate limiting and lockout): `true`, `false`, a number of
+   * hops, or a comma-separated list of addresses / CIDRs / names (`loopback`, `linklocal`, `uniquelocal`). The default
+   * trusts private ranges only, i.e. an in-cluster ingress controller; set the ingress CIDR to be strict.
+   */
+  TRUST_PROXY: z.string().default('loopback,linklocal,uniquelocal'),
   PUBLIC_URL: z.string().default('http://localhost:5173'),
   /** postgres://… (required for several replicas). Empty: SQLite under DATA_DIR. */
   DATABASE_URL: z.string().optional(),
@@ -42,7 +42,14 @@ const schema = z.object({
     .optional()
     .transform((v) => (v || 'local').split(',').map((x) => x.trim()))
     .pipe(z.array(z.enum(['local', 'entra'])).min(1)),
-  ALLOW_REGISTRATION: bool(true),
+  /** Open self-registration. Default: on for a local PUBLIC_URL (development), off once a real public URL is set. */
+  ALLOW_REGISTRATION: z.string().optional(),
+  /**
+   * One-time bootstrap secret: the first account registered with it (`bootstrapToken` field) becomes admin while no
+   * admin exists. Without it (and without ADMIN_EMAILS), the first-registrant-is-admin fallback only applies to a local
+   * PUBLIC_URL.
+   */
+  BOOTSTRAP_TOKEN: z.string().optional(),
   /** Users with these emails are admins (bootstrap). The first local user is admin too when no admin exists. */
   ADMIN_EMAILS: list.transform((v) => v.map((x) => x.toLowerCase())),
   SESSION_DAYS: z.coerce.number().default(7),
@@ -52,6 +59,12 @@ const schema = z.object({
   ENTRA_REDIRECT_URI: z.string().optional(),
   /** Entra group object ids whose members are admins. */
   ENTRA_ADMIN_GROUPS: list,
+  /**
+   * Minutes between re-synchronisations of the roles and teams of Entra users with an active session (0: sign-in only).
+   * Also needs the app registration to hold the Microsoft Graph application permission GroupMember.Read.All (admin
+   * consent), which is how group overage (more than 200 groups) is resolved at sign-in too.
+   */
+  ENTRA_RESYNC_MINUTES: z.coerce.number().int().min(0).default(60),
 
   // ---- workers ----
   /** Concurrent action runs per worker process. */
@@ -64,6 +77,20 @@ const schema = z.object({
   HTTP_TIMEOUT_SECONDS: z.coerce.number().default(30),
   /** Keep run logs, sync runs, deliveries and audit entries for N days. */
   RETENTION_DAYS: z.coerce.number().int().min(1).default(90),
+  /**
+   * SSRF guard for outbound HTTP. Private, loopback and link-local destinations (incl. cloud metadata) are blocked;
+   * OUTBOUND_ALLOW lists hostnames, `*.suffix`, IPs or CIDRs that may be reached anyway (e.g. `*.internal,10.20.0.0/16`),
+   * OUTBOUND_DENY lists destinations that are never reachable (it wins over the allow list).
+   */
+  OUTBOUND_ALLOW: list,
+  OUTBOUND_DENY: list,
+  /**
+   * Kubernetes Job invoker allow-lists (empty: no restriction on namespaces / service accounts; the platform's RBAC still
+   * applies). Other kubeconfig contexts than the default one are refused unless listed in KUBE_JOB_CONTEXTS.
+   */
+  KUBE_JOB_NAMESPACES: list,
+  KUBE_JOB_SERVICE_ACCOUNTS: list,
+  KUBE_JOB_CONTEXTS: list,
   KUBECONFIG_PATH: z.string().optional(),
 
   // ---- AI agent steps (Claude) ----
@@ -74,7 +101,12 @@ const schema = z.object({
 });
 
 const parsed = schema.parse(process.env);
-export const config = { ...parsed, PUBLIC_URL: parsed.PUBLIC_URL.replace(/\/$/, '') };
+export const isLocalUrl = (u: string) => /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/i.test(u);
+export const config = {
+  ...parsed,
+  PUBLIC_URL: parsed.PUBLIC_URL.replace(/\/$/, ''),
+  ALLOW_REGISTRATION: parsed.ALLOW_REGISTRATION ? parsed.ALLOW_REGISTRATION === 'true' || parsed.ALLOW_REGISTRATION === '1' : isLocalUrl(parsed.PUBLIC_URL),
+};
 export type Config = typeof config;
 
 export const paths = {

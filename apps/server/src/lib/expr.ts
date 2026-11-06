@@ -106,9 +106,51 @@ export function checkTemplate(template: unknown) {
   walk(template);
 }
 
-/** Replace known secret values in a log line. */
+/** Secrets shorter than this are not masked (masking 4-character substrings would shred ordinary text). */
+export const MIN_SECRET_LENGTH = 8;
+
+/**
+ * The forms a secret takes once it travelled through a header, a URL or a JSON body: raw, URL-encoded, JSON-escaped,
+ * hex, and base64 / base64url (including the three byte alignments, since `user:secret` encodes differently from `secret`).
+ */
+export function secretVariants(secret: string): string[] {
+  const out = new Set<string>([secret]);
+  const add = (v: string) => v.length >= MIN_SECRET_LENGTH && out.add(v);
+  add(encodeURIComponent(secret));
+  add(encodeURI(secret));
+  add(JSON.stringify(secret).slice(1, -1));
+  add(Buffer.from(secret).toString('hex'));
+  const bytes = Buffer.from(secret);
+  for (let k = 0; k < 3; k++) {
+    const enc = Buffer.concat([Buffer.alloc(k), bytes]).toString('base64');
+    // Drop the characters that mix in the bytes before / after the secret, and the padding.
+    const head = k ? Math.ceil((k * 8) / 6) : 0;
+    const body = enc.replace(/=+$/, '');
+    const tail = (k + bytes.length) % 3 ? 1 : 0;
+    const core = body.slice(head, body.length - tail);
+    if (core.length >= MIN_SECRET_LENGTH) {
+      out.add(core);
+      out.add(core.replace(/\+/g, '-').replace(/\//g, '_'));
+    }
+  }
+  return [...out];
+}
+
+/** Replace known secret values (and their encoded forms) in persisted text: run logs, results, sync logs. */
 export function redact(text: string, secrets: string[]) {
   let out = text;
-  for (const s of secrets) if (s.length >= 4) out = out.split(s).join('****');
+  const all = new Set<string>();
+  for (const s of secrets) if (s.length >= MIN_SECRET_LENGTH) for (const v of secretVariants(s)) all.add(v);
+  // Longest first, so a variant that contains a shorter one is masked as a whole.
+  for (const v of [...all].sort((a, b) => b.length - a.length)) out = out.split(v).join('****');
   return out;
+}
+
+/** Redact every string inside a JSON-like value. */
+export function redactDeep<T>(value: T, secrets: string[]): T {
+  if (!secrets.length) return value;
+  if (typeof value === 'string') return redact(value, secrets) as T;
+  if (Array.isArray(value)) return value.map((v) => redactDeep(v, secrets)) as T;
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, redactDeep(v, secrets)])) as T;
+  return value;
 }

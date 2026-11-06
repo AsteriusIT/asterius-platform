@@ -3,6 +3,7 @@ import fastifyStatic from '@fastify/static';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import fs from 'node:fs';
+import { timingSafeEqual } from 'node:crypto';
 import path from 'node:path';
 import { ZodError } from 'zod';
 import { config } from './config.js';
@@ -14,6 +15,18 @@ import { catalogRoutes } from './routes/catalog.js';
 import { actionRoutes } from './routes/actions.js';
 import { integrationRoutes } from './routes/integrations.js';
 import { adminRoutes } from './routes/admin.js';
+import { migrateLiteralWebhookSecrets } from './webhooks/webhooks.js';
+
+function trustProxy(v: string): boolean | string[] | ((address: string, hop: number) => boolean) {
+  const t = v.trim().toLowerCase();
+  if (t === 'true') return true;
+  if (t === '' || t === 'false') return false;
+  if (/^\d+$/.test(t)) return (_address, hop) => hop < Number(t); // trust the last N hops
+  return t
+    .split(',')
+    .map((x) => x.trim())
+    .filter(Boolean);
+}
 
 export interface AppOptions {
   reloadConfig?: () => Promise<void>;
@@ -22,10 +35,11 @@ export interface AppOptions {
 
 /** HTTP application (no listen, no background workers): used by index.ts and by tests through `inject`. */
 export async function buildApp(opts: AppOptions = {}): Promise<FastifyInstance> {
+  await migrateLiteralWebhookSecrets();
   const app = Fastify({
     logger: opts.logger === false ? false : { level: config.LOG_LEVEL, redact: ['req.headers.authorization', 'req.headers["x-asterius-token"]'] },
     bodyLimit: 5 * 1024 * 1024,
-    trustProxy: true, // behind the ingress controller: client IPs for rate limiting
+    trustProxy: trustProxy(config.TRUST_PROXY), // behind the ingress controller: client IPs for rate limiting and lockout
   });
 
   // Keep the raw body: inbound webhooks verify HMAC signatures over the exact bytes.
@@ -73,7 +87,14 @@ export async function buildApp(opts: AppOptions = {}): Promise<FastifyInstance> 
     return reply.code(r.ok ? 200 : 503).send(r);
   });
   app.get('/metrics', { config: { rateLimit: false } }, async (req, reply) => {
-    if (config.METRICS_TOKEN && req.headers.authorization !== `Bearer ${config.METRICS_TOKEN}`) return reply.code(401).send({ error: 'unauthorized' });
+    if (config.METRICS_TOKEN) {
+      const got = Buffer.from(req.headers.authorization ?? '');
+      const want = Buffer.from(`Bearer ${config.METRICS_TOKEN}`);
+      if (got.length !== want.length || !timingSafeEqual(got, want)) return reply.code(401).send({ error: 'unauthorized' });
+    } else if (req.headers['x-forwarded-for'] || req.headers.forwarded || req.headers['x-real-ip']) {
+      // No token configured: scrapers inside the cluster reach the pod directly; anything that came through the ingress is refused.
+      return reply.code(404).send({ error: 'not found' });
+    }
     return reply.type(registry.contentType).send(await registry.metrics());
   });
 

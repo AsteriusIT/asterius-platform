@@ -231,6 +231,9 @@ export type IntegrationDef = z.infer<typeof integrationDef>;
 
 export const WEBHOOK_EVENTS = ['entity.created', 'entity.updated', 'entity.deleted', 'run.created', 'run.updated'] as const;
 
+/** A `${secret:NAME}` / `${env:NAME}` reference (the only form accepted where a credential is configured). */
+export const SECRET_REF = /^\$\{(secret|env):[A-Za-z0-9_.-]+\}$/;
+
 export const webhookDef = z.object({
   identifier: slug,
   title: z.string().min(1).max(100),
@@ -238,7 +241,15 @@ export const webhookDef = z.object({
   events: z.array(z.string().regex(/^(\*|entity\.\*|run\.\*|entity\.(created|updated|deleted)|run\.(created|updated))$/)).min(1),
   blueprints: z.array(slug).default([]),
   /** Signing secret reference (`${secret:NAME}`): deliveries carry `X-Asterius-Signature: sha256=<hmac>`. */
-  secret: z.string().nullish(),
+  secret: z
+    .string()
+    .regex(
+      SECRET_REF,
+      'Signing secret must be a reference: ${secret:NAME} or ${env:NAME} (create the secret in Admin → Secrets); literal values are not accepted',
+    )
+    .nullish(),
+  /** During a rotation, deliveries are signed with both secrets so receivers can switch without downtime. */
+  secondarySecret: z.string().regex(SECRET_REF, 'Secondary signing secret must be a reference: ${secret:NAME} or ${env:NAME}').nullish(),
   enabled: z.boolean().default(true),
 });
 export type WebhookDef = z.infer<typeof webhookDef>;

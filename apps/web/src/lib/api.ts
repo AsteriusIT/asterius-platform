@@ -83,8 +83,8 @@ export type ActionView = Action & { allowedForMe?: boolean };
 export const api = {
   meta: () => request<Meta>('GET', '/api/meta'),
   login: (email: string, password: string) => request<{ token: string; user: PublicUser }>('POST', '/api/auth/login', { email, password }),
-  register: (email: string, name: string, password: string) =>
-    request<{ token: string; user: PublicUser }>('POST', '/api/auth/register', { email, name, password }),
+  register: (email: string, name: string, password: string, bootstrapToken?: string) =>
+    request<{ token: string; user: PublicUser }>('POST', '/api/auth/register', { email, name, password, ...(bootstrapToken ? { bootstrapToken } : {}) }),
   logout: () => request('POST', '/api/auth/logout'),
   me: () => request<PublicUser>('GET', '/api/auth/me'),
   setTourCompleted: (completed: boolean) => request<PublicUser>('PUT', '/api/auth/me/tour', { completed }),

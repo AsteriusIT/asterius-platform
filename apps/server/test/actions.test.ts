@@ -195,7 +195,10 @@ describe('outbound webhooks', () => {
     const got = await waitFor(async () => sink.received.find((r) => JSON.parse(r.body).data.entity?.identifier === 'hooked'), 20_000);
     const evt = JSON.parse(got.body);
     expect(evt.type).toBe('entity.created');
-    expect(got.headers['x-asterius-signature']).toBe(`sha256=${createHmac('sha256', 'signing-key-123').update(got.body).digest('hex')}`);
+    const sig = String(got.headers['x-asterius-signature']);
+    const t = /t=(\d+)/.exec(sig)![1]!;
+    expect(Math.abs(Date.now() / 1000 - Number(t))).toBeLessThan(60);
+    expect(sig).toBe(`t=${t},v1=${createHmac('sha256', 'signing-key-123').update(`${t}.${got.body}`).digest('hex')}`);
     const deliveries = await admin.get('/api/v1/webhooks/sink/deliveries');
     expect(deliveries.data.some((d: { status: string }) => d.status === 'success')).toBe(true);
     await sink.close();

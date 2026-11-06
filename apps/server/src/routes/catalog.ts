@@ -29,7 +29,7 @@ export async function catalogRoutes(app: FastifyInstance) {
     return {
       blueprints: bps.map((b) => ({ identifier: b.identifier, title: b.title, icon: b.icon, count: b.entityCount ?? 0 })),
       pendingApprovals: (await pendingApprovals(req.principal)).length,
-      myRuns: (await listRuns({ mine: req.principal.id, limit: 8, offset: 0 })).items,
+      myRuns: (await listRuns({ mine: req.principal.id, limit: 8, offset: 0 }, req.principal)).items,
       recentEntities: recent.items,
     };
   });
