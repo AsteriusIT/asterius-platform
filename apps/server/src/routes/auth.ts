@@ -19,6 +19,7 @@ import {
   type UserRow,
 } from '../auth/users.js';
 import { entraRoutes } from '../auth/entra.js';
+import { effectivePermissions } from '../auth/access.js';
 import { invokerInfos } from '../actions/invokers/index.js';
 import { sourceInfos } from '../integrations/sources/index.js';
 
@@ -79,7 +80,10 @@ export async function authRoutes(app: FastifyInstance) {
     return { ok: true };
   });
 
-  app.get('/api/auth/me', { preHandler: requireUser }, async (req) => publicUser((await getUser(req.principal.id))!));
+  app.get('/api/auth/me', { preHandler: requireUser }, async (req) => ({
+    ...(await publicUser((await getUser(req.principal.id))!)),
+    permissions: await effectivePermissions(req.principal),
+  }));
   app.put('/api/auth/me/tour', { preHandler: requireUser }, async (req) => {
     const { completed } = z.object({ completed: z.boolean() }).parse(req.body);
     await setTourCompleted(req.principal.id, completed);

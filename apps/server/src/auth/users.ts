@@ -38,6 +38,7 @@ export interface UserRow {
   groups: string;
   last_login_at: string | null;
   tour_completed_at: string | null;
+  extra_roles: string | null;
   created_at: string;
 }
 
@@ -47,6 +48,8 @@ export interface Principal {
   email: string;
   name: string;
   role: Role;
+  /** Delegated / custom roles on top of `role`. */
+  roles: string[];
   provider: UserProvider;
   teams: string[];
 }
@@ -57,7 +60,15 @@ export async function teamsOf(userId: string): Promise<TeamRef[]> {
 
 export async function principalOf(u: UserRow): Promise<Principal> {
   const teams = await teamsOf(u.id);
-  return { id: u.id, email: u.email, name: u.name, role: u.role, provider: u.provider, teams: teams.map((t) => t.identifier) };
+  return {
+    id: u.id,
+    email: u.email,
+    name: u.name,
+    role: u.role,
+    roles: json<string[]>(u.extra_roles, []),
+    provider: u.provider,
+    teams: teams.map((t) => t.identifier),
+  };
 }
 
 export async function publicUser(u: UserRow): Promise<PublicUser> {
@@ -67,6 +78,7 @@ export async function publicUser(u: UserRow): Promise<PublicUser> {
     name: u.name,
     provider: u.provider,
     role: u.role,
+    roles: json<string[]>(u.extra_roles, []),
     active: u.active === 1,
     teams: await teamsOf(u.id),
     lastLoginAt: u.last_login_at,
@@ -158,10 +170,11 @@ export async function listUsers(): Promise<PublicUser[]> {
   return Promise.all(users.map(publicUser));
 }
 
-export async function updateUser(id: string, patch: { role?: Role; active?: boolean; teams?: string[] }) {
+export async function updateUser(id: string, patch: { role?: Role; roles?: string[]; active?: boolean; teams?: string[] }) {
   const u = await getUser(id);
   if (!u) throw notFound('User');
   if (patch.role) await run('UPDATE users SET role = ? WHERE id = ?', patch.role, id);
+  if (patch.roles) await run('UPDATE users SET extra_roles = ? WHERE id = ?', JSON.stringify([...new Set(patch.roles)]), id);
   if (patch.active !== undefined) {
     await run('UPDATE users SET active = ? WHERE id = ?', patch.active ? 1 : 0, id);
     if (!patch.active) await run('DELETE FROM sessions WHERE user_id = ?', id);
@@ -311,7 +324,7 @@ export function matchesSubjects(p: Principal, s: Subjects | undefined, ownerTeam
   if (!s) return true;
   const hasRules = !!(s.roles?.length || s.teams?.length || s.users?.length || s.ownerTeam);
   if (!hasRules) return true;
-  if (s.roles?.includes(p.role)) return true;
+  if (s.roles?.some((r) => r === p.role || p.roles.includes(r))) return true;
   if (s.teams?.some((t) => p.teams.includes(t))) return true;
   if (s.users?.some((u) => u.toLowerCase() === p.email.toLowerCase())) return true;
   if (s.ownerTeam && ownerTeam && p.teams.includes(ownerTeam)) return true;

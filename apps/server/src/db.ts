@@ -361,6 +361,12 @@ export const MIGRATIONS: Migration[] = [
         );
       `),
   },
+  // Ids >= 100 belong to the identity & access epic (ap-m49): additive, independent of other migration series.
+  {
+    id: 100,
+    name: 'fine-grained RBAC: blueprint permissions, delegated roles',
+    up: (d) => d.exec('ALTER TABLE blueprints ADD COLUMN permissions TEXT; ALTER TABLE users ADD COLUMN extra_roles TEXT'),
+  },
 ];
 
 /** Apply pending numbered migrations (idempotent; serialized across replicas by an advisory lock on Postgres). */

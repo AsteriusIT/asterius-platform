@@ -1,5 +1,6 @@
 import { all, json, newId, now, run } from './db.js';
 import { metrics } from './metrics.js';
+import { getBlueprintCached } from './catalog/blueprints.js';
 
 /**
  * Domain events. Each event is written to the outbox (`deliveries`) once per matching outbound webhook;
@@ -41,10 +42,21 @@ export const eventMatches = (sub: Pick<Sub, 'events' | 'blueprints'>, type: stri
   sub.events.some((e) => e === '*' || e === type || (e.endsWith('.*') && type.startsWith(e.slice(0, -1)))) &&
   (!sub.blueprints.length || (blueprint !== null && sub.blueprints.includes(blueprint)));
 
+async function isReadRestricted(blueprint: string) {
+  try {
+    const r = (await getBlueprintCached(blueprint)).permissions?.read;
+    return !!(r && (r.roles?.length || r.teams?.length || r.users?.length || r.ownerTeam));
+  } catch {
+    return false;
+  }
+}
+
 export async function emit(e: DomainEvent) {
   metrics.event(e.type);
   try {
-    const subs = (await subscriptions()).filter((s) => eventMatches(s, e.type, e.blueprint));
+    // Blueprints with a read rule are never broadcast by wildcard subscriptions: a webhook must list them explicitly.
+    const restricted = e.blueprint && e.type.startsWith('entity.') ? await isReadRestricted(e.blueprint) : false;
+    const subs = (await subscriptions()).filter((s) => eventMatches(s, e.type, e.blueprint) && (!restricted || s.blueprints.includes(e.blueprint!)));
     if (!subs.length) return;
     const payload = JSON.stringify({ id: newId(), type: e.type, at: now(), blueprint: e.blueprint, actor: e.actor?.email ?? null, data: e.data });
     for (const s of subs)

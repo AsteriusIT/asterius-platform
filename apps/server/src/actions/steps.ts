@@ -49,7 +49,7 @@ export async function stepApprovalsOf(runIds: string[]): Promise<Map<string, Run
 
 /** Approvers default to admins when a step names nobody. */
 export const approverSubjects = (s: Subjects | undefined): Subjects =>
-  s && (s.roles?.length || s.teams?.length || s.users?.length || s.ownerTeam) ? s : { roles: ['admin'] };
+  s && (s.roles?.length || s.teams?.length || s.users?.length || s.ownerTeam) ? s : { roles: ['admin', 'approver'] };
 
 export function canApproveStep(p: Principal, run: RunRow, def: Step, row: StepRow, approvals: RunApproval[]) {
   if (def.type !== 'approval' || row.status !== 'WAITING_APPROVAL' || run.status !== 'IN_PROGRESS') return false;

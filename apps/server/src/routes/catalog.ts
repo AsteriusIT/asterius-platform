@@ -2,30 +2,38 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { HomeSummary } from '@asterius/shared';
 import { audit } from '../audit.js';
-import { actorOf, canEditEntity, isAdmin, requireAdmin, requireUser, type Principal } from '../auth/users.js';
-import { deleteBlueprint, getBlueprint, listBlueprints, upsertBlueprint } from '../catalog/blueprints.js';
-import { deleteEntity, findEntity, getEntity, related, searchEntities, upsertEntity } from '../catalog/entities.js';
-import { badRequest, forbidden } from '../lib/errors.js';
+import { assertCan, can, effectivePermissions, invalidateAccessCache, requireRole, visibleBlueprints } from '../auth/access.js';
+import { actorOf, isAdmin, requireUser, type Principal } from '../auth/users.js';
+import { deleteBlueprint, getBlueprint, getBlueprintCached, listBlueprints, upsertBlueprint } from '../catalog/blueprints.js';
+import { canRead, deleteEntity, findEntity, getEntity, related, searchEntities, upsertEntity } from '../catalog/entities.js';
+import { badRequest, forbidden, notFound } from '../lib/errors.js';
 import { listRuns, pendingApprovals } from '../actions/runs.js';
 import { entityInput } from '../schemas.js';
 import { bpParam, entityParam, filtersOf, page } from './util.js';
 
-/** Humans write entities of their teams (admins: all); API tokens of service accounts follow the same rule. */
+/**
+ * Writes follow the blueprint's `write` rule; by default humans write entities of their teams (admins: all) and
+ * API tokens of service accounts follow the same rule.
+ */
 async function assertCanWrite(p: Principal, bp: string, identifier: string, team: string | null | undefined) {
+  const blueprint = await getBlueprintCached(bp);
   const existing = await findEntity(bp, identifier);
   if (existing?.source.startsWith('integration:'))
     throw badRequest(`This entity is written by ${existing.source}; manual changes would be overwritten at the next sync`);
-  if (existing && !canEditEntity(p, existing.team)) throw forbidden(`Only members of team "${existing.team ?? '—'}" or admins can change this entity`);
+  if (existing && !can(p, blueprint, 'write', existing.team))
+    throw forbidden(`You are not allowed to change this entity (owner team "${existing.team ?? '—'}")`);
   const nextTeam = team === undefined ? (existing?.team ?? null) : team;
-  if (!isAdmin(p) && !canEditEntity(p, nextTeam)) throw forbidden('Assign the entity to one of your teams');
+  if (!isAdmin(p) && !can(p, blueprint, 'write', nextTeam)) throw forbidden('You are not allowed to write entities with this owner team');
 }
 
 export async function catalogRoutes(app: FastifyInstance) {
   app.addHook('preHandler', requireUser);
 
+  app.get('/permissions', async (req) => effectivePermissions(req.principal));
+
   app.get('/home', async (req): Promise<HomeSummary> => {
-    const bps = await listBlueprints();
-    const recent = await searchEntities({ sort: 'updated', limit: 8, offset: 0 });
+    const bps = await visibleBlueprints(req.principal, await listBlueprints());
+    const recent = await searchEntities({ sort: 'updated', limit: 8, offset: 0, viewer: req.principal });
     return {
       blueprints: bps.map((b) => ({ identifier: b.identifier, title: b.title, icon: b.icon, count: b.entityCount ?? 0 })),
       pendingApprovals: (await pendingApprovals(req.principal)).length,
@@ -35,17 +43,24 @@ export async function catalogRoutes(app: FastifyInstance) {
   });
 
   // ---- blueprints ----
-  app.get('/blueprints', async () => listBlueprints());
-  app.get('/blueprints/:bp', async (req) => getBlueprint(bpParam.parse(req.params).bp));
-  app.put('/blueprints/:bp', { preHandler: requireAdmin }, async (req) => {
+  app.get('/blueprints', async (req) => visibleBlueprints(req.principal, await listBlueprints()));
+  app.get('/blueprints/:bp', async (req) => {
+    const bp = await getBlueprint(bpParam.parse(req.params).bp);
+    if (!(await visibleBlueprints(req.principal, [bp])).length) throw notFound(`Blueprint ${bp.identifier}`);
+    return bp;
+  });
+  const blueprintAdmin = requireRole('blueprint-owner');
+  app.put('/blueprints/:bp', { preHandler: blueprintAdmin }, async (req) => {
     const { bp } = bpParam.parse(req.params);
     const { blueprint, created } = await upsertBlueprint({ ...(req.body as object), identifier: bp });
+    invalidateAccessCache();
     await audit(actorOf(req.principal), created ? 'blueprint.created' : 'blueprint.updated', bp);
     return blueprint;
   });
-  app.delete('/blueprints/:bp', { preHandler: requireAdmin }, async (req) => {
+  app.delete('/blueprints/:bp', { preHandler: blueprintAdmin }, async (req) => {
     const { bp } = bpParam.parse(req.params);
     await deleteBlueprint(bp);
+    invalidateAccessCache();
     await audit(actorOf(req.principal), 'blueprint.deleted', bp);
     return { ok: true };
   });
@@ -60,20 +75,24 @@ export async function catalogRoutes(app: FastifyInstance) {
 
   app.get('/entities', async (req) => {
     const q = listQuery.extend({ blueprint: z.string().optional() }).parse(req.query);
-    return searchEntities({ ...q, filters: filtersOf(req.query as Record<string, unknown>) });
+    return searchEntities({ ...q, filters: filtersOf(req.query as Record<string, unknown>), viewer: req.principal });
   });
   app.get('/blueprints/:bp/entities', async (req) => {
     const { bp } = bpParam.parse(req.params);
     const q = listQuery.parse(req.query);
-    return searchEntities({ ...q, blueprint: bp, filters: filtersOf(req.query as Record<string, unknown>) });
+    return searchEntities({ ...q, blueprint: bp, filters: filtersOf(req.query as Record<string, unknown>), viewer: req.principal });
   });
   app.get('/blueprints/:bp/entities/:id', async (req) => {
     const { bp, id } = entityParam.parse(req.params);
-    return getEntity(bp, id);
+    const e = await getEntity(bp, id);
+    // 404 rather than 403: do not reveal that a hidden entity exists.
+    if (!(await canRead(req.principal, e))) throw notFound(`Entity ${bp}/${id}`);
+    return e;
   });
   app.get('/blueprints/:bp/entities/:id/related', async (req) => {
     const { bp, id } = entityParam.parse(req.params);
-    return related(bp, id);
+    if (!(await canRead(req.principal, await getEntity(bp, id)))) throw notFound(`Entity ${bp}/${id}`);
+    return related(bp, id, req.principal);
   });
 
   app.post('/blueprints/:bp/entities', async (req, reply) => {
@@ -107,7 +126,7 @@ export async function catalogRoutes(app: FastifyInstance) {
   app.delete('/blueprints/:bp/entities/:id', async (req) => {
     const { bp, id } = entityParam.parse(req.params);
     const existing = await getEntity(bp, id);
-    if (!canEditEntity(req.principal, existing.team)) throw forbidden();
+    assertCan(req.principal, await getBlueprintCached(bp), 'delete', existing.team);
     await deleteEntity(bp, id, actorOf(req.principal));
     await audit(actorOf(req.principal), 'entity.deleted', `${bp}/${id}`);
     return { ok: true };

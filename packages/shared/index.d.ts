@@ -5,6 +5,7 @@
 
 // ---------- identity ----------
 export type Role = 'admin' | 'member';
+/** Delegated roles (integration-admin, blueprint-owner, approver), granted on top of `member` (any other slug is a custom role usable in permission subjects). */
 export type UserProvider = 'local' | 'entra' | 'service';
 
 export interface TeamRef {
@@ -18,6 +19,8 @@ export interface PublicUser {
   name: string;
   provider: UserProvider;
   role: Role;
+  /** Additional (delegated or custom) roles. */
+  roles: string[];
   teams: TeamRef[];
   active: boolean;
   lastLoginAt?: string | null;
@@ -91,6 +94,8 @@ export interface Blueprint {
   icon: string | null;
   schema: ObjectSchema;
   relations: Record<string, BlueprintRelation>;
+  /** Who may read / write / delete entities and run actions on them. Unset: read and run by everyone, write by the owner team. */
+  permissions?: BlueprintPermissions;
   managed: boolean;
   entityCount?: number;
   createdAt: string;
@@ -129,10 +134,25 @@ export type ActionTrigger = 'create' | 'day-2' | 'delete';
 
 /** Who: roles, teams, users (emails), and/or the team owning the target entity. Empty = everyone. */
 export interface Subjects {
-  roles?: Role[];
+  roles?: string[];
   teams?: string[];
   users?: string[];
   ownerTeam?: boolean;
+}
+
+export interface BlueprintPermissions {
+  read?: Subjects;
+  write?: Subjects;
+  delete?: Subjects;
+  run?: Subjects;
+}
+
+/** Effective access of the caller on one blueprint: `team` means only entities of the caller's teams. */
+export type Access = boolean | 'team';
+export interface EffectivePermissions {
+  roles: string[];
+  admin: boolean;
+  blueprints: Record<string, { read: Access; write: Access; delete: Access; run: Access }>;
 }
 
 export interface ApprovalPolicy {

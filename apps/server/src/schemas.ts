@@ -36,14 +36,33 @@ export const objectSchema = z
   })
   .default({ properties: {} });
 
+/** Role names: `admin`, `member`, the delegated roles and custom role slugs. */
+export const roleName = z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/, 'role names: lowercase letters, digits, - and _');
+export const DELEGATED_ROLES = ['integration-admin', 'blueprint-owner', 'approver'] as const;
+
 export const subjects = z
   .object({
-    roles: z.array(z.enum(['admin', 'member'])).optional(),
+    roles: z.array(roleName).optional(),
     teams: z.array(z.string()).optional(),
     users: z.array(z.string()).optional(),
     ownerTeam: z.boolean().optional(),
   })
   .default({});
+
+const subjectsRule = z.object({
+  roles: z.array(roleName).optional(),
+  teams: z.array(z.string()).optional(),
+  users: z.array(z.string()).optional(),
+  ownerTeam: z.boolean().optional(),
+});
+
+/** Per-blueprint access rules. A missing rule keeps the default (read/run: everyone, write/delete: owner team or admin). */
+export const blueprintPermissions = z.object({
+  read: subjectsRule.optional(),
+  write: subjectsRule.optional(),
+  delete: subjectsRule.optional(),
+  run: subjectsRule.optional(),
+});
 
 export const blueprintDef = z.object({
   identifier: slug,
@@ -62,6 +81,7 @@ export const blueprintDef = z.object({
       }),
     )
     .default({}),
+  permissions: blueprintPermissions.optional(),
 });
 export type BlueprintDef = z.infer<typeof blueprintDef>;
 
@@ -95,7 +115,7 @@ export const workflowStep = z.discriminatedUnion('type', [
     type: z.literal('approval'),
     approvers: z
       .object({
-        roles: z.array(z.enum(['admin', 'member'])).optional(),
+        roles: z.array(roleName).optional(),
         teams: z.array(z.string()).optional(),
         users: z.array(z.string()).optional(),
         ownerTeam: z.boolean().optional(),

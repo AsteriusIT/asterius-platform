@@ -13,6 +13,7 @@ const alice: PublicUser = {
   name: 'Alice',
   provider: 'local',
   role: 'member',
+  roles: [],
   active: true,
   teams: [{ identifier: 'payments', title: 'Payments' }],
 };

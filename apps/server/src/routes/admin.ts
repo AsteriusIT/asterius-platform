@@ -21,6 +21,7 @@ import { exportConfig, managedCounts } from '../config-loader.js';
 import { config } from '../config.js';
 import { idParam, page } from './util.js';
 import { badRequest } from '../lib/errors.js';
+import { roleName } from '../schemas.js';
 
 export async function adminRoutes(app: FastifyInstance, opts: { reloadConfig: () => Promise<void> }) {
   // ---- for every signed-in user ----
@@ -56,7 +57,12 @@ export async function adminRoutes(app: FastifyInstance, opts: { reloadConfig: ()
     admin.patch('/users/:id', async (req) => {
       const { id } = idParam.parse(req.params);
       const body = z
-        .object({ role: z.enum(['admin', 'member']).optional(), active: z.boolean().optional(), teams: z.array(z.string()).optional() })
+        .object({
+          role: z.enum(['admin', 'member']).optional(),
+          roles: z.array(roleName).max(50).optional(),
+          active: z.boolean().optional(),
+          teams: z.array(z.string()).optional(),
+        })
         .parse(req.body);
       if (id === req.principal.id && (body.role === 'member' || body.active === false)) throw badRequest('You cannot demote or disable yourself');
       const u = await updateUser(id, body);

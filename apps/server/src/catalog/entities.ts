@@ -6,6 +6,8 @@ import { entityInput, type EntityInput } from '../schemas.js';
 import { getBlueprintCached } from './blueprints.js';
 import { compact, validate } from './validation.js';
 import type { Actor } from '../audit.js';
+import { can, readFilter } from '../auth/access.js';
+import type { Principal } from '../auth/users.js';
 
 interface Row {
   blueprint: string;
@@ -53,6 +55,8 @@ export interface EntityQuery {
   /** Exact match on top-level properties (string comparison). */
   filters?: Record<string, string>;
   sort?: 'title' | 'updated' | 'identifier';
+  /** Restrict results to what this principal may read (omit for internal callers such as syncs). */
+  viewer?: Principal;
   limit: number;
   offset: number;
 }
@@ -72,6 +76,13 @@ export async function searchEntities(q: EntityQuery): Promise<EntityPage> {
     if (!PROP.test(k)) throw badRequest(`Invalid filter property "${k}"`);
     add(`${jsonText(k)} = ?`, dialect === 'sqlite' && (v === 'true' || v === 'false') ? (v === 'true' ? '1' : '0') : v);
   }
+  if (q.viewer) {
+    const f = await readFilter(q.viewer);
+    if (f) {
+      where.push(f.sql);
+      params.push(...f.params);
+    }
+  }
   const w = where.length ? `WHERE ${where.join(' AND ')}` : '';
   const order = q.sort === 'updated' ? 'updated_at DESC' : q.sort === 'identifier' ? 'identifier' : 'title, identifier';
   const [total] = await all<{ n: number }>(`SELECT count(*) AS n FROM entities ${w}`, ...params);
@@ -79,7 +90,12 @@ export async function searchEntities(q: EntityQuery): Promise<EntityPage> {
   return { items: rows.map(toEntity), total: Number(total?.n ?? 0) };
 }
 
-export async function related(blueprint: string, identifier: string): Promise<RelatedEntities> {
+/** Can the viewer read this entity (per-blueprint read rule, optionally limited to the owner team)? */
+export async function canRead(viewer: Principal, e: Pick<Entity, 'blueprint' | 'team'>): Promise<boolean> {
+  return can(viewer, await getBlueprintCached(e.blueprint), 'read', e.team);
+}
+
+export async function related(blueprint: string, identifier: string, viewer?: Principal): Promise<RelatedEntities> {
   const e = await getEntity(blueprint, identifier);
   const bp = await getBlueprintCached(blueprint);
   const outgoing: RelatedEntities['outgoing'] = {};
@@ -112,6 +128,16 @@ export async function related(blueprint: string, identifier: string): Promise<Re
     identifier,
   );
   for (const r of refs) (incoming[`${r.blueprint}.${r.relation}`] ??= []).push(toEntity(r));
+  if (viewer) {
+    // Hide neighbours the viewer cannot read (missing placeholders carry no data and stay).
+    const readable = async (list: Entity[]) => {
+      const kept: Entity[] = [];
+      for (const e of list) if (e.source === 'missing' || (await canRead(viewer, e))) kept.push(e);
+      return kept;
+    };
+    for (const k of Object.keys(outgoing)) outgoing[k] = await readable(outgoing[k]!);
+    for (const k of Object.keys(incoming)) incoming[k] = await readable(incoming[k]!);
+  }
   return { outgoing, incoming };
 }
 

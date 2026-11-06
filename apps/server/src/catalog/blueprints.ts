@@ -11,6 +11,7 @@ interface Row {
   icon: string | null;
   schema: string;
   relations: string;
+  permissions: string | null;
   managed: number;
   created_at: string;
   updated_at: string;
@@ -24,6 +25,7 @@ const toBlueprint = (r: Row): Blueprint => ({
   icon: r.icon,
   schema: json(r.schema, { properties: {} }),
   relations: json(r.relations, {}),
+  ...(r.permissions ? { permissions: json(r.permissions, {}) } : {}),
   managed: bool(r.managed),
   createdAt: r.created_at,
   updatedAt: r.updated_at,
@@ -70,17 +72,25 @@ export async function upsertBlueprint(input: unknown, opts: WriteOpts = {}): Pro
   const existing = await one<Row>('SELECT * FROM blueprints WHERE identifier = ?', def.identifier);
   if (existing && bool(existing.managed) && !opts.managed) throw managedError('Blueprint', def.identifier);
   const t = now();
-  const values = [def.title, def.description, def.icon ?? null, JSON.stringify(def.schema), JSON.stringify(def.relations), opts.managed ? 1 : 0];
+  const values = [
+    def.title,
+    def.description,
+    def.icon ?? null,
+    JSON.stringify(def.schema),
+    JSON.stringify(def.relations),
+    def.permissions ? JSON.stringify(def.permissions) : null,
+    opts.managed ? 1 : 0,
+  ];
   if (existing)
     await run(
-      'UPDATE blueprints SET title = ?, description = ?, icon = ?, schema = ?, relations = ?, managed = ?, updated_at = ? WHERE identifier = ?',
+      'UPDATE blueprints SET title = ?, description = ?, icon = ?, schema = ?, relations = ?, permissions = ?, managed = ?, updated_at = ? WHERE identifier = ?',
       ...values,
       t,
       def.identifier,
     );
   else
     await run(
-      'INSERT INTO blueprints (title, description, icon, schema, relations, managed, created_at, updated_at, identifier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO blueprints (title, description, icon, schema, relations, permissions, managed, created_at, updated_at, identifier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       ...values,
       t,
       t,

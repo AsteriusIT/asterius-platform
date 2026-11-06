@@ -1,7 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { audit } from '../audit.js';
-import { actorOf, requireAdmin } from '../auth/users.js';
+import { actorOf } from '../auth/users.js';
+import { requireRole } from '../auth/access.js';
 import { bool } from '../db.js';
 import {
   deleteIntegration,
@@ -47,7 +48,7 @@ export async function integrationRoutes(app: FastifyInstance) {
   });
 
   await app.register(async (admin) => {
-    admin.addHook('preHandler', requireAdmin);
+    admin.addHook('preHandler', requireRole('integration-admin'));
 
     admin.get('/integrations', async () => listIntegrations());
     admin.get('/integrations/:id', async (req) => getIntegration(idParam.parse(req.params).id));
