@@ -8,6 +8,7 @@
     "build": "tsc -p tsconfig.json",
     "start": "node --env-file-if-exists=../../.env dist/index.js",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json",
+    "openapi:export": "tsx src/cli/openapi-export.ts",
     "config:validate": "tsx src/cli/validate-config.ts",
     "test": "vitest run"
   },

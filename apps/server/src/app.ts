@@ -14,6 +14,9 @@ import { catalogRoutes } from './routes/catalog.js';
 import { actionRoutes } from './routes/actions.js';
 import { integrationRoutes } from './routes/integrations.js';
 import { adminRoutes } from './routes/admin.js';
+import { collectRoutes, registerOpenApi } from './openapi.js';
+
+const VERSION = process.env.APP_VERSION ?? '0.1.0';
 
 export interface AppOptions {
   reloadConfig?: () => Promise<void>;
@@ -77,6 +80,7 @@ export async function buildApp(opts: AppOptions = {}): Promise<FastifyInstance> 
     return reply.type(registry.contentType).send(await registry.metrics());
   });
 
+  const routes = collectRoutes(app);
   await app.register(authRoutes);
   await app.register(
     async (v1) => {
@@ -87,6 +91,8 @@ export async function buildApp(opts: AppOptions = {}): Promise<FastifyInstance> 
     },
     { prefix: '/api/v1' },
   );
+
+  registerOpenApi(app, routes, VERSION);
 
   if (config.WEB_DIST_DIR && fs.existsSync(config.WEB_DIST_DIR)) {
     await app.register(fastifyStatic, { root: path.resolve(config.WEB_DIST_DIR), wildcard: false, maxAge: '1h' });
