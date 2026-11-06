@@ -5,6 +5,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import { IconCopy, IconRefresh, IconSend } from '@tabler/icons-react';
 import type { Action, Blueprint, Integration, Webhook } from '@asterius/shared';
+import { useAppMutation } from '../../lib/queryClient';
 import { api, errorText } from '../../lib/api';
 import { DataTable } from '../../components/DataTable';
 import { EntityIcon } from '../../components/icons';
@@ -292,6 +293,10 @@ export function WebhooksAdmin() {
 
 function DeliveriesDrawer({ webhook, onClose }: { webhook: Webhook | null; onClose: () => void }) {
   const qc = useQueryClient();
+  const redeliver = useAppMutation({
+    mutationFn: (id: string) => api.redeliver(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['deliveries'] }),
+  });
   const q = useQuery({
     queryKey: ['deliveries', webhook?.identifier],
     queryFn: () => api.deliveries(webhook!.identifier),
@@ -329,13 +334,7 @@ function DeliveriesDrawer({ webhook, onClose }: { webhook: Webhook | null; onClo
             render: (d) =>
               d.status === 'failed' ? (
                 <Tooltip label="Redeliver">
-                  <ActionIcon
-                    variant="subtle"
-                    onClick={async () => {
-                      await api.redeliver(d.id);
-                      void qc.invalidateQueries({ queryKey: ['deliveries'] });
-                    }}
-                  >
+                  <ActionIcon variant="subtle" aria-label="Redeliver" onClick={() => redeliver.mutate(d.id)}>
                     <IconSend size={16} />
                   </ActionIcon>
                 </Tooltip>

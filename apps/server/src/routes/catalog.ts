@@ -55,7 +55,11 @@ export async function catalogRoutes(app: FastifyInstance) {
     search: z.string().max(200).optional(),
     team: z.string().optional(),
     source: z.string().optional(),
-    sort: z.enum(['title', 'updated', 'identifier']).default('title'),
+    sort: z
+      .string()
+      .regex(/^(title|updated|identifier|team|prop\.[A-Za-z_][A-Za-z0-9_]{0,63})$/)
+      .default('title'),
+    order: z.enum(['asc', 'desc']).optional(),
   });
 
   app.get('/entities', async (req) => {

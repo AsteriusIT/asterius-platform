@@ -5,6 +5,7 @@ import { notifications } from '@mantine/notifications';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { IconChevronDown, IconPencil, IconPlus, IconTrash } from '@tabler/icons-react';
 import { errorText } from '../../lib/api';
+import { notifyError } from '../../lib/queryClient';
 import { DataTable, type Column } from '../../components/DataTable';
 import { ResourceEditor } from '../../components/ResourceEditor';
 import { ManagedBadge, PageHeader } from '../../components/ui';
@@ -55,7 +56,13 @@ export function ResourceAdmin<T extends Resource>(props: {
     void qc.invalidateQueries({ queryKey: ['actions'] });
     return r;
   };
-  const open = async (item: T) => setEditing({ value: await props.toEditable(item), isNew: false, readOnly: item.managed });
+  const open = async (item: T) => {
+    try {
+      setEditing({ value: await props.toEditable(item), isNew: false, readOnly: item.managed });
+    } catch (e) {
+      notifyError(e, `Cannot open ${item.title}`);
+    }
+  };
   const remove = (item: T) =>
     modals.openConfirmModal({
       title: `Delete ${item.title}?`,

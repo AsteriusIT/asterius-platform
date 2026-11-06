@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Badge, Button, Group, Select, Stack, Text, TextInput } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
@@ -99,12 +99,24 @@ function CatalogTable({ bp }: { bp: Blueprint }) {
   });
 
   const set = (k: string, v: string | null) => {
-    const next = new URLSearchParams(params);
-    if (v) next.set(k, v);
-    else next.delete(k);
-    if (k !== 'page') next.delete('page');
-    setParams(next, { replace: true });
+    setParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        if (v) next.set(k, v);
+        else next.delete(k);
+        if (k !== 'page') next.delete('page');
+        return next;
+      },
+      { replace: true },
+    );
   };
+
+  // Persist the (debounced) search text in the URL so it survives reloads and can be shared.
+  const urlQ = params.get('q') ?? '';
+  useEffect(() => {
+    if (debounced !== urlQ) set('q', debounced || null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debounced]);
 
   return (
     <Stack>
@@ -132,10 +144,8 @@ function CatalogTable({ bp }: { bp: Blueprint }) {
           placeholder={`Search ${bp.title.toLowerCase()}`}
           leftSection={<IconSearch size={16} />}
           value={search}
-          onChange={(e) => {
-            setSearch(e.currentTarget.value);
-            set('page', null);
-          }}
+          onChange={(e) => setSearch(e.currentTarget.value)}
+          aria-label={`Search ${bp.title.toLowerCase()}`}
           style={{ flex: 1, maxWidth: 360 }}
         />
         <Select

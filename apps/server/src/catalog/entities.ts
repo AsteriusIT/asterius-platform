@@ -52,7 +52,9 @@ export interface EntityQuery {
   source?: string;
   /** Exact match on top-level properties (string comparison). */
   filters?: Record<string, string>;
-  sort?: 'title' | 'updated' | 'identifier';
+  /** title | updated | identifier | team | prop.<name>. */
+  sort?: string;
+  order?: 'asc' | 'desc';
   limit: number;
   offset: number;
 }
@@ -73,7 +75,20 @@ export async function searchEntities(q: EntityQuery): Promise<EntityPage> {
     add(`${jsonText(k)} = ?`, dialect === 'sqlite' && (v === 'true' || v === 'false') ? (v === 'true' ? '1' : '0') : v);
   }
   const w = where.length ? `WHERE ${where.join(' AND ')}` : '';
-  const order = q.sort === 'updated' ? 'updated_at DESC' : q.sort === 'identifier' ? 'identifier' : 'title, identifier';
+  const sortCol = (): [string, 'asc' | 'desc'] => {
+    if (q.sort === 'updated') return ['updated_at', 'desc'];
+    if (q.sort === 'identifier') return ['identifier', 'asc'];
+    if (q.sort === 'team') return ['team', 'asc'];
+    if (q.sort?.startsWith('prop.')) {
+      const prop = q.sort.slice(5);
+      if (!PROP.test(prop)) throw badRequest(`Invalid sort property "${prop}"`);
+      return [jsonText(prop), 'asc'];
+    }
+    return ['title', 'asc'];
+  };
+  const [col, defaultDir] = sortCol();
+  const dir = (q.order ?? defaultDir).toUpperCase();
+  const order = `${col} ${dir}, identifier ${dir}`;
   const [total] = await all<{ n: number }>(`SELECT count(*) AS n FROM entities ${w}`, ...params);
   const rows = await all<Row>(`SELECT * FROM entities ${w} ORDER BY ${order} LIMIT ? OFFSET ?`, ...params, q.limit, q.offset);
   return { items: rows.map(toEntity), total: Number(total?.n ?? 0) };

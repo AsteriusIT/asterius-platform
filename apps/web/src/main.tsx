@@ -3,14 +3,15 @@ import { createRoot } from 'react-dom/client';
 import { MantineProvider } from '@mantine/core';
 import { ModalsProvider } from '@mantine/modals';
 import { Notifications } from '@mantine/notifications';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClientProvider } from '@tanstack/react-query';
 import { createBrowserRouter, Navigate, Outlet, RouterProvider, useLocation } from 'react-router';
 import '@fontsource-variable/inter';
 import '@mantine/core/styles.css';
 import '@mantine/notifications/styles.css';
 import './styles.css';
 import { cssVariablesResolver, theme } from './theme';
-import { ApiError } from './lib/api';
+import { createQueryClient } from './lib/queryClient';
+import { ErrorBoundary, RouteError } from './components/ErrorBoundary';
 import { AuthProvider, useAuth } from './lib/auth';
 import { Layout } from './components/Layout';
 import { Loading } from './components/ui';
@@ -35,15 +36,7 @@ const definitions = () => import('./pages/admin/Definitions');
 const access = () => import('./pages/admin/Access');
 const system = () => import('./pages/admin/System');
 
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      staleTime: 10_000,
-      refetchOnWindowFocus: true,
-      retry: (n, err) => !(err instanceof ApiError && err.status < 500) && n < 2,
-    },
-  },
-});
+const queryClient = createQueryClient();
 
 function RequireAuth() {
   const { user, loading } = useAuth();
@@ -69,6 +62,7 @@ function Root() {
 const router = createBrowserRouter([
   {
     element: <Root />,
+    errorElement: <RouteError />,
     children: [
       { path: '/login', element: <Login /> },
       { path: '/auth/callback', element: <AuthCallback /> },
@@ -77,6 +71,7 @@ const router = createBrowserRouter([
         children: [
           {
             element: <Layout />,
+            errorElement: <RouteError />,
             children: [
               { path: '/', element: <Home /> },
               { path: '/search', element: <Search /> },
@@ -113,13 +108,15 @@ const router = createBrowserRouter([
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <MantineProvider theme={theme} cssVariablesResolver={cssVariablesResolver} defaultColorScheme="light">
-      <QueryClientProvider client={queryClient}>
-        <ModalsProvider>
-          <Notifications position="top-right" />
-          <RouterProvider router={router} />
-        </ModalsProvider>
-      </QueryClientProvider>
-    </MantineProvider>
+    <ErrorBoundary>
+      <MantineProvider theme={theme} cssVariablesResolver={cssVariablesResolver} defaultColorScheme="light">
+        <QueryClientProvider client={queryClient}>
+          <ModalsProvider>
+            <Notifications position="top-right" />
+            <RouterProvider router={router} />
+          </ModalsProvider>
+        </QueryClientProvider>
+      </MantineProvider>
+    </ErrorBoundary>
   </StrictMode>,
 );

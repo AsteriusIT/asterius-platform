@@ -103,6 +103,12 @@ describe('catalog', () => {
     expect(found.data.items.map((e: { identifier: string }) => e.identifier)).toEqual(['worker']);
     const tier1 = await bob.get('/api/v1/blueprints/service/entities?filter.tier=1');
     expect(tier1.data.total).toBe(1);
+    const asc = await bob.get('/api/v1/blueprints/service/entities?sort=identifier');
+    const desc = await bob.get('/api/v1/blueprints/service/entities?sort=identifier&order=desc');
+    const ids = (r: { data: { items: { identifier: string }[] } }) => r.data.items.map((e) => e.identifier);
+    expect(ids(desc)).toEqual(ids(asc).reverse());
+    expect((await bob.get('/api/v1/blueprints/service/entities?sort=prop.tier')).status).toBe(200);
+    expect((await bob.get('/api/v1/blueprints/service/entities?sort=prop.x;drop')).status).toBe(400);
     const rel = await bob.get('/api/v1/blueprints/service/entities/api/related');
     expect(Object.keys(rel.data.incoming)).toEqual(['service.dependsOn']);
     const out = await bob.get('/api/v1/blueprints/service/entities/worker/related');
