@@ -2,10 +2,11 @@ import { createHmac } from 'node:crypto';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Delivery, Webhook } from '@asterius/shared';
 import { all, bool, json, later, now, one, run } from '../db.js';
-import { errorMessage, managedError, notFound } from '../lib/errors.js';
+import { badRequest, errorMessage, managedError, notFound } from '../lib/errors.js';
 import { http, UpstreamError } from '../lib/http.js';
+import { checkExpression, render } from '../lib/expr.js';
 import { invalidateWebhookCache } from '../events.js';
-import { resolveValue } from '../secrets.js';
+import { resolveRef, resolveValue } from '../secrets.js';
 import { webhookDef, type WebhookDef } from '../schemas.js';
 import { metrics } from '../metrics.js';
 import { withSpan } from '../tracing.js';
@@ -23,6 +24,9 @@ interface Row {
   events: string;
   blueprints: string;
   secret: string | null;
+  headers: string | null;
+  filter: string | null;
+  transform: string | null;
   enabled: number;
   managed: number;
 }
@@ -33,6 +37,9 @@ const toWebhook = (r: Row): Webhook => ({
   url: r.url,
   events: json(r.events, []),
   blueprints: json(r.blueprints, []),
+  headers: json<Record<string, string>>(r.headers, {}),
+  filter: r.filter,
+  transform: r.transform,
   enabled: bool(r.enabled),
   managed: bool(r.managed),
   hasSecret: !!r.secret,
@@ -52,20 +59,42 @@ export async function upsertWebhook(input: unknown, opts: { managed?: boolean } 
   const def: WebhookDef = webhookDef.parse(input);
   const existing = await one<Row>('SELECT * FROM webhooks WHERE identifier = ?', def.identifier);
   if (existing && bool(existing.managed) && !opts.managed) throw managedError('Webhook', def.identifier);
+  for (const [what, expr] of [
+    ['filter', def.filter],
+    ['transform', def.transform],
+  ] as const) {
+    if (!expr) continue;
+    try {
+      checkExpression(expr);
+    } catch (err) {
+      throw badRequest(`${what}: ${errorMessage(err)}`);
+    }
+  }
   const t = now();
   // An omitted secret keeps the current one (the API never returns it).
   const secret = def.secret === undefined ? (existing?.secret ?? null) : (def.secret ?? null);
-  const vals = [def.title, def.url, JSON.stringify(def.events), JSON.stringify(def.blueprints), secret, def.enabled ? 1 : 0, opts.managed ? 1 : 0];
+  const vals = [
+    def.title,
+    def.url,
+    JSON.stringify(def.events),
+    JSON.stringify(def.blueprints),
+    secret,
+    JSON.stringify(def.headers),
+    def.filter ?? null,
+    def.transform ?? null,
+    def.enabled ? 1 : 0,
+    opts.managed ? 1 : 0,
+  ];
   if (existing)
     await run(
-      'UPDATE webhooks SET title = ?, url = ?, events = ?, blueprints = ?, secret = ?, enabled = ?, managed = ?, updated_at = ? WHERE identifier = ?',
+      'UPDATE webhooks SET title = ?, url = ?, events = ?, blueprints = ?, secret = ?, headers = ?, filter = ?, transform = ?, enabled = ?, managed = ?, updated_at = ? WHERE identifier = ?',
       ...vals,
       t,
       def.identifier,
     );
   else
     await run(
-      'INSERT INTO webhooks (title, url, events, blueprints, secret, enabled, managed, created_at, updated_at, identifier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO webhooks (title, url, events, blueprints, secret, headers, filter, transform, enabled, managed, created_at, updated_at, identifier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       ...vals,
       t,
       t,
@@ -95,24 +124,50 @@ interface DeliveryRow {
   delivered_at: string | null;
 }
 
-export async function listDeliveries(webhook: string, limit = 50): Promise<Delivery[]> {
-  const rows = await all<DeliveryRow>('SELECT * FROM deliveries WHERE webhook = ? ORDER BY created_at DESC LIMIT ?', webhook, limit);
-  return rows.map((r) => ({
-    id: r.id,
-    webhook: r.webhook,
-    event: r.event,
-    status: r.status,
-    attempts: Number(r.attempts),
-    responseStatus: r.response_status,
-    lastError: r.last_error,
-    createdAt: r.created_at,
-    deliveredAt: r.delivered_at,
-  }));
+const toDelivery = (r: DeliveryRow): Delivery => ({
+  id: r.id,
+  webhook: r.webhook,
+  event: r.event,
+  status: r.status,
+  attempts: Number(r.attempts),
+  responseStatus: r.response_status,
+  lastError: r.last_error,
+  createdAt: r.created_at,
+  deliveredAt: r.delivered_at,
+});
+
+export async function listDeliveries(webhook: string | undefined, limit = 50, status?: Delivery['status']): Promise<Delivery[]> {
+  const where: string[] = [];
+  const args: string[] = [];
+  if (webhook) {
+    where.push('webhook = ?');
+    args.push(webhook);
+  }
+  if (status) {
+    where.push('status = ?');
+    args.push(status);
+  }
+  const rows = await all<DeliveryRow>(
+    `SELECT * FROM deliveries ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY created_at DESC LIMIT ?`,
+    ...args,
+    limit,
+  );
+  return rows.map(toDelivery);
 }
 
 export async function redeliver(id: string) {
   const { changes } = await run("UPDATE deliveries SET status = 'pending', attempts = 0, next_attempt_at = ?, locked_until = NULL WHERE id = ?", now(), id);
   if (!changes) throw notFound('Delivery');
+}
+
+/** Requeue every failed delivery (optionally of one webhook). Returns how many. */
+export async function redeliverFailed(webhook?: string): Promise<number> {
+  const { changes } = await run(
+    `UPDATE deliveries SET status = 'pending', attempts = 0, next_attempt_at = ?, locked_until = NULL WHERE status = 'failed'${webhook ? ' AND webhook = ?' : ''}`,
+    now(),
+    ...(webhook ? [webhook] : []),
+  );
+  return Number(changes);
 }
 
 // ---------- delivery worker ----------
@@ -128,10 +183,16 @@ async function deliver(d: DeliveryRow) {
   const attempts = Number(d.attempts) + 1;
   try {
     const headers: Record<string, string> = { 'content-type': 'application/json', 'x-asterius-event': d.event, 'x-asterius-delivery': d.id };
+    for (const [k, v] of Object.entries(json<Record<string, string>>(w.headers, {}))) {
+      const value = (await render(v, {}, resolveRef)).value;
+      if (typeof value === 'string' && value) headers[k.toLowerCase()] = value;
+    }
     const secret = await resolveValue(w.secret);
     if (secret) headers['x-asterius-signature'] = `sha256=${createHmac('sha256', secret).update(d.payload).digest('hex')}`;
-    const res = await withSpan('webhook.deliver', { 'webhook.id': w.identifier, event: d.event }, () =>
-      http(w.url, { method: 'POST', headers, body: d.payload, timeoutMs: 15_000 }),
+    const res = await withSpan(
+      'webhook.deliver',
+      { 'webhook.id': w.identifier, event: d.event },
+      () => http(w.url, { method: 'POST', headers, body: d.payload, timeoutMs: 15_000, retry: false }), // the outbox owns the retries
     );
     await run(
       "UPDATE deliveries SET status = 'success', attempts = ?, response_status = ?, last_error = NULL, delivered_at = ?, locked_until = NULL WHERE id = ?",

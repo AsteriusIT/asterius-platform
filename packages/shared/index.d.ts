@@ -388,9 +388,13 @@ export interface Webhook {
   identifier: string;
   title: string;
   url: string;
-  /** entity.created · entity.updated · entity.deleted · run.created · run.updated, or `*` / `entity.*` */
+  /** entity.* · run.created/updated · approval.requested/decided · sync.finished/failed, or `*` / `entity.*` */
   events: string[];
   blueprints: string[];
+  /** Extra request headers; values are usually `${secret:NAME}` references. */
+  headers: Record<string, string>;
+  filter?: string | null;
+  transform?: string | null;
   enabled: boolean;
   managed: boolean;
   hasSecret: boolean;

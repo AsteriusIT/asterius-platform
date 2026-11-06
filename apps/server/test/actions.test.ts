@@ -200,4 +200,38 @@ describe('outbound webhooks', () => {
     expect(deliveries.data.some((d: { status: string }) => d.status === 'success')).toBe(true);
     await sink.close();
   });
+
+  it('filters, transforms, adds headers, and bulk redelivers failed deliveries', async () => {
+    const sink = await fakeServer();
+    const saved = await admin.put('/api/v1/webhooks/chatty', {
+      title: 'Chatty',
+      url: sink.url,
+      events: ['entity.*'],
+      blueprints: ['service'],
+      headers: { authorization: 'Bearer ${secret:SIGNING}' },
+      filter: 'data.entity.properties.tier = 9',
+      transform: '{ "text": "Service " & data.entity.identifier & " created" }',
+    });
+    expect(saved.status, JSON.stringify(saved.data)).toBe(200);
+    expect((await admin.put('/api/v1/webhooks/bad', { title: 'B', url: sink.url, events: ['*'], filter: '(((' })).status).toBe(400);
+    expect((await admin.put('/api/v1/webhooks/bad', { title: 'B', url: sink.url, events: ['*'], headers: { 'X-Asterius-Signature': 'x' } })).status).toBe(400);
+    await admin.put('/api/v1/blueprints/service/entities/skipped', { team: 'payments', properties: { tier: 2 } });
+    await admin.put('/api/v1/blueprints/service/entities/shown', { team: 'payments', properties: { tier: 9 } });
+    const got = await waitFor(async () => sink.received.find((r) => r.body.includes('shown')), 20_000);
+    expect(JSON.parse(got.body)).toEqual({ text: 'Service shown created' });
+    expect(got.headers.authorization).toBe('Bearer signing-key-123');
+    expect(sink.received.some((r) => r.body.includes('skipped'))).toBe(false);
+    await sink.close();
+
+    // A dead endpoint: the delivery fails fast (4xx is final), then a bulk redelivery requeues it.
+    const dead = await fakeServer(() => ({ status: 400 }));
+    await admin.put('/api/v1/webhooks/dead', { title: 'Dead', url: dead.url, events: ['entity.created'], blueprints: ['service'] });
+    await admin.put('/api/v1/blueprints/service/entities/will-fail', { team: 'payments', properties: { tier: 1 } });
+    await waitFor(async () => (await admin.get('/api/v1/deliveries?status=failed&webhook=dead')).data.length > 0, 20_000);
+    const before = dead.received.length;
+    const re = await admin.post('/api/v1/deliveries/redeliver-failed', { webhook: 'dead' });
+    expect(re.data.requeued).toBeGreaterThan(0);
+    await waitFor(async () => dead.received.length > before, 20_000);
+    await dead.close();
+  });
 });

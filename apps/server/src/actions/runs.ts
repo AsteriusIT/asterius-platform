@@ -171,7 +171,7 @@ export async function addLog(runId: string, message: string, level: RunLog['leve
   await run('INSERT INTO run_logs (run_id, at, level, message, step_id) VALUES (?, ?, ?, ?, ?)', runId, now(), level, message.slice(0, 8000), stepId);
 }
 
-export async function emitRun(id: string, type: 'run.created' | 'run.updated') {
+export async function emitRun(id: string, type: 'run.created' | 'run.updated' | 'approval.requested' | 'approval.decided') {
   const r = await getRunRow(id);
   const steps = (await loadSteps(id)).map((s) => ({ id: s.step_id, name: s.name, type: s.type, status: s.status }));
   await emit({ type, blueprint: r.blueprint, data: { run: { ...toRun(r, (await approvalsOf([id])).get(id) ?? []), steps } } });
@@ -221,6 +221,7 @@ export async function triggerRun(p: Principal, actionId: string, body: { entity?
   if (status === 'PENDING_APPROVAL') await addLog(id, `Waiting for ${trigger.approval.minApprovals ?? 1} approval(s)`);
   await audit(actorOf(p), 'run.triggered', `${action.identifier}${entityId ? ` → ${trigger.blueprint}/${entityId}` : ''}`, { runId: id });
   await emitRun(id, 'run.created');
+  if (status === 'PENDING_APPROVAL') await emitRun(id, 'approval.requested');
   return getRun(id, p);
 }
 
@@ -259,6 +260,7 @@ export async function decide(p: Principal, runId: string, decision: 'approved' |
     }
   }
   await emitRun(runId, 'run.updated');
+  await emitRun(runId, 'approval.decided');
   return getRun(runId, p);
 }
 

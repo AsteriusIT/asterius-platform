@@ -277,16 +277,45 @@ export const integrationDef = z.object({
 });
 export type IntegrationDef = z.infer<typeof integrationDef>;
 
-export const WEBHOOK_EVENTS = ['entity.created', 'entity.updated', 'entity.deleted', 'run.created', 'run.updated'] as const;
+export const WEBHOOK_EVENTS = [
+  'entity.created',
+  'entity.updated',
+  'entity.deleted',
+  'run.created',
+  'run.updated',
+  'approval.requested',
+  'approval.decided',
+  'sync.finished',
+  'sync.failed',
+] as const;
+
+const RESERVED_HEADERS = /^(host|content-length|content-type|transfer-encoding|connection|x-asterius-.*)$/i;
 
 export const webhookDef = z.object({
   identifier: slug,
   title: z.string().min(1).max(100),
   url: z.string().url(),
-  events: z.array(z.string().regex(/^(\*|entity\.\*|run\.\*|entity\.(created|updated|deleted)|run\.(created|updated))$/)).min(1),
+  events: z
+    .array(
+      z
+        .string()
+        .regex(
+          /^(\*|(entity|run|approval|sync)\.\*|entity\.(created|updated|deleted)|run\.(created|updated)|approval\.(requested|decided)|sync\.(finished|failed))$/,
+        ),
+    )
+    .min(1),
   blueprints: z.array(slug).default([]),
   /** Signing secret reference (`${secret:NAME}`): deliveries carry `X-Asterius-Signature: sha256=<hmac>`. */
   secret: z.string().nullish(),
+  /** Extra request headers (values may be `${secret:NAME}` references), e.g. `Authorization: Bearer ${secret:TOKEN}`. */
+  headers: z
+    .record(z.string().regex(/^[A-Za-z0-9-]+$/), z.string().max(2000))
+    .refine((h) => !Object.keys(h).some((k) => RESERVED_HEADERS.test(k)), 'reserved header name')
+    .default({}),
+  /** JSONata over the event (`{ id, type, at, blueprint, actor, data }`): deliver only when it is truthy. */
+  filter: z.string().max(2000).nullish(),
+  /** JSONata over the event producing the request body (Slack, Teams… shapes). Default: the event itself. */
+  transform: z.string().max(5000).nullish(),
   enabled: z.boolean().default(true),
 });
 export type WebhookDef = z.infer<typeof webhookDef>;

@@ -6,6 +6,7 @@ import { badRequest, errorMessage } from '../lib/errors.js';
 import { render } from '../lib/expr.js';
 import { resolveRef } from '../secrets.js';
 import { deleteEntity, upsertEntity } from '../catalog/entities.js';
+import { emit } from '../events.js';
 import { metrics } from '../metrics.js';
 import { withSpan } from '../tracing.js';
 import { nextCron } from '../lib/cron.js';
@@ -278,6 +279,11 @@ export async function runSync(identifier: string, trigger: SyncRun['trigger'], o
   );
   await run('UPDATE integrations SET locked_until = NULL, requested_kind = NULL, next_sync_at = ? WHERE identifier = ?', nextSyncAt(r), identifier);
   metrics.sync(identifier, status, stats.upserted, stats.deleted);
+  await emit({
+    type: status === 'failure' ? 'sync.failed' : 'sync.finished',
+    blueprint: null,
+    data: { integration: identifier, status, stats, runId: id, errors: log.items.slice(0, 20) },
+  });
   return toSyncRun({
     id,
     integration: identifier,

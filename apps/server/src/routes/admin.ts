@@ -16,7 +16,7 @@ import {
 } from '../auth/users.js';
 import { deleteTeam, listTeams, upsertTeam } from '../auth/teams.js';
 import { deleteSecret, listSecrets, setSecret } from '../secrets.js';
-import { deleteWebhook, getWebhook, listDeliveries, listWebhooks, redeliver, upsertWebhook } from '../webhooks/webhooks.js';
+import { deleteWebhook, getWebhook, listDeliveries, listWebhooks, redeliver, redeliverFailed, upsertWebhook } from '../webhooks/webhooks.js';
 import { exportConfig, managedCounts } from '../config-loader.js';
 import { config } from '../config.js';
 import { idParam, page } from './util.js';
@@ -126,8 +126,26 @@ export async function adminRoutes(app: FastifyInstance, opts: { reloadConfig: ()
       return { ok: true };
     });
     admin.get('/webhooks/:id/deliveries', async (req) => listDeliveries(idParam.parse(req.params).id));
+    admin.get('/deliveries', async (req) => {
+      const q = z
+        .object({
+          status: z.enum(['pending', 'success', 'failed']).optional(),
+          webhook: z.string().optional(),
+          limit: z.coerce.number().int().min(1).max(500).default(100),
+        })
+        .parse(req.query);
+      return listDeliveries(q.webhook, q.limit, q.status);
+    });
+    admin.post('/deliveries/redeliver-failed', async (req) => {
+      const body = z.object({ webhook: z.string().optional() }).parse(req.body ?? {});
+      const n = await redeliverFailed(body.webhook);
+      await audit(actorOf(req.principal), 'delivery.redelivered_bulk', body.webhook ?? '*', { count: n });
+      return { requeued: n };
+    });
     admin.post('/deliveries/:id/redeliver', async (req) => {
-      await redeliver(idParam.parse(req.params).id);
+      const { id } = idParam.parse(req.params);
+      await redeliver(id);
+      await audit(actorOf(req.principal), 'delivery.redelivered', id);
       return { ok: true };
     });
 

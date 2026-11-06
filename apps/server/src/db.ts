@@ -386,6 +386,16 @@ export const MIGRATIONS: Migration[] = [
     name: 'integrations: ownership priority',
     up: (d) => d.exec('ALTER TABLE integrations ADD COLUMN priority INTEGER NOT NULL DEFAULT 0'),
   },
+  {
+    id: 7,
+    name: 'webhooks: custom headers, filter, transform',
+    up: (d) =>
+      d.exec(`
+        ALTER TABLE webhooks ADD COLUMN headers TEXT NOT NULL DEFAULT '{}';
+        ALTER TABLE webhooks ADD COLUMN filter TEXT;
+        ALTER TABLE webhooks ADD COLUMN transform TEXT;
+      `),
+  },
 ];
 
 /** Apply pending numbered migrations (idempotent; serialized across replicas by an advisory lock on Postgres). */

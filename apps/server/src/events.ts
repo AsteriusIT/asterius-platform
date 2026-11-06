@@ -1,4 +1,5 @@
 import { all, json, newId, now, run } from './db.js';
+import { evaluate } from './lib/expr.js';
 import { metrics } from './metrics.js';
 
 /**
@@ -7,7 +8,16 @@ import { metrics } from './metrics.js';
  * bus means no event is lost when a pod restarts and any replica can deliver.
  */
 
-export type EventType = 'entity.created' | 'entity.updated' | 'entity.deleted' | 'run.created' | 'run.updated';
+export type EventType =
+  | 'entity.created'
+  | 'entity.updated'
+  | 'entity.deleted'
+  | 'run.created'
+  | 'run.updated'
+  | 'approval.requested'
+  | 'approval.decided'
+  | 'sync.finished'
+  | 'sync.failed';
 
 export interface DomainEvent {
   type: EventType;
@@ -20,6 +30,8 @@ interface Sub {
   identifier: string;
   events: string[];
   blueprints: string[];
+  filter: string | null;
+  transform: string | null;
 }
 
 let cache: { at: number; subs: Sub[] } | undefined;
@@ -31,8 +43,16 @@ export function invalidateWebhookCache() {
 
 async function subscriptions(): Promise<Sub[]> {
   if (cache && Date.now() - cache.at < CACHE_MS) return cache.subs;
-  const rows = await all<{ identifier: string; events: string; blueprints: string }>('SELECT identifier, events, blueprints FROM webhooks WHERE enabled = 1');
-  const subs = rows.map((r) => ({ identifier: r.identifier, events: json<string[]>(r.events, []), blueprints: json<string[]>(r.blueprints, []) }));
+  const rows = await all<{ identifier: string; events: string; blueprints: string; filter: string | null; transform: string | null }>(
+    'SELECT identifier, events, blueprints, filter, transform FROM webhooks WHERE enabled = 1',
+  );
+  const subs = rows.map((r) => ({
+    identifier: r.identifier,
+    events: json<string[]>(r.events, []),
+    blueprints: json<string[]>(r.blueprints, []),
+    filter: r.filter,
+    transform: r.transform,
+  }));
   cache = { at: Date.now(), subs };
   return subs;
 }
@@ -46,8 +66,22 @@ export async function emit(e: DomainEvent) {
   try {
     const subs = (await subscriptions()).filter((s) => eventMatches(s, e.type, e.blueprint));
     if (!subs.length) return;
-    const payload = JSON.stringify({ id: newId(), type: e.type, at: now(), blueprint: e.blueprint, actor: e.actor?.email ?? null, data: e.data });
-    for (const s of subs)
+    const event = { id: newId(), type: e.type, at: now(), blueprint: e.blueprint, actor: e.actor?.email ?? null, data: e.data };
+    for (const s of subs) {
+      let body: unknown = event;
+      try {
+        // JSON round trip: JSONata works on plain data (dates, undefined…).
+        const plain = JSON.parse(JSON.stringify(event)) as unknown;
+        if (s.filter && !(await evaluate(s.filter, plain))) continue;
+        if (s.transform) {
+          body = await evaluate(s.transform, plain);
+          if (body === undefined || body === null) continue; // the transform chose not to send anything
+        }
+      } catch (err) {
+        console.error('[events] webhook filter/transform failed', s.identifier, err);
+        continue;
+      }
+      const payload = JSON.stringify(body);
       await run(
         "INSERT INTO deliveries (id, webhook, event, payload, status, next_attempt_at, created_at) VALUES (?, ?, ?, ?, 'pending', ?, ?)",
         newId(),
@@ -57,6 +91,7 @@ export async function emit(e: DomainEvent) {
         now(),
         now(),
       );
+    }
   } catch (err) {
     console.error('[events] could not enqueue', e.type, err);
   }
