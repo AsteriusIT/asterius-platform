@@ -14,6 +14,12 @@ data:
   RUN_POLL_SECONDS: {{ $v.settings.runPollSeconds | quote }}
   RUN_TIMEOUT_HOURS: {{ $v.settings.runTimeoutHours | quote }}
   HTTP_TIMEOUT_SECONDS: {{ $v.settings.httpTimeoutSeconds | quote }}
+  HTTP_RETRIES: {{ $v.settings.httpRetries | quote }}
+  HTTP_RETRY_BASE_MS: {{ $v.settings.httpRetryBaseMs | quote }}
+  HTTP_RETRY_MAX_DELAY_SECONDS: {{ $v.settings.httpRetryMaxDelaySeconds | quote }}
+  HTTP_MAX_CONCURRENCY_PER_HOST: {{ $v.settings.httpMaxConcurrencyPerHost | quote }}
+  HTTP_CIRCUIT_THRESHOLD: {{ $v.settings.httpCircuitThreshold | quote }}
+  HTTP_CIRCUIT_COOLDOWN_SECONDS: {{ $v.settings.httpCircuitCooldownSeconds | quote }}
   RETENTION_DAYS: {{ $v.settings.retentionDays | quote }}
   AUTH_PROVIDERS: {{ $v.auth.providers | quote }}
   ALLOW_REGISTRATION: {{ $v.auth.allowRegistration | quote }}

@@ -91,6 +91,12 @@ settings:
   runPollSeconds: 15
   runTimeoutHours: 24
   httpTimeoutSeconds: 30
+  httpRetries: 3
+  httpRetryBaseMs: 500
+  httpRetryMaxDelaySeconds: 60
+  httpMaxConcurrencyPerHost: 8
+  httpCircuitThreshold: 5
+  httpCircuitCooldownSeconds: 60
   retentionDays: 90
 # Extra non-secret environment variables.
 extraEnv: {}
