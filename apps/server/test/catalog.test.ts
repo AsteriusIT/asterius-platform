@@ -115,6 +115,23 @@ describe('catalog', () => {
     expect(out.data.outgoing.dependsOn.map((e: { source: string }) => e.source)).toEqual(['ui', 'missing']);
   });
 
+  it('serves the relation graph and the change history of an entity', async () => {
+    const g = await bob.get('/api/v1/blueprints/service/entities/worker/graph?depth=2');
+    expect(g.status, JSON.stringify(g.data)).toBe(200);
+    const ids = g.data.nodes.map((n: { id: string }) => n.id);
+    expect(ids).toContain('service/worker');
+    expect(ids).toContain('service/api');
+    expect(
+      g.data.edges.some(
+        (e: { from: string; to: string; relation: string }) => e.from === 'service/worker' && e.to === 'service/api' && e.relation === 'dependsOn',
+      ),
+    ).toBe(true);
+    expect(g.data.nodes.find((n: { id: string }) => n.id === 'service/worker').depth).toBe(0);
+    const h = await bob.get('/api/v1/blueprints/service/entities/worker/history');
+    expect(h.data[0]).toMatchObject({ action: expect.stringMatching(/^entity\./), actorEmail: 'alice@example.com' });
+    expect((await bob.get('/api/v1/blueprints/service/entities/nope/history')).status).toBe(404);
+  });
+
   it('accepts identifiers with slashes (third-party ids)', async () => {
     const r = await admin.put(`/api/v1/blueprints/system/entities/${encodeURIComponent('org/infra')}`, { properties: { criticality: 'low' } });
     expect(r.status).toBe(200);

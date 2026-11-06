@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Anchor, Badge, Button, Card, Grid, Group, Menu, SimpleGrid, Stack, Table, Tabs, Text, Tooltip } from '@mantine/core';
+import { Anchor, Badge, Button, Card, Grid, Group, Menu, SegmentedControl, SimpleGrid, Stack, Table, Tabs, Text, Tooltip } from '@mantine/core';
 import { modals } from '@mantine/modals';
 import { notifications } from '@mantine/notifications';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -14,6 +14,7 @@ import { ActionRunModal } from '../components/ActionRunModal';
 import { DataTable } from '../components/DataTable';
 import { ResourceEditor } from '../components/ResourceEditor';
 import { EntityIcon } from '../components/icons';
+import { RelationGraph } from '../components/RelationGraph';
 import { Empty, Mono, PageHeader, QueryView, StatusBadge, TimeAgo } from '../components/ui';
 
 export function EntityPage() {
@@ -23,7 +24,7 @@ export function EntityPage() {
   return <QueryView q={blueprint}>{(b) => <QueryView q={entity}>{(e) => <EntityView bp={b} e={e} />}</QueryView>}</QueryView>;
 }
 
-const TABS = ['overview', 'runs', 'json'];
+const TABS = ['overview', 'graph', 'history', 'runs', 'json'];
 
 const entityLink = (e: Pick<Entity, 'blueprint' | 'identifier'>) => `/catalog/${e.blueprint}/${encodeURIComponent(e.identifier)}`;
 
@@ -142,6 +143,8 @@ function EntityView({ bp, e }: { bp: Blueprint; e: Entity }) {
       <Tabs value={tab} onChange={(t) => setParams(t && t !== 'overview' ? { tab: t } : {}, { replace: true })} keepMounted={false}>
         <Tabs.List mb="md">
           <Tabs.Tab value="overview">Overview</Tabs.Tab>
+          <Tabs.Tab value="graph">Graph</Tabs.Tab>
+          <Tabs.Tab value="history">History</Tabs.Tab>
           <Tabs.Tab value="runs" rightSection={runs.data?.total ? <Badge size="xs">{runs.data.total}</Badge> : undefined}>
             Runs
           </Tabs.Tab>
@@ -212,6 +215,14 @@ function EntityView({ bp, e }: { bp: Blueprint; e: Entity }) {
           </Grid>
         </Tabs.Panel>
 
+        <Tabs.Panel value="graph">
+          <GraphPanel bp={bp.identifier} id={e.identifier} />
+        </Tabs.Panel>
+
+        <Tabs.Panel value="history">
+          <HistoryPanel bp={bp.identifier} id={e.identifier} />
+        </Tabs.Panel>
+
         <Tabs.Panel value="runs">
           <DataTable
             rows={runs.data?.items}
@@ -258,6 +269,48 @@ function EntityView({ bp, e }: { bp: Blueprint; e: Entity }) {
         }}
       />
     </Stack>
+  );
+}
+
+function GraphPanel({ bp, id }: { bp: string; id: string }) {
+  const [depth, setDepth] = useState('2');
+  const q = useQuery({ queryKey: ['entity-graph', bp, id, depth], queryFn: () => api.entityGraph(bp, id, Number(depth)) });
+  return (
+    <Card>
+      <Group justify="space-between" mb="sm">
+        <Text fw={600}>Relations</Text>
+        <SegmentedControl
+          size="xs"
+          value={depth}
+          onChange={setDepth}
+          aria-label="Depth"
+          data={[
+            { value: '1', label: '1 hop' },
+            { value: '2', label: '2 hops' },
+            { value: '3', label: '3 hops' },
+          ]}
+        />
+      </Group>
+      <QueryView q={q}>{(g) => <RelationGraph graph={g} />}</QueryView>
+    </Card>
+  );
+}
+
+function HistoryPanel({ bp, id }: { bp: string; id: string }) {
+  const q = useQuery({ queryKey: ['entity-history', bp, id], queryFn: () => api.entityHistory(bp, id) });
+  return (
+    <DataTable
+      rows={q.data}
+      loading={q.isPending}
+      error={q.error}
+      rowKey={(h) => h.id}
+      empty="No recorded change"
+      columns={[
+        { key: 'w', label: 'When', render: (h) => <TimeAgo at={h.at} /> },
+        { key: 'a', label: 'Change', render: (h) => <Mono>{h.action}</Mono> },
+        { key: 'u', label: 'By', render: (h) => h.actorEmail ?? 'system' },
+      ]}
+    />
   );
 }
 

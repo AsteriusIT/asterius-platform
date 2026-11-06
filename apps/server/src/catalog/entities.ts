@@ -94,6 +94,74 @@ export async function searchEntities(q: EntityQuery): Promise<EntityPage> {
   return { items: rows.map(toEntity), total: Number(total?.n ?? 0) };
 }
 
+export interface EntityGraph {
+  nodes: { id: string; blueprint: string; identifier: string; title: string; depth: number }[];
+  edges: { from: string; to: string; relation: string }[];
+  truncated: boolean;
+}
+
+const MAX_GRAPH_NODES = 80;
+
+/** Entities reachable from one entity through relations, in both directions, up to `depth` hops (breadth-first). */
+export async function graph(blueprint: string, identifier: string, depth: number): Promise<EntityGraph> {
+  const root = await getEntity(blueprint, identifier);
+  const key = (b: string, i: string) => `${b}/${i}`;
+  const titles = new Map<string, string>([[key(root.blueprint, root.identifier), root.title]]);
+  const depthOf = new Map<string, number>([[key(root.blueprint, root.identifier), 0]]);
+  const edges = new Map<string, { from: string; to: string; relation: string }>();
+  let frontier = [{ b: root.blueprint, i: root.identifier }];
+  let truncated = false;
+  for (let d = 1; d <= depth && frontier.length && !truncated; d++) {
+    const next: typeof frontier = [];
+    for (const n of frontier) {
+      const rels = [
+        ...(
+          await all<{ relation: string; b: string; i: string }>(
+            'SELECT relation, target_blueprint AS b, target_identifier AS i FROM entity_relations WHERE blueprint = ? AND identifier = ?',
+            n.b,
+            n.i,
+          )
+        ).map((r) => ({ from: key(n.b, n.i), to: key(r.b, r.i), relation: r.relation, other: { b: r.b, i: r.i } })),
+        ...(
+          await all<{ relation: string; b: string; i: string }>(
+            'SELECT relation, blueprint AS b, identifier AS i FROM entity_relations WHERE target_blueprint = ? AND target_identifier = ?',
+            n.b,
+            n.i,
+          )
+        ).map((r) => ({ from: key(r.b, r.i), to: key(n.b, n.i), relation: r.relation, other: { b: r.b, i: r.i } })),
+      ];
+      for (const r of rels) {
+        const otherKey = key(r.other.b, r.other.i);
+        if (!depthOf.has(otherKey)) {
+          if (depthOf.size >= MAX_GRAPH_NODES) {
+            truncated = true;
+            continue;
+          }
+          depthOf.set(otherKey, d);
+          next.push(r.other);
+        }
+        edges.set(`${r.from}|${r.relation}|${r.to}`, { from: r.from, to: r.to, relation: r.relation });
+      }
+    }
+    frontier = next;
+  }
+  // Titles for the nodes found (dangling references fall back to their identifier).
+  for (const [k] of depthOf) {
+    if (titles.has(k)) continue;
+    const [b, ...rest] = k.split('/');
+    const e = await findEntity(b, rest.join('/'));
+    titles.set(k, e?.title ?? rest.join('/'));
+  }
+  return {
+    nodes: [...depthOf].map(([k, d]) => {
+      const [b, ...rest] = k.split('/');
+      return { id: k, blueprint: b, identifier: rest.join('/'), title: titles.get(k) ?? k, depth: d };
+    }),
+    edges: [...edges.values()].filter((e) => depthOf.has(e.from) && depthOf.has(e.to)),
+    truncated,
+  };
+}
+
 export async function related(blueprint: string, identifier: string): Promise<RelatedEntities> {
   const e = await getEntity(blueprint, identifier);
   const bp = await getBlueprintCached(blueprint);

@@ -1,10 +1,10 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { HomeSummary } from '@asterius/shared';
-import { audit } from '../audit.js';
+import { audit, listAudit } from '../audit.js';
 import { actorOf, canEditEntity, isAdmin, requireAdmin, requireUser, type Principal } from '../auth/users.js';
 import { deleteBlueprint, getBlueprint, listBlueprints, upsertBlueprint } from '../catalog/blueprints.js';
-import { deleteEntity, findEntity, getEntity, related, searchEntities, upsertEntity } from '../catalog/entities.js';
+import { deleteEntity, findEntity, getEntity, graph, related, searchEntities, upsertEntity } from '../catalog/entities.js';
 import { badRequest, forbidden } from '../lib/errors.js';
 import { listRuns, pendingApprovals } from '../actions/runs.js';
 import { entityInput } from '../schemas.js';
@@ -78,6 +78,22 @@ export async function catalogRoutes(app: FastifyInstance) {
   app.get('/blueprints/:bp/entities/:id/related', async (req) => {
     const { bp, id } = entityParam.parse(req.params);
     return related(bp, id);
+  });
+
+  /** Relation graph around an entity (both directions, `depth` hops, at most 80 nodes). */
+  app.get('/blueprints/:bp/entities/:id/graph', async (req) => {
+    const { bp, id } = entityParam.parse(req.params);
+    const { depth } = z.object({ depth: z.coerce.number().int().min(1).max(3).default(2) }).parse(req.query);
+    return graph(bp, id, depth);
+  });
+
+  /** Change history of an entity (who wrote it and when), from the audit log. */
+  app.get('/blueprints/:bp/entities/:id/history', async (req) => {
+    const { bp, id } = entityParam.parse(req.params);
+    await getEntity(bp, id); // 404 when unknown
+    const target = `${bp}/${id}`;
+    const entries = await listAudit({ target, limit: 200, offset: 0 });
+    return entries.filter((e) => e.target === target).map((e) => ({ id: e.id, at: e.at, action: e.action, actorEmail: e.actorEmail }));
   });
 
   app.post('/blueprints/:bp/entities', async (req, reply) => {

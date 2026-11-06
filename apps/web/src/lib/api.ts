@@ -48,6 +48,18 @@ export interface NotificationPrefs {
   slack: boolean;
 }
 
+export interface EntityGraph {
+  nodes: { id: string; blueprint: string; identifier: string; title: string; depth: number }[];
+  edges: { from: string; to: string; relation: string }[];
+  truncated: boolean;
+}
+export interface EntityHistoryItem {
+  id: string;
+  at: string;
+  action: string;
+  actorEmail: string | null;
+}
+
 /** Typed client for the platform API (/api/v1). The session token lives in localStorage. */
 
 const TOKEN_KEY = 'asterius.token';
@@ -142,6 +154,8 @@ export const api = {
     const f = Object.fromEntries(Object.entries(filters ?? {}).map(([k, v]) => [`filter.${k}`, v]));
     return request<EntityPage>('GET', v1(`${blueprint ? `/blueprints/${enc(blueprint)}` : ''}/entities${qs({ ...rest, ...f })}`));
   },
+  entityGraph: (bp: string, id: string, depth = 2) => request<EntityGraph>('GET', v1(`/blueprints/${enc(bp)}/entities/${enc(id)}/graph${qs({ depth })}`)),
+  entityHistory: (bp: string, id: string) => request<EntityHistoryItem[]>('GET', v1(`/blueprints/${enc(bp)}/entities/${enc(id)}/history`)),
   entity: (bp: string, id: string) => request<Entity>('GET', v1(`/blueprints/${enc(bp)}/entities/${enc(id)}`)),
   related: (bp: string, id: string) => request<RelatedEntities>('GET', v1(`/blueprints/${enc(bp)}/entities/${enc(id)}/related`)),
   saveEntity: (bp: string, id: string, body: unknown) => request<Entity>('PUT', v1(`/blueprints/${enc(bp)}/entities/${enc(id)}`), body),
