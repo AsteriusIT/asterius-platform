@@ -27,6 +27,7 @@ import {
   toCsv,
   type SavedView,
 } from '../lib/catalogView';
+import { useUrlParams } from '../lib/urlState';
 import { canRunOn } from '../lib/permissions';
 import { notifyError } from '../lib/queryClient';
 import { PropertyValue } from '../components/PropertyValue';
@@ -77,7 +78,7 @@ export function CatalogList() {
 }
 
 function CatalogTable({ bp }: { bp: Blueprint }) {
-  const [params, setParams] = useSearchParams();
+  const [params, set, setParams] = useUrlParams();
   const navigate = useNavigate();
   const [search, setSearch] = useState(params.get('q') ?? '');
   const [debounced] = useDebouncedValue(search, 250);
@@ -188,19 +189,6 @@ function CatalogTable({ bp }: { bp: Blueprint }) {
     setSelected(new Set());
     void qc.invalidateQueries({ queryKey: ['entities'] });
     void qc.invalidateQueries({ queryKey: ['runs'] });
-  };
-
-  const set = (k: string, v: string | null) => {
-    setParams(
-      (prev) => {
-        const next = new URLSearchParams(prev);
-        if (v) next.set(k, v);
-        else next.delete(k);
-        if (k !== 'page') next.delete('page');
-        return next;
-      },
-      { replace: true },
-    );
   };
 
   // Persist the (debounced) search text in the URL so it survives reloads and can be shared.

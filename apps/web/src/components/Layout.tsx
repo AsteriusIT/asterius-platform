@@ -49,6 +49,7 @@ import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { Tour } from './Tour';
 import { tourSteps } from './tourSteps';
+import { useT } from '../lib/i18n';
 import { CommandPalette } from './CommandPalette';
 import { NotificationCenter } from './NotificationCenter';
 import { EntityIcon } from './icons';
@@ -66,6 +67,7 @@ export function Layout() {
   const [opened, { toggle, open, close }] = useDisclosure();
   const [touring, setTouring] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const t = useT();
   const isMobile = useMediaQuery('(max-width: 48em)');
   const qc = useQueryClient();
   const { user, isAdmin, signOut } = useAuth();
@@ -115,6 +117,14 @@ export function Layout() {
 
   return (
     <AppShell layout="alt" header={{ height: 60 }} navbar={{ width: 264, breakpoint: 'sm', collapsed: { mobile: !opened } }} padding="xl">
+      <a
+        href="#main-content"
+        style={{ position: 'absolute', left: -9999, top: 0, zIndex: 1000, background: 'var(--mantine-color-body)', padding: 8 }}
+        onFocus={(e) => (e.currentTarget.style.left = '8px')}
+        onBlur={(e) => (e.currentTarget.style.left = '-9999px')}
+      >
+        {t('app.skipToContent')}
+      </a>
       <CommandPalette isAdmin={isAdmin} opened={paletteOpen} onOpenChange={setPaletteOpen} />
       <AppShell.Header className="app-header">
         <Group h="100%" px="lg" justify="space-between" wrap="nowrap" gap="md">
@@ -275,7 +285,7 @@ export function Layout() {
         </AppShell.Section>
       </AppShell.Navbar>
 
-      <AppShell.Main className="app-main">
+      <AppShell.Main className="app-main" id="main-content" tabIndex={-1}>
         <div className="app-content">
           <Outlet />
         </div>

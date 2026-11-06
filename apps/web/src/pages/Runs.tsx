@@ -26,6 +26,7 @@ import { IconCheck, IconExternalLink, IconPlayerStop, IconRepeat, IconX } from '
 import type { Run, RunStatus, RunStep } from '@asterius/shared';
 import { api, errorText } from '../lib/api';
 import { DataTable } from '../components/DataTable';
+import { useUrlParams } from '../lib/urlState';
 import { useRunStream } from '../lib/runStream';
 import { LogViewer } from '../components/LogViewer';
 import { duration, Empty, Markdown, PageHeader, QueryView, StatusBadge, STATUS_COLORS, STATUS_LABELS, TimeAgo } from '../components/ui';
@@ -61,7 +62,7 @@ const runColumns = [
 ];
 
 export function Runs() {
-  const [params, setParams] = useSearchParams();
+  const [params, set] = useUrlParams();
   const navigate = useNavigate();
   const scope = params.get('scope') ?? 'mine';
   const status = params.get('status')?.split(',').filter(Boolean) ?? [];
@@ -86,13 +87,6 @@ export function Runs() {
     placeholderData: keepPreviousData,
     refetchInterval: (query) => (query.state.data?.items.some((r) => ACTIVE.includes(r.status)) ? 5_000 : 30_000),
   });
-  const set = (k: string, v: string) => {
-    const n = new URLSearchParams(params);
-    if (v) n.set(k, v);
-    else n.delete(k);
-    if (k !== 'page') n.delete('page');
-    setParams(n, { replace: true });
-  };
   return (
     <Stack>
       <PageHeader title="Runs" description="Every self-service request and its execution." />
