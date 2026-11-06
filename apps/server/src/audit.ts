@@ -1,4 +1,5 @@
 import { all, json, newId, now, run, type SqlValue } from './db.js';
+import { componentLogger } from './logger.js';
 import type { AuditEntry } from '@asterius/shared';
 
 /** Append-only audit log of changes and decisions: who, what, on which target. */
@@ -7,6 +8,8 @@ export interface Actor {
   id: string | null;
   email: string | null;
 }
+
+const log = componentLogger('audit');
 
 export const SYSTEM: Actor = { id: null, email: 'system' };
 
@@ -23,7 +26,7 @@ export async function audit(actor: Actor, action: string, target: string | null,
       JSON.stringify(detail),
     );
   } catch (err) {
-    console.error('[audit] could not record', action, err); // never break the action itself
+    log.error({ err, action, target }, 'could not record audit entry'); // never break the action itself
   }
 }
 

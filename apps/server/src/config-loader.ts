@@ -79,17 +79,18 @@ async function applyKind<T extends { identifier: string }>(
     try {
       const was = existing.find((e) => e.identifier === item.identifier);
       const { created } = await upsert(item);
-      if (created) log.info(`config: ${kind} ${item.identifier} created`);
-      else if (was && !was.managed) log.warn(`config: ${kind} ${item.identifier} created in the UI is now managed by configuration`);
+      if (created) log.info({ component: 'config', kind, identifier: item.identifier }, 'config resource created');
+      else if (was && !was.managed)
+        log.warn({ component: 'config', kind, identifier: item.identifier }, 'resource created in the UI is now managed by configuration');
     } catch (err) {
-      log.error(`config: ${kind} ${item.identifier}: ${errorMessage(err)}`);
+      log.error({ component: 'config', kind, identifier: item.identifier, err }, 'config resource rejected');
     }
   }
   for (const e of existing)
     if (e.managed && !ids.has(e.identifier))
       await remove(e.identifier).then(
-        () => log.info(`config: ${kind} ${e.identifier} removed (no longer declared)`),
-        (err) => log.warn(`config: ${kind} ${e.identifier} is no longer declared but cannot be removed: ${errorMessage(err)}`),
+        () => log.info({ component: 'config', kind, identifier: e.identifier }, 'config resource removed (no longer declared)'),
+        (err) => log.warn({ component: 'config', kind, identifier: e.identifier, err }, 'resource is no longer declared but cannot be removed'),
       );
 }
 
@@ -144,25 +145,28 @@ export async function applyConfig(loaded: LoadedConfig, log: FastifyBaseLogger) 
   let removed = (await listBlueprints()).filter((b) => b.managed && !declared.has(b.identifier)).map((b) => b.identifier);
   for (const id of removed)
     for (const e of await all<{ identifier: string }>("SELECT identifier FROM entities WHERE blueprint = ? AND source = 'config'", id))
-      await deleteEntity(id, e.identifier).catch((err) => log.warn(`config: entity ${id}/${e.identifier}: ${errorMessage(err)}`));
+      await deleteEntity(id, e.identifier).catch((err) =>
+        log.warn({ component: 'config', blueprint: id, identifier: e.identifier, err }, 'seeded entity cannot be removed'),
+      );
   const errors = new Map<string, string>();
   for (let progress = true; removed.length && progress;) {
     progress = false;
     for (const id of removed)
       await deleteBlueprint(id, m).then(
         () => {
-          log.info(`config: blueprint ${id} removed`);
+          log.info({ component: 'config', kind: 'blueprint', identifier: id }, 'config resource removed');
           removed = removed.filter((r) => r !== id);
           progress = true;
         },
         (err) => errors.set(id, errorMessage(err)),
       );
   }
-  for (const id of removed) log.warn(`config: blueprint ${id} is no longer declared but cannot be removed: ${errors.get(id)}`);
+  for (const id of removed)
+    log.warn({ component: 'config', kind: 'blueprint', identifier: id, reason: errors.get(id) }, 'blueprint is no longer declared but cannot be removed');
   for (const e of data.entities) {
     const { blueprint, ...entity } = e;
     await upsertEntity(blueprint, entity, { source: 'config', skipExisting: true }).catch((err) =>
-      log.error(`config: entity ${blueprint}/${e.identifier}: ${errorMessage(err)}`),
+      log.error({ component: 'config', blueprint, identifier: e.identifier, err }, 'seeded entity rejected'),
     );
   }
 }
@@ -176,7 +180,7 @@ export async function startConfigLoader(log: FastifyBaseLogger) {
     try {
       loaded = readConfigDir();
     } catch (err) {
-      log.error(`config: ${errorMessage(err)} (keeping the current configuration)`);
+      log.error({ component: 'config', err }, 'config unreadable, keeping the current configuration');
       return;
     }
     if (loaded.hash === lastHash) return;
@@ -185,7 +189,7 @@ export async function startConfigLoader(log: FastifyBaseLogger) {
       lastHash = loaded.hash;
     });
     if (loaded.files.length) {
-      log.info(`config: applied ${loaded.files.length} file(s) from ${config.CONFIG_DIR}`);
+      log.info({ component: 'config', files: loaded.files.length, dir: config.CONFIG_DIR }, 'config applied');
       await audit(SYSTEM, 'config.applied', config.CONFIG_DIR, {
         files: loaded.files.map((f) => path.relative(config.CONFIG_DIR, f)),
         hash: loaded.hash.slice(0, 12),
@@ -193,7 +197,7 @@ export async function startConfigLoader(log: FastifyBaseLogger) {
     }
   };
   await check();
-  const timer = setInterval(() => check().catch((err) => log.error({ err }, 'config reload failed')), 60_000);
+  const timer = setInterval(() => check().catch((err) => log.error({ component: 'config', err }, 'config reload failed')), 60_000);
   timer.unref();
   return {
     reload: async () => {

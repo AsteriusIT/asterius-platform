@@ -25,11 +25,14 @@ const loader = await startConfigLoader(app.log);
 const stops: (() => unknown)[] = [loader.stop];
 if (isWorker) {
   stops.push(startRunWorker(app.log), startSyncScheduler(app.log), startDeliveryWorker(app.log), startMaintenance(app.log));
-  app.log.info(`worker ${WORKER_ID} started (concurrency ${config.WORKER_CONCURRENCY})`);
+  app.log.info({ component: 'worker', workerId: WORKER_ID, concurrency: config.WORKER_CONCURRENCY }, 'worker started');
 }
 
 await app.listen({ port: config.PORT, host: '0.0.0.0' });
-app.log.info(`Asterius Platform role=${config.PLATFORM_ROLE} api=${isApi} db=${config.DATABASE_URL ? 'postgres' : 'sqlite'} config=${config.CONFIG_DIR}`);
+app.log.info(
+  { component: 'main', role: config.PLATFORM_ROLE, api: isApi, db: config.DATABASE_URL ? 'postgres' : 'sqlite', configDir: config.CONFIG_DIR },
+  'Asterius Platform started',
+);
 
 // Graceful shutdown (SIGTERM from Kubernetes): stop taking work, drain HTTP, let in-flight run starts finish.
 let closing = false;
@@ -37,7 +40,7 @@ for (const signal of ['SIGTERM', 'SIGINT'] as const)
   process.on(signal, async () => {
     if (closing) return;
     closing = true;
-    app.log.info(`${signal}: shutting down`);
+    app.log.info({ component: 'main', signal }, 'shutting down');
     await Promise.allSettled(stops.map((s) => s()));
     await app.close();
     await closeDb();

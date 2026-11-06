@@ -4,6 +4,7 @@ import type { SyncRun, SyncStats } from '@asterius/shared';
 import { all, bool, json, later, newId, now, run } from '../db.js';
 import { errorMessage } from '../lib/errors.js';
 import { render } from '../lib/expr.js';
+import { maskText } from '../lib/mask.js';
 import { resolveRef } from '../secrets.js';
 import { deleteEntity, upsertEntity } from '../catalog/entities.js';
 import { metrics } from '../metrics.js';
@@ -20,8 +21,10 @@ const SYSTEM_ACTOR = { id: null, email: 'integration' };
 class SyncLog {
   lines: string[] = [];
   errors = 0;
+  /** Secret values resolved for this sync: masked (with common credential shapes) before a line is stored. */
+  secrets: string[] = [];
   add = (line: string) => {
-    if (this.lines.length < MAX_LOG_LINES) this.lines.push(`${new Date().toISOString().slice(11, 19)} ${line}`);
+    if (this.lines.length < MAX_LOG_LINES) this.lines.push(`${new Date().toISOString().slice(11, 19)} ${maskText(line, this.secrets)}`);
   };
   error = (line: string) => {
     this.errors++;
@@ -30,8 +33,9 @@ class SyncLog {
   };
 }
 
-export async function renderConfig(r: IntegrationRow) {
-  const { value } = await render(json(r.config, {}), { integration: { identifier: r.identifier } }, resolveRef);
+export async function renderConfig(r: IntegrationRow, secrets: string[] = []) {
+  const { value, secrets: used } = await render(json(r.config, {}), { integration: { identifier: r.identifier } }, resolveRef);
+  secrets.push(...used);
   return value as Record<string, unknown>;
 }
 
@@ -92,7 +96,7 @@ export async function runSync(identifier: string, trigger: SyncRun['trigger']): 
       const source = getSource(r.type);
       if (!source.list) throw new Error(`${r.type} integrations are push-only`);
       const mappings = json<MappingDef[]>(r.mappings, []);
-      const config = await renderConfig(r);
+      const config = await renderConfig(r, log.secrets);
       const bindings: Bindings = { integration: { identifier, config: json(r.config, {}) } };
       const seen = new Set<string>();
       let n = 0;

@@ -4,6 +4,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { config, paths } from './config.js';
+import { componentLogger } from './logger.js';
 import { dbSpan } from './tracing.js';
 
 /**
@@ -385,6 +386,7 @@ export async function migrate(d: Driver, migrations = MIGRATIONS) {
   }
 }
 
+const log = componentLogger('db');
 let pool: pg.Pool | undefined;
 
 async function open(): Promise<Driver> {
@@ -394,7 +396,7 @@ async function open(): Promise<Driver> {
     return d;
   }
   pool = new pg.Pool({ connectionString: config.DATABASE_URL, max: config.DATABASE_POOL_SIZE });
-  pool.on('error', (err) => console.error('[db] idle client error', err.message)); // never crash on a dropped idle connection
+  pool.on('error', (err) => log.error({ err }, 'idle client error')); // never crash on a dropped idle connection
   // The database may start after the pods (fresh install, failover): wait instead of crash-looping.
   let client: pg.PoolClient | undefined;
   for (let attempt = 1; !client; attempt++) {
@@ -402,7 +404,7 @@ async function open(): Promise<Driver> {
       client = await pool.connect();
     } catch (err) {
       if (attempt >= 30) throw err;
-      console.warn(`[db] waiting for PostgreSQL (attempt ${attempt}/30): ${(err as Error).message}`);
+      log.warn({ attempt, err: (err as Error).message }, 'waiting for PostgreSQL');
       await new Promise((r) => setTimeout(r, Math.min(1000 * attempt, 5000)));
     }
   }

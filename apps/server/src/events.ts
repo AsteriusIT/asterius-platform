@@ -1,4 +1,5 @@
 import { all, json, newId, now, run } from './db.js';
+import { componentLogger } from './logger.js';
 import { metrics } from './metrics.js';
 
 /**
@@ -21,6 +22,8 @@ interface Sub {
   events: string[];
   blueprints: string[];
 }
+
+const log = componentLogger('events');
 
 let cache: { at: number; subs: Sub[] } | undefined;
 const CACHE_MS = 15_000;
@@ -58,6 +61,6 @@ export async function emit(e: DomainEvent) {
         now(),
       );
   } catch (err) {
-    console.error('[events] could not enqueue', e.type, err);
+    log.error({ err, type: e.type }, 'could not enqueue event');
   }
 }
