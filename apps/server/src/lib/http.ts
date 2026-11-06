@@ -17,6 +17,8 @@ export interface HttpRequest {
   headers?: Record<string, string>;
   body?: unknown;
   timeoutMs?: number;
+  /** `error`: fail on redirects instead of following them (allow-listed calls must not leave their host). */
+  redirect?: 'follow' | 'error';
 }
 
 export interface HttpResponse<T = unknown> {
@@ -38,7 +40,7 @@ export async function http<T = unknown>(url: string, req: HttpRequest = {}): Pro
     headers,
     body,
     signal: AbortSignal.timeout(req.timeoutMs ?? config.HTTP_TIMEOUT_SECONDS * 1000),
-    redirect: 'follow',
+    redirect: req.redirect ?? 'follow',
   });
   const text = await res.text();
   let data: unknown = text;

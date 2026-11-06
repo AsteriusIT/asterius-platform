@@ -9,6 +9,7 @@ import { getEntity } from '../catalog/entities.js';
 import { compact, validate } from '../catalog/validation.js';
 import { canTrigger, getAction } from './actions.js';
 import { metrics } from '../metrics.js';
+import { runCosts } from '../ai/usage.js';
 import { canApproveStep, loadSteps, runStepsView, stepApprovalsOf, stepDefs, stepMessage } from './steps.js';
 
 /**
@@ -111,7 +112,14 @@ export async function getRun(id: string, p: Principal): Promise<Run> {
   const r = await getRunRow(id);
   const approvals = (await approvalsOf([id])).get(id) ?? [];
   const logs = await all<RunLog>('SELECT at, level, message, step_id AS "stepId" FROM run_logs WHERE run_id = ? ORDER BY seq LIMIT 10000', id);
-  return { ...toRun(r, approvals), logs, steps: await runStepsView(r, p), canApprove: canApprove(p, r, approvals), canCancel: canCancel(p, r) };
+  return {
+    ...toRun(r, approvals),
+    logs,
+    costUsd: (await runCosts(id)).total || null,
+    steps: await runStepsView(r, p),
+    canApprove: canApprove(p, r, approvals),
+    canCancel: canCancel(p, r),
+  };
 }
 
 export interface RunQuery {

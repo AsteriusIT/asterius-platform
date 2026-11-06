@@ -6,7 +6,7 @@ import { conflict, badRequest, errorMessage, forbidden } from '../lib/errors.js'
 import { evaluate, redact, render } from '../lib/expr.js';
 import { resolveRef, stepToken } from '../secrets.js';
 import { audit, SYSTEM } from '../audit.js';
-import { actorOf, type Principal } from '../auth/users.js';
+import { actorOf, getUser, principalOf, type Principal } from '../auth/users.js';
 import { findEntity } from '../catalog/entities.js';
 import { metrics } from '../metrics.js';
 import { withSpan } from '../tracing.js';
@@ -266,6 +266,63 @@ async function applyInvokeResult(runId: string, stepId: string, res: InvokeResul
   if (ok && (res.link !== undefined || res.statusLabel !== undefined)) await emitRun(runId, 'run.updated');
 }
 
+/** Per-team Claude credential: a secret named `anthropic-api-key-<team>` (used when the step sets no apiKey). */
+async function teamApiKey(team: string | null): Promise<string | undefined> {
+  if (!team) return undefined;
+  const name = `anthropic-api-key-${team}`;
+  if (!(await one('SELECT name FROM secrets WHERE name = ?', name))) return undefined;
+  return resolveRef('secret', name);
+}
+
+/** Keep the step's lease alive while a long model call runs (a dead worker's lease expires and the step is recovered). */
+function heartbeat(runId: string, stepId: string) {
+  const timer = setInterval(() => {
+    exec(
+      "UPDATE run_steps SET locked_until = ? WHERE run_id = ? AND step_id = ? AND status = 'RUNNING' AND locked_until IS NOT NULL",
+      later(LEASES.agent),
+      runId,
+      stepId,
+    ).catch(() => undefined);
+  }, 30_000);
+  return () => clearInterval(timer);
+}
+
+async function executeAgent(r: RunRow, rows: StepRow[], def: Extract<Step, { type: 'agent' }>, setSecrets: (s: string[]) => void) {
+  const ctx = await buildContext(r, rows, def.id);
+  // Text sent to the model: interpolated values are fenced as untrusted data and secrets cannot be referenced.
+  const text = await render({ prompt: def.prompt, system: def.system }, ctx, resolveRef, { wrap: (t, expr) => wrapUntrusted(t, expr), noRefs: true });
+  const creds = await render({ apiKey: def.apiKey ?? '', mcpTokens: def.mcpServers.map((s) => s.token ?? '') }, ctx, resolveRef);
+  const secrets = [...creds.secrets];
+  setSecrets(secrets);
+  const v = text.value as { prompt: unknown; system?: unknown };
+  const c = creds.value as { apiKey?: unknown; mcpTokens?: unknown[] };
+  const user = await getUser(r.triggered_by);
+  if (!user) throw new StepError('The user who started this run no longer exists', false);
+  const principal = await principalOf(user);
+  const team = r.team ?? principal.teams[0] ?? null;
+  let apiKey = typeof c.apiKey === 'string' && c.apiKey ? c.apiKey : undefined;
+  if (!apiKey && (def.provider ?? config.AI_PROVIDER) === 'anthropic') {
+    apiKey = await teamApiKey(team);
+    if (apiKey) secrets.push(apiKey);
+  }
+  const stop = heartbeat(r.id, def.id);
+  try {
+    return await runAgent(
+      {
+        ...def,
+        prompt: typeof v.prompt === 'string' ? v.prompt : JSON.stringify(v.prompt),
+        system: typeof v.system === 'string' ? v.system : undefined,
+        apiKey,
+        mcpTokens: (c.mcpTokens ?? []).map((t) => (typeof t === 'string' ? t : '')),
+      },
+      stepLog(r.id, def.id, secrets),
+      { runId: r.id, stepId: def.id, action: r.action, team: r.team, principal },
+    );
+  } finally {
+    stop();
+  }
+}
+
 /** Execute a step the worker just claimed (QUEUED → RUNNING). */
 export async function executeStep(runId: string, stepId: string) {
   const r = await getRunRow(runId);
@@ -285,22 +342,12 @@ export async function executeStep(runId: string, stepId: string) {
         secrets = built.secrets;
         await applyInvokeResult(runId, stepId, await inv.start(built.env), !!inv.poll);
       } else if (def.type === 'agent') {
-        const ctx = await buildContext(r, rows, stepId);
-        // Text sent to the model: interpolated values are fenced as untrusted data and secrets cannot be referenced.
-        const text = await render({ prompt: def.prompt, system: def.system }, ctx, resolveRef, { wrap: (t, expr) => wrapUntrusted(t, expr), noRefs: true });
-        const key = await render({ apiKey: def.apiKey }, ctx, resolveRef);
-        secrets = key.secrets;
-        const v = { ...(text.value as { prompt: unknown; system?: unknown }), apiKey: (key.value as { apiKey?: unknown }).apiKey };
-        const prompt = typeof v.prompt === 'string' ? v.prompt : JSON.stringify(v.prompt);
-        const result = await runAgent(
-          { ...def, prompt, system: typeof v.system === 'string' ? v.system : undefined, apiKey: typeof v.apiKey === 'string' ? v.apiKey : undefined },
-          stepLog(runId, stepId, secrets),
-        );
+        const result = await executeAgent(r, rows, def, (s) => (secrets = s));
         await setStep(runId, stepId, 'RUNNING', { state: JSON.stringify({ usage: result.usage }) });
         await complete(runId, stepId, ['RUNNING'], {
           status: 'SUCCESS',
           output: result.output,
-          statusLabel: `${result.usage.model} · ${result.usage.turns} turn(s)`,
+          statusLabel: `${result.usage.model} · ${result.usage.turns} turn(s)${result.usage.costUsd !== null ? ` · $${result.usage.costUsd.toFixed(4)}` : ''}`,
         });
       } else if (def.type === 'transform') {
         const ctx = await buildContext(r, rows, stepId);
@@ -444,7 +491,7 @@ export async function cancelSteps(r: RunRow) {
 }
 
 // ---------- worker loops ----------
-const LEASES: Record<Step['type'], number> = { invoke: 5 * 60_000, agent: 15 * 60_000, transform: 60_000, approval: 0 };
+const LEASES: Record<Step['type'], number> = { invoke: 5 * 60_000, agent: 3 * 60_000, transform: 60_000, approval: 0 };
 
 /** Claim due QUEUED steps (up to `slots`) and run them through `spawn`. */
 export async function claimSteps(worker: string, slots: number, spawn: (fn: () => Promise<void>) => void) {

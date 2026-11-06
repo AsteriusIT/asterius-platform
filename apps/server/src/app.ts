@@ -14,6 +14,7 @@ import { catalogRoutes } from './routes/catalog.js';
 import { actionRoutes } from './routes/actions.js';
 import { integrationRoutes } from './routes/integrations.js';
 import { adminRoutes } from './routes/admin.js';
+import { aiRoutes } from './routes/ai.js';
 
 export interface AppOptions {
   reloadConfig?: () => Promise<void>;
@@ -83,6 +84,7 @@ export async function buildApp(opts: AppOptions = {}): Promise<FastifyInstance> 
       await v1.register(catalogRoutes);
       await v1.register(actionRoutes);
       await v1.register(integrationRoutes);
+      await v1.register(aiRoutes);
       await v1.register(adminRoutes, { reloadConfig: opts.reloadConfig ?? (async () => undefined) });
     },
     { prefix: '/api/v1' },

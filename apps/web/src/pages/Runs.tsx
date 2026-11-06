@@ -208,6 +208,11 @@ function RunView({ r }: { r: Run }) {
                 {r.statusLabel}
               </Text>
             )}
+            {!!r.costUsd && (
+              <Text span fz="sm" c="dimmed">
+                AI cost ${r.costUsd.toFixed(4)}
+              </Text>
+            )}
           </Group>
         }
         actions={
@@ -430,6 +435,7 @@ function StepPanel({ run, step, onDone }: { run: Run; step: RunStep; onDone: (r:
             {step.statusLabel ? `${step.statusLabel} · ` : ''}
             {step.startedAt ? duration(step.startedAt, step.endedAt) : 'not started'}
             {step.maxAttempts > 1 ? ` · attempt ${Math.max(step.attempt, 1)}/${step.maxAttempts}` : ''}
+            {step.costUsd ? ` · AI cost $${step.costUsd.toFixed(4)}` : ''}
             {step.continueOnError ? ' · may fail without failing the workflow' : ''}
           </Text>
         </div>

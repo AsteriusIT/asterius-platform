@@ -1,5 +1,9 @@
 import type {
   Action,
+  AiBudget,
+  AiPrice,
+  AiStatus,
+  AiUsageReport,
   ApiToken,
   AuditEntry,
   Blueprint,
@@ -154,6 +158,13 @@ export const api = {
   secrets: () => request<SecretInfo[]>('GET', v1('/secrets')),
   setSecret: (name: string, value: string, description: string) => request('PUT', v1(`/secrets/${enc(name)}`), { value, description }),
   deleteSecret: (name: string) => request('DELETE', v1(`/secrets/${enc(name)}`)),
+
+  aiStatus: () => request<AiStatus>('GET', v1('/ai/status')),
+  aiUsage: () => request<AiUsageReport>('GET', v1('/ai/usage')),
+  aiBudgets: () => request<AiBudget[]>('GET', v1('/ai/budgets')),
+  setAiBudget: (b: { scope: AiBudget['scope']; key: string; softUsd: number | null; hardUsd: number | null }) => request<AiBudget>('PUT', v1('/ai/budgets'), b),
+  deleteAiBudget: (id: string) => request('DELETE', v1(`/ai/budgets/${enc(id)}`)),
+  aiPrices: () => request<AiPrice[]>('GET', v1('/ai/prices')),
 
   audit: (q: { search?: string; limit?: number; offset?: number }) => request<AuditEntry[]>('GET', v1(`/audit${qs(q)}`)),
   configInfo: () => request<{ dir: string; managed: Record<string, number> }>('GET', v1('/config')),

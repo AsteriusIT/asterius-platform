@@ -88,6 +88,33 @@ const stepBase = {
 
 export const AGENT_MODELS = ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-fable-5-1'] as const;
 
+export const AGENT_TOOLS = ['catalog', 'upsert_entity', 'trigger_action', 'http'] as const;
+export const agentGuardrails = z.object({
+  /** upsert_entity: blueprints the agent may write to. */
+  entityBlueprints: z.array(slug).max(50).default([]),
+  /** trigger_action: actions the agent may start (as the user who started the run). */
+  actions: z.array(slug).max(50).default([]),
+  /** http: hosts (`api.example.com` or `host:port`) the agent may call. Redirects are not followed. */
+  httpHosts: z
+    .array(z.string().regex(/^[A-Za-z0-9.-]+(:\d{1,5})?$/, 'host or host:port'))
+    .max(50)
+    .default([]),
+  httpMethods: z
+    .array(z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']))
+    .min(1)
+    .default(['GET']),
+  /** Write operations (upserts, triggers, non-GET calls) per step execution. */
+  maxWrites: z.number().int().min(1).max(50).default(5),
+});
+export const mcpServer = z.object({
+  name: z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,39}$/),
+  url: z.string().url().startsWith('https://'),
+  /** `${secret:NAME}` bearer token for the server. */
+  token: z.string().max(500).optional(),
+  /** Restrict the tools the model may call (default: all of the server's tools). */
+  allowedTools: z.array(z.string().min(1).max(100)).max(100).optional(),
+});
+
 export const workflowStep = z.discriminatedUnion('type', [
   z.object({ ...stepBase, type: z.literal('invoke'), invoker: z.object({ type: z.string().min(1) }).passthrough() }),
   z.object({
@@ -120,9 +147,18 @@ export const workflowStep = z.discriminatedUnion('type', [
         order: z.array(z.string()).optional(),
       })
       .optional(),
-    tools: z.array(z.enum(['catalog'])).default([]),
+    /** catalog: read-only lookups · upsert_entity / trigger_action / http: governed write tools (need `guardrails`). */
+    tools: z.array(z.enum(AGENT_TOOLS)).default([]),
+    /** Allow-lists and limits of the write tools; a write tool without its allow-list is rejected. */
+    guardrails: agentGuardrails.default({ entityBlueprints: [], actions: [], httpHosts: [], httpMethods: ['GET'], maxWrites: 5 }),
+    /** Remote MCP servers the model may use (called by the Claude API, so they must be reachable from the internet over HTTPS). */
+    mcpServers: z.array(mcpServer).max(5).default([]),
     maxTurns: z.number().int().min(1).max(20).default(6),
     maxTokens: z.number().int().min(256).max(64_000).default(16_000),
+    /** Stop the run's AI calls once its total AI spend reaches this many dollars. */
+    maxCostUsd: z.number().min(0).max(10_000).optional(),
+    /** anthropic (default: AI_PROVIDER), bedrock or vertex. */
+    provider: z.enum(['anthropic', 'bedrock', 'vertex']).optional(),
     apiKey: z.string().optional(),
   }),
   z.object({ ...stepBase, type: z.literal('transform'), output: z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,63}$/), z.string()) }),

@@ -7,7 +7,6 @@ import {
   Button,
   Box,
   Card,
-  Checkbox,
   Grid,
   Group,
   Input,
@@ -19,6 +18,7 @@ import {
   SimpleGrid,
   Stack,
   Switch,
+  TagsInput,
   Text,
   Textarea,
   TextInput,
@@ -31,7 +31,9 @@ import { modals } from '@mantine/modals';
 import { useQuery } from '@tanstack/react-query';
 import { IconArrowDown, IconArrowUp, IconBolt, IconCode, IconPlus, IconRobot, IconShieldCheck, IconTrash } from '@tabler/icons-react';
 import type {
+  AgentMcpServer,
   AgentStep,
+  AgentTool,
   FormTrigger,
   ApprovalStep,
   InvokeStep,
@@ -103,6 +105,10 @@ export function stepProblems(steps: WorkflowStep[], invokers: PluginInfo[]): str
     if (s.type === 'agent') {
       if (!s.prompt?.trim()) out.push(`${where}: write the prompt`);
       if (s.output) out.push(...fieldProblems(schemaToFields(s.output), `${where}: output field`));
+      if (s.tools?.includes('upsert_entity') && !s.guardrails?.entityBlueprints?.length) out.push(`${where}: list the blueprints the agent may write`);
+      if (s.tools?.includes('trigger_action') && !s.guardrails?.actions?.length) out.push(`${where}: list the actions the agent may start`);
+      if (s.tools?.includes('http') && !s.guardrails?.httpHosts?.length) out.push(`${where}: list the hosts the agent may call`);
+      for (const m of s.mcpServers ?? []) if (!m.name || !m.url.startsWith('https://')) out.push(`${where}: MCP servers need a name and an https:// URL`);
     }
     if (s.type === 'transform')
       for (const k of Object.keys(s.output ?? {})) if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(k)) out.push(`${where}: invalid output key "${k}"`);
@@ -622,11 +628,47 @@ function AgentEditor({ step, onChange }: { step: AgentStep; onChange: (p: Partia
         onChange={(e) => onChange({ prompt: e.currentTarget.value })}
         styles={MONO_INPUT}
       />
-      <Checkbox
-        label="Can look things up in the catalog (read-only: list blueprints, search entities, get an entity)"
-        checked={step.tools?.includes('catalog') ?? false}
-        onChange={(e) => onChange({ tools: e.currentTarget.checked ? ['catalog'] : [] })}
+      <MultiSelect
+        label="Tools"
+        description="Look-ups are read-only. Write tools act as the user who started the run, inside the allow-lists below, and every write is audited."
+        data={AGENT_TOOL_OPTIONS}
+        value={step.tools ?? []}
+        onChange={(t) => onChange({ tools: t as AgentTool[] })}
       />
+      {(step.tools ?? []).includes('upsert_entity') && (
+        <TagsInput
+          label="Blueprints the agent may write"
+          withAsterisk
+          value={step.guardrails?.entityBlueprints ?? []}
+          onChange={(v) => onChange({ guardrails: { ...step.guardrails, entityBlueprints: v } })}
+        />
+      )}
+      {(step.tools ?? []).includes('trigger_action') && (
+        <TagsInput
+          label="Actions the agent may start"
+          withAsterisk
+          value={step.guardrails?.actions ?? []}
+          onChange={(v) => onChange({ guardrails: { ...step.guardrails, actions: v } })}
+        />
+      )}
+      {(step.tools ?? []).includes('http') && (
+        <SimpleGrid cols={{ base: 1, sm: 2 }}>
+          <TagsInput
+            label="Hosts the agent may call"
+            withAsterisk
+            description="host or host:port; redirects are not followed"
+            value={step.guardrails?.httpHosts ?? []}
+            onChange={(v) => onChange({ guardrails: { ...step.guardrails, httpHosts: v } })}
+          />
+          <MultiSelect
+            label="HTTP methods"
+            data={['GET', 'POST', 'PUT', 'PATCH', 'DELETE']}
+            value={step.guardrails?.httpMethods ?? ['GET']}
+            onChange={(v) => onChange({ guardrails: { ...step.guardrails, httpMethods: v as NonNullable<AgentStep['guardrails']>['httpMethods'] } })}
+          />
+        </SimpleGrid>
+      )}
+      <McpServersEditor value={step.mcpServers ?? []} onChange={(mcpServers) => onChange({ mcpServers })} />
       <Switch
         label="Structured output"
         description="Claude returns JSON with the fields below (validated), usable in conditions and later steps"
@@ -666,16 +708,99 @@ function AgentEditor({ step, onChange }: { step: AgentStep; onChange: (p: Partia
               <TextInput
                 label="API key"
                 placeholder="${secret:ANTHROPIC_TEAM_KEY}"
-                description="Default: the platform key"
+                description="Default: the team key (secret anthropic-api-key-<team>), then the platform key"
                 value={step.apiKey ?? ''}
                 onChange={(e) => onChange({ apiKey: e.currentTarget.value || undefined })}
                 styles={MONO_INPUT}
+              />
+              <NumberInput
+                label="Run AI budget ($)"
+                description="Stop AI calls once the run has spent this much"
+                min={0}
+                decimalScale={2}
+                value={step.maxCostUsd ?? ''}
+                onChange={(n) => onChange({ maxCostUsd: n === '' ? undefined : Number(n) })}
+              />
+              <Select
+                label="Provider"
+                description="Where Claude runs"
+                clearable
+                placeholder="Platform default"
+                data={[
+                  { value: 'anthropic', label: 'Anthropic API' },
+                  { value: 'bedrock', label: 'Amazon Bedrock' },
+                  { value: 'vertex', label: 'Google Vertex AI' },
+                ]}
+                value={step.provider ?? null}
+                onChange={(p) => onChange({ provider: (p as AgentStep['provider']) ?? undefined })}
               />
             </SimpleGrid>
           </Accordion.Panel>
         </Accordion.Item>
       </Accordion>
     </Stack>
+  );
+}
+
+const AGENT_TOOL_OPTIONS = [
+  { value: 'catalog', label: 'Catalog look-ups (read-only)' },
+  { value: 'upsert_entity', label: 'Create or update catalog entities' },
+  { value: 'trigger_action', label: 'Start self-service actions' },
+  { value: 'http', label: 'Call HTTP APIs (allow-listed hosts)' },
+];
+
+/** Remote MCP servers the model may use (the Claude API connects to them, so they must be public HTTPS endpoints). */
+function McpServersEditor({ value, onChange }: { value: AgentMcpServer[]; onChange: (v: AgentMcpServer[]) => void }) {
+  const set = (i: number, patch: Partial<AgentMcpServer>) => onChange(value.map((s, j) => (j === i ? { ...s, ...patch } : s)));
+  return (
+    <Input.Wrapper
+      label="MCP servers"
+      description="Give the model the tools of remote Model Context Protocol servers (HTTPS). The token is a secret reference."
+    >
+      <Stack gap="xs" mt={4}>
+        {value.map((s, i) => (
+          <SimpleGrid key={i} cols={{ base: 1, sm: 4 }} style={{ alignItems: 'flex-end' }}>
+            <TextInput
+              placeholder="name"
+              aria-label="MCP server name"
+              value={s.name}
+              onChange={(e) => set(i, { name: e.currentTarget.value })}
+              styles={MONO_INPUT}
+            />
+            <TextInput
+              placeholder="https://mcp.example.com/mcp"
+              aria-label="MCP server URL"
+              value={s.url}
+              onChange={(e) => set(i, { url: e.currentTarget.value })}
+            />
+            <TextInput
+              placeholder="${secret:MCP_TOKEN}"
+              aria-label="MCP server token"
+              value={s.token ?? ''}
+              onChange={(e) => set(i, { token: e.currentTarget.value || undefined })}
+              styles={MONO_INPUT}
+            />
+            <Group gap="xs" wrap="nowrap">
+              <TagsInput
+                placeholder="allowed tools (all)"
+                aria-label="Allowed MCP tools"
+                value={s.allowedTools ?? []}
+                onChange={(v) => set(i, { allowedTools: v.length ? v : undefined })}
+                style={{ flex: 1 }}
+              />
+              <ActionIcon variant="subtle" color="red" aria-label="Remove MCP server" onClick={() => onChange(value.filter((_, j) => j !== i))}>
+                <IconTrash size={16} />
+              </ActionIcon>
+            </Group>
+          </SimpleGrid>
+        ))}
+        <div>
+          <Button size="xs" variant="default" leftSection={<IconPlus size={14} />} onClick={() => onChange([...value, { name: '', url: 'https://' }])}>
+            Add MCP server
+          </Button>
+        </div>
+      </Stack>
+    </Input.Wrapper>
   );
 }
 

@@ -11,7 +11,9 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@anthropic-ai/bedrock-sdk": "^1.1.1",
     "@anthropic-ai/sdk": "^1.5.0",
+    "@anthropic-ai/vertex-sdk": "^1.1.2",
     "@asterius/shared": "*",
     "@fastify/helmet": "^13.2.0",
     "@fastify/rate-limit": "^11.2.2",

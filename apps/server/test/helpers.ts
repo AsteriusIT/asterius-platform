@@ -45,6 +45,38 @@ export interface Received {
   body: string;
 }
 
+const wantsStream = (body: string) => {
+  try {
+    return (JSON.parse(body) as { stream?: boolean }).stream === true;
+  } catch {
+    return false;
+  }
+};
+
+interface FakeMessage {
+  content: ({ type: string; text?: string; input?: unknown } & Record<string, unknown>)[];
+  usage: Record<string, number>;
+  stop_reason: string;
+}
+
+/** The server-sent events of a Messages API stream for a complete message. */
+export function messageEvents(m: FakeMessage): string {
+  const ev = (type: string, data: object) => `event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`;
+  let out = ev('message_start', { message: { ...m, content: [], stop_reason: null, usage: { ...m.usage, output_tokens: 1 } } });
+  m.content.forEach((block, index) => {
+    if (block.type === 'text') {
+      out += ev('content_block_start', { index, content_block: { type: 'text', text: '' } });
+      out += ev('content_block_delta', { index, delta: { type: 'text_delta', text: block.text } });
+    } else {
+      out += ev('content_block_start', { index, content_block: { ...block, input: {} } });
+      out += ev('content_block_delta', { index, delta: { type: 'input_json_delta', partial_json: JSON.stringify(block.input ?? {}) } });
+    }
+    out += ev('content_block_stop', { index });
+  });
+  out += ev('message_delta', { delta: { stop_reason: m.stop_reason, stop_sequence: null }, usage: m.usage });
+  return out + ev('message_stop', {});
+}
+
 /** A local HTTP server standing in for external systems (webhook endpoints, CI APIs). */
 export async function fakeServer(handler: (r: Received) => { status?: number; body?: unknown } = () => ({ status: 200, body: { ok: true } })) {
   const received: Received[] = [];
@@ -55,6 +87,13 @@ export async function fakeServer(handler: (r: Received) => { status?: number; bo
       const r = { method: req.method ?? '', url: req.url ?? '', headers: req.headers, body };
       received.push(r);
       const out = handler(r);
+      const message = out.body as { type?: string } | undefined;
+      if (message?.type === 'message' && wantsStream(body)) {
+        // The Claude SDK streams: answer with the server-sent events of a complete message.
+        res.writeHead(out.status ?? 200, { 'content-type': 'text/event-stream' });
+        res.end(messageEvents(message as never));
+        return;
+      }
       res.writeHead(out.status ?? 200, { 'content-type': 'application/json' });
       res.end(JSON.stringify(out.body ?? {}));
     });
