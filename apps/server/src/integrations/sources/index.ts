@@ -9,6 +9,7 @@ import { sqlSource } from './sql.js';
 import { awsResourcesSource, azureResourceGraphSource, gcpAssetsSource } from './cloud.js';
 import { descriptorsSource } from './descriptors.js';
 import { externalSource } from './external.js';
+import { presetSources } from './presets.js';
 import { graphqlSource, httpSource, webhookSource } from './http.js';
 
 const registry = new Map<string, Source>();
@@ -31,6 +32,7 @@ for (const s of [
   azureResourceGraphSource,
   gcpAssetsSource,
   externalSource,
+  ...presetSources,
   webhookSource,
 ])
   registerSource(s);
