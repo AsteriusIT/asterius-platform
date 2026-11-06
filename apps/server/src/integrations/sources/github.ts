@@ -1,3 +1,4 @@
+import { validateAuth } from '../../lib/auth.js';
 import { http, nextLink } from '../../lib/http.js';
 import { requireFields, str } from '../../actions/types.js';
 import { MAX_PAGES, type Source } from '../types.js';
@@ -27,12 +28,19 @@ export const githubSource: Source = {
     },
   },
   incremental: true,
-  validate: (c) => requireFields(c, ['org', 'token'], 'github'),
+  validate(c) {
+    requireFields(c, c.auth ? ['org'] : ['org', 'token'], 'github');
+    validateAuth(c.auth);
+  },
   async *list(kind, { config, log, state, startedAt, setState, incomplete }) {
     const since = (state as { since?: string } | undefined)?.since;
     const api = str(config.apiUrl || 'https://api.github.com').replace(/\/$/, '');
     const org = encodeURIComponent(str(config.org));
-    const headers = { authorization: `Bearer ${str(config.token)}`, accept: 'application/vnd.github+json', 'x-github-api-version': '2022-11-28' };
+    const headers = {
+      ...(config.auth ? {} : { authorization: `Bearer ${str(config.token)}` }),
+      accept: 'application/vnd.github+json',
+      'x-github-api-version': '2022-11-28',
+    };
     let url: string | undefined;
     // Repositories sorted by last push: an incremental run stops at the first page holding older ones.
     if (kind === 'repository') url = `${api}/orgs/${org}/repos?per_page=100&type=all${since ? '&sort=pushed&direction=desc' : ''}`;
@@ -43,7 +51,7 @@ export const githubSource: Source = {
     let fetched = 0;
     let page = 0;
     for (; url && page < MAX_PAGES; page++) {
-      const res: Awaited<ReturnType<typeof http<unknown>>> = await http<unknown>(url, { headers });
+      const res: Awaited<ReturnType<typeof http<unknown>>> = await http<unknown>(url, { headers, auth: config.auth });
       let items = kind === 'pull-request' ? ((res.data as { items?: unknown[] }).items ?? []) : (res.data as unknown[]);
       if (page === 0) log(`${kind}: fetching from ${new URL(url).pathname}${since ? ` (changed since ${since})` : ''}`);
       if (kind === 'pull-request') {

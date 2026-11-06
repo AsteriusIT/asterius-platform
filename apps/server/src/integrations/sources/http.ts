@@ -1,3 +1,4 @@
+import { validateAuth } from '../../lib/auth.js';
 import { http, nextLink } from '../../lib/http.js';
 import { evaluate } from '../../lib/expr.js';
 import { requireFields, str } from '../../actions/types.js';
@@ -19,6 +20,7 @@ export const httpSource: Source = {
       config: {
         url: 'https://cmdb.internal/api/applications',
         headers: { Authorization: 'Bearer ${secret:CMDB_TOKEN}' },
+        // or: auth: { type: 'oauth2-client-credentials', tokenUrl: '…', clientId: '…', clientSecret: '${secret:X}' }
         itemsPath: 'data',
         pagination: { type: 'next', nextUrl: 'links.next' },
         // optional: incremental: { sinceParam: 'updated_since', etag: true },
@@ -27,7 +29,10 @@ export const httpSource: Source = {
     },
   },
   incremental: true,
-  validate: (c) => requireFields(c, ['url'], 'http'),
+  validate(c) {
+    requireFields(c, ['url'], 'http');
+    validateAuth(c.auth);
+  },
   async *list(_kind, { config, log, state, startedAt, setState, incomplete }) {
     const pagination = (config.pagination ?? {}) as { type?: string; nextUrl?: string };
     // Opt-in incremental mode: `incremental: { sinceParam: "updated_since", etag: true }`
@@ -44,7 +49,7 @@ export const httpSource: Source = {
     for (; url && page < MAX_PAGES; page++) {
       const headers = { ...((config.headers as Record<string, string>) ?? {}) };
       if (page === 0 && inc.etag && prev.etag) headers['if-none-match'] = prev.etag;
-      const res: Awaited<ReturnType<typeof http>> = await http(url, { method: str(config.method || 'GET'), headers, body: config.body });
+      const res: Awaited<ReturnType<typeof http>> = await http(url, { method: str(config.method || 'GET'), headers, body: config.body, auth: config.auth });
       if (res.status === 304) {
         log('not modified (ETag)');
         etag = prev.etag;

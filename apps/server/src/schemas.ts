@@ -215,6 +215,46 @@ export const mappingDef = z.object({
 });
 export type MappingDef = z.infer<typeof mappingDef>;
 
+/** Authentication block of HTTP-based sources and invokers (`config.auth`). Secrets are `${secret:NAME}` references. */
+export const authDef = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('basic'), username: z.string().min(1), password: z.string() }),
+  z.object({ type: z.literal('bearer'), token: z.string().min(1) }),
+  z.object({
+    type: z.literal('oauth2-client-credentials'),
+    tokenUrl: z.string().url(),
+    clientId: z.string().min(1),
+    clientSecret: z.string().min(1),
+    scope: z.string().optional(),
+    audience: z.string().optional(),
+    authStyle: z.enum(['body', 'basic']).default('body'),
+  }),
+  z.object({
+    type: z.literal('github-app'),
+    appId: z.union([z.string(), z.number()]).transform(String),
+    installationId: z.union([z.string(), z.number()]).transform(String),
+    privateKey: z.string().min(1),
+    apiUrl: z.string().url().optional(),
+  }),
+  z.object({ type: z.literal('azure-managed-identity'), resource: z.string().min(1), clientId: z.string().optional() }),
+  z.object({
+    type: z.literal('gcp-service-account'),
+    scope: z.string().default('https://www.googleapis.com/auth/cloud-platform'),
+    /** Service account key (JSON text or object); omitted: the metadata server of the workload. */
+    serviceAccountJson: z.union([z.string(), z.record(z.string(), z.unknown())]).optional(),
+  }),
+  z.object({
+    type: z.literal('aws-sigv4'),
+    region: z.string().min(1),
+    service: z.string().min(1),
+    /** Omitted: IRSA / web identity from the environment. */
+    accessKeyId: z.string().optional(),
+    secretAccessKey: z.string().optional(),
+    sessionToken: z.string().optional(),
+  }),
+  z.object({ type: z.literal('mtls'), cert: z.string().min(1), key: z.string().min(1), ca: z.string().optional() }),
+]);
+export type AuthDef = z.infer<typeof authDef>;
+
 export const integrationDef = z.object({
   identifier: slug,
   title: z.string().min(1).max(100),

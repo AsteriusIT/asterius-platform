@@ -1,4 +1,6 @@
 import { config } from '../config.js';
+import { fetch as undiciFetch, type Dispatcher } from 'undici';
+import { invalidateAuth, resolveAuth } from './auth.js';
 import { metrics } from '../metrics.js';
 import {
   CircuitBreaker,
@@ -33,6 +35,8 @@ export interface HttpRequest {
   timeoutMs?: number;
   /** Override the retry policy (defaults from HTTP_RETRIES…), or `false` to send exactly once. */
   retry?: Partial<RetryPolicy> | false;
+  /** Authentication block (see lib/auth.ts): OAuth2, GitHub App, cloud identities, SigV4, mTLS… */
+  auth?: unknown;
 }
 
 export interface HttpResponse<T = unknown> {
@@ -43,14 +47,16 @@ export interface HttpResponse<T = unknown> {
 }
 
 /** One attempt, no resilience. */
-async function httpOnce<T = unknown>(url: string, req: HttpRequest = {}): Promise<HttpResponse<T>> {
+async function httpOnce<T = unknown>(url: string, req: HttpRequest = {}, dispatcher?: Dispatcher): Promise<HttpResponse<T>> {
   const headers: Record<string, string> = { accept: 'application/json', 'user-agent': 'asterius-platform', ...req.headers };
   let body: string | undefined;
   if (req.body !== undefined) {
     body = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
     if (!Object.keys(headers).some((h) => h.toLowerCase() === 'content-type')) headers['content-type'] = 'application/json';
   }
-  const res = await fetch(url, {
+  const doFetch = dispatcher ? (undiciFetch as unknown as typeof fetch) : fetch;
+  const res = await doFetch(url, {
+    ...(dispatcher ? ({ dispatcher } as object) : {}),
     method: req.method ?? (body !== undefined ? 'POST' : 'GET'),
     headers,
     body,
@@ -95,6 +101,7 @@ export async function http<T = unknown>(url: string, req: HttpRequest = {}): Pro
       : { retries: config.HTTP_RETRIES, baseMs: config.HTTP_RETRY_BASE_MS, maxDelayMs: config.HTTP_RETRY_MAX_DELAY_SECONDS * 1000, ...req.retry };
   const circuit = config.HTTP_CIRCUIT_THRESHOLD > 0 ? callContext.getStore()?.circuit : undefined;
 
+  let authRetried = false;
   for (let attempt = 0; ; attempt++) {
     if (circuit) {
       const wait = breaker.check(circuit);
@@ -104,12 +111,27 @@ export async function http<T = unknown>(url: string, req: HttpRequest = {}): Pro
     let reason = 'network';
     let waitMs: number | undefined;
     try {
-      const res = await limiter.run(host, () => httpOnce<T>(url, req));
+      let attemptReq = req;
+      let dispatcher: Dispatcher | undefined;
+      if (req.auth) {
+        const body = req.body === undefined ? undefined : typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
+        const a = await resolveAuth(req.auth, { url, method, body }, (u, init) => http(u, { ...init, retry: req.retry }));
+        attemptReq = { ...req, headers: { ...req.headers, ...a.headers } };
+        dispatcher = a.dispatcher;
+      }
+      const res = await limiter.run(host, () => httpOnce<T>(url, attemptReq, dispatcher));
       if (circuit) breaker.success(circuit);
       return res;
     } catch (err) {
       failure = err;
       if (err instanceof UpstreamError) {
+        if (err.status === 401 && req.auth && !authRetried) {
+          // The cached token may have been revoked: fetch a fresh one once.
+          authRetried = true;
+          invalidateAuth(req.auth);
+          attempt--;
+          continue;
+        }
         const retryable = isRetryableStatus(err.status, method, err.headers);
         if (!retryable) {
           if (circuit) breaker.success(circuit); // a 4xx means the upstream is alive
