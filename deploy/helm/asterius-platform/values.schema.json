@@ -1,0 +1,226 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Asterius Platform chart values",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "global": { "type": "object" },
+    "image": {
+      "type": "object",
+      "properties": {
+        "repository": { "type": "string", "minLength": 1 },
+        "tag": { "type": "string" },
+        "pullPolicy": { "enum": ["Always", "IfNotPresent", "Never"] }
+      }
+    },
+    "imagePullSecrets": { "type": "array" },
+    "publicUrl": { "type": "string", "pattern": "^https?://" },
+    "api": {
+      "type": "object",
+      "properties": {
+        "replicas": { "type": "integer", "minimum": 1 },
+        "resources": { "type": "object" },
+        "autoscaling": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "minReplicas": { "type": "integer", "minimum": 1 },
+            "maxReplicas": { "type": "integer", "minimum": 1 },
+            "targetCPUUtilizationPercentage": { "type": "integer", "minimum": 1, "maximum": 100 }
+          }
+        },
+        "pdb": { "type": "object" }
+      }
+    },
+    "worker": {
+      "type": "object",
+      "properties": {
+        "replicas": { "type": "integer", "minimum": 1 },
+        "concurrency": { "type": "integer", "minimum": 1 },
+        "resources": { "type": "object" },
+        "pdb": { "type": "object" },
+        "terminationGracePeriodSeconds": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "podAnnotations": { "type": "object" },
+    "podLabels": { "type": "object" },
+    "nodeSelector": { "type": "object" },
+    "tolerations": { "type": "array" },
+    "affinity": { "type": "object" },
+    "priorityClassName": { "type": "string" },
+    "database": {
+      "type": "object",
+      "properties": {
+        "url": { "type": "string" },
+        "poolSize": { "type": "integer", "minimum": 1 },
+        "cnpg": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "instances": { "type": "integer", "minimum": 1 },
+            "storage": { "type": "string" },
+            "storageClass": { "type": "string" },
+            "imageName": { "type": "string" },
+            "backup": {
+              "type": "object",
+              "properties": {
+                "enabled": { "type": "boolean" },
+                "destinationPath": { "type": "string" },
+                "endpointURL": { "type": "string" },
+                "retentionPolicy": { "type": "string", "pattern": "^[0-9]+[dwm]$" },
+                "schedule": { "type": "string" },
+                "compression": { "enum": ["gzip", "bzip2", "snappy"] },
+                "s3Credentials": {
+                  "type": "object",
+                  "properties": {
+                    "secretName": { "type": "string" },
+                    "accessKeyIdKey": { "type": "string" },
+                    "secretAccessKeyKey": { "type": "string" }
+                  }
+                },
+                "credentials": { "type": "object" }
+              }
+            },
+            "recovery": {
+              "type": "object",
+              "properties": {
+                "enabled": { "type": "boolean" },
+                "sourceClusterName": { "type": "string" },
+                "destinationPath": { "type": "string" },
+                "endpointURL": { "type": "string" },
+                "targetTime": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "secrets": {
+      "type": "object",
+      "properties": {
+        "existingSecret": { "type": "string" },
+        "values": { "type": "object" }
+      }
+    },
+    "auth": {
+      "type": "object",
+      "properties": {
+        "providers": { "type": "string", "pattern": "^(local|entra)(,(local|entra))*$" },
+        "allowRegistration": { "type": "boolean" },
+        "adminEmails": { "type": "array", "items": { "type": "string" } },
+        "sessionDays": { "type": "integer", "minimum": 1 },
+        "entra": {
+          "type": "object",
+          "properties": {
+            "tenantId": { "type": "string" },
+            "clientId": { "type": "string" },
+            "adminGroups": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      }
+    },
+    "config": {
+      "type": "object",
+      "properties": {
+        "files": { "type": "object", "additionalProperties": { "type": "string" } },
+        "existingConfigMap": { "type": "string" },
+        "useImageDefaults": { "type": "boolean" }
+      }
+    },
+    "settings": {
+      "type": "object",
+      "properties": {
+        "logLevel": { "enum": ["fatal", "error", "warn", "info", "debug", "trace", "silent"] },
+        "runPollSeconds": { "type": "integer", "minimum": 2 },
+        "runTimeoutHours": { "type": "number", "minimum": 0 },
+        "httpTimeoutSeconds": { "type": "number", "minimum": 1 },
+        "retentionDays": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "extraEnv": { "type": "object", "additionalProperties": { "type": ["string", "number", "boolean"] } },
+    "service": {
+      "type": "object",
+      "properties": {
+        "type": { "enum": ["ClusterIP", "NodePort", "LoadBalancer"] },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 }
+      }
+    },
+    "ingress": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "className": { "type": "string" },
+        "host": { "type": "string" },
+        "annotations": { "type": "object" },
+        "tls": { "type": "object" }
+      }
+    },
+    "networkPolicy": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "ingressNamespaceSelector": { "type": "object" },
+        "monitoringNamespaceSelector": { "type": "object" },
+        "egress": { "type": "array" }
+      }
+    },
+    "rbac": {
+      "type": "object",
+      "properties": {
+        "clusterRead": {
+          "type": "object",
+          "properties": { "enabled": { "type": "boolean" }, "rules": { "type": "array" } }
+        },
+        "jobNamespaces": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "serviceAccount": {
+      "type": "object",
+      "properties": {
+        "create": { "type": "boolean" },
+        "name": { "type": "string" },
+        "annotations": { "type": "object" },
+        "api": { "type": "object" },
+        "worker": { "type": "object" }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "properties": {
+        "port": { "type": "integer", "minimum": 0, "maximum": 65535 },
+        "serviceMonitor": {
+          "type": "object",
+          "properties": { "enabled": { "type": "boolean" }, "interval": { "type": "string" }, "labels": { "type": "object" } }
+        },
+        "prometheusRule": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "labels": { "type": "object" },
+            "thresholds": {
+              "type": "object",
+              "properties": {
+                "runQueueSeconds": { "type": "number", "minimum": 1 },
+                "deliveryBacklogSeconds": { "type": "number", "minimum": 1 },
+                "syncStaleSeconds": { "type": "number", "minimum": 1 },
+                "workerLoopSeconds": { "type": "number", "minimum": 1 },
+                "http5xxRatio": { "type": "number", "minimum": 0, "maximum": 1 }
+              }
+            }
+          }
+        },
+        "dashboard": {
+          "type": "object",
+          "properties": { "enabled": { "type": "boolean" }, "labels": { "type": "object" }, "annotations": { "type": "object" } }
+        }
+      }
+    },
+    "tracing": {
+      "type": "object",
+      "properties": { "otlpEndpoint": { "type": "string" } }
+    },
+    "extraVolumes": { "type": "array" },
+    "extraVolumeMounts": { "type": "array" },
+    "extraContainers": { "type": "array" }
+  }
+}

@@ -1,4 +1,6 @@
+import type { FastifyInstance } from 'fastify';
 import client from 'prom-client';
+import { config } from './config.js';
 import { all, poolStats } from './db.js';
 
 /**
@@ -111,6 +113,33 @@ new client.Gauge({
   },
 });
 new client.Gauge({
+  name: 'asterius_queue_oldest_run_age_seconds',
+  help: 'Age of the oldest QUEUED action run, 0 when none (cluster-wide): workers are not keeping up',
+  registers: [registry],
+  async collect() {
+    const [r] = await all<{ at: string | null }>("SELECT min(created_at) AS at FROM runs WHERE status = 'QUEUED'");
+    this.set(r?.at ? Math.max(0, (Date.now() - Date.parse(r.at)) / 1000) : 0);
+  },
+});
+new client.Gauge({
+  name: 'asterius_queue_oldest_delivery_age_seconds',
+  help: 'Age of the oldest pending webhook delivery that is due now, 0 when none (cluster-wide)',
+  registers: [registry],
+  async collect() {
+    const [r] = await all<{ at: string | null }>(
+      "SELECT min(next_attempt_at) AS at FROM deliveries WHERE status = 'pending' AND next_attempt_at <= ?",
+      new Date().toISOString(),
+    );
+    this.set(r?.at ? Math.max(0, (Date.now() - Date.parse(r.at)) / 1000) : 0);
+  },
+});
+const loopTicks = new client.Gauge({
+  name: 'asterius_worker_loop_last_success_timestamp_seconds',
+  help: 'Unix time of the last successful iteration of each worker loop in this process (runs, deliveries, syncs)',
+  labelNames: ['loop'],
+  registers: [registry],
+});
+new client.Gauge({
   name: 'asterius_catalog_entities',
   help: 'Catalog entities by blueprint (cluster-wide)',
   labelNames: ['blueprint'],
@@ -149,6 +178,7 @@ poolGauge('asterius_db_pool_idle_connections', 'Idle connections in this process
 poolGauge('asterius_db_pool_waiting_requests', 'Queries waiting for a free pool connection (saturation signal)', 'waiting');
 
 export const metrics = {
+  loopTick: (loop: 'runs' | 'deliveries' | 'syncs') => loopTicks.set({ loop }, Date.now() / 1000),
   httpRequest: (method: string, route: string, status: number, seconds: number) => c.httpRequests.observe({ method, route, status: String(status) }, seconds),
   deliveryLatency: (seconds: number) => c.deliveryLatency.observe(seconds),
   upstream: (host: string, status: number) => {
@@ -173,3 +203,11 @@ export const metrics = {
     c.llmTokens.inc({ model, kind: 'output' }, output);
   },
 };
+
+/** GET /metrics (Prometheus text format), protected by METRICS_TOKEN when set. */
+export function registerMetricsRoute(app: FastifyInstance) {
+  app.get('/metrics', { config: { rateLimit: false } }, async (req, reply) => {
+    if (config.METRICS_TOKEN && req.headers.authorization !== `Bearer ${config.METRICS_TOKEN}`) return reply.code(401).send({ error: 'unauthorized' });
+    return reply.type(registry.contentType).send(await registry.metrics());
+  });
+}

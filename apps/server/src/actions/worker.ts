@@ -2,6 +2,7 @@ import os from 'node:os';
 import type { FastifyBaseLogger } from 'fastify';
 import { config } from '../config.js';
 import { all, now, run } from '../db.js';
+import { metrics } from '../metrics.js';
 import { claimPolls, claimSteps, initRun, stepHousekeeping } from './engine.js';
 
 /**
@@ -50,6 +51,7 @@ export function startRunWorker(log: FastifyBaseLogger) {
     if (stopping) return;
     try {
       await tick(log);
+      metrics.loopTick('runs');
     } catch (err) {
       log.error({ err }, 'run worker tick failed');
     }

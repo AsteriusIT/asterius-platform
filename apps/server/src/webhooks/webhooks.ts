@@ -180,6 +180,7 @@ export function startDeliveryWorker(log: FastifyBaseLogger) {
           if (changes) await deliver(d);
         }),
       );
+      metrics.loopTick('deliveries');
     } catch (err) {
       log.error({ err }, 'webhook delivery tick failed');
     } finally {

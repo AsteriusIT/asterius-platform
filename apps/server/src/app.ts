@@ -11,7 +11,7 @@ import { HttpError } from './lib/errors.js';
 import { ready } from './health.js';
 import { loggerOptions } from './logger.js';
 import { startRequestSpan } from './tracing.js';
-import { metrics, registry } from './metrics.js';
+import { metrics, registerMetricsRoute } from './metrics.js';
 import { authRoutes } from './routes/auth.js';
 import { catalogRoutes } from './routes/catalog.js';
 import { actionRoutes } from './routes/actions.js';
@@ -99,10 +99,8 @@ export async function buildApp(opts: AppOptions = {}): Promise<FastifyInstance> 
     const r = await ready();
     return reply.code(r.ok ? 200 : 503).send(r);
   });
-  app.get('/metrics', { config: { rateLimit: false } }, async (req, reply) => {
-    if (config.METRICS_TOKEN && req.headers.authorization !== `Bearer ${config.METRICS_TOKEN}`) return reply.code(401).send({ error: 'unauthorized' });
-    return reply.type(registry.contentType).send(await registry.metrics());
-  });
+  // With METRICS_PORT the endpoint lives on its own listener (metrics-server.ts), unreachable through the ingress.
+  if (!config.METRICS_PORT) registerMetricsRoute(app);
 
   await app.register(authRoutes);
   await app.register(

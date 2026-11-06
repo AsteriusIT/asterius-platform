@@ -20,8 +20,23 @@ app.kubernetes.io/instance: {{ .root.Release.Name }}
 app.kubernetes.io/component: {{ .component }}
 {{- end -}}
 
+{{/* ServiceAccount of a role. Call with (dict "root" $ "role" "api|worker"). */}}
 {{- define "ap.serviceAccountName" -}}
-{{- if .Values.serviceAccount.create -}}{{ .Values.serviceAccount.name | default (include "ap.fullname" .) }}{{- else -}}{{ .Values.serviceAccount.name | default "default" }}{{- end -}}
+{{- $sa := .root.Values.serviceAccount -}}
+{{- $own := index $sa .role -}}
+{{- if $sa.create -}}{{ $own.name | default $sa.name | default (printf "%s-%s" (include "ap.fullname" .root) .role) }}{{- else -}}{{ $own.name | default $sa.name | default "default" }}{{- end -}}
+{{- end -}}
+
+{{/* Object store credentials of the CNPG backup (S3 keys from a Secret, or a raw block for Azure / GCS). */}}
+{{- define "ap.barmanCredentials" -}}
+{{- $b := .Values.database.cnpg.backup -}}
+{{- if $b.credentials -}}
+{{- toYaml $b.credentials -}}
+{{- else -}}
+s3Credentials:
+  accessKeyId: { name: {{ $b.s3Credentials.secretName | required "database.cnpg.backup.s3Credentials.secretName is required (or set database.cnpg.backup.credentials)" }}, key: {{ $b.s3Credentials.accessKeyIdKey }} }
+  secretAccessKey: { name: {{ $b.s3Credentials.secretName }}, key: {{ $b.s3Credentials.secretAccessKeyKey }} }
+{{- end -}}
 {{- end -}}
 
 {{- define "ap.secretName" -}}
@@ -56,7 +71,7 @@ Call with (dict "root" $ "role" "api|worker" "resources" … "grace" N).
 */}}
 {{- define "ap.podSpec" -}}
 {{- $v := .root.Values -}}
-serviceAccountName: {{ include "ap.serviceAccountName" .root }}
+serviceAccountName: {{ include "ap.serviceAccountName" (dict "root" .root "role" .role) }}
 automountServiceAccountToken: {{ and (eq .role "worker") (or $v.rbac.clusterRead.enabled (gt (len $v.rbac.jobNamespaces) 0)) }}
 terminationGracePeriodSeconds: {{ .grace }}
 {{- with $v.imagePullSecrets }}
@@ -97,6 +112,9 @@ containers:
     imagePullPolicy: {{ $v.image.pullPolicy }}
     ports:
       - { name: http, containerPort: 8080, protocol: TCP }
+      {{- if $v.metrics.port }}
+      - { name: metrics, containerPort: {{ $v.metrics.port }}, protocol: TCP }
+      {{- end }}
     env:
       - { name: PLATFORM_ROLE, value: {{ .role | quote }} }
       - name: WORKER_ID
@@ -112,6 +130,9 @@ containers:
       - { name: tmp, mountPath: /tmp }
       {{- if not $v.config.useImageDefaults }}
       - { name: config, mountPath: /etc/asterius/config, readOnly: true }
+      {{- end }}
+      {{- with $v.extraVolumeMounts }}
+      {{- toYaml . | nindent 6 }}
       {{- end }}
     startupProbe:
       httpGet: { path: /readyz, port: http }
@@ -133,11 +154,17 @@ containers:
       allowPrivilegeEscalation: false
       readOnlyRootFilesystem: true
       capabilities: { drop: [ALL] }
+  {{- with $v.extraContainers }}
+  {{- toYaml . | nindent 2 }}
+  {{- end }}
 volumes:
   - name: tmp
     emptyDir: { sizeLimit: 256Mi }
   {{- if not $v.config.useImageDefaults }}
   - name: config
     configMap: { name: {{ include "ap.configMapName" .root }} }
+  {{- end }}
+  {{- with $v.extraVolumes }}
+  {{- toYaml . | nindent 2 }}
   {{- end }}
 {{- end -}}

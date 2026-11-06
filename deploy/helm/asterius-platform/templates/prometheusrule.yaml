@@ -1,0 +1,89 @@
+{{- $v := .Values -}}
+{{- if $v.metrics.prometheusRule.enabled }}
+{{- $t := $v.metrics.prometheusRule.thresholds }}
+{{- $job := printf "%s(-worker)?" (include "ap.fullname" .) }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "ap.fullname" . }}
+  labels: {{- include "ap.labels" . | nindent 4 }}
+    {{- with $v.metrics.prometheusRule.labels }}{{ toYaml . | nindent 4 }}{{- end }}
+spec:
+  groups:
+    - name: asterius-platform
+      rules:
+        - alert: AsteriusTargetDown
+          # /metrics fails when the database is unreachable (queue gauges are read at scrape time), so this also covers database readiness.
+          expr: up{namespace={{ .Release.Namespace | quote }}, job=~"{{ $job }}"} == 0
+          for: 5m
+          labels: { severity: critical }
+          annotations:
+            summary: "Asterius Platform pod {{ "{{ $labels.pod }}" }} cannot be scraped"
+            description: The pod is down, or its database is unreachable (metrics collection reads the database).
+        - alert: AsteriusDatabasePoolSaturated
+          expr: max by (pod) (asterius_db_pool_waiting_requests{namespace={{ .Release.Namespace | quote }}}) > 0
+          for: 10m
+          labels: { severity: warning }
+          annotations:
+            summary: "Database connection pool saturated on {{ "{{ $labels.pod }}" }}"
+            description: Queries are waiting for a connection. Raise database.poolSize or add replicas.
+        - alert: AsteriusRunQueueStuck
+          expr: max(asterius_queue_oldest_run_age_seconds{namespace={{ .Release.Namespace | quote }}}) > {{ $t.runQueueSeconds }}
+          for: 5m
+          labels: { severity: warning }
+          annotations:
+            summary: Action runs are waiting for a worker
+            description: The oldest queued run has been waiting for more than {{ $t.runQueueSeconds }} seconds. Check the workers.
+        - alert: AsteriusWorkerLoopStalled
+          expr: time() - asterius_worker_loop_last_success_timestamp_seconds{namespace={{ .Release.Namespace | quote }}} > {{ $t.workerLoopSeconds }}
+          for: 2m
+          labels: { severity: critical }
+          annotations:
+            summary: "Worker loop {{ "{{ $labels.loop }}" }} stalled on {{ "{{ $labels.pod }}" }}"
+            description: The loop has not completed an iteration for more than {{ $t.workerLoopSeconds }} seconds.
+        - alert: AsteriusSyncFailing
+          expr: sum by (integration) (increase(asterius_syncs_total{namespace={{ .Release.Namespace | quote }}, status="failure"}[1h])) > 0
+          for: 5m
+          labels: { severity: warning }
+          annotations:
+            summary: "Integration {{ "{{ $labels.integration }}" }} sync failures"
+            description: At least one sync of the integration failed in the last hour. See its sync history in the UI.
+        - alert: AsteriusSyncStale
+          expr: time() - max by (integration) (asterius_integration_last_success_timestamp_seconds{namespace={{ .Release.Namespace | quote }}}) > {{ $t.syncStaleSeconds }}
+          for: 15m
+          labels: { severity: warning }
+          annotations:
+            summary: "Integration {{ "{{ $labels.integration }}" }} has not synced successfully for a long time"
+            description: No successful sync for more than {{ $t.syncStaleSeconds }} seconds. Manual-only integrations may be silenced.
+        - alert: AsteriusWebhookDeliveriesFailing
+          expr: sum(increase(asterius_webhook_deliveries_total{namespace={{ .Release.Namespace | quote }}, result="failed"}[15m])) > 0
+          labels: { severity: warning }
+          annotations:
+            summary: Outbound webhook deliveries are failing permanently
+            description: Deliveries exhausted their retries or were rejected by the target. Check the webhook delivery history.
+        - alert: AsteriusWebhookBacklog
+          expr: max(asterius_queue_oldest_delivery_age_seconds{namespace={{ .Release.Namespace | quote }}}) > {{ $t.deliveryBacklogSeconds }}
+          for: 5m
+          labels: { severity: warning }
+          annotations:
+            summary: Outbound webhook deliveries are backing up
+            description: The oldest due delivery has been waiting for more than {{ $t.deliveryBacklogSeconds }} seconds.
+        - alert: AsteriusHighErrorRate
+          expr: |
+            sum(rate(asterius_http_request_duration_seconds_count{namespace={{ .Release.Namespace | quote }}, status=~"5.."}[10m]))
+              / sum(rate(asterius_http_request_duration_seconds_count{namespace={{ .Release.Namespace | quote }}}[10m])) > {{ $t.http5xxRatio }}
+          for: 10m
+          labels: { severity: critical }
+          annotations:
+            summary: More than {{ mulf $t.http5xxRatio 100 }}% of API requests fail with 5xx
+            description: Check the API logs (filter on trace_id) and the database.
+        {{- if $v.database.cnpg.enabled }}
+        - alert: AsteriusDatabaseBackupMissing
+          expr: time() - cnpg_collector_last_available_backup_timestamp{namespace={{ .Release.Namespace | quote }}, pod=~"{{ include "ap.cnpgName" . }}-.*"} > 172800
+          for: 30m
+          labels: { severity: warning }
+          annotations:
+            summary: No successful database backup for 2 days
+            description: Check database.cnpg.backup and the ScheduledBackup status.
+        {{- end }}
+{{- end }}

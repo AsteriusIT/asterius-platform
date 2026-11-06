@@ -29,6 +29,10 @@ if (isWorker) {
 }
 
 await app.listen({ port: config.PORT, host: '0.0.0.0' });
+if (config.METRICS_PORT) {
+  const { startMetricsServer } = await import('./metrics-server.js');
+  stops.push(await startMetricsServer(app.log, config.METRICS_PORT));
+}
 app.log.info(
   { component: 'main', role: config.PLATFORM_ROLE, api: isApi, db: config.DATABASE_URL ? 'postgres' : 'sqlite', configDir: config.CONFIG_DIR },
   'Asterius Platform started',

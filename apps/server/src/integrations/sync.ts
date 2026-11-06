@@ -215,7 +215,7 @@ let running = 0;
 
 export function startSyncScheduler(log: FastifyBaseLogger) {
   const tick = async () => {
-    if (running >= MAX_PARALLEL_SYNCS) return;
+    if (running >= MAX_PARALLEL_SYNCS) return metrics.loopTick('syncs');
     const due = await all<{ identifier: string; type: string; next_sync_at: string }>(
       `SELECT identifier, type, next_sync_at FROM integrations
        WHERE enabled = 1 AND next_sync_at IS NOT NULL AND next_sync_at <= ? AND (locked_until IS NULL OR locked_until < ?)
@@ -224,6 +224,7 @@ export function startSyncScheduler(log: FastifyBaseLogger) {
       now(),
       MAX_PARALLEL_SYNCS - running,
     );
+    metrics.loopTick('syncs');
     for (const d of due) {
       if (getSource(d.type).push) {
         await run('UPDATE integrations SET next_sync_at = NULL WHERE identifier = ?', d.identifier);

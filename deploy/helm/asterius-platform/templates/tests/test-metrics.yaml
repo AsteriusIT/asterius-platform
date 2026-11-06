@@ -1,0 +1,58 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "ap.fullname" . }}-test-metrics
+  labels: {{- include "ap.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: test
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  securityContext: { runAsNonRoot: true, runAsUser: 65534, seccompProfile: { type: RuntimeDefault } }
+  containers:
+    # /metrics answers on the metrics port of the Service and is NOT reachable on the public HTTP port.
+    - name: metrics
+      image: curlimages/curl:8.11.1
+      command: ["/bin/sh", "-c"]
+      args:
+        - |
+          set -eu
+          {{- $auth := ternary "-H \"Authorization: Bearer $METRICS_TOKEN\" " "" (hasKey .Values.secrets.values "METRICS_TOKEN") }}
+          {{- if .Values.metrics.port }}
+          curl -fsS {{ $auth }}http://{{ include "ap.fullname" . }}:{{ .Values.metrics.port }}/metrics | grep -q asterius_
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://{{ include "ap.fullname" . }}:{{ .Values.service.port }}/metrics)
+          [ "$code" = "404" ] || { echo "/metrics must not be served on the HTTP port (got $code)"; exit 1; }
+          {{- else }}
+          curl -fsS {{ $auth }}http://{{ include "ap.fullname" . }}:{{ .Values.service.port }}/metrics | grep -q asterius_
+          {{- end }}
+      {{- if hasKey .Values.secrets.values "METRICS_TOKEN" }}
+      env:
+        - name: METRICS_TOKEN
+          valueFrom: { secretKeyRef: { name: {{ include "ap.secretName" . }}, key: METRICS_TOKEN } }
+      {{- end }}
+      securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "ap.fullname" . }}-test-api
+  labels: {{- include "ap.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: test
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  securityContext: { runAsNonRoot: true, runAsUser: 65534, seccompProfile: { type: RuntimeDefault } }
+  containers:
+    # Unauthenticated API calls are refused (401) while the health endpoints stay open.
+    - name: auth
+      image: curlimages/curl:8.11.1
+      command: ["/bin/sh", "-c"]
+      args:
+        - |
+          set -eu
+          base=http://{{ include "ap.fullname" . }}:{{ .Values.service.port }}
+          curl -fsS $base/healthz >/dev/null
+          code=$(curl -s -o /dev/null -w '%{http_code}' $base/api/v1/blueprints)
+          [ "$code" = "401" ] || { echo "expected 401 on an unauthenticated API call, got $code"; exit 1; }
+      securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }

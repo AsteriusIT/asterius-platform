@@ -102,7 +102,7 @@ Guarantees:
 
 ## Observability
 
-- `/healthz` (liveness), `/readyz` (database), `/metrics` (Prometheus; optional `METRICS_TOKEN`).
+- `/healthz` (liveness), `/readyz` (database), `/metrics` (Prometheus; optional `METRICS_TOKEN`). With `METRICS_PORT` (the chart sets 9090) `/metrics` is served on that separate port only, so the ingress never exposes it.
 - Metrics: `asterius_runs_finished_total{action,status}`, `asterius_run_duration_seconds{invoker}`, `asterius_syncs_total{integration,status}`, `asterius_sync_entities_total`, `asterius_webhook_deliveries_total{result}`, `asterius_events_total{type}`. Cluster-wide gauges: `asterius_queue_runs{status}`, `asterius_queue_deliveries_pending`, `asterius_catalog_entities{blueprint}`.
 - Further metrics (labels are bounded: route patterns, configured integration ids and upstream hosts, never raw URLs or entity ids):
   - `asterius_http_request_duration_seconds{method,route,status}` histogram of inbound requests (rate is `_count`; `/metrics` and probes excluded).
