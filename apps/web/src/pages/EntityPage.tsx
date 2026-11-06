@@ -4,8 +4,8 @@ import { modals } from '@mantine/modals';
 import { notifications } from '@mantine/notifications';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from 'react-router';
-import { IconChevronDown, IconDots, IconPencil, IconTrash } from '@tabler/icons-react';
-import type { Action, Blueprint, Entity } from '@asterius/shared';
+import { IconCheck, IconChevronDown, IconDots, IconPencil, IconTrash, IconX } from '@tabler/icons-react';
+import type { Action, Blueprint, Entity, ScorecardResult } from '@asterius/shared';
 import { api, errorText } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { PropertyValue } from '../components/PropertyValue';
@@ -14,7 +14,7 @@ import { ActionRunModal } from '../components/ActionRunModal';
 import { DataTable } from '../components/DataTable';
 import { ResourceEditor } from '../components/ResourceEditor';
 import { EntityIcon } from '../components/icons';
-import { Empty, Mono, PageHeader, QueryView, StatusBadge, TimeAgo } from '../components/ui';
+import { Empty, LevelBadge, Mono, PageHeader, QueryView, StatusBadge, TimeAgo } from '../components/ui';
 
 export function EntityPage() {
   const { bp = '', id = '' } = useParams();
@@ -37,6 +37,10 @@ function EntityView({ bp, e }: { bp: Blueprint; e: Entity }) {
     queryKey: ['runs', 'entity', bp.identifier, e.identifier],
     queryFn: () => api.runs({ blueprint: bp.identifier, entity: e.identifier, limit: 20 }),
     refetchInterval: 15_000,
+  });
+  const scorecards = useQuery({
+    queryKey: ['entity-scorecards', bp.identifier, e.identifier],
+    queryFn: () => api.entityScorecards(bp.identifier, e.identifier),
   });
   const canEdit = (isAdmin || (!!e.team && user?.teams.some((t) => t.identifier === e.team))) && !e.source.startsWith('integration:');
 
@@ -178,6 +182,9 @@ function EntityView({ bp, e }: { bp: Blueprint; e: Entity }) {
             </Grid.Col>
             <Grid.Col span={{ base: 12, md: 5 }}>
               <Stack>
+                {(scorecards.data ?? []).map((sc) => (
+                  <ScorecardCard key={sc.scorecard} result={sc} />
+                ))}
                 <QueryView q={related}>
                   {(rel) => (
                     <>
@@ -237,6 +244,41 @@ function EntityView({ bp, e }: { bp: Blueprint; e: Entity }) {
         }}
       />
     </Stack>
+  );
+}
+
+function ScorecardCard({ result }: { result: ScorecardResult }) {
+  return (
+    <Card>
+      <Group justify="space-between" mb="sm">
+        <Text fw={600}>{result.scorecardTitle}</Text>
+        <Group gap="xs">
+          <Text fz="xs" c="dimmed">
+            {result.passed}/{result.total} rules
+          </Text>
+          <LevelBadge level={result.level} color={result.levelColor} />
+        </Group>
+      </Group>
+      <Stack gap={4}>
+        {result.rules.map((r) => (
+          <Group key={r.rule} gap="xs" wrap="nowrap" align="flex-start">
+            {r.passed ? <IconCheck size={16} color="var(--mantine-color-green-6)" /> : <IconX size={16} color="var(--mantine-color-red-6)" />}
+            <Text fz="sm" style={{ flex: 1 }}>
+              {r.title}
+              {r.error && (
+                <Text span fz="xs" c="red">
+                  {' '}
+                  ({r.error})
+                </Text>
+              )}
+            </Text>
+            <Badge size="xs" color="gray" variant="outline">
+              {r.level}
+            </Badge>
+          </Group>
+        ))}
+      </Stack>
+    </Card>
   );
 }
 

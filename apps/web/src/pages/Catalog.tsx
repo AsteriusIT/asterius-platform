@@ -13,7 +13,7 @@ import { PropertyValue } from '../components/PropertyValue';
 import { orderedFields } from '../components/SchemaForm';
 import { ActionRunModal } from '../components/ActionRunModal';
 import { EntityActionsMenu } from '../components/EntityActionsMenu';
-import { Markdown, PageHeader, QueryView, TimeAgo } from '../components/ui';
+import { LevelBadge, Markdown, PageHeader, QueryView, TimeAgo } from '../components/ui';
 
 const PAGE = 25;
 
@@ -79,7 +79,7 @@ function CatalogTable({ bp }: { bp: Blueprint }) {
     setRunOn(e);
     setRunAction(a);
   };
-  const columns: Column<Entity>[] = [
+  const baseColumns: Column<Entity>[] = [
     ...columnsFor(bp),
     ...(entityActions.data?.length
       ? [
@@ -92,11 +92,32 @@ function CatalogTable({ bp }: { bp: Blueprint }) {
         ]
       : []),
   ];
+  const cards = useQuery({ queryKey: ['scorecards', bp.identifier], queryFn: () => api.scorecards(bp.identifier), staleTime: 60_000 });
   const entities = useQuery({
     queryKey: ['entities', bp.identifier, debounced, team, page],
     queryFn: () => api.entities({ blueprint: bp.identifier, search: debounced, team: team ?? undefined, limit: PAGE, offset: (page - 1) * PAGE }),
     placeholderData: keepPreviousData,
   });
+
+  const ids = (entities.data?.items ?? []).map((e) => e.identifier);
+  const levels = useQuery({
+    queryKey: ['scorecard-levels', bp.identifier, ids],
+    queryFn: () => api.scorecardLevels(bp.identifier, ids),
+    enabled: !!cards.data?.length && ids.length > 0,
+  });
+  const columns = [
+    ...baseColumns,
+    ...(cards.data ?? []).map((sc) => ({
+      key: `sc-${sc.identifier}`,
+      label: sc.title,
+      render: (e: Entity) => (
+        <LevelBadge
+          level={levels.data?.[sc.identifier]?.[e.identifier]}
+          color={sc.levels.find((l) => l.name === levels.data?.[sc.identifier]?.[e.identifier])?.color}
+        />
+      ),
+    })),
+  ];
 
   const set = (k: string, v: string | null) => {
     const next = new URLSearchParams(params);

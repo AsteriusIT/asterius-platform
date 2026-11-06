@@ -6,6 +6,7 @@ import { entityInput, type EntityInput } from '../schemas.js';
 import { getBlueprintCached } from './blueprints.js';
 import { compact, validate } from './validation.js';
 import type { Actor } from '../audit.js';
+import { evaluateEntity, removeEntityResults } from './scorecards.js';
 
 interface Row {
   blueprint: string;
@@ -195,6 +196,7 @@ export async function upsertEntity(blueprint: string, raw: unknown, opts: Upsert
   });
   const entity = await getEntity(blueprint, input.identifier);
   await emit({ type: existing ? 'entity.updated' : 'entity.created', blueprint, data: { entity, before: existing ?? null }, actor: opts.actor });
+  await evaluateEntity(entity);
   return { entity, created: !existing, changed: true };
 }
 
@@ -214,6 +216,7 @@ async function writeRelations(d: Driver, bp: Blueprint, identifier: string, rela
 export async function deleteEntity(blueprint: string, identifier: string, actor?: Actor) {
   const entity = await getEntity(blueprint, identifier);
   await tx((d) => d.query('DELETE FROM entities WHERE blueprint = ? AND identifier = ?', [blueprint, identifier]));
+  await removeEntityResults(blueprint, identifier);
   await emit({ type: 'entity.deleted', blueprint, data: { entity }, actor });
   return entity;
 }

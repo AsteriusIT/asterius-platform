@@ -7,7 +7,7 @@ import { metrics } from './metrics.js';
  * bus means no event is lost when a pod restarts and any replica can deliver.
  */
 
-export type EventType = 'entity.created' | 'entity.updated' | 'entity.deleted' | 'run.created' | 'run.updated';
+export type EventType = 'entity.created' | 'entity.updated' | 'entity.deleted' | 'run.created' | 'run.updated' | 'scorecard.changed';
 
 export interface DomainEvent {
   type: EventType;

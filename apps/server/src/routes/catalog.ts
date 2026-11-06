@@ -6,9 +6,19 @@ import { actorOf, canEditEntity, isAdmin, requireAdmin, requireUser, type Princi
 import { deleteBlueprint, getBlueprint, listBlueprints, upsertBlueprint } from '../catalog/blueprints.js';
 import { deleteEntity, findEntity, getEntity, related, searchEntities, upsertEntity } from '../catalog/entities.js';
 import { badRequest, forbidden } from '../lib/errors.js';
+import {
+  deleteScorecard,
+  evaluateAllEntities,
+  getScorecard,
+  levelsFor,
+  listScorecards,
+  resultsForEntity,
+  scorecardSummary,
+  upsertScorecard,
+} from '../catalog/scorecards.js';
 import { listRuns, pendingApprovals } from '../actions/runs.js';
 import { entityInput } from '../schemas.js';
-import { bpParam, entityParam, filtersOf, page } from './util.js';
+import { bpParam, entityParam, filtersOf, idParam, page } from './util.js';
 
 /** Humans write entities of their teams (admins: all); API tokens of service accounts follow the same rule. */
 async function assertCanWrite(p: Principal, bp: string, identifier: string, team: string | null | undefined) {
@@ -48,6 +58,42 @@ export async function catalogRoutes(app: FastifyInstance) {
     await deleteBlueprint(bp);
     await audit(actorOf(req.principal), 'blueprint.deleted', bp);
     return { ok: true };
+  });
+
+  // ---- scorecards ----
+  app.get('/scorecards', async (req) => listScorecards(z.object({ blueprint: z.string().optional() }).parse(req.query).blueprint));
+  app.get('/scorecards/:id', async (req) => getScorecard(idParam.parse(req.params).id));
+  app.get('/scorecards/:id/summary', async (req) => {
+    const { id } = idParam.parse(req.params);
+    const { days } = z.object({ days: z.coerce.number().int().min(1).max(365).default(30) }).parse(req.query);
+    return scorecardSummary(id, days);
+  });
+  app.put('/scorecards/:id', { preHandler: requireAdmin }, async (req) => {
+    const { id } = idParam.parse(req.params);
+    const { scorecard, created, changed } = await upsertScorecard({ ...(req.body as object), identifier: id });
+    await audit(actorOf(req.principal), created ? 'scorecard.created' : 'scorecard.updated', id);
+    if (changed) void evaluateAllEntities(scorecard).catch((err) => req.log.error({ err }, 'scorecard evaluation failed'));
+    return scorecard;
+  });
+  app.delete('/scorecards/:id', { preHandler: requireAdmin }, async (req) => {
+    const { id } = idParam.parse(req.params);
+    await deleteScorecard(id);
+    await audit(actorOf(req.principal), 'scorecard.deleted', id);
+    return { ok: true };
+  });
+  app.post('/scorecards/:id/evaluate', { preHandler: requireAdmin }, async (req) => {
+    const evaluated = await evaluateAllEntities(await getScorecard(idParam.parse(req.params).id));
+    return { evaluated };
+  });
+  /** Levels of the entities of one page of a table: `?ids=a,b,c`. */
+  app.get('/blueprints/:bp/scorecard-levels', async (req) => {
+    const { bp } = bpParam.parse(req.params);
+    const { ids } = z.object({ ids: z.string().max(20_000).default('') }).parse(req.query);
+    return levelsFor(bp, ids.split(',').filter(Boolean).slice(0, 500));
+  });
+  app.get('/blueprints/:bp/entities/:id/scorecards', async (req) => {
+    const { bp, id } = entityParam.parse(req.params);
+    return resultsForEntity(bp, id);
   });
 
   // ---- entities ----

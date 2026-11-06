@@ -4,6 +4,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { config, paths } from './config.js';
+import { CATALOG_MIGRATIONS } from './catalog/migrations.js';
 
 /**
  * Storage: Postgres in production (DATABASE_URL, any number of replicas) or SQLite for local development.
@@ -361,6 +362,7 @@ export const MIGRATIONS: Migration[] = [
         );
       `),
   },
+  ...CATALOG_MIGRATIONS,
 ];
 
 /** Apply pending numbered migrations (idempotent; serialized across replicas by an advisory lock on Postgres). */

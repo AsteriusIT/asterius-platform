@@ -177,3 +177,16 @@ export function duration(from: string | null, to: string | null) {
   if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`;
   return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
 }
+
+/** Level reached on a scorecard (colors come from the scorecard's levels). */
+export function LevelBadge({ level, color }: { level: string | null | undefined; color?: string | null }) {
+  return level ? (
+    <Badge color={color || 'brand'} variant="light">
+      {level}
+    </Badge>
+  ) : (
+    <Badge color="gray" variant="outline">
+      —
+    </Badge>
+  );
+}

@@ -13,6 +13,9 @@ import type {
   RelatedEntities,
   Run,
   RunPage,
+  Scorecard,
+  ScorecardResult,
+  ScorecardSummary,
   SecretInfo,
   SyncRun,
   Team,
@@ -130,6 +133,14 @@ export const api = {
   deleteIntegration: (id: string, deleteEntities = false) => request('DELETE', v1(`/integrations/${enc(id)}${qs({ deleteEntities })}`)),
   syncNow: (id: string) => request('POST', v1(`/integrations/${enc(id)}/sync`), {}),
   previewMapping: (body: { mapping: unknown; item: unknown }) => request<{ mapped: unknown[]; skipped: number }>('POST', v1('/mappings/preview'), body),
+
+  scorecards: (blueprint?: string) => request<Scorecard[]>('GET', v1(`/scorecards${qs({ blueprint })}`)),
+  saveScorecard: (id: string, body: unknown) => request<Scorecard>('PUT', v1(`/scorecards/${enc(id)}`), body),
+  deleteScorecard: (id: string) => request('DELETE', v1(`/scorecards/${enc(id)}`)),
+  scorecardSummary: (id: string, days = 30) => request<ScorecardSummary>('GET', v1(`/scorecards/${enc(id)}/summary${qs({ days })}`)),
+  entityScorecards: (bp: string, id: string) => request<ScorecardResult[]>('GET', v1(`/blueprints/${enc(bp)}/entities/${enc(id)}/scorecards`)),
+  scorecardLevels: (bp: string, ids: string[]) =>
+    request<Record<string, Record<string, string | null>>>('GET', v1(`/blueprints/${enc(bp)}/scorecard-levels${qs({ ids: ids.join(',') })}`)),
 
   webhooks: () => request<Webhook[]>('GET', v1('/webhooks')),
   webhook: (id: string) => request<Webhook & { secret: string | null }>('GET', v1(`/webhooks/${enc(id)}`)),

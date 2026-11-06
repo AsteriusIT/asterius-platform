@@ -451,3 +451,64 @@ export interface HomeSummary {
   myRuns: Run[];
   recentEntities: Entity[];
 }
+
+// ---------- scorecards ----------
+export interface ScorecardLevel {
+  name: string;
+  color?: string;
+}
+
+export interface ScorecardRule {
+  identifier: string;
+  title: string;
+  description?: string;
+  /** Name of the level the rule belongs to. */
+  level: string;
+  /** JSONata over the entity; passes when truthy. */
+  expression: string;
+}
+
+export interface Scorecard {
+  identifier: string;
+  title: string;
+  description: string;
+  blueprint: string;
+  /** Lowest to highest. */
+  levels: ScorecardLevel[];
+  rules: ScorecardRule[];
+  managed: boolean;
+}
+
+export interface RuleResult {
+  rule: string;
+  title: string;
+  level: string;
+  passed: boolean;
+  /** Evaluation error of the expression (counts as failed). */
+  error?: string;
+}
+
+export interface ScorecardResult {
+  scorecard: string;
+  scorecardTitle: string;
+  blueprint: string;
+  entity: string;
+  /** Highest level reached; null: not even the first one. */
+  level: string | null;
+  levelColor?: string | null;
+  passed: number;
+  total: number;
+  rules: RuleResult[];
+  evaluatedAt: string;
+  /** Present on GET .../scorecards: levels of the scorecard, lowest first. */
+  levels?: ScorecardLevel[];
+}
+
+export interface ScorecardSummary {
+  scorecard: string;
+  total: number;
+  /** Number of entities per level name (`none`: below the first level). */
+  distribution: Record<string, number>;
+  /** Daily snapshots of the distribution. */
+  trend: { day: string; distribution: Record<string, number> }[];
+}

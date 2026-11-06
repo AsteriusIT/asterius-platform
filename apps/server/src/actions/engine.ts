@@ -8,6 +8,7 @@ import { resolveRef, stepToken } from '../secrets.js';
 import { audit, SYSTEM } from '../audit.js';
 import { actorOf, type Principal } from '../auth/users.js';
 import { findEntity } from '../catalog/entities.js';
+import { scorecardLevels } from '../catalog/scorecards.js';
 import { metrics } from '../metrics.js';
 import { withSpan } from '../tracing.js';
 import { getInvoker } from './invokers/index.js';
@@ -43,7 +44,8 @@ export async function buildContext(r: RunRow, rows: StepRow[], forStep?: string)
     run: { id: r.id, url: runUrl(r.id), callback: { url: stepCallbackUrl(r.id, forStep ?? ''), token: forStep ? stepToken(r.id, forStep) : '' } },
     action: { identifier: r.action, title: r.action_title, blueprint: r.blueprint },
     inputs: json(r.inputs, {}),
-    entity,
+    // `entity.scorecards.<id>.level` / `.rank` (0: below the first level) for conditions and templates.
+    entity: entity ? { ...entity, scorecards: await scorecardLevels(entity.blueprint, entity.identifier) } : null,
     trigger: { user: { id: r.triggered_by, email: r.user_email ?? '', name: r.user_name ?? '' }, at: r.created_at },
     steps: Object.fromEntries(rows.map((s) => [s.step_id, { status: s.status, output: json(s.output, null), link: s.link }])),
   };

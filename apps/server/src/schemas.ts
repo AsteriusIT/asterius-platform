@@ -65,6 +65,48 @@ export const blueprintDef = z.object({
 });
 export type BlueprintDef = z.infer<typeof blueprintDef>;
 
+export const scorecardDef = z
+  .object({
+    identifier: slug,
+    title: z.string().min(1).max(100),
+    description: z.string().max(2000).default(''),
+    blueprint: slug,
+    /** Ordered from the lowest to the highest (e.g. Bronze, Silver, Gold). An entity reaches a level when it passes every rule of that level and of the levels below. */
+    levels: z
+      .array(z.object({ name: z.string().min(1).max(40), color: z.string().max(30).optional() }))
+      .min(1)
+      .max(8),
+    rules: z
+      .array(
+        z.object({
+          identifier: fieldName,
+          title: z.string().min(1).max(200),
+          description: z.string().max(1000).optional(),
+          /** Name of the level this rule belongs to. */
+          level: z.string().min(1),
+          /** JSONata over the entity (`properties`, `relations`, `related`, `team`…): passes when truthy. */
+          expression: z.string().min(1).max(2000),
+        }),
+      )
+      .min(1)
+      .max(100),
+  })
+  .superRefine((s, ctx) => {
+    const levels = new Set<string>();
+    for (const l of s.levels) {
+      if (levels.has(l.name)) ctx.addIssue({ code: 'custom', message: `Level "${l.name}" is declared twice`, path: ['levels'] });
+      levels.add(l.name);
+    }
+    const ids = new Set<string>();
+    s.rules.forEach((r, i) => {
+      if (!levels.has(r.level))
+        ctx.addIssue({ code: 'custom', message: `Rule "${r.identifier}" uses unknown level "${r.level}"`, path: ['rules', i, 'level'] });
+      if (ids.has(r.identifier)) ctx.addIssue({ code: 'custom', message: `Rule "${r.identifier}" is declared twice`, path: ['rules', i, 'identifier'] });
+      ids.add(r.identifier);
+    });
+  });
+export type ScorecardDef = z.infer<typeof scorecardDef>;
+
 export const invokerConfig = z.object({ type: z.string().min(1) }).passthrough();
 
 /** Step ids are used in templates (`steps.<id>.output`): JSONata-friendly names. */
@@ -229,13 +271,15 @@ export const integrationDef = z.object({
 });
 export type IntegrationDef = z.infer<typeof integrationDef>;
 
-export const WEBHOOK_EVENTS = ['entity.created', 'entity.updated', 'entity.deleted', 'run.created', 'run.updated'] as const;
+export const WEBHOOK_EVENTS = ['entity.created', 'entity.updated', 'entity.deleted', 'run.created', 'run.updated', 'scorecard.changed'] as const;
 
 export const webhookDef = z.object({
   identifier: slug,
   title: z.string().min(1).max(100),
   url: z.string().url(),
-  events: z.array(z.string().regex(/^(\*|entity\.\*|run\.\*|entity\.(created|updated|deleted)|run\.(created|updated))$/)).min(1),
+  events: z
+    .array(z.string().regex(/^(\*|entity\.\*|run\.\*|scorecard\.\*|entity\.(created|updated|deleted)|run\.(created|updated)|scorecard\.changed)$/))
+    .min(1),
   blueprints: z.array(slug).default([]),
   /** Signing secret reference (`${secret:NAME}`): deliveries carry `X-Asterius-Signature: sha256=<hmac>`. */
   secret: z.string().nullish(),
@@ -269,6 +313,7 @@ export const configFile = z.object({
   actions: z.array(actionDef).default([]),
   integrations: z.array(integrationDef).default([]),
   webhooks: z.array(webhookDef).default([]),
+  scorecards: z.array(scorecardDef).default([]),
   entities: z.array(seedEntity).default([]),
 });
 export type ConfigFile = z.infer<typeof configFile>;

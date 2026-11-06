@@ -4,7 +4,7 @@ import { notifications } from '@mantine/notifications';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import { IconCopy, IconRefresh, IconSend } from '@tabler/icons-react';
-import type { Action, Blueprint, Integration, Webhook } from '@asterius/shared';
+import type { Action, Blueprint, Integration, Scorecard, Webhook } from '@asterius/shared';
 import { api, errorText } from '../../lib/api';
 import { DataTable } from '../../components/DataTable';
 import { EntityIcon } from '../../components/icons';
@@ -232,6 +232,45 @@ function IntegrationDrawer({ integration, onClose }: { integration: Integration 
         </Stack>
       )}
     </Drawer>
+  );
+}
+
+export function ScorecardsAdmin() {
+  return (
+    <ResourceAdmin<Scorecard>
+      title="Scorecards"
+      description="Quality rules per blueprint, grouped into levels. Rules are JSONata expressions over the entity (properties, relations, related, team)."
+      queryKey="scorecards"
+      list={() => api.scorecards()}
+      columns={[
+        { key: 'b', label: 'Blueprint', render: (s) => <Badge color="gray">{s.blueprint}</Badge> },
+        { key: 'l', label: 'Levels', render: (s) => s.levels.map((l) => l.name).join(' < ') },
+        { key: 'r', label: 'Rules', render: (s) => s.rules.length },
+      ]}
+      templates={[
+        {
+          label: 'Scorecard',
+          value: {
+            identifier: 'production-readiness',
+            title: 'Production readiness',
+            description: '',
+            blueprint: 'service',
+            levels: [
+              { name: 'Bronze', color: 'orange' },
+              { name: 'Silver', color: 'gray' },
+              { name: 'Gold', color: 'yellow' },
+            ],
+            rules: [
+              { identifier: 'has_owner', title: 'Has an owner team', level: 'Bronze', expression: 'team != null' },
+              { identifier: 'has_docs', title: 'Links to documentation', level: 'Silver', expression: 'properties.docs != null' },
+            ],
+          },
+        },
+      ]}
+      toEditable={(s) => strip(s, ['managed'])}
+      save={api.saveScorecard}
+      remove={(s) => api.deleteScorecard(s.identifier)}
+    />
   );
 }
 

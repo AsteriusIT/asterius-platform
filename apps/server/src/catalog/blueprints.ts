@@ -97,6 +97,8 @@ export async function deleteBlueprint(id: string, opts: { managed?: boolean } = 
   if (Number(n?.n) > 0) throw conflict(`Blueprint "${id}" still has ${n!.n} entities; delete them first`);
   const actions = await all<{ identifier: string }>('SELECT identifier FROM actions WHERE blueprint = ?', id);
   if (actions.length) throw conflict(`Actions use blueprint "${id}": ${actions.map((a) => a.identifier).join(', ')}`);
+  const cards = await all<{ identifier: string }>('SELECT identifier FROM scorecards WHERE blueprint = ?', id);
+  if (cards.length) throw conflict(`Scorecards use blueprint "${id}": ${cards.map((c) => c.identifier).join(', ')}`);
   for (const other of await listBlueprints())
     if (other.identifier !== id && Object.values(other.relations).some((r) => r.target === id))
       throw conflict(`Blueprint "${other.identifier}" has a relation to "${id}"`);
