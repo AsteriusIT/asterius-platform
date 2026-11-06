@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Alert, Badge, Button, Group, Modal, Select, SimpleGrid, Stack, Switch, Tabs, Text, Textarea, TextInput } from '@mantine/core';
+import { Alert, Badge, Button, Group, TagsInput, Modal, Select, SimpleGrid, Stack, Switch, Tabs, Text, Textarea, TextInput } from '@mantine/core';
 import { useQuery } from '@tanstack/react-query';
 import { IconFlask, IconHistory, IconInfoCircle, IconSettings, IconSitemap } from '@tabler/icons-react';
 import type { ActionTrigger, FormTrigger, InvokerConfig, ObjectSchema, PluginInfo, WorkflowStep, WorkflowTrigger } from '@asterius/shared';
@@ -339,6 +339,13 @@ function Builder({
           <Tabs.Panel value="general">
             <Stack gap="md">
               <GeneralFields doc={doc} isNew={false} onChange={set} />
+              <TagsInput
+                label="Allowed secrets"
+                description="Secrets (NAME) and environment variables (env:NAME) this workflow may reference. Empty: any."
+                placeholder="DEPLOY_TOKEN"
+                value={(doc.secrets as string[] | undefined) ?? []}
+                onChange={(secrets) => set({ secrets: secrets.length ? secrets : undefined })}
+              />
               <Switch
                 label="Enabled"
                 description="Disabled workflows are hidden from users"

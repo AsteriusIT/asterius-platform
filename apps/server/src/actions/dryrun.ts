@@ -45,7 +45,11 @@ export function sampleOf(schema: ObjectSchema | undefined): Record<string, unkno
   return out;
 }
 
-async function secretExists(kind: 'secret' | 'env', name: string, missing: Set<string>) {
+async function secretExists(kind: 'secret' | 'env', name: string, missing: Set<string>, allowed?: string[]) {
+  if (allowed && !allowed.includes(kind === 'env' ? `env:${name}` : name)) {
+    missing.add(`\${${kind}:${name}} (not in the allow-list)`);
+    return;
+  }
   if (kind === 'env') {
     if (process.env[name] === undefined || Object.keys(config).includes(name)) missing.add(`\${env:${name}}`);
   } else if (!(await one('SELECT name FROM secrets WHERE name = ?', name))) missing.add(`\${secret:${name}}`);
@@ -73,7 +77,7 @@ export async function dryRun(actionId: string, p: Principal, input: DryRunInput)
 
   const missing = new Set<string>();
   const resolver: RefResolver = async (kind, name) => {
-    await secretExists(kind, name, missing);
+    await secretExists(kind, name, missing, def ? def.secrets : saved?.secrets);
     return MASK;
   };
   const ctx: RunContext = {

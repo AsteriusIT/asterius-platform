@@ -68,6 +68,14 @@ const schema = z.object({
   RETENTION_DAYS: z.coerce.number().int().min(1).default(90),
   KUBECONFIG_PATH: z.string().optional(),
 
+  // ---- guard rails ----
+  /** A JSONata expression running longer than this (milliseconds) is stopped and fails with a clear message. */
+  EXPR_TIMEOUT_MS: z.coerce.number().int().min(50).default(2000),
+  /** Maximum nesting depth of a JSONata evaluation (non-terminating recursion). */
+  EXPR_MAX_DEPTH: z.coerce.number().int().min(10).default(500),
+  /** A step whose output is larger (JSON bytes) fails instead of bloating the database. */
+  STEP_OUTPUT_MAX_BYTES: z.coerce.number().int().min(1024).default(262_144),
+
   // ---- notifications ----
   /** smtp://user:pass@host:587 (or smtps://…): email notifications and the email invoker. Admin → Notifications can override it. */
   SMTP_URL: z.string().optional(),

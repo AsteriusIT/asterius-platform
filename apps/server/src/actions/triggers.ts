@@ -3,7 +3,7 @@ import { all, json, now, one, run } from '../db.js';
 import { conflict, errorMessage, notFound } from '../lib/errors.js';
 import { evaluate, render } from '../lib/expr.js';
 import { onEvent, type DomainEvent } from '../events.js';
-import { resolveRef } from '../secrets.js';
+import { scopedResolver } from './limits.js';
 import { verifyWebhook } from '../integrations/sync.js';
 import { startAutomatedRun } from './runs.js';
 import { nextTick } from './trigger-defs.js';
@@ -146,14 +146,14 @@ export async function receiveWebhook(
   actionId: string,
   req: { headers: Record<string, string | string[] | undefined>; rawBody: string; body: unknown; query: unknown },
 ): Promise<{ runId: string }> {
-  const row = await one<{ identifier: string; trigger_config: string | null; enabled: number }>(
-    "SELECT identifier, trigger_config, enabled FROM actions WHERE identifier = ? AND trigger = 'webhook'",
+  const row = await one<{ identifier: string; trigger_config: string | null; enabled: number; allowed_secrets: string | null }>(
+    "SELECT identifier, trigger_config, enabled, allowed_secrets FROM actions WHERE identifier = ? AND trigger = 'webhook'",
     actionId,
   );
   const trig = json<Trigger<'webhook'> | null>(row?.trigger_config, null);
   if (!row || trig?.type !== 'webhook') throw notFound('Webhook trigger');
   if (!row.enabled) throw conflict('This workflow is disabled');
-  const secret = String((await render(trig.secret, {}, resolveRef)).value ?? '');
+  const secret = String((await render(trig.secret, {}, scopedResolver(json<string[] | null>(row.allowed_secrets, null)))).value ?? '');
   if (!secret) throw Object.assign(new Error('The webhook secret is not configured'), { statusCode: 503 });
   if (!verifyWebhook({ secret, signatureHeader: trig.signatureHeader }, req.headers, req.rawBody))
     throw Object.assign(new Error('invalid signature or token'), { statusCode: 401 });

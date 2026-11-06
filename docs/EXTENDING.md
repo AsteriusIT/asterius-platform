@@ -29,7 +29,7 @@ The platform uses one language everywhere: [JSONata](https://jsonata.org).
 
 ## Workflows
 
-A workflow (an *action*) is a **trigger** followed by **steps**. Today the trigger is a form submission:
+A workflow (an *action*) is a **trigger** followed by **steps**. The usual trigger is a form submission (other triggers are described below):
 
 ```yaml
 trigger:
@@ -81,6 +81,69 @@ steps:
 ```
 
 Step outputs: invoke → the invoker result (webhook response, callback `result`); approval → `{ approved, by, comments }`; agent → the structured fields or `{ text }`; transform → its keys. Every step also exposes `steps.<id>.status` and `steps.<id>.link`. The run result is the outputs by step id.
+
+### Other triggers
+
+```yaml
+trigger: { type: api, on: create, inputs: {…} }    # a form without a page: POST /api/v1/actions/<id>/runs
+trigger:                                           # cron (5 fields) in an IANA time zone, one run per tick across all replicas
+  type: schedule
+  cron: "0 3 * * 1-5"
+  timezone: Europe/Paris
+  inputs: { day: "{{ schedule.at }}" }
+trigger:                                           # catalog events and finished runs; JSONata filter over { event }
+  type: event
+  event: entity.created                            # entity.created | entity.updated | entity.deleted | run.finished
+  blueprint: service
+  filter: 'event.entity.properties.tier = "gold"'
+  inputs: { name: "{{ event.entity.identifier }}" }   # the entity of the event is the run's entity
+trigger:                                           # POST /api/v1/hooks/<action>, token (X-Asterius-Token) or HMAC of the body
+  type: webhook
+  secret: ${secret:HOOK_SECRET}
+  signatureHeader: X-Hub-Signature-256             # optional: verify "sha256=<hmac>" instead of the token
+  inputs: { repo: "{{ body.repository.name }}" }
+```
+
+Runs started automatically belong to the "Workflow automation" service account and record `trigger.type` (and, for event triggers, a depth that stops loops). The inputs of these triggers are free-form templates (`event`, `body`, `headers`, `query`, `schedule`); secret references are not allowed in them.
+
+### More step types
+
+```yaml
+  - { id: nap, type: wait, duration: 15m }                         # or `until: "{{ inputs.window }}"`
+  - id: gate
+    type: wait
+    event: { name: deployed, filter: 'event.env = "prod"' }        # POST /api/v1/runs/<run>/steps/gate/events {"name":"deployed","payload":{…}}
+    timeoutMinutes: 120                                            # token: {{ steps.gate.events.token }} (or an admin token)
+  - id: pick
+    type: input                                                    # a form mid-run; output = the values
+    message: Which cluster?
+    inputs: { properties: { cluster: { type: string, enum: [eu, us] } }, required: [cluster] }
+    assignees: { teams: [platform] }                               # default: the requester and admins
+  - id: ok
+    type: approval
+    choices: [eu, us]                                              # output.choice
+    fields: { properties: { ticket: { type: string } } }           # output.values
+  - id: child                                                      # run another action and wait: output { runId, status, result }
+    type: workflow
+    action: create-repo
+    inputs: { name: "{{ inputs.name }}" }
+  - id: each                                                       # fan-out: one child run per item, `item` and `index` in templates
+    type: workflow
+    action: add-member
+    inputs: { user: "{{ item }}" }
+    forEach: { items: inputs.users, maxConcurrency: 3, failFast: false }   # output { results: [{ item, status, result, runId }], succeeded, failed }
+```
+
+Child runs belong to the parent's requester, link to the parent (`parent`), are cancelled with it, and are limited to 5 levels of nesting. Failed runs can be re-run (`POST /runs/:id/rerun`), resumed in place from the failed steps (`POST /runs/:id/resume`) or have one failed step retried (`POST /runs/:id/steps/:step/retry`): requester and admins only.
+
+### Safety and testing
+
+- `secrets: [NAME, env:OTHER]` on an action restricts the references its steps may use (checked when saving and when rendering).
+- `outputSchema` on a step makes it fail when its output does not match; outputs above `STEP_OUTPUT_MAX_BYTES` fail the step.
+- JSONata is stopped after `EXPR_TIMEOUT_MS` / `EXPR_MAX_DEPTH`.
+- Every change of an action is a version (`GET /actions/:id/versions`, `/diff?from=&to=`, `POST /actions/:id/rollback`); runs record `actionVersion`.
+- `POST /actions/:id/dry-run { definition?, inputs, entity?, mock? }` renders and validates without calling anything (the builder's Test button).
+- Notifications: invokers `slack`, `teams` and `email`; defaults in Admin → Notifications (`/notification-settings`), personal preferences in the profile (`/me/notifications`); `SMTP_URL` / `SMTP_FROM` configure email.
 
 ## Invokers
 

@@ -163,6 +163,8 @@ interface WorkflowStepBase {
   timeoutMinutes?: number;
   /** A failure does not fail the workflow; dependents still run. */
   continueOnError?: boolean;
+  /** The step output must match this schema (and stay under the platform size cap) or the step fails. */
+  outputSchema?: ObjectSchema;
 }
 
 export interface InvokeStep extends WorkflowStepBase {
@@ -329,6 +331,8 @@ export interface Action {
   trigger: WorkflowTrigger | null;
   /** Increments on every change of the definition (see the history). */
   version: number;
+  /** Secrets the workflow may reference (`NAME`, `env:NAME`). Omitted: any. */
+  secrets?: string[];
   /** Non-admins only see each step's id, name and type (no configuration). */
   steps: WorkflowStep[];
   /** Legacy single-invoker form (configuration files), when the action was declared with `invoker`. */

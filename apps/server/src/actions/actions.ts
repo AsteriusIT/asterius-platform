@@ -1,5 +1,6 @@
 import type { Action, ActionTrigger, InvokerConfig, WorkflowStep, WorkflowTrigger } from '@asterius/shared';
 import { invalidateTriggerCache } from './triggers.js';
+import { assertSecretsAllowed } from './limits.js';
 import { definitionDoc, nextVersion, recordVersion } from './versions.js';
 import { SYSTEM, type Actor } from '../audit.js';
 import { isFormLike, nextTick, validateTrigger } from './trigger-defs.js';
@@ -27,6 +28,7 @@ interface Row {
   trigger_config: string | null;
   next_fire_at: string | null;
   version: number;
+  allowed_secrets: string | null;
 }
 
 /** Stored in the trigger column when a workflow has no trigger yet (draft). */
@@ -57,6 +59,7 @@ function toAction(r: Row): Action {
     icon: r.icon,
     trigger,
     version: Number(r.version),
+    ...(r.allowed_secrets ? { secrets: json<string[]>(r.allowed_secrets, []) } : {}),
     steps,
     ...(declared || !invoker ? {} : { invoker }),
     enabled: bool(r.enabled),
@@ -114,6 +117,7 @@ export async function upsertAction(
   if (form && form.on !== 'create' && !form.blueprint) throw badRequest(`Forms submitted on an entity ("${form.on}") need a blueprint`);
   if (form) validator(form.inputs as never);
   validateWorkflow(stepsOf(def));
+  assertSecretsAllowed(def.secrets, [def.steps, def.invoker, t0]);
   const existing = await one<Row>('SELECT * FROM actions WHERE identifier = ?', def.identifier);
   if (existing && bool(existing.managed) && !opts.managed) throw managedError('Action', def.identifier);
   const t = now();
@@ -138,17 +142,18 @@ export async function upsertAction(
     t0 && t0.type !== 'form' ? JSON.stringify(t0) : null,
     t0?.type === 'schedule' && def.enabled ? nextTick(t0) : null,
     next.version,
+    def.secrets ? JSON.stringify(def.secrets) : null,
   ];
   if (existing)
     await run(
-      'UPDATE actions SET title = ?, description = ?, icon = ?, blueprint = ?, trigger = ?, inputs = ?, invoker = ?, steps = ?, approval = ?, allowed = ?, enabled = ?, managed = ?, trigger_config = ?, next_fire_at = ?, version = ?, updated_at = ? WHERE identifier = ?',
+      'UPDATE actions SET title = ?, description = ?, icon = ?, blueprint = ?, trigger = ?, inputs = ?, invoker = ?, steps = ?, approval = ?, allowed = ?, enabled = ?, managed = ?, trigger_config = ?, next_fire_at = ?, version = ?, allowed_secrets = ?, updated_at = ? WHERE identifier = ?',
       ...vals,
       t,
       def.identifier,
     );
   else
     await run(
-      'INSERT INTO actions (title, description, icon, blueprint, trigger, inputs, invoker, steps, approval, allowed, enabled, managed, trigger_config, next_fire_at, version, created_at, updated_at, identifier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO actions (title, description, icon, blueprint, trigger, inputs, invoker, steps, approval, allowed, enabled, managed, trigger_config, next_fire_at, version, allowed_secrets, created_at, updated_at, identifier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       ...vals,
       t,
       t,

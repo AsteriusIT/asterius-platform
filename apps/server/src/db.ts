@@ -414,6 +414,15 @@ export const MIGRATIONS: Migration[] = [
         ALTER TABLE users ADD COLUMN notification_prefs TEXT;
       `),
   },
+  {
+    id: 104,
+    name: 'per-action secret allow-list',
+    up: (d) =>
+      d.exec(`
+        ALTER TABLE actions ADD COLUMN allowed_secrets TEXT;  -- JSON list; NULL: unrestricted
+        ALTER TABLE runs ADD COLUMN allowed_secrets TEXT;     -- snapshot at trigger time
+      `),
+  },
 ];
 
 /** Apply pending numbered migrations (idempotent; serialized across replicas by an advisory lock on Postgres). */

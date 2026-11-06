@@ -51,6 +51,7 @@ export interface RunRow {
   parent_run_id: string | null;
   parent_step_id: string | null;
   action_version: number | null;
+  allowed_secrets: string | null;
   user_name?: string;
   user_email?: string;
 }
@@ -225,8 +226,8 @@ async function insertRun(n: NewRun): Promise<string> {
   const t = now();
   const status: RunStatus = n.approval.required ? 'PENDING_APPROVAL' : 'QUEUED';
   await run(
-    `INSERT INTO runs (id, action, action_title, blueprint, entity, inputs, status, invoker, steps, approval, triggered_by, team, trigger_type, trigger_info, parent_run_id, parent_step_id, action_version, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO runs (id, action, action_title, blueprint, entity, inputs, status, invoker, steps, approval, triggered_by, team, trigger_type, trigger_info, parent_run_id, parent_step_id, action_version, allowed_secrets, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     id,
     action.identifier,
     action.title,
@@ -244,6 +245,7 @@ async function insertRun(n: NewRun): Promise<string> {
     n.parent?.runId ?? null,
     n.parent?.stepId ?? null,
     action.version,
+    action.secrets ? JSON.stringify(action.secrets) : null,
     t,
     t,
   );

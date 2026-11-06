@@ -84,6 +84,8 @@ const stepBase = {
     .max(60 * 24 * 30)
     .optional(),
   continueOnError: z.boolean().default(false),
+  /** The output must match this schema or the step fails (see also STEP_OUTPUT_MAX_BYTES). */
+  outputSchema: objectSchema.optional(),
 };
 
 export const AGENT_MODELS = ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-fable-5-1'] as const;
@@ -275,6 +277,11 @@ export const actionDef = z.preprocess(
     invoker: invokerConfig.optional(),
     /** The workflow: steps run in order, or as a graph with `needs`. Empty: a draft. */
     steps: z.array(workflowStep).max(40).default([]),
+    /** Secret names (`NAME`, or `env:NAME` for environment variables) this workflow may reference; omitted: any. */
+    secrets: z
+      .array(z.string().regex(/^(env:)?[A-Za-z0-9_.-]{1,100}$/))
+      .max(50)
+      .optional(),
     enabled: z.boolean().default(true),
   }),
 );
