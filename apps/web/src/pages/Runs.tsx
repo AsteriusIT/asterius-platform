@@ -16,6 +16,7 @@ import {
   Table,
   Text,
   Textarea,
+  TextInput,
   Timeline,
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
@@ -33,6 +34,7 @@ import { STEP_STATUS_COLORS, STEP_STATUS_LABELS, STEP_TYPES } from '../lib/workf
 import { PropertyValue } from '../components/PropertyValue';
 
 const PAGE = 30;
+const onError = (e: unknown) => notifications.show({ color: 'red', message: errorText(e) });
 const ACTIVE: RunStatus[] = ['PENDING_APPROVAL', 'QUEUED', 'IN_PROGRESS'];
 
 const runColumns = [
@@ -65,11 +67,22 @@ export function Runs() {
   const status = params.get('status')?.split(',').filter(Boolean) ?? [];
   const page = Number(params.get('page') ?? 1);
   const action = params.get('action');
+  const blueprint = params.get('blueprint');
+  const entity = params.get('entity');
+  const blueprints = useQuery({ queryKey: ['blueprints'], queryFn: api.blueprints, staleTime: 30_000 });
   const actions = useQuery({ queryKey: ['actions', 'all'], queryFn: () => api.actions(), staleTime: 60_000 });
   const q = useQuery({
-    queryKey: ['runs', scope, status.join(','), action, page],
+    queryKey: ['runs', scope, status.join(','), action, blueprint, entity, page],
     queryFn: () =>
-      api.runs({ mine: scope === 'mine', status: status.join(',') || undefined, action: action ?? undefined, limit: PAGE, offset: (page - 1) * PAGE }),
+      api.runs({
+        mine: scope === 'mine',
+        status: status.join(',') || undefined,
+        action: action ?? undefined,
+        blueprint: blueprint ?? undefined,
+        entity: entity ?? undefined,
+        limit: PAGE,
+        offset: (page - 1) * PAGE,
+      }),
     placeholderData: keepPreviousData,
     refetchInterval: (query) => (query.state.data?.items.some((r) => ACTIVE.includes(r.status)) ? 5_000 : 30_000),
   });
@@ -102,6 +115,22 @@ export function Runs() {
           w={320}
         />
         <Select
+          placeholder="Any blueprint"
+          aria-label="Filter by blueprint"
+          clearable
+          data={(blueprints.data ?? []).map((b) => ({ value: b.identifier, label: b.title }))}
+          value={blueprint}
+          onChange={(v) => set('blueprint', v ?? '')}
+          w={200}
+        />
+        <TextInput
+          placeholder="Entity identifier"
+          aria-label="Filter by entity"
+          value={entity ?? ''}
+          onChange={(e) => set('entity', e.currentTarget.value)}
+          w={200}
+        />
+        <Select
           placeholder="Any action"
           aria-label="Filter by action"
           searchable
@@ -126,17 +155,74 @@ export function Runs() {
   );
 }
 
+const approvalKey = (r: Run) => `${r.id}/${r.pendingStep?.id ?? ''}`;
+
 export function Approvals() {
   const q = useQuery({ queryKey: ['approvals'], queryFn: api.approvals, refetchInterval: 15_000 });
   const navigate = useNavigate();
+  const qc = useQueryClient();
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [comment, setComment] = useState('');
+  const decide = useMutation({
+    mutationFn: async (d: 'approve' | 'reject') => {
+      const targets = (q.data ?? []).filter((r) => selected.has(approvalKey(r)));
+      const results = await Promise.allSettled(
+        targets.map((r) => {
+          if (r.pendingStep) return d === 'approve' ? api.approveStep(r.id, r.pendingStep.id, comment) : api.rejectStep(r.id, r.pendingStep.id, comment);
+          return d === 'approve' ? api.approve(r.id, comment) : api.reject(r.id, comment);
+        }),
+      );
+      return { d, ok: results.filter((x) => x.status === 'fulfilled').length, failed: results.filter((x) => x.status === 'rejected').length };
+    },
+    onSuccess: ({ d, ok, failed }) => {
+      notifications.show({
+        color: failed ? 'orange' : 'green',
+        message: `${ok} ${d === 'approve' ? 'approved' : 'rejected'}${failed ? `, ${failed} failed` : ''}`,
+      });
+      setSelected(new Set());
+      setComment('');
+      void qc.invalidateQueries({ queryKey: ['approvals'] });
+      void qc.invalidateQueries({ queryKey: ['runs'] });
+    },
+    onError,
+  });
   return (
     <Stack>
       <PageHeader title="Approvals" description="Requests and workflow steps waiting for a decision you can make." />
+      {selected.size > 0 && (
+        <Group align="flex-end">
+          <Text fz="sm">{selected.size} selected</Text>
+          <Textarea
+            aria-label="Comment for the decision"
+            placeholder="Comment (required to reject)"
+            value={comment}
+            onChange={(e) => setComment(e.currentTarget.value)}
+            autosize
+            minRows={1}
+            style={{ flex: 1, maxWidth: 420 }}
+          />
+          <Button color="green" size="xs" leftSection={<IconCheck size={14} />} loading={decide.isPending} onClick={() => decide.mutate('approve')}>
+            Approve selected
+          </Button>
+          <Button
+            color="red"
+            variant="light"
+            size="xs"
+            leftSection={<IconX size={14} />}
+            loading={decide.isPending}
+            disabled={!comment.trim()}
+            onClick={() => decide.mutate('reject')}
+          >
+            Reject selected
+          </Button>
+        </Group>
+      )}
       <DataTable
+        selection={{ selected, onChange: setSelected }}
         rows={q.data}
         loading={q.isPending}
         error={q.error}
-        rowKey={(r) => `${r.id}/${r.pendingStep?.id ?? ''}`}
+        rowKey={approvalKey}
         onRowClick={(r) => navigate(`/runs/${r.id}${r.pendingStep ? `?step=${r.pendingStep.id}` : ''}`)}
         empty={<Empty title="Nothing to approve">You are all caught up.</Empty>}
         columns={[
@@ -204,7 +290,6 @@ function RunView({ r }: { r: Run }) {
     void qc.invalidateQueries({ queryKey: ['approvals'] });
     void qc.invalidateQueries({ queryKey: ['runs'] });
   };
-  const onError = (e: unknown) => notifications.show({ color: 'red', message: errorText(e) });
   const decide = useMutation({
     mutationFn: (d: 'approve' | 'reject') => (d === 'approve' ? api.approve(r.id, comment) : api.reject(r.id, comment)),
     onSuccess: (run) => {
