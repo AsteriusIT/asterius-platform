@@ -3,6 +3,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import { config } from '../config.js';
 import { beat, registerLoop } from '../health.js';
 import { claimPolls, claimRuns, claimSteps, stepHousekeeping } from './engine.js';
+import { claimWaits } from './waiting.js';
 import { listenForWork, onWake } from './wake.js';
 
 /**
@@ -60,6 +61,7 @@ export function startRunWorker(log: FastifyBaseLogger) {
     claimed += await claimRuns(WORKER_ID, Math.min(free(), 20), spawn);
     claimed += await claimSteps(WORKER_ID, free(), spawn);
     claimed += await claimPolls(free(), spawn);
+    claimed += await claimWaits(free(), spawn); // time, input and child-run waits
     return claimed;
   };
 

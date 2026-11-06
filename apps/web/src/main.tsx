@@ -34,6 +34,7 @@ const page = <M,>(load: () => Promise<M>, name: keyof M) => {
 const definitions = () => import('./pages/admin/Definitions');
 const access = () => import('./pages/admin/Access');
 const system = () => import('./pages/admin/System');
+const notificationsAdmin = () => import('./pages/admin/Notifications');
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -103,6 +104,7 @@ const router = createBrowserRouter([
                   { path: 'deleted', element: page(system, 'DeletedAdmin') },
                   { path: 'audit', element: page(system, 'AuditAdmin') },
                   { path: 'config', element: page(system, 'ConfigAdmin') },
+                  { path: 'notifications', element: page(notificationsAdmin, 'NotificationsAdmin') },
                 ],
               },
               { path: '*', element: <Navigate to="/" replace /> },

@@ -6,7 +6,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router';
 import { IconPlus, IconSearch } from '@tabler/icons-react';
 import type { Action, Blueprint, Entity } from '@asterius/shared';
 import { api } from '../lib/api';
-import { isRunnable } from '../lib/permissions';
+import { formOf, isRunnable } from '../lib/permissions';
 import { useAuth } from '../lib/auth';
 import { DataTable, type Column } from '../components/DataTable';
 import { PropertyValue } from '../components/PropertyValue';
@@ -81,7 +81,8 @@ function CatalogTable({ bp }: { bp: Blueprint }) {
   // Day-2 / delete actions of this blueprint, loaded once for the "⋯" menu of every row.
   const entityActions = useQuery({
     queryKey: ['actions', bp.identifier, 'entity'],
-    queryFn: async () => (await api.actions({ blueprint: bp.identifier })).filter((a) => a.trigger?.on !== 'create' && a.enabled && isRunnable(a)),
+    queryFn: async () =>
+      (await api.actions({ blueprint: bp.identifier })).filter((a) => !!formOf(a) && formOf(a)?.on !== 'create' && a.enabled && isRunnable(a)),
   });
   const runOnEntity = (a: Action, e: Entity) => {
     setRunOn(e);

@@ -4,10 +4,15 @@ import type { Action } from '@asterius/shared';
 import { audit } from '../audit.js';
 import { actorOf, authenticate, bearer, isAdmin, requireAdmin, requireUser } from '../auth/users.js';
 import { getEntity } from '../catalog/entities.js';
-import { canTrigger, isRunnable, deleteAction, forViewer, getAction, listActions, upsertAction } from '../actions/actions.js';
+import { blueprintOf, canTrigger, isRunnable, deleteAction, forViewer, getAction, listActions, upsertAction } from '../actions/actions.js';
 import { nextPageHeaders } from '../lib/cursor.js';
 import { addLog, cancelRun, decide, getRun, getRunLogs, getRunRow, listRuns, pendingApprovals, triggerRun } from '../actions/runs.js';
 import { cancelSteps, decideStep, runningInvokeStep, updateStep } from '../actions/engine.js';
+import { dryRun } from '../actions/dryrun.js';
+import { diffVersions, getVersion, listVersions } from '../actions/versions.js';
+import { rerun, resume, retryStep } from '../actions/recovery.js';
+import { deliverEvent, submitInput } from '../actions/waiting.js';
+import { receiveWebhook } from '../actions/triggers.js';
 import { checkRunToken, checkStepToken } from '../secrets.js';
 import { conflict, forbidden } from '../lib/errors.js';
 import { entityParam, idParam, page } from './util.js';
@@ -73,6 +78,15 @@ export async function actionRoutes(app: FastifyInstance) {
     return { ok: true };
   });
 
+  /** External signal for a `wait` step (`event`): authenticated by the step token or an admin token. */
+  app.post('/runs/:id/steps/:step/events', { config: { rateLimit: { max: 600, timeWindow: '1 minute' } } }, async (req, reply) => {
+    const { id, step } = stepParams.parse(req.params);
+    await authorizeCallback(req, id, step);
+    const body = z.object({ name: z.string().min(1).max(100), payload: z.unknown().optional() }).parse(req.body ?? {});
+    const delivered = await deliverEvent(id, step, body.name, body.payload);
+    return reply.code(delivered ? 200 : 202).send({ delivered });
+  });
+
   /** Single-step (legacy) form: applies to the one running invoke step of the run. */
   app.patch('/runs/:id', { config: { rateLimit: { max: 600, timeWindow: '1 minute' } } }, async (req) => {
     const { id } = idParam.parse(req.params);
@@ -93,6 +107,13 @@ export async function actionRoutes(app: FastifyInstance) {
     return { ok: true };
   });
 
+  /** Inbound webhook trigger: starts the workflow named in the URL. Authenticated by the trigger's secret (token or HMAC). */
+  app.post('/hooks/:id', { config: { rateLimit: { max: 600, timeWindow: '1 minute' } } }, async (req, reply) => {
+    const { id } = idParam.parse(req.params);
+    const out = await receiveWebhook(id, { headers: req.headers, rawBody: req.rawBody ?? JSON.stringify(req.body ?? null), body: req.body, query: req.query });
+    return reply.code(202).send(out);
+  });
+
   // ---- everything below: signed-in users ----
   await app.register(async (scoped) => {
     scoped.addHook('preHandler', requireUser);
@@ -100,15 +121,56 @@ export async function actionRoutes(app: FastifyInstance) {
     scoped.get('/actions', async (req) => {
       const q = z.object({ blueprint: z.string().optional(), trigger: z.enum(['create', 'day-2', 'delete']).optional() }).parse(req.query);
       return (await listActions())
-        .filter((a) => (!q.blueprint || a.trigger?.blueprint === q.blueprint) && (!q.trigger || a.trigger?.on === q.trigger))
+        .filter((a) => (!q.blueprint || blueprintOf(a) === q.blueprint) && (!q.trigger || (a.trigger?.type === 'form' && a.trigger.on === q.trigger)))
         .filter((a) => isAdmin(req.principal) || a.enabled)
-        .map((a) => ({ ...forViewer(a, req.principal), allowedForMe: a.trigger?.on === 'create' ? canTrigger(a, req.principal, null) : undefined }));
+        .map((a) => ({
+          ...forViewer(a, req.principal),
+          allowedForMe: a.trigger?.type === 'form' && a.trigger.on === 'create' ? canTrigger(a, req.principal, null) : undefined,
+        }));
     });
     scoped.get('/actions/:id', async (req) => forViewer(await getAction(idParam.parse(req.params).id), req.principal));
     scoped.put('/actions/:id', { preHandler: requireAdmin }, async (req) => {
       const { id } = idParam.parse(req.params);
-      const { action, created } = await upsertAction({ ...(req.body as object), identifier: id });
+      const { action, created } = await upsertAction({ ...(req.body as object), identifier: id }, { actor: actorOf(req.principal) });
       await audit(actorOf(req.principal), created ? 'action.created' : 'action.updated', id);
+      return action;
+    });
+    /** Test a workflow without side effects: renders templates, evaluates expressions, validates invokers and secrets. */
+    scoped.post('/actions/:id/dry-run', { preHandler: requireAdmin, config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async (req) => {
+      const { id } = idParam.parse(req.params);
+      const body = z
+        .object({
+          definition: z.record(z.string(), z.unknown()).optional(),
+          inputs: z.record(z.string(), z.unknown()).default({}),
+          entity: z.string().nullish(),
+          mock: z.record(z.string(), z.unknown()).optional(),
+        })
+        .parse(req.body ?? {});
+      return dryRun(id, req.principal, body);
+    });
+    scoped.get('/actions/:id/versions', { preHandler: requireAdmin }, async (req) => {
+      const { id } = idParam.parse(req.params);
+      await getAction(id);
+      return listVersions(id);
+    });
+    scoped.get('/actions/:id/versions/:version', { preHandler: requireAdmin }, async (req) => {
+      const { id, version } = z.object({ id: z.string().min(1).max(200), version: z.coerce.number().int().min(1) }).parse(req.params);
+      return getVersion(id, version);
+    });
+    scoped.get('/actions/:id/diff', { preHandler: requireAdmin }, async (req) => {
+      const { id } = idParam.parse(req.params);
+      const q = z.object({ from: z.coerce.number().int().min(1), to: z.coerce.number().int().min(1) }).parse(req.query);
+      return diffVersions(id, q.from, q.to);
+    });
+    scoped.post('/actions/:id/rollback', { preHandler: requireAdmin }, async (req) => {
+      const { id } = idParam.parse(req.params);
+      const { version } = z.object({ version: z.coerce.number().int().min(1) }).parse(req.body ?? {});
+      const target = await getVersion(id, version);
+      const { action } = await upsertAction(
+        { ...target.definition, identifier: id },
+        { actor: actorOf(req.principal), note: `Rollback to version ${version}` },
+      );
+      await audit(actorOf(req.principal), 'action.rolled_back', id, { to: version, version: action.version });
       return action;
     });
     scoped.delete('/actions/:id', { preHandler: requireAdmin }, async (req) => {
@@ -123,7 +185,7 @@ export async function actionRoutes(app: FastifyInstance) {
       const { bp, id } = entityParam.parse(req.params);
       const e = await getEntity(bp, id);
       return (await listActions())
-        .filter((a: Action) => a.enabled && isRunnable(a) && a.trigger?.blueprint === bp && a.trigger.on !== 'create')
+        .filter((a: Action) => a.enabled && isRunnable(a) && a.trigger?.type === 'form' && a.trigger.blueprint === bp && a.trigger.on !== 'create')
         .map((a) => ({ ...forViewer(a, req.principal), allowedForMe: canTrigger(a, req.principal, e.team) }));
     });
 
@@ -176,9 +238,22 @@ export async function actionRoutes(app: FastifyInstance) {
     scoped.post('/runs/:id/approve', async (req) => decide(req.principal, idParam.parse(req.params).id, 'approved', comment.parse(req.body ?? {}).comment));
     scoped.post('/runs/:id/reject', async (req) => decide(req.principal, idParam.parse(req.params).id, 'rejected', comment.parse(req.body ?? {}).comment));
     scoped.post('/runs/:id/cancel', async (req) => cancelRun(req.principal, idParam.parse(req.params).id, cancelSteps));
+    scoped.post('/runs/:id/rerun', async (req, reply) => reply.code(201).send(await rerun(req.principal, idParam.parse(req.params).id)));
+    scoped.post('/runs/:id/resume', async (req) => resume(req.principal, idParam.parse(req.params).id));
+    scoped.post('/runs/:id/steps/:step/retry', async (req) => {
+      const { id, step } = stepParams.parse(req.params);
+      return retryStep(req.principal, id, step);
+    });
+    const decision = comment.extend({ choice: z.string().max(100).optional(), values: z.record(z.string(), z.unknown()).optional() });
+    scoped.post('/runs/:id/steps/:step/input', async (req) => {
+      const { id, step } = stepParams.parse(req.params);
+      await submitInput(req.principal, id, step, z.object({ values: z.record(z.string(), z.unknown()).default({}) }).parse(req.body ?? {}).values);
+      return getRun(id, req.principal);
+    });
     scoped.post('/runs/:id/steps/:step/approve', async (req) => {
       const { id, step } = stepParams.parse(req.params);
-      await decideStep(req.principal, id, step, 'approved', comment.parse(req.body ?? {}).comment);
+      const b = decision.parse(req.body ?? {});
+      await decideStep(req.principal, id, step, 'approved', b.comment, { choice: b.choice, values: b.values });
       return getRun(id, req.principal);
     });
     scoped.post('/runs/:id/steps/:step/reject', async (req) => {

@@ -26,6 +26,11 @@ import type {
   Tombstone,
   Webhook,
   WidgetData,
+  ActionVersion,
+  ActionVersionDiff,
+  NotificationPrefs,
+  NotificationSettings,
+  DryRunResult,
 } from '@asterius/shared';
 
 /** Typed client for the platform API (/api/v1). The session token lives in localStorage. */
@@ -134,6 +139,20 @@ export const api = {
   purgeEntity: (bp: string, id: string) => request('DELETE', v1(`/deleted-entities/${enc(bp)}/${enc(id)}`)),
   entityActions: (bp: string, id: string) => request<ActionView[]>('GET', v1(`/blueprints/${enc(bp)}/entities/${enc(id)}/actions`)),
 
+  actionVersions: (id: string) => request<ActionVersion[]>('GET', v1(`/actions/${enc(id)}/versions`)),
+  actionDiff: (id: string, from: number, to: number) =>
+    request<ActionVersionDiff>('GET', v1(`/actions/${enc(id)}/diff${qs({ from: String(from), to: String(to) })}`)),
+  rollbackAction: (id: string, version: number) => request<ActionView>('POST', v1(`/actions/${enc(id)}/rollback`), { version }),
+  dryRun: (
+    id: string,
+    body: { definition?: Record<string, unknown>; inputs: Record<string, unknown>; entity?: string | null; mock?: Record<string, unknown> },
+  ) => request<DryRunResult>('POST', v1(`/actions/${enc(id)}/dry-run`), body),
+  notificationSettings: () => request<NotificationSettings>('GET', v1('/notification-settings')),
+  saveNotificationSettings: (s: NotificationSettings) => request<NotificationSettings>('PUT', v1('/notification-settings'), s),
+  testNotification: (channel: 'slack' | 'teams' | 'email') => request<{ ok: boolean }>('POST', v1('/notification-settings/test'), { channel }),
+  notificationChannels: () => request<{ email: boolean; slack: boolean }>('GET', v1('/notifications/channels')),
+  myNotifications: () => request<NotificationPrefs>('GET', v1('/me/notifications')),
+  saveMyNotifications: (p: NotificationPrefs) => request<NotificationPrefs>('PUT', v1('/me/notifications'), p),
   actions: (q: { blueprint?: string; trigger?: string } = {}) => request<ActionView[]>('GET', v1(`/actions${qs(q)}`)),
   action: (id: string) => request<Action>('GET', v1(`/actions/${enc(id)}`)),
   saveAction: (id: string, body: unknown) => request<Action>('PUT', v1(`/actions/${enc(id)}`), body),
@@ -147,8 +166,13 @@ export const api = {
   approvals: () => request<Run[]>('GET', v1('/approvals')),
   approve: (id: string, comment: string) => request<Run>('POST', v1(`/runs/${enc(id)}/approve`), { comment }),
   reject: (id: string, comment: string) => request<Run>('POST', v1(`/runs/${enc(id)}/reject`), { comment }),
+  rerun: (id: string) => request<Run>('POST', v1(`/runs/${enc(id)}/rerun`), {}),
+  resume: (id: string) => request<Run>('POST', v1(`/runs/${enc(id)}/resume`), {}),
+  retryStep: (id: string, step: string) => request<Run>('POST', v1(`/runs/${enc(id)}/steps/${enc(step)}/retry`), {}),
   cancel: (id: string) => request<Run>('POST', v1(`/runs/${enc(id)}/cancel`), {}),
-  approveStep: (id: string, step: string, comment: string) => request<Run>('POST', v1(`/runs/${enc(id)}/steps/${enc(step)}/approve`), { comment }),
+  approveStep: (id: string, step: string, comment: string, extra: { choice?: string; values?: Record<string, unknown> } = {}) =>
+    request<Run>('POST', v1(`/runs/${enc(id)}/steps/${enc(step)}/approve`), { comment, ...extra }),
+  submitInput: (id: string, step: string, values: Record<string, unknown>) => request<Run>('POST', v1(`/runs/${enc(id)}/steps/${enc(step)}/input`), { values }),
   rejectStep: (id: string, step: string, comment: string) => request<Run>('POST', v1(`/runs/${enc(id)}/steps/${enc(step)}/reject`), { comment }),
 
   integrations: () => request<Integration[]>('GET', v1('/integrations')),

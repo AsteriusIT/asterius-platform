@@ -233,6 +233,8 @@ const stepBase = {
     .max(60 * 24 * 30)
     .optional(),
   continueOnError: z.boolean().default(false),
+  /** The output must match this schema or the step fails (see also STEP_OUTPUT_MAX_BYTES). */
+  outputSchema: objectSchema.optional(),
 };
 
 export const AGENT_MODELS = ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-fable-5-1'] as const;
@@ -250,6 +252,10 @@ export const workflowStep = z.discriminatedUnion('type', [
         ownerTeam: z.boolean().optional(),
       })
       .optional(),
+    /** Decisions beyond yes / no: the approver picks one (`output.choice`). */
+    choices: z.array(z.string().min(1).max(100)).max(20).optional(),
+    /** Fields the approver fills along with an approval (`output.values`). */
+    fields: objectSchema.optional(),
     minApprovals: z.number().int().min(1).max(10).default(1),
     allowSelfApproval: z.boolean().default(false),
     message: z.string().max(20_000).optional(),
@@ -274,6 +280,47 @@ export const workflowStep = z.discriminatedUnion('type', [
     maxTokens: z.number().int().min(256).max(64_000).default(16_000),
     apiKey: z.string().optional(),
   }),
+  z.object({
+    ...stepBase,
+    type: z.literal('wait'),
+    /** `30s`, `15m`, `2h`, `7d`. */
+    duration: z
+      .string()
+      .regex(/^[1-9]\d{0,5}[smhd]$/, 'e.g. 30s, 15m, 2h, 7d')
+      .optional(),
+    /** Template giving an ISO date-time (`{{ inputs.window }}`). */
+    until: z.string().max(500).optional(),
+    /** Wait for an external signal: `POST /runs/:id/steps/:step/events` with this name (and a payload matching `filter`). */
+    event: z.object({ name: z.string().min(1).max(100), filter: z.string().max(2000).optional() }).optional(),
+  }),
+  z.object({
+    ...stepBase,
+    type: z.literal('input'),
+    message: z.string().max(20_000).optional(),
+    /** The form the assignee fills; its values are the step output. */
+    inputs: objectSchema,
+    /** Who may answer (default: the requester and admins). */
+    assignees: subjects.optional(),
+  }),
+  z.object({
+    ...stepBase,
+    type: z.literal('workflow'),
+    /** The action to run as a child workflow; the step waits for it and exposes its result. */
+    action: slug,
+    /** Templates for the child inputs (and `item` inside a fan-out). */
+    inputs: z.record(z.string(), z.unknown()).default({}),
+    /** Template of the entity identifier for child workflows started on an entity. */
+    entity: z.string().max(500).optional(),
+    /** Fan-out: one child run per item of the list. */
+    forEach: z
+      .object({
+        items: z.string().min(1).max(2000),
+        maxConcurrency: z.number().int().min(1).max(20).default(3),
+        /** Stop at the first failure (cancelling running children) instead of collecting every result. */
+        failFast: z.boolean().default(false),
+      })
+      .optional(),
+  }),
   z.object({ ...stepBase, type: z.literal('transform'), output: z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,63}$/), z.string()) }),
 ]);
 export type WorkflowStepDef = z.infer<typeof workflowStep>;
@@ -288,11 +335,15 @@ const approvalPolicy = z
   .default({ required: false, minApprovals: 1, allowSelfApproval: false });
 
 /**
- * Workflow triggers. For now one type: `form`, a form submitted by a user (self-service page, or an entity page).
- * Other types (schedule, catalog event, webhook) will join this union.
+ * Workflow triggers:
+ *  - `form`: a form submitted by a user (self-service page, or an entity page);
+ *  - `api`: like a form, without a page: inputs only come from the API (`POST /actions/:id/runs`);
+ *  - `schedule`: a cron expression in a time zone, one run per tick;
+ *  - `event`: a catalog or run event (optionally filtered with a JSONata expression);
+ *  - `webhook`: `POST /api/v1/hooks/<action>`, authenticated by a shared secret or HMAC signature.
+ * `inputs` of the last three map the context (`event`, `body`, `headers`, `schedule`) to the run inputs with `{{ }}` templates.
  */
-export const formTrigger = z.object({
-  type: z.literal('form'),
+const formFields = {
   /** create: the self-service page · day-2 / delete: on an existing entity of `blueprint`. */
   on: z.enum(['create', 'day-2', 'delete']).default('create'),
   /** The kind of entity it creates or acts on (null: a general workflow). */
@@ -303,8 +354,41 @@ export const formTrigger = z.object({
   allowed: subjects,
   /** Approval before the workflow starts (approval steps cover approvals in the middle). */
   approval: approvalPolicy,
+};
+export const formTrigger = z.object({ type: z.literal('form'), ...formFields });
+export const apiTrigger = z.object({ type: z.literal('api'), ...formFields });
+const templateInputs = z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,63}$/), z.unknown()).default({});
+export const scheduleTrigger = z.object({
+  type: z.literal('schedule'),
+  /** Five fields: minute hour day-of-month month day-of-week. */
+  cron: z.string().min(1).max(100),
+  timezone: z.string().min(1).max(64).default('UTC'),
+  inputs: templateInputs,
 });
-export const workflowTrigger = z.discriminatedUnion('type', [formTrigger]);
+export const EVENT_TRIGGERS = ['entity.created', 'entity.updated', 'entity.deleted', 'scorecard.changed', 'run.finished'] as const;
+export const eventTrigger = z.object({
+  type: z.literal('event'),
+  event: z.enum(EVENT_TRIGGERS),
+  /** entity.*: only entities of this blueprint. */
+  blueprint: slug.nullish(),
+  /** run.finished: only runs of this action. */
+  action: slug.nullish(),
+  /** JSONata over the event (`event.entity.properties.tier = "gold"`); the event fires the workflow when truthy. */
+  filter: z.string().max(2000).optional(),
+  /** Template of the target entity identifier (needs `blueprint`); entity events default to the entity that changed. */
+  entity: z.string().max(500).optional(),
+  inputs: templateInputs,
+});
+export const webhookTrigger = z.object({
+  type: z.literal('webhook'),
+  /** `${secret:NAME}`: sent as `X-Asterius-Token` / bearer token, or used to verify the HMAC `signatureHeader`. */
+  secret: z.string().min(1).max(500),
+  signatureHeader: z.string().max(100).optional(),
+  blueprint: slug.nullish(),
+  entity: z.string().max(500).optional(),
+  inputs: templateInputs,
+});
+export const workflowTrigger = z.discriminatedUnion('type', [formTrigger, apiTrigger, scheduleTrigger, eventTrigger, webhookTrigger]);
 export type WorkflowTriggerDef = z.infer<typeof workflowTrigger>;
 
 /**
@@ -342,10 +426,38 @@ export const actionDef = z.preprocess(
     invoker: invokerConfig.optional(),
     /** The workflow: steps run in order, or as a graph with `needs`. Empty: a draft. */
     steps: z.array(workflowStep).max(40).default([]),
+    /** Secret names (`NAME`, or `env:NAME` for environment variables) this workflow may reference; omitted: any. */
+    secrets: z
+      .array(z.string().regex(/^(env:)?[A-Za-z0-9_.-]{1,100}$/))
+      .max(50)
+      .optional(),
     enabled: z.boolean().default(true),
   }),
 );
 export type ActionDef = z.infer<typeof actionDef>;
+
+/** Platform-wide notification defaults (Admin → Notifications). Credentials are `${secret:NAME}` references. */
+export const notificationSettings = z
+  .object({
+    slack: z
+      .object({
+        botToken: z.string().max(500).optional(),
+        webhookUrl: z.string().max(500).optional(),
+        defaultChannel: z.string().max(100).optional(),
+      })
+      .default({}),
+    teams: z.object({ webhookUrl: z.string().max(500).optional() }).default({}),
+    email: z.object({ smtpUrl: z.string().max(500).optional(), from: z.string().max(200).optional() }).default({}),
+  })
+  .default({ slack: {}, teams: {}, email: {} });
+export type NotificationSettings = z.infer<typeof notificationSettings>;
+
+/** Where a person wants to hear about approvals (and inputs) waiting for them, and about the outcome of their runs. */
+export const notificationPrefs = z.object({
+  approvals: z.array(z.enum(['email', 'slack'])).default(['email']),
+  runs: z.array(z.enum(['email', 'slack'])).default([]),
+});
+export type NotificationPrefs = z.infer<typeof notificationPrefs>;
 
 export const mappingDef = z.object({
   kind: z.string().default('item'),

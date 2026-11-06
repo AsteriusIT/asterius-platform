@@ -5,7 +5,7 @@ import { badRequest, conflict, notFound, preconditionFailed } from '../lib/error
 import { LRU } from '../lib/lru.js';
 import { onConfigChange, syncCaches } from '../lib/config-version.js';
 import { decodeCursor, encodeCursor } from '../lib/cursor.js';
-import { prepareEvents, type DomainEvent } from '../events.js';
+import { notifyListeners, prepareEvents, type DomainEvent } from '../events.js';
 import { entityInput, type EntityInput } from '../schemas.js';
 import { recordVersion, snapshotOf } from './history.js';
 import { refreshAfterWrite, withCalculated } from './computed.js';
@@ -316,6 +316,7 @@ export async function upsertEntity(blueprint: string, raw: unknown, opts: Upsert
       if (!existing && opts.createOnly) throw conflict(`Entity ${blueprint}/${input.identifier} already exists`);
       continue;
     }
+    await notifyListeners([{ type: existing ? 'entity.updated' : 'entity.created', blueprint, data: { entity, before: existing ?? null }, actor: opts.actor }]);
     await refreshAfterWrite(blueprint, input.identifier, existing?.relations ?? null, p.relations, bp.relations);
     const fresh = await getEntity(blueprint, input.identifier); // with its computed values
     await evaluateEntity(fresh);
@@ -466,6 +467,7 @@ async function writeChunk(
     for (const w of toWrite) fail(w.i, err);
     return;
   }
+  await notifyListeners(events);
   for (const { i, p, entity } of toWrite) {
     await refreshAfterWrite(blueprint, p.input.identifier, p.existing?.relations ?? null, p.relations, bp.relations);
     const fresh = (await withCalculated([entity]))[0]!;
@@ -566,6 +568,7 @@ async function deleteOne(entity: Entity, actor?: Actor) {
     await recordVersion(d, { blueprint, entity: identifier, op: 'delete', actor, source: actor ? 'user' : 'system', before: snapshotOf(entity), after: null });
     await outbox(d);
   });
+  await notifyListeners([{ type: 'entity.deleted', blueprint, data: { entity }, actor }]);
   await removeEntityResults(blueprint, identifier);
   await refreshAfterWrite(blueprint, identifier, entity.relations, null, (await getBlueprintCached(blueprint)).relations);
 }

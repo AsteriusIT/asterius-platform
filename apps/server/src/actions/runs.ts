@@ -1,16 +1,29 @@
-import type { ApprovalPolicy, Run, RunApproval, RunLog, RunPage, RunStatus } from '@asterius/shared';
+import type { Action, ApprovalPolicy, Run, RunApproval, RunLog, RunPage, RunStatus } from '@asterius/shared';
 import { config } from '../config.js';
 import { all, forUpdate, json, newId, now, one, run, tx, type Driver, type SqlValue } from '../db.js';
 import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
 import { emit } from '../events.js';
 import { audit } from '../audit.js';
-import { actorOf, isAdmin, matchesSubjects, type Principal } from '../auth/users.js';
+import { actorOf, automationPrincipal, isAdmin, matchesSubjects, type Principal } from '../auth/users.js';
 import { getEntity } from '../catalog/entities.js';
 import { compact, validate } from '../catalog/validation.js';
 import { canTrigger, getAction } from './actions.js';
 import { metrics } from '../metrics.js';
 import { wake } from './wake.js';
-import { approverSubjects, canApproveStep, loadSteps, runStepsView, stepApprovalsOf, stepDefs, stepMessage, type StepRow } from './steps.js';
+import { notifyPendingDecision } from '../notifications/dispatch.js';
+import {
+  approverSubjects,
+  canApproveStep,
+  canManageRun,
+  canSubmitInput,
+  loadSteps,
+  resumableSteps,
+  runStepsView,
+  stepApprovalsOf,
+  stepDefs,
+  stepMessage,
+  type StepRow,
+} from './steps.js';
 import { decodeCursor, encodeCursor } from '../lib/cursor.js';
 
 /**
@@ -52,6 +65,12 @@ export interface RunRow {
   created_at: string;
   started_at: string | null;
   ended_at: string | null;
+  trigger_type: string | null;
+  trigger_info: string | null;
+  parent_run_id: string | null;
+  parent_step_id: string | null;
+  action_version: number | null;
+  allowed_secrets: string | null;
   user_name?: string;
   user_email?: string;
 }
@@ -87,6 +106,9 @@ const toRun = (r: RunRow, approvals: RunApproval[]): Run => ({
   triggeredBy: { id: r.triggered_by, name: r.user_name ?? '', email: r.user_email ?? '' },
   approvals,
   result: json(r.result, null),
+  trigger: { type: r.trigger_type ?? 'form', ...json<Record<string, unknown>>(r.trigger_info, {}) },
+  actionVersion: r.action_version,
+  parent: r.parent_run_id ? { runId: r.parent_run_id, stepId: r.parent_step_id ?? '' } : null,
   createdAt: r.created_at,
   startedAt: r.started_at,
   endedAt: r.ended_at,
@@ -156,7 +178,18 @@ export async function getRun(id: string, p: Principal, opts: { after?: number } 
     logsTruncated = newest.length > LOG_TAIL;
     logs = newest.slice(0, LOG_TAIL).reverse();
   }
-  return { ...toRun(r, approvals), logs, logsTruncated, steps: await runStepsView(r, p), canApprove: canApprove(p, r, approvals), canCancel: canCancel(p, r) };
+  const manage = canManageRun(p, r);
+  const canResume = manage && ['FAILURE', 'CANCELLED'].includes(r.status) && !!r.steps && resumableSteps(stepDefs(r), await loadSteps(id)).length > 0;
+  return {
+    ...toRun(r, approvals),
+    logs,
+    logsTruncated,
+    steps: await runStepsView(r, p),
+    canApprove: canApprove(p, r, approvals),
+    canCancel: canCancel(p, r),
+    canRerun: manage && FINAL.includes(r.status),
+    canResume,
+  };
 }
 
 /** One page of a run's log, oldest first: continue with `after = next` while `next` is not null. */
@@ -274,7 +307,7 @@ export async function pendingApprovals(
   for (;;) {
     const rows = await all<RunRow>(
       `${SELECT} WHERE (r.status = 'PENDING_APPROVAL' AND NOT EXISTS (SELECT 1 FROM run_approvals a WHERE a.run_id = r.id AND a.user_id = ?)
-          OR r.status = 'IN_PROGRESS' AND EXISTS (SELECT 1 FROM run_steps s WHERE s.run_id = r.id AND s.status = 'WAITING_APPROVAL'))
+          OR r.status = 'IN_PROGRESS' AND EXISTS (SELECT 1 FROM run_steps s WHERE s.run_id = r.id AND s.status IN ('WAITING_APPROVAL', 'WAITING')))
         ${after ? 'AND (r.created_at, r.id) > (?, ?)' : ''} ORDER BY r.created_at, r.id LIMIT ?`,
       p.id,
       ...(after ?? []),
@@ -286,7 +319,7 @@ export async function pendingApprovals(
     const inProgress = rows.filter((r) => r.status === 'IN_PROGRESS');
     const stepRows = inProgress.length
       ? await all<StepRow>(
-          `SELECT * FROM run_steps WHERE status = 'WAITING_APPROVAL' AND run_id IN (${inProgress.map(() => '?').join(',')}) ORDER BY run_id, position`,
+          `SELECT * FROM run_steps WHERE status IN ('WAITING_APPROVAL', 'WAITING') AND run_id IN (${inProgress.map(() => '?').join(',')}) ORDER BY run_id, position`,
           ...inProgress.map((r) => r.id),
         )
       : [];
@@ -297,8 +330,10 @@ export async function pendingApprovals(
       } else {
         for (const row of stepRows.filter((sr) => sr.run_id === r.id)) {
           const def = stepDefs(r).find((d) => d.id === row.step_id);
-          if (def && canApproveStep(p, r, def, row, stepApprovals.get(`${r.id}/${row.step_id}`) ?? []))
-            items.push({ ...toRun(r, []), pendingStep: { id: row.step_id, name: row.name, message: stepMessage(row) } });
+          if (!def) continue;
+          const kind = def.type === 'input' ? 'input' : 'approval';
+          const allowed = kind === 'input' ? canSubmitInput(p, r, def, row) : canApproveStep(p, r, def, row, stepApprovals.get(`${r.id}/${row.step_id}`) ?? []);
+          if (allowed) items.push({ ...toRun(r, []), pendingStep: { id: row.step_id, name: row.name, message: stepMessage(row), kind } });
         }
       }
       if (items.length >= limit && i < rows.length - 1) return { items, nextCursor: encodeCursor({ s: 'approvals', d: 'asc', v: [r.created_at, r.id] }) };
@@ -343,25 +378,99 @@ export async function addLog(runId: string, message: string, level: RunLog['leve
 export async function emitRun(id: string, type: 'run.created' | 'run.updated') {
   const r = await getRunRow(id);
   const steps = (await loadSteps(id)).map((s) => ({ id: s.step_id, name: s.name, type: s.type, status: s.status }));
-  await emit({ type, blueprint: r.blueprint, data: { run: { ...toRun(r, (await approvalsOf([id])).get(id) ?? []), steps } } });
+  const data = { run: { ...toRun(r, (await approvalsOf([id])).get(id) ?? []), steps } };
+  await emit({ type, blueprint: r.blueprint, data });
+  if (type === 'run.updated' && FINAL.includes(r.status)) await emit({ type: 'run.finished', blueprint: r.blueprint, data });
 }
 
 // ---------- trigger ----------
-/**
- * Create a run. With an `idempotencyKey` (Idempotency-Key header), retrying the same request returns the original run
- * (`created: false`) instead of starting a second one; the same key with other inputs is a 409.
- */
+export interface RunSource {
+  type: 'form' | 'api' | 'schedule' | 'event' | 'webhook' | 'workflow' | 'rerun';
+  info?: Record<string, unknown>;
+}
+
+interface NewRun {
+  p: Principal;
+  action: Action;
+  blueprint: string | null;
+  entity: string | null;
+  entityTeam: string | null;
+  inputs: Record<string, unknown>;
+  approval: ApprovalPolicy;
+  source: RunSource;
+  parent?: { runId: string; stepId: string };
+  /** Retrying a request with the same key returns the original run (`replay`). */
+  idempotencyKey?: string;
+}
+
+async function insertRun(n: NewRun): Promise<{ id: string; replay?: false } | { replay: true }> {
+  const { p, action } = n;
+  const id = newId();
+  const t = now();
+  const status: RunStatus = n.approval.required ? 'PENDING_APPROVAL' : 'QUEUED';
+  const inserted = await run(
+    `INSERT INTO runs (id, action, action_title, blueprint, entity, inputs, status, invoker, steps, approval, triggered_by, team, trigger_type, trigger_info, parent_run_id, parent_step_id, action_version, allowed_secrets, created_at, updated_at, idempotency_key)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
+    id,
+    action.identifier,
+    action.title,
+    n.blueprint,
+    n.entity,
+    JSON.stringify(n.inputs),
+    status,
+    JSON.stringify(action.invoker ?? null),
+    JSON.stringify(action.steps), // snapshot: editing the action never changes runs in flight
+    JSON.stringify(n.approval),
+    p.id,
+    n.entityTeam,
+    n.source.type,
+    JSON.stringify(n.source.info ?? {}),
+    n.parent?.runId ?? null,
+    n.parent?.stepId ?? null,
+    action.version,
+    action.secrets ? JSON.stringify(action.secrets) : null,
+    t,
+    t,
+    n.idempotencyKey ?? null,
+  );
+  // A concurrent request with the same idempotency key won the unique index.
+  if (!inserted.changes) return { replay: true };
+  const via = n.source.type === 'form' || n.source.type === 'api' ? '' : ` (${n.source.type})`;
+  const where = n.entity ? ` on ${n.blueprint}/${n.entity}` : '';
+  await addLog(id, `Triggered by ${p.name} <${p.email}>${where}${via}`);
+  if (status === 'PENDING_APPROVAL') {
+    await addLog(id, `Waiting for ${n.approval.minApprovals ?? 1} approval(s)`);
+    void notifyPendingDecision({
+      run: { id, action_title: action.title, team: n.entityTeam, triggered_by: p.id, user_name: p.name },
+      kind: 'approval',
+      subjects: n.approval.approvers,
+      allowSelf: n.approval.allowSelfApproval,
+    }).catch(() => undefined);
+  }
+  await audit(actorOf(p), 'run.triggered', `${action.identifier}${n.entity ? ` → ${n.blueprint}/${n.entity}` : ''}`, { runId: id, source: n.source.type });
+  await emitRun(id, 'run.created');
+  if (status === 'QUEUED') wake();
+  return { id };
+}
+
+function checkRunnable(action: Action) {
+  if (!action.enabled) throw badRequest(`Action "${action.title}" is disabled`);
+  if (!action.trigger) throw badRequest(`"${action.title}" has no trigger yet: set up its form submission trigger`);
+  if (!action.steps.length) throw badRequest(`"${action.title}" has no steps yet: add a step to its workflow`);
+}
+
 export async function triggerRun(
   p: Principal,
   actionId: string,
   body: { entity?: string | null; inputs?: Record<string, unknown> },
   idempotencyKey?: string,
+  source?: RunSource,
 ): Promise<{ run: Run; created: boolean }> {
   const action = await getAction(actionId);
-  if (!action.enabled) throw badRequest(`Action "${action.title}" is disabled`);
+  checkRunnable(action);
   const trigger = action.trigger;
-  if (!trigger) throw badRequest(`"${action.title}" has no trigger yet: set up its form submission trigger`);
-  if (!action.steps.length) throw badRequest(`"${action.title}" has no steps yet: add a step to its workflow`);
+  if (trigger?.type !== 'form' && trigger?.type !== 'api')
+    throw badRequest(`"${action.title}" is started by its ${trigger?.type} trigger, not by a form or an API call`);
   let entityTeam: string | null = null;
   let entityId: string | null = null;
   if (trigger.on !== 'create') {
@@ -373,57 +482,63 @@ export async function triggerRun(
   if (!canTrigger(action, p, entityTeam)) throw forbidden(`You are not allowed to run "${action.title}"`);
   const inputs = compact(body.inputs ?? {});
   validate(trigger.inputs, inputs, 'inputs');
-
-  const replay = async () => {
+  const res = await insertRun({
+    p,
+    action,
+    blueprint: trigger.blueprint ?? null,
+    entity: entityId,
+    entityTeam,
+    inputs,
+    approval: trigger.approval,
+    source: source ?? { type: trigger.type },
+    idempotencyKey,
+  });
+  if (res.replay) {
     const existing = await one<RunRow>(
       `${SELECT} WHERE r.triggered_by = ? AND r.action = ? AND r.idempotency_key = ?`,
       p.id,
       action.identifier,
       idempotencyKey ?? '',
     );
-    if (!existing) return undefined;
+    if (!existing) throw conflict('The run could not be created; retry');
     if (JSON.stringify(compact(json(existing.inputs, {}))) !== JSON.stringify(inputs) || (existing.entity ?? null) !== entityId)
       throw conflict('This Idempotency-Key was already used with a different request');
     return { run: await getRun(existing.id, p), created: false };
-  };
-  if (idempotencyKey) {
-    const hit = await replay();
-    if (hit) return hit;
   }
-  const id = newId();
-  const t = now();
-  const status: RunStatus = trigger.approval.required ? 'PENDING_APPROVAL' : 'QUEUED';
-  const inserted = await run(
-    `INSERT INTO runs (id, action, action_title, blueprint, entity, inputs, status, invoker, steps, approval, triggered_by, team, created_at, updated_at, idempotency_key)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
-    id,
-    action.identifier,
-    action.title,
-    trigger.blueprint,
-    entityId,
-    JSON.stringify(inputs),
-    status,
-    JSON.stringify(action.invoker ?? null),
-    JSON.stringify(action.steps), // snapshot: editing the action never changes runs in flight
-    JSON.stringify(trigger.approval),
-    p.id,
-    entityTeam,
-    t,
-    t,
-    idempotencyKey ?? null,
-  );
-  if (!inserted.changes) {
-    // A concurrent request with the same key won the unique index.
-    const hit = await replay();
-    if (hit) return hit;
-    throw conflict('The run could not be created; retry');
-  }
-  await addLog(id, `Triggered by ${p.name} <${p.email}>${entityId ? ` on ${trigger.blueprint}/${entityId}` : ''}`);
-  if (status === 'PENDING_APPROVAL') await addLog(id, `Waiting for ${trigger.approval.minApprovals ?? 1} approval(s)`);
-  await audit(actorOf(p), 'run.triggered', `${action.identifier}${entityId ? ` → ${trigger.blueprint}/${entityId}` : ''}`, { runId: id });
-  await emitRun(id, 'run.created');
-  if (status === 'QUEUED') wake();
-  return { run: await getRun(id, p), created: true };
+  return { run: await getRun(res.id, p), created: true };
+}
+
+/**
+ * Start a run on behalf of the platform (schedule, event, webhook, parent workflow): the run belongs to the
+ * automation service account, there is no form validation and no approval gate before the workflow.
+ */
+export async function startAutomatedRun(
+  actionId: string,
+  o: {
+    blueprint?: string | null;
+    entity?: string | null;
+    inputs: Record<string, unknown>;
+    source: RunSource;
+    as?: Principal;
+    parent?: { runId: string; stepId: string };
+  },
+): Promise<string> {
+  const action = await getAction(actionId);
+  checkRunnable(action);
+  const entity = o.entity && o.blueprint ? await getEntity(o.blueprint, o.entity) : null;
+  const res = await insertRun({
+    p: o.as ?? (await automationPrincipal()),
+    action,
+    blueprint: o.blueprint ?? null,
+    entity: entity?.identifier ?? null,
+    entityTeam: entity?.team ?? null,
+    inputs: o.inputs,
+    approval: { required: false, minApprovals: 1, allowSelfApproval: false },
+    source: o.source,
+    parent: o.parent,
+  });
+  if (res.replay) throw conflict('The run could not be created; retry');
+  return res.id;
 }
 
 // ---------- approvals ----------

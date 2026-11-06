@@ -4,11 +4,14 @@ import { config } from '../config.js';
 import { all, dialect, driver, forUpdate, json, later, now, one, run as exec, tx, tryAdvisoryLock, type SqlValue } from '../db.js';
 import { conflict, badRequest, errorMessage, forbidden } from '../lib/errors.js';
 import { evaluate, redact, redactDeep, render } from '../lib/expr.js';
-import { resolveRef, stepToken } from '../secrets.js';
+import { stepToken } from '../secrets.js';
+import { outputProblem, resolverFor } from './limits.js';
 import { audit, SYSTEM } from '../audit.js';
 import { actorOf, type Principal } from '../auth/users.js';
 import { findEntity } from '../catalog/entities.js';
 import { scorecardLevels } from '../catalog/scorecards.js';
+import { compact, validate } from '../catalog/validation.js';
+import type { ObjectSchema } from '@asterius/shared';
 import { metrics } from '../metrics.js';
 import { withSpan } from '../tracing.js';
 import { getInvoker } from './invokers/index.js';
@@ -18,6 +21,8 @@ import { canApproveStep, isTerminal, loadSteps, stepApprovalsOf, stepDefs, type 
 import { needsOf, type Step } from './workflow.js';
 import { runAgent, StepError } from './agent.js';
 import { wake } from './wake.js';
+import { notifyPendingDecision } from '../notifications/dispatch.js';
+import { cancelChildrenOf, startSubWorkflow, startWaitingStep } from './waiting.js';
 
 /**
  * Workflow engine. A run's steps form a graph (see workflow.ts); the engine moves each step through
@@ -29,11 +34,12 @@ import { wake } from './wake.js';
 
 export const stepCallbackUrl = (runId: string, stepId: string) => `${config.PUBLIC_URL}/api/v1/runs/${runId}/steps/${stepId}`;
 const APPROVAL_TIMEOUT_MIN = 7 * 24 * 60;
-const defaultTimeoutMin = (s: Step) => s.timeoutMinutes ?? (s.type === 'approval' ? APPROVAL_TIMEOUT_MIN : config.STEP_TIMEOUT_MINUTES);
-/** Run-level deadline: RUN_TIMEOUT_HOURS of machine time, plus the time humans may take on approval steps. */
+const HUMAN_STEPS = new Set<Step['type']>(['approval', 'input', 'wait']);
+const defaultTimeoutMin = (s: Step) => s.timeoutMinutes ?? (HUMAN_STEPS.has(s.type) ? APPROVAL_TIMEOUT_MIN : config.STEP_TIMEOUT_MINUTES);
+/** Run-level deadline: RUN_TIMEOUT_HOURS of machine time, plus the time humans (or timers) may take on waiting steps. */
 export const runDeadline = (defs: Step[], startMs = Date.now()) =>
   new Date(
-    startMs + config.RUN_TIMEOUT_HOURS * 3_600_000 + defs.filter((d) => d.type === 'approval').reduce((n, d) => n + defaultTimeoutMin(d) * 60_000, 0),
+    startMs + config.RUN_TIMEOUT_HOURS * 3_600_000 + defs.filter((d) => HUMAN_STEPS.has(d.type)).reduce((n, d) => n + defaultTimeoutMin(d) * 60_000, 0),
   ).toISOString();
 const BLOCKED = '{"blocked":true}';
 
@@ -44,6 +50,7 @@ const stepLog =
 
 // ---------- context ----------
 export async function buildContext(r: RunRow, rows: StepRow[], forStep?: string): Promise<RunContext> {
+  const defs = stepDefs(r);
   const entity = r.blueprint && r.entity ? ((await findEntity(r.blueprint, r.entity)) ?? null) : null;
   return {
     // Each step gets its own callback (URL + token scoped to the step).
@@ -58,7 +65,14 @@ export async function buildContext(r: RunRow, rows: StepRow[], forStep?: string)
     // `entity.scorecards.<id>.level` / `.rank` (0: below the first level) for conditions and templates.
     entity: entity ? { ...entity, scorecards: await scorecardLevels(entity.blueprint, entity.identifier) } : null,
     trigger: { user: { id: r.triggered_by, email: r.user_email ?? '', name: r.user_name ?? '' }, at: r.created_at },
-    steps: Object.fromEntries(rows.map((s) => [s.step_id, { status: s.status, output: json(s.output, null), link: s.link }])),
+    steps: Object.fromEntries(
+      rows.map((s) => {
+        const def = defs.find((d) => d.id === s.step_id);
+        // Event waits: the token an earlier step (or an external system) uses to signal this step.
+        const events = def?.type === 'wait' && def.event ? { url: `${stepCallbackUrl(r.id, s.step_id)}/events`, token: stepToken(r.id, s.step_id) } : undefined;
+        return [s.step_id, { status: s.status, output: json(s.output, null), link: s.link, ...(events ? { events } : {}) }];
+      }),
+    ),
   };
 }
 
@@ -144,6 +158,7 @@ export async function advance(runId: string): Promise<void> {
 /** PENDING → WAITING_APPROVAL (approval) or QUEUED (others). */
 async function startStep(r: RunRow, def: Step, rows: StepRow[]): Promise<boolean> {
   const deadline = later(defaultTimeoutMin(def) * 60_000);
+  if (def.type === 'wait' || def.type === 'input') return startWaitingStep(r, def, rows, deadline);
   if (def.type === 'approval') {
     let message: string | null = null;
     if (def.message) {
@@ -157,7 +172,17 @@ async function startStep(r: RunRow, def: Step, rows: StepRow[]): Promise<boolean
       started_at: now(),
       deadline_at: deadline,
     });
-    if (ok) await addLog(r.id, `Waiting for ${def.minApprovals} approval(s)`, 'info', def.id);
+    if (ok) {
+      await addLog(r.id, `Waiting for ${def.minApprovals} approval(s)`, 'info', def.id);
+      void notifyPendingDecision({
+        run: r,
+        kind: 'approval',
+        subjects: def.approvers,
+        allowSelf: def.allowSelfApproval,
+        stepName: def.name || def.id,
+        message,
+      }).catch(() => undefined);
+    }
     return ok;
   }
   const ok = await setStep(r.id, def.id, 'PENDING', { status: 'QUEUED', status_label: null, next_at: now(), deadline_at: deadline });
@@ -190,7 +215,7 @@ function stepUpdate(runId: string, stepId: string, from: StepRow['status'] | Ste
 }
 
 /** Conditional transition: only applies when the step is still in `from` (one of) and, when given, still owned. */
-async function setStep(runId: string, stepId: string, from: StepRow['status'] | StepRow['status'][], patch: StepPatch, owner?: Owner): Promise<boolean> {
+export async function setStep(runId: string, stepId: string, from: StepRow['status'] | StepRow['status'][], patch: StepPatch, owner?: Owner): Promise<boolean> {
   const { sql, params } = stepUpdate(runId, stepId, from, patch, owner);
   return (await exec(sql, ...params)).changes > 0;
 }
@@ -216,7 +241,7 @@ async function finishOrLabel(runId: string, defs: Step[]) {
     return;
   }
   const waiting = rows.filter((s) => s.status === 'WAITING_APPROVAL').map((s) => s.name);
-  const running = rows.filter((s) => s.status === 'RUNNING' || s.status === 'QUEUED').map((s) => s.name);
+  const running = rows.filter((s) => ['RUNNING', 'QUEUED', 'WAITING'].includes(s.status)).map((s) => s.name);
   const label = waiting.length ? `Waiting for approval: ${waiting.join(', ')}` : running.length ? `Running: ${running.join(', ')}` : null;
   const r = await one<{ status_label: string | null }>('SELECT status_label FROM runs WHERE id = ?', runId);
   if (r && r.status_label !== label) await updateRun(runId, { statusLabel: label });
@@ -233,7 +258,11 @@ interface Completion {
 }
 
 /** The transition and its log lines commit together; only the caller that wins the conditional update advances the run. */
-async function complete(runId: string, stepId: string, from: StepRow['status'][], c: Completion, owner?: Owner) {
+export async function complete(runId: string, stepId: string, from: StepRow['status'][], c: Completion, owner?: Owner) {
+  if (c.status === 'SUCCESS' && c.output !== undefined) {
+    const problem = await outputProblem(runId, stepId, c.output);
+    if (problem) c = { status: 'FAILURE', statusLabel: problem };
+  }
   const { sql, params } = stepUpdate(
     runId,
     stepId,
@@ -299,7 +328,7 @@ export async function failStep(runId: string, stepId: string, message: string, r
 // ---------- execution (workers) ----------
 async function invokeEnv(r: RunRow, def: Extract<Step, { type: 'invoke' }>, rows: StepRow[]) {
   const ctx = await buildContext(r, rows, def.id);
-  const { value, secrets } = await render(def.invoker, ctx, resolveRef);
+  const { value, secrets } = await render(def.invoker, ctx, resolverFor(r));
   secrets.push(ctx.run.callback.token);
   const env: InvokeEnv = { ctx, config: value as Record<string, unknown>, log: stepLog(r.id, def.id, secrets) };
   return { env, secrets };
@@ -405,7 +434,7 @@ export async function executeStep(runId: string, stepId: string, owner: Owner) {
           await applyInvokeResult(runId, stepId, res, !!inv.poll, secrets, owner);
         } else if (def.type === 'agent') {
           const ctx = await buildContext(r, rows, stepId);
-          const rendered = await render({ prompt: def.prompt, system: def.system, apiKey: def.apiKey }, ctx, resolveRef);
+          const rendered = await render({ prompt: def.prompt, system: def.system, apiKey: def.apiKey }, ctx, resolverFor(r));
           secrets = rendered.secrets;
           const v = rendered.value as { prompt: unknown; system?: unknown; apiKey?: unknown };
           const prompt = typeof v.prompt === 'string' ? v.prompt : JSON.stringify(v.prompt);
@@ -424,6 +453,10 @@ export async function executeStep(runId: string, stepId: string, owner: Owner) {
             { status: 'SUCCESS', output: result.output, statusLabel: `${result.usage.model} · ${result.usage.turns} turn(s)` },
             owner,
           );
+        } else if (def.type === 'workflow') {
+          stopBeat();
+          if (lost) return;
+          await startSubWorkflow(r, def, rows);
         } else if (def.type === 'transform') {
           const ctx = await buildContext(r, rows, stepId);
           const output: Record<string, unknown> = {};
@@ -433,7 +466,7 @@ export async function executeStep(runId: string, stepId: string, owner: Owner) {
       } catch (err) {
         if (lost) return void (await addLog(runId, 'Step stopped: its lease was lost or the run was cancelled', 'warn', stepId));
         // Invokers: an exception during start may have reached the external system → not retried unless declared retryable.
-        const retryable = err instanceof StepError ? err.retryable : def.type !== 'invoke' || def.retries > 0;
+        const retryable = err instanceof StepError ? err.retryable : (def.type !== 'invoke' && def.type !== 'workflow') || def.retries > 0;
         await failStep(runId, stepId, `${def.type === 'invoke' ? 'Invoker' : 'Step'} error: ${errorMessage(err)}`, retryable, secrets, owner);
       }
     });
@@ -516,7 +549,14 @@ export async function runningInvokeStep(runId: string): Promise<string | undefin
 }
 
 // ---------- approval steps ----------
-export async function decideStep(p: Principal, runId: string, stepId: string, decision: 'approved' | 'rejected', comment: string) {
+export async function decideStep(
+  p: Principal,
+  runId: string,
+  stepId: string,
+  decision: 'approved' | 'rejected',
+  comment: string,
+  extra: { choice?: string; values?: Record<string, unknown> } = {},
+) {
   const r = await getRunRow(runId);
   const def = stepDefs(r).find((d) => d.id === stepId);
   const row = await one<StepRow>('SELECT * FROM run_steps WHERE run_id = ? AND step_id = ?', runId, stepId);
@@ -525,6 +565,14 @@ export async function decideStep(p: Principal, runId: string, stepId: string, de
   const approvals = (await stepApprovalsOf([runId])).get(`${runId}/${stepId}`) ?? [];
   if (!canApproveStep(p, r, def, row, approvals)) throw forbidden('You cannot approve this step');
   if (decision === 'rejected' && !comment.trim()) throw badRequest('Give a reason when rejecting');
+  let values: Record<string, unknown> | null = null;
+  if (decision === 'approved') {
+    if (def.choices?.length && !(extra.choice && def.choices.includes(extra.choice))) throw badRequest(`Choose one of: ${def.choices.join(', ')}`);
+    if (def.fields) {
+      values = compact(extra.values ?? {});
+      validate(def.fields as ObjectSchema, values, 'values');
+    }
+  }
   // Insert, count and decide under a row lock on the step: concurrent approvers are serialized (see runs.decide).
   const outcome = await tx(async (d) => {
     const cur = (await d.query<{ status: string }>(`SELECT status FROM run_steps WHERE run_id = ? AND step_id = ?${forUpdate}`, [runId, stepId])).rows[0];
@@ -536,13 +584,15 @@ export async function decideStep(p: Principal, runId: string, stepId: string, de
       )
     ).rows;
     if (decided.some((a) => a.user_id === p.id)) throw conflict('You already decided on this step');
-    await d.query('INSERT INTO step_approvals (run_id, step_id, user_id, decision, comment, at) VALUES (?, ?, ?, ?, ?, ?)', [
+    await d.query('INSERT INTO step_approvals (run_id, step_id, user_id, decision, comment, at, choice, form_values) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', [
       runId,
       stepId,
       p.id,
       decision,
       comment,
       now(),
+      decision === 'approved' ? (extra.choice ?? null) : null,
+      values ? JSON.stringify(values) : null,
     ]);
     return [...decided, { user_id: p.id, user_name: p.name, decision, comment }].filter((a) => a.decision === 'approved');
   });
@@ -564,12 +614,32 @@ export async function decideStep(p: Principal, runId: string, stepId: string, de
     await complete(runId, stepId, ['WAITING_APPROVAL'], {
       status: 'SUCCESS',
       statusLabel: `Approved by ${approved.map((a) => a.user_name).join(', ')}`,
-      output: { approved: true, by: approved.map((a) => a.user_name), comments: approved.map((a) => a.comment).filter(Boolean) },
+      output: {
+        approved: true,
+        by: approved.map((a) => a.user_name),
+        comments: approved.map((a) => a.comment).filter(Boolean),
+        ...(await approvalExtras(runId, stepId)),
+      },
     });
   else {
     await setStep(runId, stepId, 'WAITING_APPROVAL', { status_label: `${approved.length}/${def.minApprovals} approval(s)` });
     await emitRun(runId, 'run.updated');
   }
+}
+
+/** Choice and field values given with the approvals of a step (the last choice wins; values are merged). */
+async function approvalExtras(runId: string, stepId: string) {
+  const rows = await all<{ choice: string | null; form_values: string | null }>(
+    "SELECT choice, form_values FROM step_approvals WHERE run_id = ? AND step_id = ? AND decision = 'approved' ORDER BY at",
+    runId,
+    stepId,
+  );
+  const choice = rows
+    .map((r) => r.choice)
+    .filter(Boolean)
+    .pop();
+  const values = Object.assign({}, ...rows.map((r) => json<Record<string, unknown>>(r.form_values, {})));
+  return { ...(choice ? { choice } : {}), ...(Object.keys(values).length ? { values } : {}) };
 }
 
 // ---------- cancellation ----------
@@ -592,7 +662,8 @@ export async function cancelSteps(r: RunRow) {
   for (const row of await loadSteps(r.id)) {
     if (isTerminal(row.status)) continue;
     await cancelExternal(r, row);
-    await setStep(r.id, row.step_id, ['PENDING', 'QUEUED', 'RUNNING', 'WAITING_APPROVAL'], {
+    await cancelChildrenOf(row);
+    await setStep(r.id, row.step_id, ['PENDING', 'QUEUED', 'RUNNING', 'WAITING_APPROVAL', 'WAITING'], {
       status: 'CANCELLED',
       ended_at: now(),
       next_at: null,
@@ -603,7 +674,15 @@ export async function cancelSteps(r: RunRow) {
 
 // ---------- worker loops ----------
 /** Lease of a claimed step by type. Renewed by the executor's heartbeat; mutable so tests can shorten it. */
-export const LEASES: Record<Step['type'], number> = { invoke: 5 * 60_000, agent: 15 * 60_000, transform: 60_000, approval: 0 };
+export const LEASES: Record<Step['type'], number> = {
+  invoke: 5 * 60_000,
+  agent: 15 * 60_000,
+  transform: 60_000,
+  approval: 0,
+  wait: 0,
+  input: 0,
+  workflow: 2 * 60_000,
+};
 
 // Postgres: concurrent replicas skip rows another claim already locked instead of queueing behind or racing for them.
 const skipLocked = dialect === 'postgres' ? ' FOR UPDATE SKIP LOCKED' : '';
@@ -708,15 +787,16 @@ export async function stepHousekeeping(log: FastifyBaseLogger) {
       );
     // Step timeouts (running steps and approvals). Only the replica winning the transition cancels the external job.
     for (const s of await all<StepRow>(
-      "SELECT * FROM run_steps WHERE status IN ('QUEUED', 'RUNNING', 'WAITING_APPROVAL') AND deadline_at IS NOT NULL AND deadline_at < ? LIMIT ?",
+      "SELECT * FROM run_steps WHERE status IN ('QUEUED', 'RUNNING', 'WAITING_APPROVAL', 'WAITING') AND deadline_at IS NOT NULL AND deadline_at < ? LIMIT ?",
       t,
       BATCH,
     ))
       await guard('step timeout', async () => {
-        const won = await complete(s.run_id, s.step_id, ['RUNNING', 'WAITING_APPROVAL', 'QUEUED'], {
+        const won = await complete(s.run_id, s.step_id, ['RUNNING', 'WAITING_APPROVAL', 'QUEUED', 'WAITING'], {
           status: 'FAILURE',
           statusLabel: s.status === 'WAITING_APPROVAL' ? 'Approval expired' : 'Timed out',
         });
+        if (won) await cancelChildrenOf(s);
         const r = won && s.status === 'RUNNING' ? await getRunRow(s.run_id).catch(() => undefined) : undefined;
         if (r) await cancelExternal(r, s);
       });
@@ -751,7 +831,7 @@ export async function stepHousekeeping(log: FastifyBaseLogger) {
     for (const r of await all<{ id: string; n: number }>(
       `SELECT r.id, (SELECT count(*) FROM run_steps s WHERE s.run_id = r.id) AS n FROM runs r
        WHERE r.status = 'IN_PROGRESS' AND r.cancel_requested = 0 AND r.started_at < ?
-         AND NOT EXISTS (SELECT 1 FROM run_steps s WHERE s.run_id = r.id AND s.status IN ('QUEUED', 'RUNNING', 'WAITING_APPROVAL')) LIMIT ?`,
+         AND NOT EXISTS (SELECT 1 FROM run_steps s WHERE s.run_id = r.id AND s.status IN ('QUEUED', 'RUNNING', 'WAITING_APPROVAL', 'WAITING')) LIMIT ?`,
       later(-60_000),
       BATCH,
     ))

@@ -224,7 +224,7 @@ entities:
       type: 'invoke',
       invoker: { type: 'azure-pipeline', project: 'Platform', token: '${secret:ADO_PAT}', templateParameters: { operation: 'create-project' } },
     });
-    expect(data.actions.map((a) => `${a.identifier}:${a.trigger?.on}`).sort()).toEqual([
+    expect(data.actions.map((a) => `${a.identifier}:${a.trigger && 'on' in a.trigger ? a.trigger.on : a.trigger?.type}`).sort()).toEqual([
       'add-ado-member:day-2',
       'add-ado-repository:day-2',
       'create-ado-project:create',

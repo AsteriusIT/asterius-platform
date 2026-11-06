@@ -1,7 +1,7 @@
 import { ActionIcon, Menu, Text } from '@mantine/core';
 import { IconDots, IconShieldCheck } from '@tabler/icons-react';
 import type { Action, Entity, PublicUser } from '@asterius/shared';
-import { canRunOn } from '../lib/permissions';
+import { canRunOn, formOf } from '../lib/permissions';
 import { EntityIcon } from './icons';
 
 /**
@@ -19,8 +19,8 @@ export function EntityActionsMenu({
   user: PublicUser | null;
   onRun: (a: Action) => void;
 }) {
-  const day2 = actions.filter((a) => a.trigger?.on === 'day-2');
-  const deletes = actions.filter((a) => a.trigger?.on === 'delete');
+  const day2 = actions.filter((a) => formOf(a)?.on === 'day-2');
+  const deletes = actions.filter((a) => formOf(a)?.on === 'delete');
   if (!day2.length && !deletes.length) return null;
 
   const item = (a: Action) => {
@@ -28,10 +28,10 @@ export function EntityActionsMenu({
     return (
       <Menu.Item
         key={a.identifier}
-        color={a.trigger?.on === 'delete' ? 'red' : undefined}
+        color={formOf(a)?.on === 'delete' ? 'red' : undefined}
         leftSection={<EntityIcon name={a.icon} size={16} />}
         rightSection={
-          a.trigger?.approval.required ? <IconShieldCheck size={14} color="var(--mantine-color-yellow-6)" aria-label="Requires approval" /> : undefined
+          formOf(a)?.approval.required ? <IconShieldCheck size={14} color="var(--mantine-color-yellow-6)" aria-label="Requires approval" /> : undefined
         }
         disabled={!allowed}
         title={allowed ? a.description : 'You are not allowed to run this action'}

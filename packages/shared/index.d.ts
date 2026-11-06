@@ -244,7 +244,7 @@ export interface InvokerConfig {
 }
 
 // ---------- workflows ----------
-export type WorkflowStepType = 'invoke' | 'approval' | 'agent' | 'transform';
+export type WorkflowStepType = 'invoke' | 'approval' | 'agent' | 'transform' | 'wait' | 'input' | 'workflow';
 
 interface WorkflowStepBase {
   /** Letters, digits and _; later steps read `{{ steps.<id>.output }}`. */
@@ -259,6 +259,8 @@ interface WorkflowStepBase {
   timeoutMinutes?: number;
   /** A failure does not fail the workflow; dependents still run. */
   continueOnError?: boolean;
+  /** The step output must match this schema (and stay under the platform size cap) or the step fails. */
+  outputSchema?: ObjectSchema;
 }
 
 export interface InvokeStep extends WorkflowStepBase {
@@ -271,6 +273,10 @@ export interface ApprovalStep extends WorkflowStepBase {
   approvers?: Subjects;
   minApprovals?: number;
   allowSelfApproval?: boolean;
+  /** Decisions beyond yes / no: the approver picks one (`output.choice`). */
+  choices?: string[];
+  /** Fields the approver fills along with an approval (`output.values`). */
+  fields?: ObjectSchema;
   /** Markdown template shown to approvers (e.g. an AI summary from an earlier step). */
   message?: string;
 }
@@ -299,9 +305,34 @@ export interface TransformStep extends WorkflowStepBase {
   output: Record<string, string>;
 }
 
-export type WorkflowStep = InvokeStep | ApprovalStep | AgentStep | TransformStep;
+/** Pause: a duration (`15m`), until a time (template), or until an external event is posted to the step. */
+export interface WaitStep extends WorkflowStepBase {
+  type: 'wait';
+  duration?: string;
+  until?: string;
+  event?: { name: string; filter?: string };
+}
 
-export type StepStatus = 'PENDING' | 'QUEUED' | 'RUNNING' | 'WAITING_APPROVAL' | 'SUCCESS' | 'FAILURE' | 'SKIPPED' | 'CANCELLED';
+/** Ask the requester or an operator for data mid-run. */
+export interface InputStep extends WorkflowStepBase {
+  type: 'input';
+  message?: string;
+  inputs: ObjectSchema;
+  assignees?: Subjects;
+}
+
+/** Run another action as a child workflow (optionally once per item of a list) and wait for the result. */
+export interface WorkflowCallStep extends WorkflowStepBase {
+  type: 'workflow';
+  action: string;
+  inputs?: Record<string, unknown>;
+  entity?: string;
+  forEach?: { items: string; maxConcurrency?: number; failFast?: boolean };
+}
+
+export type WorkflowStep = InvokeStep | ApprovalStep | AgentStep | TransformStep | WaitStep | InputStep | WorkflowCallStep;
+
+export type StepStatus = 'PENDING' | 'QUEUED' | 'RUNNING' | 'WAITING_APPROVAL' | 'WAITING' | 'SUCCESS' | 'FAILURE' | 'SKIPPED' | 'CANCELLED';
 
 export interface RunStep {
   id: string;
@@ -315,10 +346,18 @@ export interface RunStep {
   continueOnError: boolean;
   output: unknown;
   link: string | null;
-  /** Approval steps: the rendered message for approvers. */
+  /** Approval and input steps: the rendered message for the people asked. */
   message: string | null;
+  /** Input steps (and approvals with fields): the form to fill, and who may. */
+  form?: ObjectSchema | null;
+  choices?: string[] | null;
+  canSubmit?: boolean;
+  /** Sub-workflow steps: the child runs. */
+  children?: { runId: string; status: string; item?: unknown }[];
   approvals: RunApproval[];
   canApprove?: boolean;
+  /** A failed step the caller may retry. */
+  canRetry?: boolean;
   startedAt: string | null;
   endedAt: string | null;
 }
@@ -337,8 +376,47 @@ export interface FormTrigger {
   approval: ApprovalPolicy;
 }
 
-/** What starts a workflow (more types will come: schedule, catalog event, webhook). */
-export type WorkflowTrigger = FormTrigger;
+/** Like a form, without a page: inputs only come from the API. */
+export interface ApiTrigger extends Omit<FormTrigger, 'type'> {
+  type: 'api';
+}
+
+/** Cron schedule: one run per tick. `inputs` are `{{ }}` templates over `schedule.at`. */
+export interface ScheduleTrigger {
+  type: 'schedule';
+  cron: string;
+  timezone: string;
+  inputs: Record<string, unknown>;
+  /** Next planned tick (read-only). */
+  nextRunAt?: string | null;
+}
+
+export interface EventTrigger {
+  type: 'event';
+  event: 'entity.created' | 'entity.updated' | 'entity.deleted' | 'scorecard.changed' | 'run.finished';
+  blueprint?: string | null;
+  /** run.finished: only runs of this action. */
+  action?: string | null;
+  /** JSONata over `{ event }`; truthy fires the workflow. */
+  filter?: string;
+  entity?: string;
+  inputs: Record<string, unknown>;
+}
+
+/** `POST /api/v1/hooks/<action>` with the secret (token or HMAC signature). `inputs` are templates over `body` and `headers`. */
+export interface WebhookTrigger {
+  type: 'webhook';
+  secret: string;
+  signatureHeader?: string;
+  blueprint?: string | null;
+  entity?: string;
+  inputs: Record<string, unknown>;
+}
+
+/** What starts a workflow. */
+export type WorkflowTrigger = FormTrigger | ApiTrigger | ScheduleTrigger | EventTrigger | WebhookTrigger;
+/** Triggers started by a person through a form payload (the form page, or the API). */
+export type FormLikeTrigger = FormTrigger | ApiTrigger;
 
 /** A workflow: a trigger and steps. Without a trigger, or without steps, it is a draft and cannot run. */
 export interface Action {
@@ -347,12 +425,53 @@ export interface Action {
   description: string;
   icon: string | null;
   trigger: WorkflowTrigger | null;
+  /** Increments on every change of the definition (see the history). */
+  version: number;
+  /** Secrets the workflow may reference (`NAME`, `env:NAME`). Omitted: any. */
+  secrets?: string[];
   /** Non-admins only see each step's id, name and type (no configuration). */
   steps: WorkflowStep[];
   /** Legacy single-invoker form (configuration files), when the action was declared with `invoker`. */
   invoker?: InvokerConfig;
   enabled: boolean;
   managed: boolean;
+}
+
+export interface ActionVersion {
+  version: number;
+  actor: string | null;
+  note: string | null;
+  at: string;
+}
+
+export interface ActionVersionDiff {
+  /** Dotted paths outside the steps that differ. */
+  fields: { path: string; before: unknown; after: unknown }[];
+  stepsAdded: string[];
+  stepsRemoved: string[];
+  stepsChanged: { id: string; changes: { path: string; before: unknown; after: unknown }[] }[];
+  stepsReordered: boolean;
+}
+
+export interface DryRunStep {
+  id: string;
+  type: WorkflowStepType;
+  /** planned: would run · skipped: its condition is false · error: could not be rendered or validated */
+  status: 'planned' | 'skipped' | 'error';
+  condition?: boolean;
+  /** The step as it would be executed (templates rendered, secrets masked). */
+  rendered?: unknown;
+  /** Simulated output, as seen by later steps. */
+  output?: unknown;
+  errors: string[];
+}
+
+export interface DryRunResult {
+  valid: boolean;
+  inputErrors: string[];
+  /** Secret and environment references that do not resolve. */
+  missingSecrets: string[];
+  steps: DryRunStep[];
 }
 
 export type RunStatus = 'PENDING_APPROVAL' | 'QUEUED' | 'IN_PROGRESS' | 'SUCCESS' | 'FAILURE' | 'REJECTED' | 'CANCELLED';
@@ -388,6 +507,12 @@ export interface Run {
   triggeredBy: { id: string; name: string; email: string };
   approvals: RunApproval[];
   result: unknown;
+  /** Set on child runs of a sub-workflow step. */
+  parent?: { runId: string; stepId: string } | null;
+  /** The version of the action's definition this run started from. */
+  actionVersion?: number | null;
+  /** What started the run: form, api, schedule, event, webhook, workflow (parent run) or rerun. */
+  trigger?: { type: string; [k: string]: unknown };
   createdAt: string;
   startedAt: string | null;
   endedAt: string | null;
@@ -397,9 +522,13 @@ export interface Run {
   logsTruncated?: boolean;
   steps?: RunStep[];
   /** Approvals page: the step waiting for the caller's decision (null: the run-level approval). */
-  pendingStep?: { id: string; name: string; message: string | null } | null;
+  pendingStep?: { id: string; name: string; message: string | null; kind?: 'approval' | 'input' } | null;
   canApprove?: boolean;
   canCancel?: boolean;
+  /** Requester or admin, finished run. */
+  canRerun?: boolean;
+  /** Requester or admin, failed or cancelled run with steps to start over. */
+  canResume?: boolean;
 }
 
 export interface RunPage {
@@ -537,6 +666,19 @@ export interface PluginInfo {
   example: Record<string, unknown>;
   /** Form of the configuration for the UI builder; without it the UI falls back to a JSON editor. */
   fields?: PluginField[];
+}
+
+export interface NotificationSettings {
+  slack: { botToken?: string; webhookUrl?: string; defaultChannel?: string };
+  teams: { webhookUrl?: string };
+  email: { smtpUrl?: string; from?: string };
+}
+
+export interface NotificationPrefs {
+  /** Approvals (and inputs) waiting for me. */
+  approvals: ('email' | 'slack')[];
+  /** The outcome of runs I requested. */
+  runs: ('email' | 'slack')[];
 }
 
 export interface Meta {

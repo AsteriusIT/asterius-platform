@@ -6,6 +6,7 @@ import { useNavigate } from 'react-router';
 import { IconShieldCheck } from '@tabler/icons-react';
 import type { Action, ApprovalPolicy, ObjectSchema } from '@asterius/shared';
 import { api, errorText } from '../lib/api';
+import { formOf } from '../lib/permissions';
 import { initialValues, SchemaForm, validateValues, type FormValues } from './SchemaForm';
 import { Markdown } from './ui';
 
@@ -50,8 +51,8 @@ function RunForm({
   entity: { blueprint: string; identifier: string; title: string } | null;
   onClose: () => void;
 }) {
-  const inputs = action.trigger?.inputs ?? NO_INPUTS;
-  const approval = action.trigger?.approval ?? NO_APPROVAL;
+  const inputs = formOf(action)?.inputs ?? NO_INPUTS;
+  const approval = formOf(action)?.approval ?? NO_APPROVAL;
   const [values, setValues] = useState<FormValues>(() => initialValues(inputs));
   const [errors, setErrors] = useState<Record<string, string>>({});
   const navigate = useNavigate();
@@ -99,7 +100,7 @@ function RunForm({
         <Button variant="default" onClick={onClose}>
           Cancel
         </Button>
-        <Button onClick={submit} loading={run.isPending} color={action.trigger?.on === 'delete' ? 'red' : undefined}>
+        <Button onClick={submit} loading={run.isPending} color={formOf(action)?.on === 'delete' ? 'red' : undefined}>
           {approval.required ? 'Request' : 'Run'}
         </Button>
       </Group>

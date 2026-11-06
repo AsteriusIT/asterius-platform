@@ -18,6 +18,7 @@ const alice: PublicUser = {
 };
 
 const action = ({ trigger, ...patch }: Partial<Omit<Action, 'trigger'>> & { trigger?: Partial<FormTrigger> | null } = {}): Action => ({
+  version: 1,
   identifier: 'a',
   title: 'A',
   description: '',

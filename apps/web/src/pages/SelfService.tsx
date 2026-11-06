@@ -5,7 +5,7 @@ import { IconSearch, IconShieldCheck } from '@tabler/icons-react';
 import type { Action } from '@asterius/shared';
 import { api, type ActionView } from '../lib/api';
 import { workflowSummary } from '../lib/workflow';
-import { isRunnable } from '../lib/permissions';
+import { formOf, isRunnable } from '../lib/permissions';
 import { ActionRunModal } from '../components/ActionRunModal';
 import { EntityIcon } from '../components/icons';
 import { Empty, PageHeader, QueryView } from '../components/ui';
@@ -32,7 +32,7 @@ export function SelfService() {
           const visible = list.filter((a) => isRunnable(a) && `${a.title} ${a.description}`.toLowerCase().includes(filter.toLowerCase()));
           if (!visible.length) return <Empty title="No self-service action" />;
           const groups = new Map<string, ActionView[]>();
-          for (const a of visible) groups.set(a.trigger?.blueprint ?? '', [...(groups.get(a.trigger?.blueprint ?? '') ?? []), a]);
+          for (const a of visible) groups.set(formOf(a)?.blueprint ?? '', [...(groups.get(formOf(a)?.blueprint ?? '') ?? []), a]);
           return [...groups.entries()].map(([bp, items]) => {
             const b = blueprints.data?.find((x) => x.identifier === bp);
             return (
@@ -50,7 +50,7 @@ export function SelfService() {
                           </ThemeIcon>
                           <Text fw={600}>{a.title}</Text>
                         </Group>
-                        {a.trigger?.approval.required && (
+                        {formOf(a)?.approval.required && (
                           <Tooltip label="Requires approval">
                             <Badge color="yellow" leftSection={<IconShieldCheck size={12} />} style={{ flexShrink: 0 }}>
                               approval

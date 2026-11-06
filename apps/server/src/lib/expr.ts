@@ -1,4 +1,5 @@
 import jsonata from 'jsonata';
+import { config } from '../config.js';
 import { badRequest } from './errors.js';
 import { LRU } from './lru.js';
 
@@ -15,7 +16,7 @@ export function compile(expr: string): jsonata.Expression {
   let c = cache.get(expr);
   if (!c) {
     try {
-      c = jsonata(expr);
+      c = jsonata(expr, { timeout: config.EXPR_TIMEOUT_MS, stack: config.EXPR_MAX_DEPTH });
     } catch (err) {
       throw badRequest(`Invalid expression "${expr}": ${(err as { message?: string }).message}`);
     }
@@ -30,8 +31,23 @@ export function checkExpression(expr: string) {
 }
 
 export async function evaluate(expr: string, data: unknown, bindings?: Record<string, unknown>): Promise<unknown> {
-  const v = await compile(expr).evaluate(data, bindings);
+  let v: unknown;
+  try {
+    v = await compile(expr).evaluate(data, bindings);
+  } catch (err) {
+    throw evaluationError(err, expr);
+  }
   return normalize(v);
+}
+
+/** JSONata throws plain objects; the time and depth limits get a message that says what to do. */
+function evaluationError(err: unknown, expr: string): Error {
+  const e = err as { code?: string; message?: string; value?: number };
+  if (e?.code === 'D1012')
+    return new Error(`Expression "${expr.slice(0, 80)}" took longer than ${config.EXPR_TIMEOUT_MS} ms and was stopped (infinite loop or too much data?)`);
+  if (e?.code === 'D1011')
+    return new Error(`Expression "${expr.slice(0, 80)}" is nested more than ${config.EXPR_MAX_DEPTH} levels deep (non-terminating recursion?)`);
+  return err instanceof Error ? err : new Error(e?.message ?? String(err));
 }
 
 /** JSONata returns arrays with a `sequence` marker and may return functions; keep plain JSON. */

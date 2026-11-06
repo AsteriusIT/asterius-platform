@@ -21,6 +21,9 @@ export const STEP_TYPES: Record<WorkflowStepType, { label: string; color: string
   approval: { label: 'Approval', color: 'yellow', hint: 'Wait for people to approve before continuing' },
   agent: { label: 'AI agent', color: 'grape', hint: 'Ask Claude; its answer (text or structured JSON) feeds later steps' },
   transform: { label: 'Transform', color: 'teal', hint: 'Compute values from inputs and earlier outputs (JSONata)' },
+  wait: { label: 'Wait', color: 'orange', hint: 'Pause for a duration, until a time, or until an external event arrives' },
+  input: { label: 'Input', color: 'cyan', hint: 'Ask the requester or an operator for more data mid-run' },
+  workflow: { label: 'Sub-workflow', color: 'indigo', hint: 'Run another workflow (once, or for each item of a list) and use its result' },
 };
 
 export const STEP_STATUS_COLORS: Record<StepStatus, string> = {
@@ -28,6 +31,7 @@ export const STEP_STATUS_COLORS: Record<StepStatus, string> = {
   QUEUED: 'gray',
   RUNNING: 'blue',
   WAITING_APPROVAL: 'yellow',
+  WAITING: 'orange',
   SUCCESS: 'brand',
   FAILURE: 'red',
   SKIPPED: 'gray',
@@ -39,6 +43,7 @@ export const STEP_STATUS_LABELS: Record<StepStatus, string> = {
   QUEUED: 'Queued',
   RUNNING: 'Running',
   WAITING_APPROVAL: 'Waiting for approval',
+  WAITING: 'Waiting',
   SUCCESS: 'Succeeded',
   FAILURE: 'Failed',
   SKIPPED: 'Skipped',
@@ -51,4 +56,20 @@ export function workflowSummary(a: Pick<Action, 'steps' | 'invoker'>) {
   if (!steps.length) return 'no steps yet';
   if (steps.length === 1 && steps[0].type === 'invoke') return steps[0].invoker?.type ?? a.invoker?.type ?? 'invoke';
   return `workflow · ${steps.length} steps`;
+}
+
+/** Label and colour of a trigger in tables. */
+export function triggerBadge(t: NonNullable<Action['trigger']>): { label: string; color: string } {
+  switch (t.type) {
+    case 'form':
+      return { label: `form · ${t.on}`, color: t.on === 'delete' ? 'red' : t.on === 'create' ? 'green' : 'blue' };
+    case 'api':
+      return { label: 'api', color: 'cyan' };
+    case 'schedule':
+      return { label: `schedule · ${t.cron}`, color: 'grape' };
+    case 'event':
+      return { label: `event · ${t.event}`, color: 'orange' };
+    case 'webhook':
+      return { label: 'webhook', color: 'teal' };
+  }
 }

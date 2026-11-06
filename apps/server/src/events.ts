@@ -10,8 +10,9 @@ import { bumpConfigVersion, onConfigChange, syncCaches } from './lib/config-vers
 
 export type EventType = 'entity.created' | 'entity.updated' | 'entity.deleted' | 'run.created' | 'run.updated' | 'scorecard.changed';
 
+/** `run.finished` is internal: it fires event triggers of workflows but is not offered to outbound webhooks. */
 export interface DomainEvent {
-  type: EventType;
+  type: EventType | 'run.finished';
   blueprint: string | null;
   data: unknown;
   actor?: { id: string | null; email: string | null };
@@ -60,6 +61,7 @@ export async function prepareEvents(events: DomainEvent[]): Promise<(d?: Driver)
   const subs = await subscriptions();
   const rows: SqlValue[][] = [];
   for (const e of events) {
+    if (e.type === 'run.finished') continue; // internal: never offered to outbound webhooks
     const matching = subs.filter((s) => eventMatches(s, e.type, e.blueprint));
     if (!matching.length) continue;
     const payload = JSON.stringify({ id: newId(), type: e.type, at: now(), blueprint: e.blueprint, actor: e.actor?.email ?? null, data: e.data });
@@ -82,6 +84,19 @@ export async function prepareEvents(events: DomainEvent[]): Promise<(d?: Driver)
 
 export const prepareEvent = (e: DomainEvent) => prepareEvents([e]);
 
+type Listener = (e: DomainEvent) => Promise<void>;
+const listeners: Listener[] = [];
+
+/** In-process subscribers (workflow event triggers). They run in the process that emits the event, after the write committed. */
+export function onEvent(l: Listener) {
+  listeners.push(l);
+}
+
+/** Run the in-process subscribers. Callers that wrote through `prepareEvents` + a transaction call this after the commit. */
+export async function notifyListeners(events: DomainEvent[]) {
+  for (const e of events) for (const l of listeners) await l(e).catch((err) => console.error('[events] listener failed', e.type, err));
+}
+
 const OUTBOX_CHUNK = 100;
 
 export async function emit(e: DomainEvent) {
@@ -94,6 +109,7 @@ export async function emitMany(events: DomainEvent[]) {
     await (
       await prepareEvents(events)
     )();
+    await notifyListeners(events);
   } catch (err) {
     console.error('[events] could not enqueue', events[0]?.type, err);
   }

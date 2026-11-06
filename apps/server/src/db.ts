@@ -412,7 +412,7 @@ export const MIGRATIONS: Migration[] = [
         CREATE INDEX runs_deadline ON runs(deadline_at) WHERE status = 'IN_PROGRESS';
         ALTER TABLE integrations ADD COLUMN lock_owner TEXT;
         CREATE INDEX run_steps_lease ON run_steps(locked_until) WHERE status = 'RUNNING' AND locked_until IS NOT NULL;
-        CREATE INDEX run_steps_deadline ON run_steps(deadline_at) WHERE deadline_at IS NOT NULL AND status IN ('QUEUED', 'RUNNING', 'WAITING_APPROVAL');
+        CREATE INDEX run_steps_deadline ON run_steps(deadline_at) WHERE deadline_at IS NOT NULL AND status IN ('QUEUED', 'RUNNING', 'WAITING_APPROVAL', 'WAITING');
       `),
   },
   {
@@ -483,6 +483,68 @@ export const MIGRATIONS: Migration[] = [
       `),
   },
   ...CATALOG_MIGRATIONS,
+  // Workflow features (epic ap-35y)
+  {
+    id: 17,
+    name: 'workflow triggers: schedule, event, webhook, api',
+    up: (d) =>
+      d.exec(`
+        ALTER TABLE actions ADD COLUMN trigger_config TEXT;  -- full trigger document for non-form triggers
+        ALTER TABLE actions ADD COLUMN next_fire_at TEXT;    -- schedule triggers: next tick (claimed with a conditional UPDATE)
+        ALTER TABLE runs ADD COLUMN trigger_type TEXT;
+        ALTER TABLE runs ADD COLUMN trigger_info TEXT;
+        CREATE INDEX actions_next_fire ON actions(next_fire_at);
+      `),
+  },
+  {
+    id: 18,
+    name: 'workflows: sub-workflows, approval choices and values',
+    up: (d) =>
+      d.exec(`
+        ALTER TABLE runs ADD COLUMN parent_run_id TEXT;
+        ALTER TABLE runs ADD COLUMN parent_step_id TEXT;
+        CREATE INDEX runs_parent ON runs(parent_run_id);
+        ALTER TABLE step_approvals ADD COLUMN choice TEXT;
+        ALTER TABLE step_approvals ADD COLUMN form_values TEXT;
+      `),
+  },
+  {
+    id: 19,
+    name: 'action versions',
+    up: (d) =>
+      d.exec(`
+        ALTER TABLE actions ADD COLUMN version INTEGER NOT NULL DEFAULT 1;
+        ALTER TABLE runs ADD COLUMN action_version INTEGER;
+        CREATE TABLE action_versions (
+          action TEXT NOT NULL,       -- no foreign key: the history outlives a deleted action
+          version INTEGER NOT NULL,
+          definition TEXT NOT NULL,
+          actor_id TEXT,
+          actor_email TEXT,
+          note TEXT,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (action, version)
+        );
+      `),
+  },
+  {
+    id: 20,
+    name: 'notification settings and user preferences',
+    up: (d) =>
+      d.exec(`
+        CREATE TABLE notification_settings (id INTEGER PRIMARY KEY, config TEXT NOT NULL, updated_at TEXT NOT NULL);
+        ALTER TABLE users ADD COLUMN notification_prefs TEXT;
+      `),
+  },
+  {
+    id: 21,
+    name: 'per-action secret allow-list',
+    up: (d) =>
+      d.exec(`
+        ALTER TABLE actions ADD COLUMN allowed_secrets TEXT;  -- JSON list; NULL: unrestricted
+        ALTER TABLE runs ADD COLUMN allowed_secrets TEXT;     -- snapshot at trigger time
+      `),
+  },
 ];
 
 /**

@@ -75,6 +75,8 @@ const schema = z.object({
   // ---- workers ----
   /** Concurrent action runs per worker process. */
   WORKER_CONCURRENCY: z.coerce.number().int().min(1).default(8),
+  /** Milliseconds between checks of steps waiting for child runs (sub-workflows, fan-out). */
+  WORKFLOW_VISIT_MS: z.coerce.number().int().min(100).default(2000),
   /** Seconds between status polls of running pipelines / jobs. */
   RUN_POLL_SECONDS: z.coerce.number().int().min(2).default(15),
   /** A run still IN_PROGRESS this many hours after it started is failed (extended by the timeouts of its approval steps). */
@@ -112,6 +114,19 @@ const schema = z.object({
   /** Deleted entities stay restorable for N days (tombstones). 0: delete for good immediately. */
   TOMBSTONE_DAYS: z.coerce.number().int().min(0).default(30),
   KUBECONFIG_PATH: z.string().optional(),
+
+  // ---- guard rails ----
+  /** A JSONata expression running longer than this (milliseconds) is stopped and fails with a clear message. */
+  EXPR_TIMEOUT_MS: z.coerce.number().int().min(50).default(2000),
+  /** Maximum nesting depth of a JSONata evaluation (non-terminating recursion). */
+  EXPR_MAX_DEPTH: z.coerce.number().int().min(10).default(500),
+  /** A step whose output is larger (JSON bytes) fails instead of bloating the database. */
+  STEP_OUTPUT_MAX_BYTES: z.coerce.number().int().min(1024).default(262_144),
+
+  // ---- notifications ----
+  /** smtp://user:pass@host:587 (or smtps://…): email notifications and the email invoker. Admin → Notifications can override it. */
+  SMTP_URL: z.string().optional(),
+  SMTP_FROM: z.string().optional(),
 
   // ---- AI agent steps (Claude) ----
   /** Default credential of agent steps (a step may reference another key with `apiKey: ${secret:…}`). */
