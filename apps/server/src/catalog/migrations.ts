@@ -129,4 +129,24 @@ export const CATALOG_MIGRATIONS: CatalogMigration[] = [
         CREATE INDEX entity_tombstones_expires ON entity_tombstones(expires_at);
       `),
   },
+  {
+    id: 25,
+    name: 'dashboards',
+    up: (d) =>
+      d.exec(`
+        CREATE TABLE dashboards (
+          identifier TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          description TEXT NOT NULL DEFAULT '',
+          team TEXT,
+          blueprint TEXT,
+          is_default INTEGER NOT NULL DEFAULT 0,
+          widgets TEXT NOT NULL,
+          managed INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE INDEX dashboards_blueprint ON dashboards(blueprint);
+      `),
+  },
 ];

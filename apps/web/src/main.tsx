@@ -94,6 +94,7 @@ const router = createBrowserRouter([
                   { path: 'blueprints', element: page(definitions, 'BlueprintsAdmin') },
                   { path: 'actions', element: page(definitions, 'ActionsAdmin') },
                   { path: 'integrations', element: page(definitions, 'IntegrationsAdmin') },
+                  { path: 'dashboards', element: page(definitions, 'DashboardsAdmin') },
                   { path: 'scorecards', element: page(definitions, 'ScorecardsAdmin') },
                   { path: 'webhooks', element: page(definitions, 'WebhooksAdmin') },
                   { path: 'teams', element: page(access, 'TeamsAdmin') },

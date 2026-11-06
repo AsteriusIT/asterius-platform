@@ -11,6 +11,7 @@ import { useAuth } from '../lib/auth';
 import { DataTable, type Column } from '../components/DataTable';
 import { PropertyValue } from '../components/PropertyValue';
 import { orderedFields } from '../components/SchemaForm';
+import { DashboardView } from '../components/DashboardView';
 import { EntityEditor } from '../components/EntityEditor';
 import { ActionRunModal } from '../components/ActionRunModal';
 import { EntityActionsMenu } from '../components/EntityActionsMenu';
@@ -99,6 +100,7 @@ function CatalogTable({ bp }: { bp: Blueprint }) {
         ]
       : []),
   ];
+  const dashboard = useQuery({ queryKey: ['dashboard-resolve', bp.identifier], queryFn: () => api.resolveDashboard(bp.identifier) });
   const cards = useQuery({ queryKey: ['scorecards', bp.identifier], queryFn: () => api.scorecards(bp.identifier), staleTime: 60_000 });
   const entities = useQuery({
     queryKey: ['entities', bp.identifier, debounced, team, page],
@@ -164,6 +166,7 @@ function CatalogTable({ bp }: { bp: Blueprint }) {
           </>
         }
       />
+      {dashboard.data && <DashboardView dashboard={dashboard.data} />}
       <Group>
         <TextInput
           placeholder={`Search ${bp.title.toLowerCase()}`}

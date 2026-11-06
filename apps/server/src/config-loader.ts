@@ -14,6 +14,7 @@ import { deleteEntity, upsertEntity } from './catalog/entities.js';
 import { deleteAction, listActions, upsertAction } from './actions/actions.js';
 import { deleteIntegration, listIntegrations, upsertIntegration } from './integrations/integrations.js';
 import { deleteScorecard, evaluateAllEntities, listScorecards, upsertScorecard } from './catalog/scorecards.js';
+import { deleteDashboard, listDashboards, upsertDashboard } from './catalog/dashboards.js';
 import { deleteWebhook, getWebhook, listWebhooks, upsertWebhook } from './webhooks/webhooks.js';
 
 /**
@@ -150,6 +151,14 @@ export async function applyConfig(loaded: LoadedConfig, log: FastifyBaseLogger) 
     },
     (id) => deleteScorecard(id, m),
   );
+  await applyKind(
+    log,
+    'dashboard',
+    data.dashboards,
+    await listDashboards(),
+    (d) => upsertDashboard(d, m),
+    (id) => deleteDashboard(id, m),
+  );
   // Blueprints last: actions and integrations that used a removed blueprint are gone by now.
   // The entities the configuration seeded go with them; entities created by people or integrations keep their
   // blueprint (it stays, with a warning). Removed blueprints may relate to each other: retry until no progress.
@@ -230,6 +239,7 @@ export async function exportConfig(): Promise<string> {
     integrations: (await listIntegrations()).map((i) => strip(i as never, ['managed', 'lastSync', 'webhookUrl'])),
     webhooks,
     scorecards: (await listScorecards()).map((s) => strip(s as never, ['managed'])),
+    dashboards: (await listDashboards()).map((d) => strip(d as never, ['managed'])),
   };
   return `# Exported ${new Date().toISOString()} — secrets are references (\${secret:NAME}), never values.\n${stringify(doc, { lineWidth: 140 })}`;
 }
@@ -242,6 +252,7 @@ export async function managedCounts() {
      UNION ALL SELECT 'integrations', count(*) FROM integrations WHERE managed = 1
      UNION ALL SELECT 'webhooks', count(*) FROM webhooks WHERE managed = 1
      UNION ALL SELECT 'scorecards', count(*) FROM scorecards WHERE managed = 1
+     UNION ALL SELECT 'dashboards', count(*) FROM dashboards WHERE managed = 1
      UNION ALL SELECT 'teams', count(*) FROM teams WHERE managed = 1`,
   );
   return Object.fromEntries(rows.map((r) => [r.k, Number(r.n)]));

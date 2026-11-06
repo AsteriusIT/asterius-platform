@@ -4,7 +4,7 @@ import { notifications } from '@mantine/notifications';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import { IconCopy, IconRefresh, IconSend } from '@tabler/icons-react';
-import type { Action, Blueprint, Integration, Scorecard, Webhook } from '@asterius/shared';
+import type { Action, Blueprint, Dashboard, Integration, Scorecard, Webhook } from '@asterius/shared';
 import { api, errorText } from '../../lib/api';
 import { DataTable } from '../../components/DataTable';
 import { EntityIcon } from '../../components/icons';
@@ -270,6 +270,46 @@ export function ScorecardsAdmin() {
       toEditable={(s) => strip(s, ['managed'])}
       save={api.saveScorecard}
       remove={(s) => api.deleteScorecard(s.identifier)}
+    />
+  );
+}
+
+export function DashboardsAdmin() {
+  return (
+    <ResourceAdmin<Dashboard>
+      title="Dashboards"
+      description="Widgets (counts, scorecard levels, runs, approvals, saved tables, markdown) shown on the home page, per team, or on a blueprint's page."
+      queryKey="dashboards"
+      list={api.dashboards}
+      columns={[
+        {
+          key: 'w',
+          label: 'Where',
+          render: (d) =>
+            d.blueprint ? <Badge color="gray">{d.blueprint} page</Badge> : d.team ? <Badge>{d.team} home</Badge> : d.default ? 'Home (everyone)' : '—',
+        },
+        { key: 'n', label: 'Widgets', render: (d) => d.widgets.length },
+      ]}
+      templates={[
+        {
+          label: 'Home dashboard',
+          value: {
+            identifier: 'home',
+            title: 'Home',
+            description: '',
+            default: true,
+            widgets: [
+              { type: 'count', title: 'Services', blueprint: 'service', width: 3 },
+              { type: 'count', title: 'By tier', blueprint: 'service', groupBy: 'tier', width: 3 },
+              { type: 'approvals', width: 6 },
+              { type: 'runs', mine: true, width: 12 },
+            ],
+          },
+        },
+      ]}
+      toEditable={(d) => strip(d, ['managed'])}
+      save={api.saveDashboard}
+      remove={(d) => api.deleteDashboard(d.identifier)}
     />
   );
 }

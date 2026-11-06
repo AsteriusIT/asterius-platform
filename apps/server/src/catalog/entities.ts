@@ -413,3 +413,24 @@ export async function purgeTombstone(blueprint: string, identifier: string) {
 
 /** Maintenance: tombstones past their period are gone for good. */
 export const purgeExpiredTombstones = () => run('DELETE FROM entity_tombstones WHERE expires_at < ?', now());
+
+/** Number of entities of a blueprint (exact-match filters on properties), or their distribution by `groupBy`. */
+export async function countEntities(blueprint: string, filters: Record<string, string> = {}, groupBy?: string) {
+  const where = ['blueprint = ?'];
+  const params: SqlValue[] = [blueprint];
+  for (const [k, v] of Object.entries(filters)) {
+    if (!PROP.test(k)) throw badRequest(`Invalid filter property "${k}"`);
+    where.push(`COALESCE(${jsonText(k)}, ${computedText(k)}) = ?`);
+    params.push(dialect === 'sqlite' && (v === 'true' || v === 'false') ? (v === 'true' ? '1' : '0') : v);
+  }
+  const w = where.join(' AND ');
+  if (!groupBy) return { value: Number((await one<{ n: number }>(`SELECT count(*) AS n FROM entities WHERE ${w}`, ...params))?.n ?? 0) };
+  if (!PROP.test(groupBy)) throw badRequest(`Invalid property "${groupBy}"`);
+  const col = groupBy === 'team' || groupBy === 'source' ? groupBy : `COALESCE(${jsonText(groupBy)}, ${computedText(groupBy)})`;
+  const rows = await all<{ k: string | null; n: number }>(
+    `SELECT ${col} AS k, count(*) AS n FROM entities WHERE ${w} GROUP BY ${col} ORDER BY n DESC LIMIT 50`,
+    ...params,
+  );
+  const groups = rows.map((r) => ({ key: r.k ?? '—', count: Number(r.n) }));
+  return { value: groups.reduce((a, g) => a + g.count, 0), groups };
+}

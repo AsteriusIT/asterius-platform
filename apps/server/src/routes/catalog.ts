@@ -16,6 +16,7 @@ import {
   upsertEntity,
 } from '../catalog/entities.js';
 import { badRequest, forbidden } from '../lib/errors.js';
+import { dashboardData, deleteDashboard, getDashboard, listDashboards, resolveDashboard, upsertDashboard } from '../catalog/dashboards.js';
 import { getVersion, listVersions } from '../catalog/history.js';
 import { checkEntities, getReport, migrateEntities, migrationList } from '../catalog/impact.js';
 import {
@@ -93,6 +94,27 @@ export async function catalogRoutes(app: FastifyInstance) {
     const { bp } = bpParam.parse(req.params);
     await deleteBlueprint(bp);
     await audit(actorOf(req.principal), 'blueprint.deleted', bp);
+    return { ok: true };
+  });
+
+  // ---- dashboards ----
+  app.get('/dashboards', async () => listDashboards());
+  app.get('/dashboards/resolve', async (req) => {
+    const { blueprint } = z.object({ blueprint: z.string().optional() }).parse(req.query);
+    return resolveDashboard(req.principal, blueprint);
+  });
+  app.get('/dashboards/:id', async (req) => getDashboard(idParam.parse(req.params).id));
+  app.get('/dashboards/:id/data', async (req) => dashboardData(await getDashboard(idParam.parse(req.params).id), req.principal));
+  app.put('/dashboards/:id', { preHandler: requireAdmin }, async (req) => {
+    const { id } = idParam.parse(req.params);
+    const { dashboard, created } = await upsertDashboard({ ...(req.body as object), identifier: id });
+    await audit(actorOf(req.principal), created ? 'dashboard.created' : 'dashboard.updated', id);
+    return dashboard;
+  });
+  app.delete('/dashboards/:id', { preHandler: requireAdmin }, async (req) => {
+    const { id } = idParam.parse(req.params);
+    await deleteDashboard(id);
+    await audit(actorOf(req.principal), 'dashboard.deleted', id);
     return { ok: true };
   });
 

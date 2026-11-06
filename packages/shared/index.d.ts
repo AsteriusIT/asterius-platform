@@ -582,3 +582,47 @@ export interface Tombstone {
   /** After this date the entity is purged for good. */
   expiresAt: string;
 }
+
+// ---------- dashboards ----------
+interface WidgetBase {
+  title?: string;
+  /** Columns out of 12. */
+  width: number;
+}
+
+export type DashboardWidget =
+  | (WidgetBase & { type: 'count'; blueprint: string; filters: Record<string, string>; groupBy?: string })
+  | (WidgetBase & { type: 'scorecard'; scorecard: string })
+  | (WidgetBase & { type: 'runs'; limit: number; mine: boolean; status?: RunStatus[]; action?: string })
+  | (WidgetBase & { type: 'approvals'; limit: number })
+  | (WidgetBase & {
+      type: 'table';
+      blueprint: string;
+      filters: Record<string, string>;
+      search?: string;
+      sort: 'title' | 'updated' | 'identifier';
+      columns: string[];
+      limit: number;
+    })
+  | (WidgetBase & { type: 'markdown'; content: string });
+
+export interface Dashboard {
+  identifier: string;
+  title: string;
+  description: string;
+  team: string | null;
+  blueprint: string | null;
+  default: boolean;
+  widgets: DashboardWidget[];
+  managed: boolean;
+}
+
+/** Computed data of one widget, in the order of the dashboard's widgets. */
+export type WidgetData =
+  | { error: string }
+  | { type: 'count'; value: number; groups?: { key: string; count: number }[] }
+  | { type: 'scorecard'; scorecard: string; title: string; levels: ScorecardLevel[]; distribution: Record<string, number>; total: number }
+  | { type: 'runs'; items: Run[]; total: number }
+  | { type: 'approvals'; items: Run[]; total: number }
+  | { type: 'table'; blueprint: string; items: Entity[]; total: number }
+  | { type: 'markdown' };

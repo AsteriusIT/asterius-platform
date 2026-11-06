@@ -27,6 +27,7 @@ import {
   IconChecklist,
   IconDots,
   IconHistory,
+  IconLayoutDashboard,
   IconMedal,
   IconTrashX,
   IconHome,
@@ -210,6 +211,7 @@ export function Layout() {
               {link('/admin/blueprints', 'Blueprints', <IconSchema size={18} stroke={1.6} />)}
               {link('/admin/actions', 'Actions', <IconBolt size={18} stroke={1.6} />)}
               {link('/admin/integrations', 'Integrations', <IconPlugConnected size={18} stroke={1.6} />)}
+              {link('/admin/dashboards', 'Dashboards', <IconLayoutDashboard size={18} stroke={1.6} />)}
               {link('/admin/scorecards', 'Scorecards', <IconMedal size={18} stroke={1.6} />)}
               {link('/admin/webhooks', 'Webhooks', <IconWebhook size={18} stroke={1.6} />)}
               {link('/admin/teams', 'Teams', <IconUsersGroup size={18} stroke={1.6} />)}

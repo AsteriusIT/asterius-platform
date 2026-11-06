@@ -3,6 +3,7 @@ import type {
   ApiToken,
   AuditEntry,
   Blueprint,
+  Dashboard,
   Delivery,
   Entity,
   EntityMigration,
@@ -24,6 +25,7 @@ import type {
   Team,
   Tombstone,
   Webhook,
+  WidgetData,
 } from '@asterius/shared';
 
 /** Typed client for the platform API (/api/v1). The session token lives in localStorage. */
@@ -163,6 +165,12 @@ export const api = {
   entityScorecards: (bp: string, id: string) => request<ScorecardResult[]>('GET', v1(`/blueprints/${enc(bp)}/entities/${enc(id)}/scorecards`)),
   scorecardLevels: (bp: string, ids: string[]) =>
     request<Record<string, Record<string, string | null>>>('GET', v1(`/blueprints/${enc(bp)}/scorecard-levels${qs({ ids: ids.join(',') })}`)),
+
+  dashboards: () => request<Dashboard[]>('GET', v1('/dashboards')),
+  resolveDashboard: (blueprint?: string) => request<Dashboard | null>('GET', v1(`/dashboards/resolve${qs({ blueprint })}`)),
+  dashboardData: (id: string) => request<WidgetData[]>('GET', v1(`/dashboards/${enc(id)}/data`)),
+  saveDashboard: (id: string, body: unknown) => request<Dashboard>('PUT', v1(`/dashboards/${enc(id)}`), body),
+  deleteDashboard: (id: string) => request('DELETE', v1(`/dashboards/${enc(id)}`)),
 
   webhooks: () => request<Webhook[]>('GET', v1('/webhooks')),
   webhook: (id: string) => request<Webhook & { secret: string | null }>('GET', v1(`/webhooks/${enc(id)}`)),

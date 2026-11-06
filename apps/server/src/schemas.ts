@@ -159,6 +159,61 @@ export const entityMigration = z.discriminatedUnion('type', [
 ]);
 export type EntityMigration = z.infer<typeof entityMigration>;
 
+const widgetBase = { title: z.string().max(100).optional(), width: z.number().int().min(1).max(12).default(6) };
+const filterMap = z.record(fieldName, z.string()).default({});
+
+/** Widgets of a dashboard; the server computes their data for the viewer. */
+export const dashboardWidget = z.discriminatedUnion('type', [
+  /** Number of entities, or their distribution by a property (`team`, `source` or any top-level property). */
+  z.object({
+    ...widgetBase,
+    type: z.literal('count'),
+    blueprint: slug,
+    filters: filterMap,
+    groupBy: z
+      .string()
+      .regex(/^[A-Za-z_][A-Za-z0-9_]{0,63}$/)
+      .optional(),
+  }),
+  z.object({ ...widgetBase, type: z.literal('scorecard'), scorecard: slug }),
+  z.object({
+    ...widgetBase,
+    type: z.literal('runs'),
+    limit: z.number().int().min(1).max(20).default(8),
+    mine: z.boolean().default(false),
+    status: z.array(z.enum(['PENDING_APPROVAL', 'QUEUED', 'IN_PROGRESS', 'SUCCESS', 'FAILURE', 'REJECTED', 'CANCELLED'])).optional(),
+    action: slug.optional(),
+  }),
+  z.object({ ...widgetBase, type: z.literal('approvals'), limit: z.number().int().min(1).max(20).default(8) }),
+  /** A saved table view: entities of a blueprint with filters, sort and chosen columns. */
+  z.object({
+    ...widgetBase,
+    type: z.literal('table'),
+    blueprint: slug,
+    filters: filterMap,
+    search: z.string().max(200).optional(),
+    sort: z.enum(['title', 'updated', 'identifier']).default('title'),
+    columns: z.array(z.string()).max(8).default([]),
+    limit: z.number().int().min(1).max(50).default(10),
+  }),
+  z.object({ ...widgetBase, type: z.literal('markdown'), content: z.string().max(10_000) }),
+]);
+export type DashboardWidgetDef = z.infer<typeof dashboardWidget>;
+
+export const dashboardDef = z.object({
+  identifier: slug,
+  title: z.string().min(1).max(100),
+  description: z.string().max(2000).default(''),
+  /** Default dashboard of the home page for members of this team. */
+  team: slug.nullish(),
+  /** Shown on the catalog page of this blueprint. */
+  blueprint: slug.nullish(),
+  /** Home page for everyone (when no team dashboard applies). */
+  default: z.boolean().default(false),
+  widgets: z.array(dashboardWidget).max(30).default([]),
+});
+export type DashboardDef = z.infer<typeof dashboardDef>;
+
 export const invokerConfig = z.object({ type: z.string().min(1) }).passthrough();
 
 /** Step ids are used in templates (`steps.<id>.output`): JSONata-friendly names. */
@@ -366,6 +421,7 @@ export const configFile = z.object({
   integrations: z.array(integrationDef).default([]),
   webhooks: z.array(webhookDef).default([]),
   scorecards: z.array(scorecardDef).default([]),
+  dashboards: z.array(dashboardDef).default([]),
   entities: z.array(seedEntity).default([]),
 });
 export type ConfigFile = z.infer<typeof configFile>;
