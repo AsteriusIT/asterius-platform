@@ -8,6 +8,7 @@ import {
   Burger,
   Group,
   Indicator,
+  Kbd,
   Menu,
   NavLink,
   ScrollArea,
@@ -47,6 +48,7 @@ import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { Tour } from './Tour';
 import { tourSteps } from './tourSteps';
+import { CommandPalette } from './CommandPalette';
 import { EntityIcon } from './icons';
 
 const initials = (name = '') =>
@@ -61,6 +63,7 @@ const initials = (name = '') =>
 export function Layout() {
   const [opened, { toggle, open, close }] = useDisclosure();
   const [touring, setTouring] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const isMobile = useMediaQuery('(max-width: 48em)');
   const qc = useQueryClient();
   const { user, isAdmin, signOut } = useAuth();
@@ -110,6 +113,7 @@ export function Layout() {
 
   return (
     <AppShell layout="alt" header={{ height: 60 }} navbar={{ width: 264, breakpoint: 'sm', collapsed: { mobile: !opened } }} padding="xl">
+      <CommandPalette isAdmin={isAdmin} opened={paletteOpen} onOpenChange={setPaletteOpen} />
       <AppShell.Header className="app-header">
         <Group h="100%" px="lg" justify="space-between" wrap="nowrap" gap="md">
           <Group gap="sm" wrap="nowrap">
@@ -134,6 +138,8 @@ export function Layout() {
               value={search}
               onChange={(e) => setSearch(e.currentTarget.value)}
               aria-label="Search the catalog"
+              rightSection={<Kbd size="xs">Ctrl K</Kbd>}
+              rightSectionWidth={64}
             />
           </form>
           <Group gap={4} wrap="nowrap">

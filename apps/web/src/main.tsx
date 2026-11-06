@@ -16,14 +16,8 @@ import { AuthProvider, useAuth } from './lib/auth';
 import { Layout } from './components/Layout';
 import { Loading } from './components/ui';
 import { AuthCallback, Login } from './pages/Login';
-import { Home } from './pages/Home';
-import { CatalogList, Search } from './pages/Catalog';
-import { EntityPage } from './pages/EntityPage';
-import { SelfService } from './pages/SelfService';
-import { Approvals, RunPage, Runs } from './pages/Runs';
-import { Profile } from './pages/Profile';
 
-// Admin pages are only loaded by admins: separate chunks.
+// Every page is a separate chunk loaded on first visit.
 const page = <M,>(load: () => Promise<M>, name: keyof M) => {
   const C = lazy(async () => ({ default: (await load())[name] as ComponentType }));
   return (
@@ -32,6 +26,12 @@ const page = <M,>(load: () => Promise<M>, name: keyof M) => {
     </Suspense>
   );
 };
+const home = () => import('./pages/Home');
+const catalog = () => import('./pages/Catalog');
+const entity = () => import('./pages/EntityPage');
+const selfService = () => import('./pages/SelfService');
+const runs = () => import('./pages/Runs');
+const profile = () => import('./pages/Profile');
 const definitions = () => import('./pages/admin/Definitions');
 const access = () => import('./pages/admin/Access');
 const system = () => import('./pages/admin/System');
@@ -73,15 +73,15 @@ const router = createBrowserRouter([
             element: <Layout />,
             errorElement: <RouteError />,
             children: [
-              { path: '/', element: <Home /> },
-              { path: '/search', element: <Search /> },
-              { path: '/catalog/:bp', element: <CatalogList /> },
-              { path: '/catalog/:bp/:id', element: <EntityPage /> },
-              { path: '/self-service', element: <SelfService /> },
-              { path: '/runs', element: <Runs /> },
-              { path: '/runs/:id', element: <RunPage /> },
-              { path: '/approvals', element: <Approvals /> },
-              { path: '/profile', element: <Profile /> },
+              { path: '/', element: page(home, 'Home') },
+              { path: '/search', element: page(catalog, 'Search') },
+              { path: '/catalog/:bp', element: page(catalog, 'CatalogList') },
+              { path: '/catalog/:bp/:id', element: page(entity, 'EntityPage') },
+              { path: '/self-service', element: page(selfService, 'SelfService') },
+              { path: '/runs', element: page(runs, 'Runs') },
+              { path: '/runs/:id', element: page(runs, 'RunPage') },
+              { path: '/approvals', element: page(runs, 'Approvals') },
+              { path: '/profile', element: page(profile, 'Profile') },
               {
                 path: '/admin',
                 element: <RequireAdmin />,
