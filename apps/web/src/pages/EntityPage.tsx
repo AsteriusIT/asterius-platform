@@ -13,7 +13,7 @@ import { orderedFields } from '../components/SchemaForm';
 import { ActionRunModal } from '../components/ActionRunModal';
 import { EntityHistory } from '../components/EntityHistory';
 import { DataTable } from '../components/DataTable';
-import { ResourceEditor } from '../components/ResourceEditor';
+import { EntityEditor } from '../components/EntityEditor';
 import { EntityIcon } from '../components/icons';
 import { Empty, LevelBadge, Mono, PageHeader, QueryView, StatusBadge, TimeAgo } from '../components/ui';
 
@@ -111,7 +111,7 @@ function EntityView({ bp, e }: { bp: Blueprint; e: Entity }) {
                 <Menu.Dropdown>
                   {canEdit && (
                     <Menu.Item leftSection={<IconPencil size={16} />} onClick={() => setEditing(true)}>
-                      Edit as YAML
+                      Edit
                     </Menu.Item>
                   )}
                   {deletes.map((a) => (
@@ -252,16 +252,16 @@ function EntityView({ bp, e }: { bp: Blueprint; e: Entity }) {
       </Tabs>
 
       <ActionRunModal action={runAction} entity={e} onClose={() => setRunAction(null)} />
-      <ResourceEditor
-        title={`Edit ${e.title}`}
-        isNew={false}
-        value={editing ? { identifier: e.identifier, title: e.title, team: e.team, properties: e.properties, relations: e.relations } : null}
+      <EntityEditor
+        blueprint={bp}
+        entity={e}
+        opened={editing}
         onClose={() => setEditing(false)}
-        onSave={async (_id, body) => {
-          const saved = await api.saveEntity(bp.identifier, e.identifier, body);
+        onSaved={(saved) => {
           qc.setQueryData(['entity', bp.identifier, e.identifier], saved);
           void qc.invalidateQueries({ queryKey: ['related'] });
-          return saved;
+          void qc.invalidateQueries({ queryKey: ['history'] });
+          void qc.invalidateQueries({ queryKey: ['entity-scorecards'] });
         }}
       />
     </Stack>
