@@ -52,3 +52,9 @@ export function workflowSummary(a: Pick<Action, 'steps' | 'invoker'>) {
   if (steps.length === 1 && steps[0].type === 'invoke') return steps[0].invoker?.type ?? a.invoker?.type ?? 'invoke';
   return `workflow · ${steps.length} steps`;
 }
+
+/** CI log lines copied into a run are prefixed `[job] `: split them so the run page can group and filter by job. */
+export function splitJobLog(message: string): { job: string | null; text: string } {
+  const m = /^\[([^\]\s][^\]]{0,60})\] (.*)$/s.exec(message);
+  return m ? { job: m[1]!, text: m[2]! } : { job: null, text: message };
+}

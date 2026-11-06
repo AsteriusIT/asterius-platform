@@ -10,6 +10,7 @@ import {
   Grid,
   Group,
   MultiSelect,
+  NativeSelect,
   ScrollArea,
   SegmentedControl,
   Stack,
@@ -27,7 +28,7 @@ import { api, errorText } from '../lib/api';
 import { DataTable } from '../components/DataTable';
 import { duration, Empty, Markdown, PageHeader, QueryView, StatusBadge, STATUS_COLORS, TimeAgo } from '../components/ui';
 import { WorkflowGraph } from '../components/WorkflowGraph';
-import { STEP_STATUS_COLORS, STEP_STATUS_LABELS, STEP_TYPES } from '../lib/workflow';
+import { splitJobLog, STEP_STATUS_COLORS, STEP_STATUS_LABELS, STEP_TYPES } from '../lib/workflow';
 import { PropertyValue } from '../components/PropertyValue';
 
 const PAGE = 30;
@@ -176,6 +177,7 @@ function RunView({ r }: { r: Run }) {
   const [comment, setComment] = useState('');
   const [selected, setSelected] = useState<string | null>(() => defaultStep(r, params.get('step')));
   const [allLogs, setAllLogs] = useState(false);
+  const [job, setJob] = useState<string | null>(null);
   const refresh = (run: Run) => {
     qc.setQueryData(['run', r.id], run);
     void qc.invalidateQueries({ queryKey: ['approvals'] });
@@ -193,7 +195,9 @@ function RunView({ r }: { r: Run }) {
   const cancel = useMutation({ mutationFn: () => api.cancel(r.id), onSuccess: refresh, onError });
   const steps = r.steps ?? [];
   const step = steps.find((s) => s.id === selected) ?? null;
-  const logs = (r.logs ?? []).filter((l) => allLogs || !step || l.stepId === step.id);
+  const stepLogs = (r.logs ?? []).filter((l) => allLogs || !step || l.stepId === step.id);
+  const jobs = [...new Set(stepLogs.map((l) => splitJobLog(l.message).job).filter((j): j is string => !!j))];
+  const logs = stepLogs.filter((l) => !job || splitJobLog(l.message).job === job);
 
   return (
     <Stack>
@@ -346,6 +350,15 @@ function RunView({ r }: { r: Run }) {
                       live
                     </Badge>
                   )}
+                  {jobs.length > 1 && (
+                    <NativeSelect
+                      size="xs"
+                      aria-label="Filter by job"
+                      value={job ?? ''}
+                      onChange={(e) => setJob(e.currentTarget.value || null)}
+                      data={[{ value: '', label: 'All jobs' }, ...jobs.map((j) => ({ value: j, label: j }))]}
+                    />
+                  )}
                   {step && (
                     <SegmentedControl
                       size="xs"
@@ -369,7 +382,17 @@ function RunView({ r }: { r: Run }) {
                     <div key={i} style={{ color: LOG_COLORS[l.level] }}>
                       <span style={{ opacity: 0.55 }}>{new Date(l.at).toLocaleTimeString()} </span>
                       {allLogs && l.stepId && <span style={{ opacity: 0.7 }}>[{l.stepId}] </span>}
-                      {l.message}
+                      {(() => {
+                        const { job: j, text } = splitJobLog(l.message);
+                        return j ? (
+                          <>
+                            <span style={{ opacity: 0.7, fontWeight: 600 }}>[{j}] </span>
+                            {text}
+                          </>
+                        ) : (
+                          text
+                        );
+                      })()}
                     </div>
                   ))}
                 </pre>

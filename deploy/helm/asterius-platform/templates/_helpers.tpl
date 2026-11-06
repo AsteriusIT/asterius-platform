@@ -110,6 +110,9 @@ containers:
       - secretRef: { name: {{ include "ap.secretName" .root }} }
     volumeMounts:
       - { name: tmp, mountPath: /tmp }
+      {{- if or $v.plugins.existingConfigMap $v.plugins.existingClaim }}
+      - { name: plugins, mountPath: /plugins, readOnly: true }
+      {{- end }}
       {{- if $v.config.gitSync.enabled }}
       - { name: sync-config, mountPath: /git, readOnly: true }
       {{- else if not $v.config.useImageDefaults }}
@@ -164,6 +167,13 @@ containers:
 volumes:
   - name: tmp
     emptyDir: { sizeLimit: 256Mi }
+  {{- if $v.plugins.existingClaim }}
+  - name: plugins
+    persistentVolumeClaim: { claimName: {{ $v.plugins.existingClaim }}, readOnly: true }
+  {{- else if $v.plugins.existingConfigMap }}
+  - name: plugins
+    configMap: { name: {{ $v.plugins.existingConfigMap }} }
+  {{- end }}
   {{- if $v.config.gitSync.enabled }}
   - name: sync-config
     emptyDir: { sizeLimit: 256Mi }

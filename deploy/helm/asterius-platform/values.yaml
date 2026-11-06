@@ -99,6 +99,18 @@ config:
       requests: { cpu: 10m, memory: 32Mi }
       limits: { memory: 128Mi }
 
+# ---------- plugins ----------
+# In-process plugins (docs/EXTENDING.md): ES modules loaded at startup. Provide them as a ConfigMap (small plugins)
+# or a PersistentVolumeClaim, and/or list packages that are installed in your image. They run with the server's
+# privileges: install only code you trust.
+plugins:
+  # ConfigMap whose keys are *.mjs files, mounted read-only at /plugins.
+  existingConfigMap: ""
+  # PersistentVolumeClaim holding plugin files, mounted read-only at /plugins.
+  existingClaim: ""
+  # Plugin packages or paths installed in the image (PLUGINS).
+  packages: []
+
 # ---------- settings ----------
 settings:
   logLevel: info

@@ -13,6 +13,12 @@ data:
   WORKER_CONCURRENCY: {{ $v.worker.concurrency | quote }}
   RUN_POLL_SECONDS: {{ $v.settings.runPollSeconds | quote }}
   RUN_TIMEOUT_HOURS: {{ $v.settings.runTimeoutHours | quote }}
+  {{- if or $v.plugins.existingConfigMap $v.plugins.existingClaim }}
+  PLUGIN_DIR: /plugins
+  {{- end }}
+  {{- if $v.plugins.packages }}
+  PLUGINS: {{ join "," $v.plugins.packages | quote }}
+  {{- end }}
   HTTP_TIMEOUT_SECONDS: {{ $v.settings.httpTimeoutSeconds | quote }}
   HTTP_RETRIES: {{ $v.settings.httpRetries | quote }}
   HTTP_RETRY_BASE_MS: {{ $v.settings.httpRetryBaseMs | quote }}
