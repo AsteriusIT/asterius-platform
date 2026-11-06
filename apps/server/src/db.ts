@@ -381,6 +381,11 @@ export const MIGRATIONS: Migration[] = [
         ALTER TABLE sync_runs ADD COLUMN errors TEXT NOT NULL DEFAULT '[]';
       `),
   },
+  {
+    id: 6,
+    name: 'integrations: ownership priority',
+    up: (d) => d.exec('ALTER TABLE integrations ADD COLUMN priority INTEGER NOT NULL DEFAULT 0'),
+  },
 ];
 
 /** Apply pending numbered migrations (idempotent; serialized across replicas by an advisory lock on Postgres). */

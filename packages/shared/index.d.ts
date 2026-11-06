@@ -369,6 +369,8 @@ export interface Integration {
   mappings: Mapping[];
   intervalMinutes: number;
   deleteMissing: boolean;
+  /** Ownership priority when integrations write the same entity (higher wins). */
+  priority: number;
   /** Cron expression (UTC) replacing intervalMinutes. */
   schedule?: string;
   deleteMaxPercent: number;

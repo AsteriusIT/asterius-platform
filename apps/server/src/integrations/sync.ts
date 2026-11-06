@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { FastifyBaseLogger } from 'fastify';
 import type { SyncItemError, SyncRun, SyncStats } from '@asterius/shared';
-import { all, bool, json, later, newId, now, run } from '../db.js';
+import { all, bool, json, later, newId, now, one, run } from '../db.js';
 import { badRequest, errorMessage } from '../lib/errors.js';
 import { render } from '../lib/expr.js';
 import { resolveRef } from '../secrets.js';
@@ -56,6 +56,13 @@ class SyncLog {
   add = (line: string) => {
     if (this.lines.length < MAX_LOG_LINES) this.lines.push(`${new Date().toISOString().slice(11, 19)} ${line}`);
   };
+  private conflicts = 0;
+  /** Ownership conflicts: logged (capped) without counting as errors. */
+  conflict = (line: string) => {
+    this.conflicts++;
+    if (this.conflicts <= 20) this.add(line);
+    else if (this.conflicts === 21) this.add('CONFLICT … further conflicts omitted');
+  };
   error = (line: string, rec?: Omit<SyncItemError, 'message'> & { message: string }) => {
     if (rec && this.items.length < MAX_ITEM_ERRORS) this.items.push(rec);
     this.errors++;
@@ -69,7 +76,55 @@ export async function renderConfig(r: IntegrationRow) {
   return value as Record<string, unknown>;
 }
 
-async function applyMapped(integration: string, kind: string, m: Mapped, merge: boolean, stats: SyncStats, log: SyncLog, seen?: Set<string>) {
+/**
+ * Ownership of entities written by several integrations (`entities.source` names the owner):
+ *  - an entity owned by an integration with a higher or equal `priority` keeps its owner (the incumbent wins ties);
+ *  - a mapping with `merge: false` then skips the entity (reported as a CONFLICT in the sync log);
+ *  - a mapping with `merge: true` only fills the properties and relations the owner left unset (ownership stays);
+ *  - a higher priority integration takes the entity over, whatever was there.
+ * Entities of unknown / removed integrations, manual and config entities are taken over as before.
+ */
+const priorities = new Map<string, number>();
+async function priorityOf(source: string): Promise<number> {
+  if (!source.startsWith('integration:')) return Number.NEGATIVE_INFINITY;
+  const id = source.slice('integration:'.length);
+  const hit = priorities.get(id);
+  if (hit !== undefined) return hit;
+  const row = await one<{ priority: number }>('SELECT priority FROM integrations WHERE identifier = ?', id);
+  const p = row ? Number(row.priority) : Number.NEGATIVE_INFINITY;
+  priorities.set(id, p);
+  return p;
+}
+
+type Ownership =
+  | { action: 'write' }
+  | { action: 'skip'; owner: string }
+  | { action: 'fill'; owner: string; properties: Record<string, unknown>; relations: Record<string, unknown> };
+
+export async function resolveOwnership(integration: string, priority: number, m: Mapped, merge: boolean): Promise<Ownership> {
+  const mine = entitySource(integration);
+  const row = await one<{ source: string; properties: string; relations: string }>(
+    'SELECT source, properties, relations FROM entities WHERE blueprint = ? AND identifier = ?',
+    m.blueprint,
+    m.identifier,
+  );
+  if (!row || row.source === mine || !row.source.startsWith('integration:')) return { action: 'write' };
+  const theirs = await priorityOf(row.source);
+  if (priority > theirs) return { action: 'write' };
+  if (!merge) return { action: 'skip', owner: row.source };
+  const have = json<Record<string, unknown>>(row.properties, {});
+  const haveRel = json<Record<string, unknown>>(row.relations, {});
+  const gaps = (incoming: Record<string, unknown>, existing: Record<string, unknown>) =>
+    Object.fromEntries(Object.entries(incoming).filter(([k]) => existing[k] === undefined || existing[k] === null));
+  return {
+    action: 'fill',
+    owner: row.source,
+    properties: gaps(m.properties ?? {}, have),
+    relations: gaps((m.relations ?? {}) as Record<string, unknown>, haveRel),
+  };
+}
+
+async function applyMapped(integration: string, priority: number, kind: string, m: Mapped, merge: boolean, stats: SyncStats, log: SyncLog, seen?: Set<string>) {
   try {
     if (m.delete) {
       await deleteEntity(m.blueprint, m.identifier, SYSTEM_ACTOR).then(
@@ -78,11 +133,26 @@ async function applyMapped(integration: string, kind: string, m: Mapped, merge: 
       );
       return;
     }
-    const res = await upsertEntity(
-      m.blueprint,
-      { identifier: m.identifier, title: m.title, team: m.team, properties: m.properties, relations: m.relations },
-      { source: entitySource(integration), actor: SYSTEM_ACTOR, merge },
-    );
+    const own = await resolveOwnership(integration, priority, m, merge);
+    if (own.action === 'skip') {
+      log.conflict(`CONFLICT ${m.blueprint}/${m.identifier} is owned by ${own.owner} (higher or equal priority): not written`);
+      stats.skipped++;
+      return;
+    }
+    const res =
+      own.action === 'fill'
+        ? await upsertEntity(
+            m.blueprint,
+            { identifier: m.identifier, properties: own.properties, relations: own.relations },
+            { source: own.owner, actor: SYSTEM_ACTOR, merge: true },
+          )
+        : await upsertEntity(
+            m.blueprint,
+            { identifier: m.identifier, title: m.title, team: m.team, properties: m.properties, relations: m.relations },
+            { source: entitySource(integration), actor: SYSTEM_ACTOR, merge },
+          );
+    if (own.action === 'fill' && res.changed)
+      log.conflict(`CONFLICT ${m.blueprint}/${m.identifier} owned by ${own.owner}: filled only the fields it leaves empty`);
     seen?.add(`${m.blueprint}/${m.identifier}`);
     if (res.changed) stats.upserted++;
     else stats.skipped++;
@@ -97,7 +167,7 @@ async function processItem(r: IntegrationRow, mapping: MappingDef, item: unknown
   try {
     const { mapped, skipped } = await mapItem(mapping, item, bindings);
     stats.skipped += skipped;
-    for (const m of mapped) await applyMapped(r.identifier, mapping.kind, m, mapping.merge, stats, log, seen);
+    for (const m of mapped) await applyMapped(r.identifier, Number(r.priority ?? 0), mapping.kind, m, mapping.merge, stats, log, seen);
   } catch (err) {
     stats.failed++;
     log.error(`mapping ${mapping.kind} → ${mapping.entity.blueprint}: ${errorMessage(err)}`, {
@@ -118,6 +188,7 @@ export async function runSync(identifier: string, trigger: SyncRun['trigger'], o
     t,
   );
   if (!changes) return undefined;
+  priorities.clear(); // ownership priorities are read afresh by every run
   const r = await getIntegrationRow(identifier);
   const id = newId();
   await run("INSERT INTO sync_runs (id, integration, trigger, status, started_at) VALUES (?, ?, ?, 'running', ?)", id, identifier, trigger, t);
