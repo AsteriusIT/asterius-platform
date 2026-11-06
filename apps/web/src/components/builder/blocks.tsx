@@ -124,7 +124,7 @@ export function SubjectsEditor({
       <Group grow align="flex-start">
         <MultiSelect
           label="Roles"
-          data={['admin', 'member']}
+          data={[...new Set(['admin', 'member', 'integration-admin', 'blueprint-owner', 'approver', ...(v.roles ?? [])])]}
           value={v.roles ?? []}
           onChange={(r) => set({ roles: r as Subjects['roles'] })}
           placeholder="Any role"
