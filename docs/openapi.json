@@ -66,7 +66,7 @@
                   "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
                 },
                 "additionalProperties": {
-                  "$ref": "#/$defs/__schema0"
+                  "$ref": "#/components/schemas/Blueprint_schema0"
                 }
               },
               "required": {
@@ -118,53 +118,7 @@
         "required": [
           "identifier",
           "title"
-        ],
-        "$defs": {
-          "__schema0": {
-            "type": "object",
-            "properties": {
-              "type": {
-                "type": "string",
-                "enum": [
-                  "string",
-                  "number",
-                  "integer",
-                  "boolean",
-                  "array",
-                  "object"
-                ]
-              },
-              "title": {
-                "type": "string"
-              },
-              "description": {
-                "type": "string"
-              },
-              "format": {
-                "type": "string"
-              },
-              "blueprint": {
-                "type": "string"
-              },
-              "enum": {
-                "type": "array",
-                "items": {
-                  "type": [
-                    "string",
-                    "number"
-                  ]
-                }
-              },
-              "items": {
-                "$ref": "#/$defs/__schema0"
-              }
-            },
-            "required": [
-              "type"
-            ],
-            "additionalProperties": {}
-          }
-        }
+        ]
       },
       "Action": {
         "type": "object",
@@ -240,7 +194,7 @@
                               "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
                             },
                             "additionalProperties": {
-                              "$ref": "#/$defs/__schema0"
+                              "$ref": "#/components/schemas/Action_schema0"
                             }
                           },
                           "required": {
@@ -748,53 +702,7 @@
         "required": [
           "identifier",
           "title"
-        ],
-        "$defs": {
-          "__schema0": {
-            "type": "object",
-            "properties": {
-              "type": {
-                "type": "string",
-                "enum": [
-                  "string",
-                  "number",
-                  "integer",
-                  "boolean",
-                  "array",
-                  "object"
-                ]
-              },
-              "title": {
-                "type": "string"
-              },
-              "description": {
-                "type": "string"
-              },
-              "format": {
-                "type": "string"
-              },
-              "blueprint": {
-                "type": "string"
-              },
-              "enum": {
-                "type": "array",
-                "items": {
-                  "type": [
-                    "string",
-                    "number"
-                  ]
-                }
-              },
-              "items": {
-                "$ref": "#/$defs/__schema0"
-              }
-            },
-            "required": [
-              "type"
-            ],
-            "additionalProperties": {}
-          }
-        }
+        ]
       },
       "Integration": {
         "type": "object",
@@ -1180,7 +1088,7 @@
                         "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
                       },
                       "additionalProperties": {
-                        "$ref": "#/$defs/__schema0"
+                        "$ref": "#/components/schemas/ConfigFile_schema0"
                       }
                     },
                     "required": {
@@ -1311,7 +1219,7 @@
                                     "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
                                   },
                                   "additionalProperties": {
-                                    "$ref": "#/$defs/__schema0"
+                                    "$ref": "#/components/schemas/ConfigFile_schema0"
                                   }
                                 },
                                 "required": {
@@ -2113,53 +2021,883 @@
               ]
             }
           }
+        }
+      },
+      "Entity": {
+        "type": "object",
+        "properties": {
+          "blueprint": {
+            "type": "string"
+          },
+          "identifier": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "team": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "properties": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          },
+          "relations": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          },
+          "source": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "description": "ISO 8601 timestamp"
+          },
+          "updatedAt": {
+            "type": "string",
+            "description": "ISO 8601 timestamp"
+          }
         },
-        "$defs": {
-          "__schema0": {
+        "required": [
+          "blueprint",
+          "identifier",
+          "title",
+          "team",
+          "properties",
+          "relations",
+          "source",
+          "createdAt",
+          "updatedAt"
+        ],
+        "additionalProperties": false
+      },
+      "SyncRun": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "integration": {
+            "type": "string"
+          },
+          "trigger": {
+            "type": "string",
+            "enum": [
+              "schedule",
+              "manual",
+              "webhook",
+              "startup"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "running",
+              "success",
+              "partial",
+              "failure"
+            ]
+          },
+          "stats": {
             "type": "object",
             "properties": {
-              "type": {
-                "type": "string",
-                "enum": [
-                  "string",
-                  "number",
-                  "integer",
-                  "boolean",
-                  "array",
-                  "object"
-                ]
+              "upserted": {
+                "type": "number"
               },
-              "title": {
-                "type": "string"
+              "deleted": {
+                "type": "number"
               },
-              "description": {
-                "type": "string"
+              "skipped": {
+                "type": "number"
               },
-              "format": {
-                "type": "string"
-              },
-              "blueprint": {
-                "type": "string"
-              },
-              "enum": {
-                "type": "array",
-                "items": {
-                  "type": [
-                    "string",
-                    "number"
-                  ]
-                }
-              },
-              "items": {
-                "$ref": "#/$defs/__schema0"
+              "failed": {
+                "type": "number"
               }
             },
             "required": [
-              "type"
+              "upserted",
+              "deleted",
+              "skipped",
+              "failed"
             ],
-            "additionalProperties": {}
+            "additionalProperties": false
+          },
+          "logs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "mapping": {
+                  "type": "string"
+                },
+                "key": {
+                  "type": "string"
+                },
+                "message": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "mapping",
+                "key",
+                "message"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "startedAt": {
+            "type": "string",
+            "description": "ISO 8601 timestamp"
+          },
+          "endedAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "ISO 8601 timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
-        }
+        },
+        "required": [
+          "id",
+          "integration",
+          "trigger",
+          "status",
+          "stats",
+          "logs",
+          "errors",
+          "startedAt",
+          "endedAt"
+        ],
+        "additionalProperties": false
+      },
+      "IntegrationView": {
+        "type": "object",
+        "properties": {
+          "identifier": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "type": {
+            "type": "string",
+            "minLength": 1
+          },
+          "enabled": {
+            "default": true,
+            "type": "boolean"
+          },
+          "config": {
+            "default": {},
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          },
+          "mappings": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "default": "item",
+                  "type": "string"
+                },
+                "filter": {
+                  "type": "string"
+                },
+                "items": {
+                  "type": "string"
+                },
+                "delete": {
+                  "type": "string"
+                },
+                "merge": {
+                  "default": false,
+                  "type": "boolean"
+                },
+                "entity": {
+                  "type": "object",
+                  "properties": {
+                    "blueprint": {
+                      "type": "string",
+                      "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                    },
+                    "identifier": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "team": {
+                      "type": "string"
+                    },
+                    "properties": {
+                      "default": {},
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {
+                        "type": "string"
+                      }
+                    },
+                    "relations": {
+                      "default": {},
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "blueprint",
+                    "identifier",
+                    "properties",
+                    "relations"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "kind",
+                "merge",
+                "entity"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "intervalMinutes": {
+            "default": 60,
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10080
+          },
+          "deleteMissing": {
+            "default": false,
+            "type": "boolean"
+          },
+          "priority": {
+            "default": 0,
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000
+          },
+          "schedule": {
+            "type": "string",
+            "maxLength": 100
+          },
+          "deleteMaxPercent": {
+            "default": 20,
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "deleteDryRun": {
+            "default": false,
+            "type": "boolean"
+          },
+          "managed": {
+            "type": "boolean"
+          },
+          "lastSync": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "integration": {
+                    "type": "string"
+                  },
+                  "trigger": {
+                    "type": "string",
+                    "enum": [
+                      "schedule",
+                      "manual",
+                      "webhook",
+                      "startup"
+                    ]
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "running",
+                      "success",
+                      "partial",
+                      "failure"
+                    ]
+                  },
+                  "stats": {
+                    "type": "object",
+                    "properties": {
+                      "upserted": {
+                        "type": "number"
+                      },
+                      "deleted": {
+                        "type": "number"
+                      },
+                      "skipped": {
+                        "type": "number"
+                      },
+                      "failed": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "upserted",
+                      "deleted",
+                      "skipped",
+                      "failed"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "logs": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "errors": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "mapping": {
+                          "type": "string"
+                        },
+                        "key": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "mapping",
+                        "key",
+                        "message"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "startedAt": {
+                    "type": "string",
+                    "description": "ISO 8601 timestamp"
+                  },
+                  "endedAt": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "description": "ISO 8601 timestamp"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "id",
+                  "integration",
+                  "trigger",
+                  "status",
+                  "stats",
+                  "logs",
+                  "errors",
+                  "startedAt",
+                  "endedAt"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lastSuccessAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "ISO 8601 timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "webhookUrl": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "identifier",
+          "title",
+          "type",
+          "enabled",
+          "config",
+          "mappings",
+          "intervalMinutes",
+          "deleteMissing",
+          "priority",
+          "deleteMaxPercent",
+          "deleteDryRun",
+          "managed",
+          "lastSync",
+          "lastSuccessAt"
+        ],
+        "additionalProperties": false
+      },
+      "WebhookView": {
+        "type": "object",
+        "properties": {
+          "identifier": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "events": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^(\\*|(entity|run|approval|sync)\\.\\*|entity\\.(created|updated|deleted)|run\\.(created|updated)|approval\\.(requested|decided)|sync\\.(finished|failed))$"
+            }
+          },
+          "blueprints": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+            }
+          },
+          "secret": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "headers": {
+            "default": {},
+            "type": "object",
+            "propertyNames": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9-]+$"
+            },
+            "additionalProperties": {
+              "type": "string",
+              "maxLength": 2000
+            }
+          },
+          "filter": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2000
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "transform": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 5000
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "enabled": {
+            "default": true,
+            "type": "boolean"
+          },
+          "managed": {
+            "type": "boolean"
+          },
+          "hasSecret": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "identifier",
+          "title",
+          "url",
+          "events",
+          "blueprints",
+          "headers",
+          "enabled",
+          "managed",
+          "hasSecret"
+        ],
+        "additionalProperties": false
+      },
+      "Delivery": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "webhook": {
+            "type": "string"
+          },
+          "event": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "success",
+              "failed"
+            ]
+          },
+          "attempts": {
+            "type": "number"
+          },
+          "responseStatus": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "lastError": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "description": "ISO 8601 timestamp"
+          },
+          "deliveredAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "ISO 8601 timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "webhook",
+          "event",
+          "status",
+          "attempts",
+          "responseStatus",
+          "lastError",
+          "createdAt",
+          "deliveredAt"
+        ],
+        "additionalProperties": false
+      },
+      "Run": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string"
+          },
+          "actionTitle": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "inputs": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          },
+          "createdAt": {
+            "type": "string",
+            "description": "ISO 8601 timestamp"
+          },
+          "endedAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "ISO 8601 timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "action",
+          "actionTitle",
+          "status",
+          "inputs",
+          "createdAt",
+          "endedAt"
+        ],
+        "additionalProperties": {}
+      },
+      "ConfigStatus": {
+        "type": "object",
+        "properties": {
+          "appliedHash": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "appliedAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "ISO 8601 timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "readError": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "inSync": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "appliedHash",
+          "appliedAt",
+          "errors",
+          "readError",
+          "inSync"
+        ],
+        "additionalProperties": {}
+      },
+      "EntityPage": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {}
+          },
+          "total": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "items",
+          "total"
+        ],
+        "additionalProperties": false,
+        "description": "Page of Entity"
+      },
+      "RunPage": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {}
+          },
+          "total": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "items",
+          "total"
+        ],
+        "additionalProperties": false,
+        "description": "Page of Run"
+      },
+      "Blueprint_schema0": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "string",
+              "number",
+              "integer",
+              "boolean",
+              "array",
+              "object"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "format": {
+            "type": "string"
+          },
+          "blueprint": {
+            "type": "string"
+          },
+          "enum": {
+            "type": "array",
+            "items": {
+              "type": [
+                "string",
+                "number"
+              ]
+            }
+          },
+          "items": {
+            "$ref": "#/components/schemas/Blueprint_schema0"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "additionalProperties": {}
+      },
+      "Action_schema0": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "string",
+              "number",
+              "integer",
+              "boolean",
+              "array",
+              "object"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "format": {
+            "type": "string"
+          },
+          "blueprint": {
+            "type": "string"
+          },
+          "enum": {
+            "type": "array",
+            "items": {
+              "type": [
+                "string",
+                "number"
+              ]
+            }
+          },
+          "items": {
+            "$ref": "#/components/schemas/Action_schema0"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "additionalProperties": {}
+      },
+      "ConfigFile_schema0": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "string",
+              "number",
+              "integer",
+              "boolean",
+              "array",
+              "object"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "format": {
+            "type": "string"
+          },
+          "blueprint": {
+            "type": "string"
+          },
+          "enum": {
+            "type": "array",
+            "items": {
+              "type": [
+                "string",
+                "number"
+              ]
+            }
+          },
+          "items": {
+            "$ref": "#/components/schemas/ConfigFile_schema0"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "additionalProperties": {}
       },
       "Error": {
         "type": "object",
@@ -2533,7 +3271,17 @@
         "parameters": [],
         "responses": {
           "200": {
-            "description": "Success"
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Blueprint"
+                  }
+                }
+              }
+            }
           },
           "400": {
             "description": "Validation error",
@@ -2617,7 +3365,14 @@
         ],
         "responses": {
           "200": {
-            "description": "Success"
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Blueprint"
+                }
+              }
+            }
           },
           "400": {
             "description": "Validation error",
@@ -2668,7 +3423,14 @@
         },
         "responses": {
           "200": {
-            "description": "Success"
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Blueprint"
+                }
+              }
+            }
           },
           "400": {
             "description": "Validation error",
@@ -2711,7 +3473,14 @@
         ],
         "responses": {
           "200": {
-            "description": "Success"
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityPage"
+                }
+              }
+            }
           },
           "400": {
             "description": "Validation error",
@@ -2762,7 +3531,14 @@
         },
         "responses": {
           "200": {
-            "description": "Success"
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Entity"
+                }
+              }
+            }
           },
           "400": {
             "description": "Validation error",
@@ -2862,7 +3638,14 @@
         ],
         "responses": {
           "200": {
-            "description": "Success"
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Entity"
+                }
+              }
+            }
           },
           "400": {
             "description": "Validation error",
@@ -2970,7 +3753,14 @@
         },
         "responses": {
           "200": {
-            "description": "Success"
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Entity"
+                }
+              }
+            }
           },
           "400": {
             "description": "Validation error",
@@ -3285,7 +4075,14 @@
         "parameters": [],
         "responses": {
           "200": {
-            "description": "Success"
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigStatus"
+                }
+              }
+            }
           },
           "400": {
             "description": "Validation error",
@@ -3319,7 +4116,17 @@
         "parameters": [],
         "responses": {
           "200": {
-            "description": "Success"
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Delivery"
+                  }
+                }
+              }
+            }
           },
           "400": {
             "description": "Validation error",
@@ -3430,7 +4237,14 @@
         "parameters": [],
         "responses": {
           "200": {
-            "description": "Success"
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityPage"
+                }
+              }
+            }
           },
           "400": {
             "description": "Validation error",
@@ -3498,7 +4312,17 @@
         "parameters": [],
         "responses": {
           "200": {
-            "description": "Success"
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/IntegrationView"
+                  }
+                }
+              }
+            }
           },
           "400": {
             "description": "Validation error",
@@ -3582,7 +4406,14 @@
         ],
         "responses": {
           "200": {
-            "description": "Success"
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntegrationView"
+                }
+              }
+            }
           },
           "400": {
             "description": "Validation error",
@@ -3633,7 +4464,14 @@
         },
         "responses": {
           "200": {
-            "description": "Success"
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntegrationView"
+                }
+              }
+            }
           },
           "400": {
             "description": "Validation error",
@@ -3719,7 +4557,17 @@
         ],
         "responses": {
           "200": {
-            "description": "Success"
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SyncRun"
+                  }
+                }
+              }
+            }
           },
           "400": {
             "description": "Validation error",
@@ -3830,7 +4678,14 @@
         "parameters": [],
         "responses": {
           "200": {
-            "description": "Success"
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunPage"
+                }
+              }
+            }
           },
           "400": {
             "description": "Validation error",
@@ -3873,7 +4728,14 @@
         ],
         "responses": {
           "200": {
-            "description": "Success"
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Run"
+                }
+              }
+            }
           },
           "400": {
             "description": "Validation error",
@@ -4476,7 +5338,17 @@
         "parameters": [],
         "responses": {
           "200": {
-            "description": "Success"
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Team"
+                  }
+                }
+              }
+            }
           },
           "400": {
             "description": "Validation error",
@@ -4570,7 +5442,14 @@
         },
         "responses": {
           "200": {
-            "description": "Success"
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Team"
+                }
+              }
+            }
           },
           "400": {
             "description": "Validation error",
@@ -4824,7 +5703,17 @@
         "parameters": [],
         "responses": {
           "200": {
-            "description": "Success"
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/WebhookView"
+                  }
+                }
+              }
+            }
           },
           "400": {
             "description": "Validation error",
@@ -4959,7 +5848,14 @@
         },
         "responses": {
           "200": {
-            "description": "Success"
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookView"
+                }
+              }
+            }
           },
           "400": {
             "description": "Validation error",
@@ -5002,7 +5898,17 @@
         ],
         "responses": {
           "200": {
-            "description": "Success"
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Delivery"
+                  }
+                }
+              }
+            }
           },
           "400": {
             "description": "Validation error",

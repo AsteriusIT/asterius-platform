@@ -20,6 +20,88 @@ const COMPONENTS: Record<string, z.ZodType> = {
   ConfigFile: configFile,
 };
 
+const str = z.string();
+const iso = z.string().describe('ISO 8601 timestamp');
+const obj = z.record(z.string(), z.unknown());
+
+/** Response shapes (what the API returns), written to match packages/shared/index.d.ts. */
+const SyncStatsOut = z.object({ upserted: z.number(), deleted: z.number(), skipped: z.number(), failed: z.number() });
+const SyncRunOut = z.object({
+  id: str,
+  integration: str,
+  trigger: z.enum(['schedule', 'manual', 'webhook', 'startup']),
+  status: z.enum(['running', 'success', 'partial', 'failure']),
+  stats: SyncStatsOut,
+  logs: z.array(str),
+  errors: z.array(z.object({ mapping: str, key: str, message: str })),
+  startedAt: iso,
+  endedAt: iso.nullable(),
+});
+const OUTPUTS: Record<string, z.ZodType> = {
+  Entity: z.object({
+    blueprint: str,
+    identifier: str,
+    title: str,
+    team: str.nullable(),
+    properties: obj,
+    relations: obj,
+    source: str,
+    createdAt: iso,
+    updatedAt: iso,
+  }),
+  SyncRun: SyncRunOut,
+  IntegrationView: integrationDef.safeExtend({
+    managed: z.boolean(),
+    lastSync: SyncRunOut.nullable(),
+    lastSuccessAt: iso.nullable(),
+    webhookUrl: str.optional(),
+  }),
+  WebhookView: webhookDef.safeExtend({ managed: z.boolean(), hasSecret: z.boolean() }),
+  Delivery: z.object({
+    id: str,
+    webhook: str,
+    event: str,
+    status: z.enum(['pending', 'success', 'failed']),
+    attempts: z.number(),
+    responseStatus: z.number().nullable(),
+    lastError: str.nullable(),
+    createdAt: iso,
+    deliveredAt: iso.nullable(),
+  }),
+  Run: z.object({ id: str, action: str, actionTitle: str, status: str, inputs: obj, createdAt: iso, endedAt: iso.nullable() }).catchall(z.unknown()),
+  ConfigStatus: z
+    .object({ appliedHash: str.nullable(), appliedAt: iso.nullable(), errors: z.array(str), readError: str.nullable(), inSync: z.boolean() })
+    .catchall(z.unknown()),
+};
+const page = (name: string) => z.object({ items: z.array(z.unknown()), total: z.number() }).describe(`Page of ${name}`);
+OUTPUTS.EntityPage = page('Entity');
+OUTPUTS.RunPage = page('Run');
+
+/** Success response of a route: component name, `[]` suffix for arrays. */
+const RESPONSES: Record<string, string> = {
+  'GET /api/v1/blueprints': 'Blueprint[]',
+  'GET /api/v1/blueprints/:bp': 'Blueprint',
+  'PUT /api/v1/blueprints/:bp': 'Blueprint',
+  'GET /api/v1/blueprints/:bp/entities': 'EntityPage',
+  'GET /api/v1/blueprints/:bp/entities/:id': 'Entity',
+  'POST /api/v1/blueprints/:bp/entities': 'Entity',
+  'PUT /api/v1/blueprints/:bp/entities/:id': 'Entity',
+  'GET /api/v1/entities': 'EntityPage',
+  'GET /api/v1/integrations': 'IntegrationView[]',
+  'GET /api/v1/integrations/:id': 'IntegrationView',
+  'PUT /api/v1/integrations/:id': 'IntegrationView',
+  'GET /api/v1/integrations/:id/syncs': 'SyncRun[]',
+  'GET /api/v1/webhooks': 'WebhookView[]',
+  'PUT /api/v1/webhooks/:id': 'WebhookView',
+  'GET /api/v1/webhooks/:id/deliveries': 'Delivery[]',
+  'GET /api/v1/deliveries': 'Delivery[]',
+  'GET /api/v1/runs': 'RunPage',
+  'GET /api/v1/runs/:id': 'Run',
+  'GET /api/v1/config/status': 'ConfigStatus',
+  'GET /api/v1/teams': 'Team[]',
+  'PUT /api/v1/teams/:id': 'Team',
+};
+
 /** Which component is the JSON body of a write route (`METHOD url` with Fastify-style `:param`). */
 const BODIES: Record<string, string> = {
   'PUT /api/v1/blueprints/:bp': 'Blueprint',
@@ -53,6 +135,26 @@ export function collectRoutes(app: FastifyInstance): RouteInfo[] {
 const toOpenApiPath = (url: string) => url.replace(/:([A-Za-z0-9_]+)/g, '{$1}');
 const camel = (s: string) => s.replace(/[^A-Za-z0-9]+(.)?/g, (_m, c: string | undefined) => (c ? c.toUpperCase() : ''));
 
+/** zod emits recursive schemas with a local `$defs`; OpenAPI wants them as components. */
+function hoistDefs(schemas: Record<string, unknown>) {
+  for (const [name, schema] of Object.entries(schemas)) {
+    const defs = (schema as { $defs?: Record<string, unknown> }).$defs;
+    if (!defs) continue;
+    const rename = (key: string) => `${name}${key.replace(/^_+/, '_')}`;
+    const fix = (v: unknown) => JSON.stringify(v).replace(/#\/\$defs\/([A-Za-z0-9_]+)/g, (_m, k: string) => `#/components/schemas/${rename(k)}`);
+    for (const [k, def] of Object.entries(defs)) schemas[rename(k)] = JSON.parse(fix(def));
+    const { $defs: _d, ...rest } = schema as Record<string, unknown>;
+    void _d;
+    schemas[name] = JSON.parse(fix(rest));
+  }
+}
+
+function success(ref: string | undefined) {
+  if (!ref) return { description: 'Success' };
+  const item = { $ref: `#/components/schemas/${ref.replace('[]', '')}` };
+  return { description: 'Success', content: { 'application/json': { schema: ref.endsWith('[]') ? { type: 'array', items: item } : item } } };
+}
+
 export function buildOpenApi(routes: RouteInfo[], version = '0.1.0') {
   const schemas: Record<string, unknown> = {};
   for (const [name, schema] of Object.entries(COMPONENTS)) {
@@ -64,6 +166,16 @@ export function buildOpenApi(routes: RouteInfo[], version = '0.1.0') {
       schemas[name] = { type: 'object', additionalProperties: true };
     }
   }
+  for (const [name, schema] of Object.entries(OUTPUTS)) {
+    try {
+      const { $schema: _s, ...js } = z.toJSONSchema(schema, { io: 'output', unrepresentable: 'any' }) as Record<string, unknown>;
+      void _s;
+      schemas[name] = js;
+    } catch {
+      schemas[name] = { type: 'object', additionalProperties: true };
+    }
+  }
+  hoistDefs(schemas);
   schemas.Error = { type: 'object', properties: { error: { type: 'string' } }, required: ['error'] };
 
   const paths: Record<string, Record<string, unknown>> = {};
@@ -83,7 +195,7 @@ export function buildOpenApi(routes: RouteInfo[], version = '0.1.0') {
       parameters: params,
       ...(body ? { requestBody: { required: true, content: { 'application/json': { schema: { $ref: `#/components/schemas/${body}` } } } } } : {}),
       responses: {
-        '200': { description: 'Success' },
+        '200': success(RESPONSES[`${r.method} ${r.url}`]),
         '400': { description: 'Validation error', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
         '401': { description: 'Not authenticated' },
         '403': { description: 'Forbidden' },

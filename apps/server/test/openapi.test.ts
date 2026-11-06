@@ -21,6 +21,10 @@ describe('OpenAPI', () => {
     expect(put.parameters).toEqual([{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }]);
     expect(spec.components.schemas.Integration.properties).toHaveProperty('deleteMaxPercent');
     expect(spec.components.schemas.Webhook.properties).toHaveProperty('transform');
+    const ok = spec.paths['/api/v1/integrations'].get.responses['200'].content['application/json'].schema;
+    expect(ok).toEqual({ type: 'array', items: { $ref: '#/components/schemas/IntegrationView' } });
+    expect(spec.components.schemas.IntegrationView.properties).toHaveProperty('lastSuccessAt');
+    expect(JSON.stringify(spec)).not.toContain('#/$defs');
     // Inbound webhooks and auth are not part of the public contract.
     expect(Object.keys(spec.paths).some((p) => p.includes('/ingest/'))).toBe(false);
     const ids = Object.values(spec.paths).flatMap((ops) => Object.values(ops as Record<string, { operationId: string }>).map((o) => o.operationId));
