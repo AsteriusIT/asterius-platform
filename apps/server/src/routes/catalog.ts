@@ -6,6 +6,7 @@ import { actorOf, canEditEntity, isAdmin, requireAdmin, requireUser, type Princi
 import { deleteBlueprint, getBlueprint, listBlueprints, upsertBlueprint } from '../catalog/blueprints.js';
 import { deleteEntity, findEntity, getEntity, related, searchEntities, upsertEntity } from '../catalog/entities.js';
 import { badRequest, forbidden } from '../lib/errors.js';
+import { getVersion, listVersions } from '../catalog/history.js';
 import {
   deleteScorecard,
   evaluateAllEntities,
@@ -120,6 +121,33 @@ export async function catalogRoutes(app: FastifyInstance) {
   app.get('/blueprints/:bp/entities/:id/related', async (req) => {
     const { bp, id } = entityParam.parse(req.params);
     return related(bp, id);
+  });
+
+  // ---- history ----
+  const historyQuery = z.object({ limit: z.coerce.number().int().min(1).max(200).default(50), offset: z.coerce.number().int().min(0).default(0) });
+  for (const path of ['/blueprints/:bp/entities/:id/history', '/entities/:bp/:id/history'])
+    app.get(path, async (req) => {
+      const { bp, id } = entityParam.parse(req.params);
+      const q = historyQuery.parse(req.query);
+      return listVersions(bp, id, q.limit, q.offset);
+    });
+  /** Write an old snapshot back: a new version (`revert`) is recorded, nothing is rewritten. */
+  app.post('/blueprints/:bp/entities/:id/history/:version/revert', async (req) => {
+    const { bp, id } = entityParam.parse(req.params);
+    const { version } = z.object({ version: z.coerce.number().int().min(1) }).parse(req.params);
+    const v = await getVersion(bp, id, version);
+    await assertCanWrite(req.principal, bp, id, v.snapshot.team);
+    const { entity } = await upsertEntity(
+      bp,
+      { identifier: id, ...v.snapshot },
+      {
+        source: req.principal.provider === 'service' ? 'api' : 'ui',
+        actor: actorOf(req.principal),
+        op: 'revert',
+      },
+    );
+    await audit(actorOf(req.principal), 'entity.reverted', `${bp}/${id}`, { toVersion: version });
+    return entity;
   });
 
   app.post('/blueprints/:bp/entities', async (req, reply) => {

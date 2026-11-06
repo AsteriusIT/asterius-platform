@@ -64,6 +64,8 @@ const schema = z.object({
   HTTP_TIMEOUT_SECONDS: z.coerce.number().default(30),
   /** Keep run logs, sync runs, deliveries and audit entries for N days. */
   RETENTION_DAYS: z.coerce.number().int().min(1).default(90),
+  /** Keep entity history (versions, diffs) for N days; the latest version of every entity is always kept. */
+  HISTORY_RETENTION_DAYS: z.coerce.number().int().min(1).default(365),
   KUBECONFIG_PATH: z.string().optional(),
 
   // ---- AI agent steps (Claude) ----

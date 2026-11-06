@@ -6,6 +6,7 @@ import type {
   Delivery,
   Entity,
   EntityPage,
+  EntityVersion,
   HomeSummary,
   Integration,
   Meta,
@@ -108,6 +109,9 @@ export const api = {
   related: (bp: string, id: string) => request<RelatedEntities>('GET', v1(`/blueprints/${enc(bp)}/entities/${enc(id)}/related`)),
   saveEntity: (bp: string, id: string, body: unknown) => request<Entity>('PUT', v1(`/blueprints/${enc(bp)}/entities/${enc(id)}`), body),
   deleteEntity: (bp: string, id: string) => request('DELETE', v1(`/blueprints/${enc(bp)}/entities/${enc(id)}`)),
+  history: (bp: string, id: string) => request<{ items: EntityVersion[]; total: number }>('GET', v1(`/blueprints/${enc(bp)}/entities/${enc(id)}/history`)),
+  revertEntity: (bp: string, id: string, version: number) =>
+    request<Entity>('POST', v1(`/blueprints/${enc(bp)}/entities/${enc(id)}/history/${version}/revert`), {}),
   entityActions: (bp: string, id: string) => request<ActionView[]>('GET', v1(`/blueprints/${enc(bp)}/entities/${enc(id)}/actions`)),
 
   actions: (q: { blueprint?: string; trigger?: string } = {}) => request<ActionView[]>('GET', v1(`/actions${qs(q)}`)),

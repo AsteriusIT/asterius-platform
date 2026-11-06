@@ -61,4 +61,31 @@ export const CATALOG_MIGRATIONS: CatalogMigration[] = [
         ),
       ),
   },
+  {
+    id: 21,
+    name: 'entity history',
+    up: (d) =>
+      d.exec(
+        ddl(
+          d,
+          `
+        CREATE TABLE entity_versions (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          blueprint TEXT NOT NULL,
+          entity TEXT NOT NULL,
+          version INTEGER NOT NULL,
+          op TEXT NOT NULL,              -- create | update | delete | revert
+          actor_id TEXT,
+          actor_email TEXT,
+          source TEXT NOT NULL,
+          snapshot TEXT NOT NULL,        -- the entity after the change (before it, for a delete)
+          diff TEXT NOT NULL,            -- [{ path, before, after }]
+          at TEXT NOT NULL
+        );
+        CREATE UNIQUE INDEX entity_versions_entity ON entity_versions(blueprint, entity, version);
+        CREATE INDEX entity_versions_at ON entity_versions(at);
+      `,
+        ),
+      ),
+  },
 ];

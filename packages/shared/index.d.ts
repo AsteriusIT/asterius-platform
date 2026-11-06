@@ -112,6 +112,24 @@ export interface Entity {
   updatedAt: string;
 }
 
+export interface EntityVersionDiff {
+  /** `title`, `team`, `properties.<name>` or `relations.<name>`. */
+  path: string;
+  before: unknown;
+  after: unknown;
+}
+
+export interface EntityVersion {
+  version: number;
+  op: 'create' | 'update' | 'delete' | 'revert';
+  actor: string | null;
+  source: string;
+  /** The complete entity state after the change (before it, for a delete). */
+  snapshot: { title: string; team: string | null; properties: Record<string, unknown>; relations: Record<string, RelationValue> };
+  diff: EntityVersionDiff[];
+  at: string;
+}
+
 export interface EntityPage {
   items: Entity[];
   total: number;

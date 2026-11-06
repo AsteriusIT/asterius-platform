@@ -11,6 +11,7 @@ import { useAuth } from '../lib/auth';
 import { PropertyValue } from '../components/PropertyValue';
 import { orderedFields } from '../components/SchemaForm';
 import { ActionRunModal } from '../components/ActionRunModal';
+import { EntityHistory } from '../components/EntityHistory';
 import { DataTable } from '../components/DataTable';
 import { ResourceEditor } from '../components/ResourceEditor';
 import { EntityIcon } from '../components/icons';
@@ -142,6 +143,7 @@ function EntityView({ bp, e }: { bp: Blueprint; e: Entity }) {
           <Tabs.Tab value="runs" rightSection={runs.data?.total ? <Badge size="xs">{runs.data.total}</Badge> : undefined}>
             Runs
           </Tabs.Tab>
+          <Tabs.Tab value="history">History</Tabs.Tab>
           <Tabs.Tab value="json">Raw</Tabs.Tab>
         </Tabs.List>
 
@@ -221,6 +223,10 @@ function EntityView({ bp, e }: { bp: Blueprint; e: Entity }) {
               { key: 't', label: 'When', render: (r) => <TimeAgo at={r.createdAt} /> },
             ]}
           />
+        </Tabs.Panel>
+
+        <Tabs.Panel value="history">
+          <EntityHistory blueprint={bp.identifier} identifier={e.identifier} canEdit={!!canEdit} />
         </Tabs.Panel>
 
         <Tabs.Panel value="json">

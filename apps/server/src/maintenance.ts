@@ -2,6 +2,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import { config } from './config.js';
 import { all, run, withAdvisoryLock } from './db.js';
 import { purgeExpiredAuth } from './auth/users.js';
+import { purgeVersions } from './catalog/history.js';
 import { evaluateEverything, purgeScorecardHistory } from './catalog/scorecards.js';
 
 /** Hourly housekeeping (one replica at a time): expired sessions, data past RETENTION_DAYS. */
@@ -28,6 +29,8 @@ export async function housekeeping(log: FastifyBaseLogger) {
     const scored = await evaluateEverything();
     await purgeScorecardHistory(new Date(Date.now() - 365 * 86400_000).toISOString());
     if (scored) log.debug({ scored }, 'scorecards re-evaluated');
+    const versions = await purgeVersions(new Date(Date.now() - config.HISTORY_RETENTION_DAYS * 86400_000).toISOString());
+    if (versions.changes) log.info({ versions: versions.changes }, 'retention: old entity versions deleted');
     if (runs.changes + deliveries.changes + audit.changes + syncs)
       log.info({ runs: runs.changes, deliveries: deliveries.changes, audit: audit.changes, syncs }, 'retention: old records deleted');
   });

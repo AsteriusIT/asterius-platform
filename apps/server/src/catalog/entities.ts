@@ -6,6 +6,7 @@ import { entityInput, type EntityInput } from '../schemas.js';
 import { getBlueprintCached } from './blueprints.js';
 import { compact, validate } from './validation.js';
 import type { Actor } from '../audit.js';
+import { recordVersion, snapshotOf } from './history.js';
 import { evaluateEntity, removeEntityResults } from './scorecards.js';
 
 interface Row {
@@ -151,6 +152,8 @@ export interface UpsertOpts {
   createOnly?: boolean;
   /** Seed entities: never touch an existing entity. */
   skipExisting?: boolean;
+  /** History label of the change (a revert is recorded as such). */
+  op?: 'revert';
 }
 
 /**
@@ -193,6 +196,15 @@ export async function upsertEntity(blueprint: string, raw: unknown, opts: Upsert
         [...vals, t, blueprint, input.identifier],
       );
     await writeRelations(d, bp, input.identifier, relations);
+    await recordVersion(d, {
+      blueprint,
+      entity: input.identifier,
+      op: opts.op ?? (existing ? 'update' : 'create'),
+      actor: opts.actor,
+      source: opts.source,
+      before: existing ? snapshotOf(existing) : null,
+      after: snapshotOf({ ...next }),
+    });
   });
   const entity = await getEntity(blueprint, input.identifier);
   await emit({ type: existing ? 'entity.updated' : 'entity.created', blueprint, data: { entity, before: existing ?? null }, actor: opts.actor });
@@ -215,7 +227,10 @@ async function writeRelations(d: Driver, bp: Blueprint, identifier: string, rela
 
 export async function deleteEntity(blueprint: string, identifier: string, actor?: Actor) {
   const entity = await getEntity(blueprint, identifier);
-  await tx((d) => d.query('DELETE FROM entities WHERE blueprint = ? AND identifier = ?', [blueprint, identifier]));
+  await tx(async (d) => {
+    await d.query('DELETE FROM entities WHERE blueprint = ? AND identifier = ?', [blueprint, identifier]);
+    await recordVersion(d, { blueprint, entity: identifier, op: 'delete', actor, source: actor ? 'user' : 'system', before: snapshotOf(entity), after: null });
+  });
   await removeEntityResults(blueprint, identifier);
   await emit({ type: 'entity.deleted', blueprint, data: { entity }, actor });
   return entity;
