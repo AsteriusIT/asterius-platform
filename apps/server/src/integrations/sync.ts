@@ -3,7 +3,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { SyncRun, SyncStats } from '@asterius/shared';
 import { all, bool, json, later, newId, now, run } from '../db.js';
 import { errorMessage } from '../lib/errors.js';
-import { render } from '../lib/expr.js';
+import { redact, render } from '../lib/expr.js';
 import { resolveRef } from '../secrets.js';
 import { deleteEntity, upsertEntity } from '../catalog/entities.js';
 import { metrics } from '../metrics.js';
@@ -20,8 +20,10 @@ const SYSTEM_ACTOR = { id: null, email: 'integration' };
 class SyncLog {
   lines: string[] = [];
   errors = 0;
+  /** Resolved secret values of the integration: upstream error bodies and item errors may echo them. */
+  secrets: string[] = [];
   add = (line: string) => {
-    if (this.lines.length < MAX_LOG_LINES) this.lines.push(`${new Date().toISOString().slice(11, 19)} ${line}`);
+    if (this.lines.length < MAX_LOG_LINES) this.lines.push(`${new Date().toISOString().slice(11, 19)} ${redact(line, this.secrets)}`);
   };
   error = (line: string) => {
     this.errors++;
@@ -30,9 +32,13 @@ class SyncLog {
   };
 }
 
+export async function renderConfigWithSecrets(r: IntegrationRow) {
+  const { value, secrets } = await render(json(r.config, {}), { integration: { identifier: r.identifier } }, resolveRef);
+  return { config: value as Record<string, unknown>, secrets };
+}
+
 export async function renderConfig(r: IntegrationRow) {
-  const { value } = await render(json(r.config, {}), { integration: { identifier: r.identifier } }, resolveRef);
-  return value as Record<string, unknown>;
+  return (await renderConfigWithSecrets(r)).config;
 }
 
 async function applyMapped(integration: string, m: Mapped, merge: boolean, stats: SyncStats, log: SyncLog, seen?: Set<string>) {
@@ -92,7 +98,9 @@ export async function runSync(identifier: string, trigger: SyncRun['trigger']): 
       const source = getSource(r.type);
       if (!source.list) throw new Error(`${r.type} integrations are push-only`);
       const mappings = json<MappingDef[]>(r.mappings, []);
-      const config = await renderConfig(r);
+      const rendered = await renderConfigWithSecrets(r);
+      const config = rendered.config;
+      log.secrets = rendered.secrets;
       const bindings: Bindings = { integration: { identifier, config: json(r.config, {}) } };
       const seen = new Set<string>();
       let n = 0;
@@ -164,7 +172,7 @@ async function deleteMissing(r: IntegrationRow, mappings: MappingDef[], seen: Se
 // ---------- inbound webhooks ----------
 export function verifyWebhook(cfg: Record<string, unknown>, headers: Record<string, string | string[] | undefined>, rawBody: string) {
   const secret = typeof cfg.secret === 'string' ? cfg.secret : '';
-  if (!secret) return true; // explicitly unauthenticated (not recommended; documented)
+  if (!secret) return cfg.allowUnauthenticated === true; // anonymous only when the admin explicitly opted in
   const eq = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
   const header = (name: string) => {
     const v = headers[name.toLowerCase()];
@@ -180,10 +188,39 @@ export function verifyWebhook(cfg: Record<string, unknown>, headers: Record<stri
   return eq(token, secret);
 }
 
+/** Provider delivery ids: GitHub `X-GitHub-Delivery`, GitLab `X-Gitlab-Event-UUID`, generic `X-Asterius-Delivery`. */
+export function deliveryIdOf(headers: Record<string, string | string[] | undefined>): string | undefined {
+  for (const h of ['x-github-delivery', 'x-gitlab-event-uuid', 'x-asterius-delivery']) {
+    const v = headers[h];
+    const id = Array.isArray(v) ? v[0] : v;
+    if (id) return id.slice(0, 200);
+  }
+  return undefined;
+}
+
+export const DELIVERY_WINDOW_MS = 24 * 3600_000;
+
+/** Remember a delivery id; false when it was already seen inside the window (a replay). */
+export async function recordDelivery(integration: string, deliveryId: string): Promise<boolean> {
+  const cutoff = new Date(Date.now() - DELIVERY_WINDOW_MS).toISOString();
+  await run('DELETE FROM ingest_deliveries WHERE integration = ? AND delivery_id = ? AND received_at < ?', integration, deliveryId, cutoff);
+  const { changes } = await run(
+    'INSERT INTO ingest_deliveries (integration, delivery_id, received_at) VALUES (?, ?, ?) ON CONFLICT (integration, delivery_id) DO NOTHING',
+    integration,
+    deliveryId,
+    now(),
+  );
+  return changes > 0;
+}
+
 /** Apply the mappings of a webhook integration to one received payload. */
 export async function ingest(r: IntegrationRow, payload: unknown, headers: Record<string, unknown>): Promise<SyncStats & { errors: string[] }> {
   const stats: SyncStats = { upserted: 0, deleted: 0, skipped: 0, failed: 0 };
   const log = new SyncLog();
+  log.secrets = await renderConfigWithSecrets(r).then(
+    (x) => x.secrets,
+    () => [],
+  );
   const bindings: Bindings = { integration: { identifier: r.identifier, config: json(r.config, {}) }, headers };
   const items = Array.isArray(payload) ? payload : [payload];
   for (const item of items) for (const m of json<MappingDef[]>(r.mappings, [])) await processItem(r, m, item, bindings, stats, log);

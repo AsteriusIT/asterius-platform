@@ -15,7 +15,7 @@ import {
   updateUser,
 } from '../auth/users.js';
 import { deleteTeam, listTeams, upsertTeam } from '../auth/teams.js';
-import { deleteSecret, listSecrets, setSecret } from '../secrets.js';
+import { deleteSecret, listSecrets, setSecret, shortSecretWarning } from '../secrets.js';
 import { deleteWebhook, getWebhook, listDeliveries, listWebhooks, redeliver, upsertWebhook } from '../webhooks/webhooks.js';
 import { exportConfig, managedCounts } from '../config-loader.js';
 import { config } from '../config.js';
@@ -99,7 +99,7 @@ export async function adminRoutes(app: FastifyInstance, opts: { reloadConfig: ()
       const body = z.object({ value: z.string().min(1).max(64_000), description: z.string().max(500).default('') }).parse(req.body);
       await setSecret(id, body.value, body.description, req.principal.id);
       await audit(actorOf(req.principal), 'secret.set', id);
-      return { ok: true };
+      return { ok: true, warning: shortSecretWarning(body.value) };
     });
     admin.delete('/secrets/:id', async (req) => {
       const { id } = idParam.parse(req.params);
@@ -110,8 +110,8 @@ export async function adminRoutes(app: FastifyInstance, opts: { reloadConfig: ()
 
     admin.get('/webhooks', async () => listWebhooks());
     admin.get('/webhooks/:id', async (req) => {
-      const { secret, ...w } = await getWebhook(idParam.parse(req.params).id);
-      return { ...w, secret: secret ?? null }; // a reference (${secret:NAME}), never a value
+      const { secret, secondarySecret, ...w } = await getWebhook(idParam.parse(req.params).id);
+      return { ...w, secret: secret ?? null, secondarySecret: secondarySecret ?? null }; // references (${secret:NAME}), never values
     });
     admin.put('/webhooks/:id', async (req) => {
       const { id } = idParam.parse(req.params);

@@ -86,7 +86,9 @@ export async function actionRoutes(app: FastifyInstance) {
     const r = await getRunRow(id);
     if (r.status !== 'IN_PROGRESS') throw conflict('Only runs in progress accept logs');
     const step = await runningInvokeStep(id);
-    for (const l of parseLogs(req.body)) await addLog(id, l.message, l.level ?? 'info', step ?? null);
+    if (step)
+      await updateStep(id, step, { logs: parseLogs(req.body) }); // masks secrets
+    else for (const l of parseLogs(req.body)) await addLog(id, l.message, l.level ?? 'info', null);
     return { ok: true };
   });
 
@@ -141,7 +143,7 @@ export async function actionRoutes(app: FastifyInstance) {
         })
         .parse(req.query);
       const status = q.status ? z.array(z.enum(RUN_STATUSES)).parse(q.status.split(',')) : undefined;
-      return listRuns({ ...q, status, mine: q.mine === 'true' ? req.principal.id : undefined });
+      return listRuns({ ...q, status, mine: q.mine === 'true' ? req.principal.id : undefined }, req.principal);
     });
     scoped.get('/runs/:id', async (req) => getRun(idParam.parse(req.params).id, req.principal));
     scoped.get('/approvals', async (req) => pendingApprovals(req.principal));

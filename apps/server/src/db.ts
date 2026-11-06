@@ -361,6 +361,43 @@ export const MIGRATIONS: Migration[] = [
         );
       `),
   },
+  {
+    id: 4,
+    name: 'users: local role override (Entra roles follow group claims unless an admin set the role by hand)',
+    up: (d) => d.exec('ALTER TABLE users ADD COLUMN role_override INTEGER NOT NULL DEFAULT 0'),
+  },
+  {
+    id: 5,
+    name: 'inbound webhook delivery ids (replay protection)',
+    up: (d) =>
+      d.exec(`
+        CREATE TABLE ingest_deliveries (
+          integration TEXT NOT NULL,
+          delivery_id TEXT NOT NULL,
+          received_at TEXT NOT NULL,
+          PRIMARY KEY (integration, delivery_id)
+        );
+        CREATE INDEX ingest_deliveries_at ON ingest_deliveries(received_at);
+      `),
+  },
+  {
+    id: 6,
+    name: 'login failure counters shared by all replicas',
+    up: (d) =>
+      d.exec(`
+        CREATE TABLE login_failures (
+          key TEXT PRIMARY KEY,
+          count INTEGER NOT NULL DEFAULT 0,
+          locked_until TEXT,
+          updated_at TEXT NOT NULL
+        );
+      `),
+  },
+  {
+    id: 7,
+    name: 'outbound webhooks: secondary signing secret for rotation',
+    up: (d) => d.exec('ALTER TABLE webhooks ADD COLUMN secondary_secret TEXT'),
+  },
 ];
 
 /** Apply pending numbered migrations (idempotent; serialized across replicas by an advisory lock on Postgres). */

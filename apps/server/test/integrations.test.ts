@@ -129,6 +129,38 @@ describe('inbound webhooks', () => {
     expect((await member.get('/api/v1/blueprints/app/entities/w1')).data.properties.status).toBe('created');
   });
 
+  it('requires a secret unless allowUnauthenticated, and answers generically', async () => {
+    const bad = await admin.put('/api/v1/integrations/open', { title: 'Open', type: 'webhook', config: {}, mappings: [] });
+    expect(bad.status).toBe(400);
+    expect(bad.data.error).toMatch(/secret/);
+    expect(
+      (await admin.put('/api/v1/integrations/open', { title: 'Open', type: 'webhook', config: { allowUnauthenticated: true }, mappings: [] })).status,
+    ).toBe(200);
+    expect((await app.inject({ method: 'POST', url: '/api/v1/ingest/open', payload: { a: 1 } })).statusCode).toBe(200);
+    await admin.put('/api/v1/integrations/ghost', { title: 'G', type: 'webhook', config: { secret: '${secret:NOT_DEFINED}' }, mappings: [] });
+    const res = await app.inject({ method: 'POST', url: '/api/v1/ingest/ghost', payload: {} });
+    expect(res.statusCode).toBe(503);
+    expect(res.body).not.toContain('NOT_DEFINED');
+  });
+
+  it('ignores replayed delivery ids', async () => {
+    const raw = JSON.stringify({ action: 'created', app: { id: 'r1', name: 'R' } });
+    const send = () =>
+      app.inject({
+        method: 'POST',
+        url: '/api/v1/ingest/events',
+        headers: {
+          'content-type': 'application/json',
+          'x-event': 'app',
+          'x-github-delivery': 'abc-123',
+          'x-hub-signature-256': `sha256=${createHmac('sha256', 'hook-secret-1').update(raw).digest('hex')}`,
+        },
+        payload: raw,
+      });
+    expect((await send()).json()).toMatchObject({ upserted: 1 });
+    expect((await send()).json()).toMatchObject({ duplicate: true, upserted: 0 });
+  });
+
   it('filters events and deletes on a delete expression', async () => {
     expect((await post({ action: 'created', app: { id: 'w2' } }, 'hook-secret-1', 'other')).json()).toMatchObject({ upserted: 0, skipped: 1 });
     expect((await post({ action: 'deleted', app: { id: 'w1' } })).json()).toMatchObject({ deleted: 1 });

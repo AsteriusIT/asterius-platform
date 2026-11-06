@@ -5,8 +5,8 @@ import { all, bool, json, later, now, one, run } from '../db.js';
 import { errorMessage, managedError, notFound } from '../lib/errors.js';
 import { http, UpstreamError } from '../lib/http.js';
 import { invalidateWebhookCache } from '../events.js';
-import { resolveValue } from '../secrets.js';
-import { webhookDef, type WebhookDef } from '../schemas.js';
+import { resolveValue, setSecret } from '../secrets.js';
+import { SECRET_REF, webhookDef, type WebhookDef } from '../schemas.js';
 import { metrics } from '../metrics.js';
 import { withSpan } from '../tracing.js';
 
@@ -23,6 +23,7 @@ interface Row {
   events: string;
   blueprints: string;
   secret: string | null;
+  secondary_secret: string | null;
   enabled: number;
   managed: number;
 }
@@ -36,6 +37,7 @@ const toWebhook = (r: Row): Webhook => ({
   enabled: bool(r.enabled),
   managed: bool(r.managed),
   hasSecret: !!r.secret,
+  hasSecondarySecret: !!r.secondary_secret,
 });
 
 export async function listWebhooks(): Promise<Webhook[]> {
@@ -45,7 +47,9 @@ export async function listWebhooks(): Promise<Webhook[]> {
 export async function getWebhook(id: string) {
   const r = await one<Row>('SELECT * FROM webhooks WHERE identifier = ?', id);
   if (!r) throw notFound(`Webhook ${id}`);
-  return { ...toWebhook(r), secret: r.secret };
+  // Defence in depth: only ever expose a reference, never a literal value.
+  const ref = (v: string | null) => (v && SECRET_REF.test(v.trim()) ? v : null);
+  return { ...toWebhook(r), secret: ref(r.secret), secondarySecret: ref(r.secondary_secret) };
 }
 
 export async function upsertWebhook(input: unknown, opts: { managed?: boolean } = {}) {
@@ -55,17 +59,18 @@ export async function upsertWebhook(input: unknown, opts: { managed?: boolean } 
   const t = now();
   // An omitted secret keeps the current one (the API never returns it).
   const secret = def.secret === undefined ? (existing?.secret ?? null) : (def.secret ?? null);
-  const vals = [def.title, def.url, JSON.stringify(def.events), JSON.stringify(def.blueprints), secret, def.enabled ? 1 : 0, opts.managed ? 1 : 0];
+  const secondary = def.secondarySecret === undefined ? (existing?.secondary_secret ?? null) : (def.secondarySecret ?? null);
+  const vals = [def.title, def.url, JSON.stringify(def.events), JSON.stringify(def.blueprints), secret, secondary, def.enabled ? 1 : 0, opts.managed ? 1 : 0];
   if (existing)
     await run(
-      'UPDATE webhooks SET title = ?, url = ?, events = ?, blueprints = ?, secret = ?, enabled = ?, managed = ?, updated_at = ? WHERE identifier = ?',
+      'UPDATE webhooks SET title = ?, url = ?, events = ?, blueprints = ?, secret = ?, secondary_secret = ?, enabled = ?, managed = ?, updated_at = ? WHERE identifier = ?',
       ...vals,
       t,
       def.identifier,
     );
   else
     await run(
-      'INSERT INTO webhooks (title, url, events, blueprints, secret, enabled, managed, created_at, updated_at, identifier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO webhooks (title, url, events, blueprints, secret, secondary_secret, enabled, managed, created_at, updated_at, identifier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       ...vals,
       t,
       t,
@@ -115,6 +120,18 @@ export async function redeliver(id: string) {
   if (!changes) throw notFound('Delivery');
 }
 
+// ---------- signatures ----------
+/**
+ * `X-Asterius-Signature: t=<unix seconds>,v1=<hex>[,v1=<hex>]` where each v1 is HMAC-SHA256 of `"<t>.<body>"` keyed with
+ * a signing secret (two entries while a rotation is in progress). Receivers recompute it, accept any matching v1 and reject
+ * timestamps more than 5 minutes old (replay protection). The timestamp is taken at each attempt, so retries stay valid.
+ */
+export function signPayload(payload: string, secrets: (string | undefined)[], at = Math.floor(Date.now() / 1000)): string | undefined {
+  const keys = secrets.filter((s): s is string => !!s);
+  if (!keys.length) return undefined;
+  return `t=${at},${keys.map((k) => `v1=${createHmac('sha256', k).update(`${at}.${payload}`).digest('hex')}`).join(',')}`;
+}
+
 // ---------- delivery worker ----------
 const MAX_ATTEMPTS = 8;
 const backoffMs = (attempt: number) => Math.min(6 * 3600_000, 30_000 * 2 ** (attempt - 1)); // 30 s … 6 h
@@ -128,8 +145,8 @@ async function deliver(d: DeliveryRow) {
   const attempts = Number(d.attempts) + 1;
   try {
     const headers: Record<string, string> = { 'content-type': 'application/json', 'x-asterius-event': d.event, 'x-asterius-delivery': d.id };
-    const secret = await resolveValue(w.secret);
-    if (secret) headers['x-asterius-signature'] = `sha256=${createHmac('sha256', secret).update(d.payload).digest('hex')}`;
+    const signature = await signPayload(d.payload, [await resolveValue(w.secret), await resolveValue(w.secondary_secret)]);
+    if (signature) headers['x-asterius-signature'] = signature;
     const res = await withSpan('webhook.deliver', { 'webhook.id': w.identifier, event: d.event }, () =>
       http(w.url, { method: 'POST', headers, body: d.payload, timeoutMs: 15_000 }),
     );
@@ -188,4 +205,19 @@ export function startDeliveryWorker(log: FastifyBaseLogger) {
   const timer = setInterval(() => void tick(), 3_000);
   timer.unref();
   return () => clearInterval(timer);
+}
+
+/**
+ * Older versions accepted a literal signing secret. Move any such value into the encrypted secret store and rewrite
+ * the row as a `${secret:NAME}` reference. Idempotent; runs at startup.
+ */
+export async function migrateLiteralWebhookSecrets() {
+  const rows = await all<{ identifier: string; secret: string }>("SELECT identifier, secret FROM webhooks WHERE secret IS NOT NULL AND secret <> ''");
+  for (const r of rows) {
+    if (SECRET_REF.test(r.secret.trim())) continue;
+    const name = `webhook-${r.identifier}-signing`.slice(0, 100);
+    await setSecret(name, r.secret, `Signing secret of webhook ${r.identifier} (migrated from a plaintext value)`, null);
+    await run('UPDATE webhooks SET secret = ? WHERE identifier = ?', `\${secret:${name}}`, r.identifier);
+  }
+  if (rows.length) invalidateWebhookCache();
 }

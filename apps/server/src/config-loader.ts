@@ -208,7 +208,14 @@ export async function startConfigLoader(log: FastifyBaseLogger) {
 export async function exportConfig(): Promise<string> {
   const strip = <T extends Record<string, unknown>>(o: T, keys: string[]) => Object.fromEntries(Object.entries(o).filter(([k]) => !keys.includes(k)));
   const webhooks = await Promise.all(
-    (await listWebhooks()).map(async (w) => ({ ...strip(w as never, ['managed', 'hasSecret']), secret: (await getWebhook(w.identifier)).secret ?? undefined })),
+    (await listWebhooks()).map(async (w) => {
+      const full = await getWebhook(w.identifier);
+      return {
+        ...strip(w as never, ['managed', 'hasSecret', 'hasSecondarySecret']),
+        secret: full.secret ?? undefined,
+        secondarySecret: full.secondarySecret ?? undefined,
+      };
+    }),
   );
   const doc = {
     teams: (await listTeams()).map((t) => strip(t as never, ['managed', 'members'])),

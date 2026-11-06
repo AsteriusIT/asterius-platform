@@ -134,7 +134,23 @@ Entity identifiers may contain `/`, `:` and `@` (third-party ids); URL-encode th
 
 ## Outbound webhooks
 
-The payload has the form `{ id, type, at, blueprint, actor, data }`. Event types are `entity.created`, `entity.updated` (with `data.before`), `entity.deleted`, `run.created` and `run.updated`. Requests carry the headers `X-Asterius-Event`, `X-Asterius-Delivery` and `X-Asterius-Signature: sha256=<HMAC-SHA256(body, secret)>`. Delivery is at-least-once: retries back off from 30 s to 6 h (8 attempts), so deduplicate on `id`. Client errors (4xx other than 408/429) are not retried.
+The payload has the form `{ id, type, at, blueprint, actor, data }`. Event types are `entity.created`, `entity.updated` (with `data.before`), `entity.deleted`, `run.created` and `run.updated`. Requests carry the headers `X-Asterius-Event`, `X-Asterius-Delivery` and `X-Asterius-Signature: t=<unix seconds>,v1=<hex>`, where `v1 = HMAC-SHA256(secret, "<t>.<body>")`. Receivers must recompute it over the raw body, compare in constant time, and reject timestamps more than **5 minutes** from their clock (replay protection); the timestamp is refreshed on every retry. `secret` and `secondarySecret` must be references (`${secret:NAME}` / `${env:NAME}`); literal values are rejected.
+
+**Rotating a signing secret without downtime:** (1) create the new secret and set it as `secondarySecret`: deliveries now carry two `v1=` entries, one per secret; (2) make receivers accept either (any matching `v1`) and switch them to the new secret; (3) move the new secret to `secret` and remove `secondarySecret`.
+
+Receiver sketch (Node):
+
+```ts
+function verify(header: string, rawBody: string, secret: string, toleranceSec = 300) {
+  const parts = header.split(',').map((p) => p.split('='));
+  const t = Number(parts.find(([k]) => k === 't')?.[1]);
+  if (!t || Math.abs(Date.now() / 1000 - t) > toleranceSec) return false;
+  const expected = createHmac('sha256', secret).update(`${t}.${rawBody}`).digest('hex');
+  return parts.some(([k, v]) => k === 'v1' && v?.length === expected.length && timingSafeEqual(Buffer.from(v), Buffer.from(expected)));
+}
+```
+
+The `webhook` invoker (action steps) keeps its simpler `X-Asterius-Signature: sha256=<HMAC of the body>`. Delivery is at-least-once: retries back off from 30 s to 6 h (8 attempts), so deduplicate on `id`. Client errors (4xx other than 408/429) are not retried.
 
 ## Writing a code plugin
 

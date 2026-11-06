@@ -97,7 +97,7 @@ Guarantees:
 - **Secrets.** Stored with AES-256-GCM using `SECRETS_KEY`, and referenced by name in configuration. `${env:…}` cannot read platform settings such as `DATABASE_URL` or `SECRETS_KEY`.
 - **Run callbacks.** The token is an HMAC of the run id, so it is valid for that run only and verifiable by any replica without storage.
 - **Templates.** Admin-written text is tokenized once; user inputs and secret values are never evaluated as expressions or references.
-- **Outbound requests.** Webhooks and invokers are signed (`X-Asterius-Signature: sha256=…`), with timeouts. Inbound webhooks are verified the same way.
+- **Outbound requests.** Outbound webhooks are signed over a timestamp and the body (`X-Asterius-Signature: t=…,v1=…`, replay window 5 min, dual-secret rotation), the webhook invoker signs the body (`sha256=…`); all calls have timeouts and go through the SSRF guard (private, loopback and link-local destinations need `OUTBOUND_ALLOW`). Inbound webhooks are verified the same way.
 - **Audit.** The audit log records definition changes, catalog writes, runs, approvals, tokens, secrets and sign-ins.
 
 ## Observability

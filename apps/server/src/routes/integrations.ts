@@ -12,7 +12,7 @@ import {
   syncHistory,
   upsertIntegration,
 } from '../integrations/integrations.js';
-import { ingest, renderConfig, verifyWebhook } from '../integrations/sync.js';
+import { deliveryIdOf, ingest, recordDelivery, renderConfig, verifyWebhook } from '../integrations/sync.js';
 import { getSource } from '../integrations/sources/index.js';
 import { mapItem } from '../integrations/mapping.js';
 import { mappingDef } from '../schemas.js';
@@ -39,9 +39,12 @@ export async function integrationRoutes(app: FastifyInstance) {
       cfg = await renderConfig(r);
     } catch (err) {
       req.log.warn({ err, integration: id }, 'webhook integration misconfigured');
-      return reply.code(503).send({ error: `Integration "${id}" is misconfigured: ${(err as Error).message}` });
+      return reply.code(503).send({ error: 'Service unavailable' }); // details stay in the logs: callers are anonymous
     }
     if (!verifyWebhook(cfg, req.headers, req.rawBody ?? JSON.stringify(req.body ?? null))) return reply.code(401).send({ error: 'invalid signature or token' });
+    // Replay protection: a delivery id (GitHub, GitLab) is processed once within the dedupe window.
+    const deliveryId = deliveryIdOf(req.headers);
+    if (deliveryId && !(await recordDelivery(id, deliveryId))) return { duplicate: true, upserted: 0, deleted: 0, skipped: 0, failed: 0, errors: [] };
     const headers = Object.fromEntries(Object.entries(req.headers).filter(([k]) => !['authorization', 'cookie', 'x-asterius-token'].includes(k)));
     return ingest(r, req.body, headers);
   });

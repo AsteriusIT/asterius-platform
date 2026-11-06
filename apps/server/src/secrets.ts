@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import { config, paths } from './config.js';
 import { all, dialect, now, one, run } from './db.js';
 import { badRequest, notFound } from './lib/errors.js';
-import type { RefResolver } from './lib/expr.js';
+import { MIN_SECRET_LENGTH, type RefResolver } from './lib/expr.js';
 import type { SecretInfo } from '@asterius/shared';
 
 /**
@@ -52,6 +52,12 @@ export async function listSecrets(): Promise<SecretInfo[]> {
   const rows = await all<{ name: string; description: string; updated_at: string }>('SELECT name, description, updated_at FROM secrets ORDER BY name');
   return rows.map((r) => ({ name: r.name, description: r.description, updatedAt: r.updated_at }));
 }
+
+/** Returned when a secret is too short to be masked in logs and results (see redact). */
+export const shortSecretWarning = (value: string) =>
+  value.length < MIN_SECRET_LENGTH
+    ? `This secret is shorter than ${MIN_SECRET_LENGTH} characters: it will not be masked if it appears in run logs or results. Prefer a longer value.`
+    : undefined;
 
 export async function setSecret(name: string, value: string, description: string, userId: string | null) {
   if (!SECRET_NAME.test(name)) throw badRequest('Secret names may contain letters, digits, _ . - (max 100)');

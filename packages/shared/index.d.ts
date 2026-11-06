@@ -376,6 +376,7 @@ export interface Webhook {
   enabled: boolean;
   managed: boolean;
   hasSecret: boolean;
+  hasSecondarySecret?: boolean;
 }
 
 export interface Delivery {
