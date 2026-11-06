@@ -44,7 +44,8 @@ export async function integrationRoutes(app: FastifyInstance) {
     hooks.post('/ingest/:id', { config: { rateLimit: { max: 600, timeWindow: '1 minute' } } }, async (req, reply) => {
       const { id } = idParam.parse(req.params);
       const r = await getIntegrationRow(id).catch(() => undefined);
-      if (!r || !getSource(r.type).push) return reply.code(404).send({ error: 'not found' });
+      const source = r ? getSource(r.type) : undefined;
+      if (!r || !source || (!source.push && !source.pushScope)) return reply.code(404).send({ error: 'not found' });
       if (!bool(r.enabled)) return reply.code(409).send({ error: 'integration disabled' });
       let cfg: Record<string, unknown>;
       try {
@@ -55,7 +56,10 @@ export async function integrationRoutes(app: FastifyInstance) {
       }
       const contentType = String(req.headers['content-type'] ?? 'application/json');
       const raw = req.rawBody ?? (typeof req.body === 'string' ? req.body : JSON.stringify(req.body ?? null));
-      if (!verifyWebhook(cfg, req.headers, raw)) return reply.code(401).send({ error: 'invalid signature or token' });
+      // Pull sources refreshed by a provider webhook authenticate with `pushSecret` / `pushPreset`.
+      const auth = source.push ? cfg : { secret: cfg.pushSecret, preset: cfg.pushPreset, signatureHeader: cfg.pushSignatureHeader };
+      if (!source.push && !cfg.pushSecret) return reply.code(404).send({ error: 'not found' });
+      if (!verifyWebhook(auth, req.headers, raw)) return reply.code(401).send({ error: 'invalid signature or token' });
       const headers = Object.fromEntries(
         Object.entries(req.headers).filter(([k]) => !['authorization', 'cookie', 'x-asterius-token', 'x-gitlab-token'].includes(k)),
       );
@@ -64,6 +68,12 @@ export async function integrationRoutes(app: FastifyInstance) {
         body = decodeBody(contentType, raw);
       } catch {
         return reply.code(400).send({ error: 'payload cannot be decoded for its content type' });
+      }
+      if (!source.push) {
+        const scope = source.pushScope!(body, req.headers);
+        if (!scope) return reply.code(202).send({ queued: false, ignored: true });
+        await requestSync(id, undefined, scope);
+        return reply.code(202).send({ queued: true, scope });
       }
       // Slack's endpoint verification handshake.
       if (cfg.preset === 'slack' && (body as { type?: string } | null)?.type === 'url_verification')

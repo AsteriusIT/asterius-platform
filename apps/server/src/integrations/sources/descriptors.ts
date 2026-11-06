@@ -135,6 +135,35 @@ const azure: { list: Lister; fetch: Fetcher } = {
 
 const PROVIDERS = { github, gitlab, 'azure-devops': azure } as const;
 
+/**
+ * Repository (`fullName` as listed by the provider) of a push event of GitHub, GitLab or Azure DevOps; undefined for
+ * events that cannot change a descriptor (other branches than the default one, non-push events).
+ */
+export function repositoryOfPush(payload: unknown, headers: Record<string, unknown> = {}): string | undefined {
+  const p = (payload ?? {}) as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+  const event = String(headers['x-github-event'] ?? headers['x-gitlab-event'] ?? '');
+  if (p.repository?.full_name && p.ref) {
+    // GitHub push
+    if (event && event !== 'push') return undefined;
+    const def = p.repository.default_branch;
+    return !def || p.ref === `refs/heads/${def}` ? String(p.repository.full_name) : undefined;
+  }
+  if (p.project?.path_with_namespace) {
+    // GitLab push
+    if (event && !/push/i.test(event)) return undefined;
+    const def = p.project.default_branch;
+    return !def || !p.ref || p.ref === `refs/heads/${def}` ? String(p.project.path_with_namespace) : undefined;
+  }
+  if (p.eventType === 'git.push' && p.resource?.repository) {
+    // Azure DevOps service hook
+    const repo = p.resource.repository;
+    const def = String(repo.defaultBranch ?? '');
+    const ref = String(p.resource.refUpdates?.[0]?.name ?? '');
+    return !def || !ref || ref === def ? `${repo.project?.name}/${repo.name}` : undefined;
+  }
+  return undefined;
+}
+
 export const descriptorsSource: Source = {
   info: {
     type: 'git-descriptors',
@@ -143,7 +172,14 @@ export const descriptorsSource: Source = {
     kinds: ['descriptor'],
     example: {
       type: 'git-descriptors',
-      config: { provider: 'github', org: 'my-org', token: '${secret:GITHUB_TOKEN}', path: 'asterius.yaml' },
+      config: {
+        provider: 'github',
+        org: 'my-org',
+        token: '${secret:GITHUB_TOKEN}',
+        path: 'asterius.yaml',
+        pushSecret: '${secret:PUSH_WEBHOOK_SECRET}',
+        pushPreset: 'github',
+      }, // pushSecret: refresh a repository on push (POST /api/v1/ingest/<id>)
       mappings: [
         {
           kind: 'descriptor',
@@ -167,12 +203,16 @@ export const descriptorsSource: Source = {
     const p = str(c.path || 'asterius.yaml');
     if (p.startsWith('/') || p.includes('..')) throw new Error('git-descriptors: path must be relative to the repository root');
   },
-  async *list(_kind, { config, log, incomplete }) {
+  pushScope(payload, headers) {
+    return repositoryOfPush(payload, headers);
+  },
+  async *list(_kind, { config, log, incomplete, scope }) {
     const provider = PROVIDERS[str(config.provider) as keyof typeof PROVIDERS];
     const path = str(config.path || 'asterius.yaml');
     let scanned = 0;
     let found = 0;
-    for await (const repos of provider.list(config, log)) {
+    for await (let repos of provider.list(config, log)) {
+      if (scope) repos = repos.filter((r) => r.fullName === scope);
       for (let i = 0; i < repos.length; i += CONCURRENCY) {
         const results = await Promise.all(
           repos.slice(i, i + CONCURRENCY).map(async (repo) => {

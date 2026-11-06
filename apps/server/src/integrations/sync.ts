@@ -238,7 +238,7 @@ async function processItem(r: IntegrationRow, mapping: MappingDef, item: unknown
 }
 
 /** Full pull of one integration. Returns undefined when another worker holds it. */
-export async function runSync(identifier: string, trigger: SyncRun['trigger'], opts: { kind?: string } = {}): Promise<SyncRun | undefined> {
+export async function runSync(identifier: string, trigger: SyncRun['trigger'], opts: { kind?: string; scope?: string } = {}): Promise<SyncRun | undefined> {
   const t = now();
   const { changes } = await run(
     'UPDATE integrations SET locked_until = ? WHERE identifier = ? AND (locked_until IS NULL OR locked_until < ?)',
@@ -271,8 +271,9 @@ export async function runSync(identifier: string, trigger: SyncRun['trigger'], o
         const prev = json<SyncState>(r.sync_state, { kinds: {} });
         const reconcileMs = Math.max(0, Number(config.fullReconcileHours ?? DEFAULT_RECONCILE_HOURS)) * 3_600_000;
         if (opts.kind && !mappings.some((m) => m.kind === opts.kind)) throw new Error(`no mapping for kind "${opts.kind}"`);
+        if (opts.scope) log.add(`targeted sync of "${opts.scope}": no deletions, full reconcile clock untouched`);
         if (opts.kind) log.add(`syncing only kind "${opts.kind}": no deletions, full reconcile clock untouched`);
-        const full = !!opts.kind || !source.incremental || !prev.lastFullAt || Date.now() - Date.parse(prev.lastFullAt) >= reconcileMs;
+        const full = !!opts.kind || !!opts.scope || !source.incremental || !prev.lastFullAt || Date.now() - Date.parse(prev.lastFullAt) >= reconcileMs;
         if (source.incremental) log.add(full ? 'full sync' : `incremental sync (full reconcile after ${prev.lastFullAt})`);
         const nextKinds: Record<string, unknown> = { ...prev.kinds };
         const listings: KindListing[] = [];
@@ -288,6 +289,7 @@ export async function runSync(identifier: string, trigger: SyncRun['trigger'], o
             config,
             log: log.add,
             startedAt: t,
+            scope: opts.scope,
             state: full ? undefined : prev.kinds[kind],
             setState: (s) => {
               newState = s;
@@ -308,14 +310,17 @@ export async function runSync(identifier: string, trigger: SyncRun['trigger'], o
         }
         log.add(`${n} items read`);
         if (listings.some((l) => l.partial)) log.add('deletions of incrementally listed kinds are deferred to the next full reconcile');
-        if (bool(r.delete_missing) && !opts.kind)
+        if (bool(r.delete_missing) && !opts.kind && !opts.scope)
           await deleteMissing(r, listings, seen, stats, log, {
             maxPercent: Number(r.delete_max_percent ?? DEFAULT_MAX_DELETE_PERCENT),
             dryRun: bool(r.delete_dry_run),
           });
         if (source.incremental) {
           const complete = listings.every((l) => !l.incomplete);
-          state = { kinds: nextKinds, ...(full && !opts.kind && complete ? { lastFullAt: t } : prev.lastFullAt ? { lastFullAt: prev.lastFullAt } : {}) };
+          state = {
+            kinds: nextKinds,
+            ...(full && !opts.kind && !opts.scope && complete ? { lastFullAt: t } : prev.lastFullAt ? { lastFullAt: prev.lastFullAt } : {}),
+          };
         }
       } catch (err) {
         ok = false;
@@ -335,7 +340,11 @@ export async function runSync(identifier: string, trigger: SyncRun['trigger'], o
     now(),
     id,
   );
-  await run('UPDATE integrations SET locked_until = NULL, requested_kind = NULL, next_sync_at = ? WHERE identifier = ?', nextSyncAt(r), identifier);
+  await run(
+    'UPDATE integrations SET locked_until = NULL, requested_kind = NULL, requested_scope = NULL, next_sync_at = ? WHERE identifier = ?',
+    nextSyncAt(r),
+    identifier,
+  );
   metrics.sync(identifier, status, stats.upserted, stats.deleted);
   await emit({
     type: status === 'failure' ? 'sync.failed' : 'sync.finished',
@@ -535,8 +544,8 @@ let running = 0;
 export function startSyncScheduler(log: FastifyBaseLogger) {
   const tick = async () => {
     if (running >= MAX_PARALLEL_SYNCS) return;
-    const due = await all<{ identifier: string; type: string; next_sync_at: string; requested_kind: string | null }>(
-      `SELECT identifier, type, next_sync_at, requested_kind FROM integrations
+    const due = await all<{ identifier: string; type: string; next_sync_at: string; requested_kind: string | null; requested_scope: string | null }>(
+      `SELECT identifier, type, next_sync_at, requested_kind, requested_scope FROM integrations
        WHERE enabled = 1 AND next_sync_at IS NOT NULL AND next_sync_at <= ? AND (locked_until IS NULL OR locked_until < ?)
        ORDER BY next_sync_at LIMIT ?`,
       now(),
@@ -549,7 +558,7 @@ export function startSyncScheduler(log: FastifyBaseLogger) {
         continue;
       }
       running++;
-      runSync(d.identifier, d.next_sync_at === MANUAL ? 'manual' : 'schedule', { kind: d.requested_kind ?? undefined })
+      runSync(d.identifier, d.next_sync_at === MANUAL ? 'manual' : 'schedule', { kind: d.requested_kind ?? undefined, scope: d.requested_scope ?? undefined })
         .then((res) => res && log.info({ integration: d.identifier, status: res.status, stats: res.stats }, 'integration synced'))
         .catch((err) => log.error({ err, integration: d.identifier }, 'integration sync crashed'))
         .finally(() => running--);

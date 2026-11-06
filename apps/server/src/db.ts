@@ -442,6 +442,11 @@ export const MIGRATIONS: Migration[] = [
         ALTER TABLE integrations ADD COLUMN primary_for TEXT NOT NULL DEFAULT '[]';
       `),
   },
+  {
+    id: 11,
+    name: 'integrations: scoped sync requests (push fast path)',
+    up: (d) => d.exec('ALTER TABLE integrations ADD COLUMN requested_scope TEXT'),
+  },
 ];
 
 /** Apply pending numbered migrations (idempotent; serialized across replicas by an advisory lock on Postgres). */

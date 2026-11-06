@@ -24,6 +24,7 @@ export interface IntegrationRow {
   priority: number;
   primary_for: string | null;
   requested_kind: string | null;
+  requested_scope: string | null;
   managed: number;
   next_sync_at: string | null;
   locked_until: string | null;
@@ -192,9 +193,15 @@ export async function deleteIntegration(id: string, opts: { managed?: boolean; d
 }
 
 /** Ask workers to sync now (works from API-only pods: the next worker tick picks it up). */
-export async function requestSync(id: string, kind?: string) {
+export async function requestSync(id: string, kind?: string, scope?: string) {
   const r = await getIntegrationRow(id);
   if (getSource(r.type).push) throw badRequest('Webhook integrations receive data; there is nothing to pull');
   if (kind && !json<Array<{ kind: string }>>(r.mappings, []).some((m) => m.kind === kind)) throw badRequest(`No mapping for kind "${kind}"`);
-  await run('UPDATE integrations SET next_sync_at = ?, requested_kind = ? WHERE identifier = ?', '1970-01-01T00:00:00.000Z', kind ?? null, id); // MANUAL in sync.ts
+  await run(
+    'UPDATE integrations SET next_sync_at = ?, requested_kind = ?, requested_scope = ? WHERE identifier = ?',
+    '1970-01-01T00:00:00.000Z',
+    kind ?? null,
+    scope ?? null,
+    id,
+  ); // MANUAL in sync.ts
 }
