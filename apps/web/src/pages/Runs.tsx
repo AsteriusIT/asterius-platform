@@ -21,7 +21,7 @@ import {
 import { notifications } from '@mantine/notifications';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
-import { IconCheck, IconExternalLink, IconPlayerStop, IconX } from '@tabler/icons-react';
+import { IconCheck, IconExternalLink, IconPlayerStop, IconRepeat, IconX } from '@tabler/icons-react';
 import type { Run, RunStatus, RunStep } from '@asterius/shared';
 import { api, errorText } from '../lib/api';
 import { DataTable } from '../components/DataTable';
@@ -210,6 +210,15 @@ function RunView({ r }: { r: Run }) {
     },
     onError,
   });
+  const navigate = useNavigate();
+  const rerun = useMutation({
+    mutationFn: () => api.trigger(r.action, { entity: r.entity, inputs: r.inputs }),
+    onSuccess: (run) => {
+      void qc.invalidateQueries({ queryKey: ['runs'] });
+      navigate(`/runs/${run.id}`);
+    },
+    onError,
+  });
   const cancel = useMutation({ mutationFn: () => api.cancel(r.id), onSuccess: refresh, onError });
   const steps = r.steps ?? [];
   const step = steps.find((s) => s.id === selected) ?? null;
@@ -241,6 +250,11 @@ function RunView({ r }: { r: Run }) {
                 rightSection={<IconExternalLink size={16} />}
               >
                 Open
+              </Button>
+            )}
+            {!ACTIVE.includes(r.status) && (
+              <Button variant="default" leftSection={<IconRepeat size={16} />} loading={rerun.isPending} onClick={() => rerun.mutate()}>
+                Run again
               </Button>
             )}
             {r.canCancel && (
