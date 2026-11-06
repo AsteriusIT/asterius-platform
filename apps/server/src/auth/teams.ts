@@ -2,6 +2,7 @@ import { bumpConfigVersion } from '../lib/config-version.js';
 import type { Team } from '@asterius/shared';
 import { all, bool, now, one, run } from '../db.js';
 import { conflict, managedError, notFound } from '../lib/errors.js';
+import { emit } from '../events.js';
 import { teamDef, type TeamDef } from '../schemas.js';
 
 interface Row {
@@ -41,6 +42,11 @@ export async function upsertTeam(input: unknown, opts: { managed?: boolean } = {
       def.identifier,
     );
   await bumpConfigVersion();
+  await emit({
+    type: existing ? 'team.updated' : 'team.created',
+    blueprint: null,
+    data: { team: { identifier: def.identifier, title: def.title, description: def.description } },
+  });
   return { created: !existing };
 }
 
@@ -52,4 +58,5 @@ export async function deleteTeam(id: string, opts: { managed?: boolean } = {}) {
   if (Number(owned?.n) > 0) throw conflict(`Team "${id}" owns ${owned!.n} entities; reassign them first`);
   await run('DELETE FROM teams WHERE identifier = ?', id);
   await bumpConfigVersion();
+  await emit({ type: 'team.deleted', blueprint: null, data: { team: { identifier: id, title: r.title } } });
 }

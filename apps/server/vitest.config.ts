@@ -15,6 +15,8 @@ export default defineConfig({
       RUN_POLL_SECONDS: '2',
       WORKER_IDLE_MAX_MS: '500',
       LOG_LEVEL: 'silent',
+      HTTP_RETRY_BASE_MS: '5',
+      HTTP_CIRCUIT_COOLDOWN_SECONDS: '1',
     },
     pool: 'forks',
     testTimeout: 20_000,

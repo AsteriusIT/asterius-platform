@@ -7,7 +7,7 @@ metadata:
   labels: {{- include "ap.labels" . | nindent 4 }}
 data:
   PUBLIC_URL: {{ $v.publicUrl | quote }}
-  CONFIG_DIR: /etc/asterius/config
+  CONFIG_DIR: {{ if $v.config.gitSync.enabled }}{{ printf "/git/config/%s" $v.config.gitSync.path | trimSuffix "/" | quote }}{{ else }}/etc/asterius/config{{ end }}
   LOG_LEVEL: {{ $v.settings.logLevel | quote }}
   DATABASE_POOL_SIZE: {{ $v.database.poolSize | quote }}
   WORKER_CONCURRENCY: {{ $v.worker.concurrency | quote }}
@@ -15,8 +15,20 @@ data:
   RUN_TIMEOUT_HOURS: {{ $v.settings.runTimeoutHours | quote }}
   STEP_TIMEOUT_MINUTES: {{ $v.settings.stepTimeoutMinutes | default 1440 | quote }}
   MIGRATE_ON_START: {{ not $v.migrations.job.enabled | quote }}
-  HTTP_TIMEOUT_SECONDS: {{ $v.settings.httpTimeoutSeconds | quote }}
   TRUST_PROXY: {{ $v.settings.trustProxy | quote }}
+  {{- if or $v.plugins.existingConfigMap $v.plugins.existingClaim }}
+  PLUGIN_DIR: /plugins
+  {{- end }}
+  {{- if $v.plugins.packages }}
+  PLUGINS: {{ join "," $v.plugins.packages | quote }}
+  {{- end }}
+  HTTP_TIMEOUT_SECONDS: {{ $v.settings.httpTimeoutSeconds | quote }}
+  HTTP_RETRIES: {{ $v.settings.httpRetries | quote }}
+  HTTP_RETRY_BASE_MS: {{ $v.settings.httpRetryBaseMs | quote }}
+  HTTP_RETRY_MAX_DELAY_SECONDS: {{ $v.settings.httpRetryMaxDelaySeconds | quote }}
+  HTTP_MAX_CONCURRENCY_PER_HOST: {{ $v.settings.httpMaxConcurrencyPerHost | quote }}
+  HTTP_CIRCUIT_THRESHOLD: {{ $v.settings.httpCircuitThreshold | quote }}
+  HTTP_CIRCUIT_COOLDOWN_SECONDS: {{ $v.settings.httpCircuitCooldownSeconds | quote }}
   RETENTION_DAYS: {{ $v.settings.retentionDays | quote }}
   RATE_LIMIT_STORE: {{ $v.settings.rateLimitStore | default "memory" | quote }}
   AUTH_PROVIDERS: {{ $v.auth.providers | quote }}

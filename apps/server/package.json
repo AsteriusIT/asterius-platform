@@ -9,6 +9,9 @@
     "migrate": "node --env-file-if-exists=../../.env dist/migrate.js",
     "start": "node --env-file-if-exists=../../.env dist/index.js",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json",
+    "openapi:export": "tsx src/cli/openapi-export.ts",
+    "clients:generate": "tsx src/cli/generate-clients.ts",
+    "config:validate": "tsx src/cli/validate-config.ts",
     "test": "vitest run"
   },
   "dependencies": {
@@ -28,6 +31,7 @@
     "@opentelemetry/sdk-trace": "^3.0.0",
     "ajv": "^8.20.0",
     "ajv-formats": "^3.0.1",
+    "fast-xml-parser": "^5.12.0",
     "fastify": "^5.2.0",
     "jose": "^6.2.15",
     "jsonata": "^2.2.2",

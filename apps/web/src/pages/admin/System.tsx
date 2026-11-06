@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Badge, Button, Card, Code, Group, SimpleGrid, Stack, Text, TextInput } from '@mantine/core';
+import { Alert, Badge, Button, Card, Code, Group, SimpleGrid, Stack, Text, TextInput } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -109,6 +109,8 @@ export function AuditAdmin() {
 export function ConfigAdmin() {
   const qc = useQueryClient();
   const info = useQuery({ queryKey: ['config-info'], queryFn: api.configInfo });
+  const status = useQuery({ queryKey: ['config-status'], queryFn: api.configStatus, refetchInterval: 30_000 });
+  const plan = useQuery({ queryKey: ['config-plan'], queryFn: api.configPlan });
   const [busy, setBusy] = useState(false);
 
   const download = async () => {
@@ -149,6 +151,40 @@ export function ConfigAdmin() {
           </>
         }
       />
+      <QueryView q={status}>
+        {(st) => (
+          <>
+            {st.readError && (
+              <Alert color="red" title="Configuration files cannot be read (the previous configuration stays in force)">
+                {st.readError}
+              </Alert>
+            )}
+            {st.errors.length > 0 && (
+              <Alert color="orange" title={`${st.errors.length} resource(s) could not be applied`}>
+                {st.errors.slice(0, 10).map((e) => (
+                  <Text key={e} fz="sm">
+                    {e}
+                  </Text>
+                ))}
+              </Alert>
+            )}
+            <Group gap="xs">
+              <Badge color={st.inSync ? 'green' : 'orange'}>{st.inSync ? 'in sync' : 'not in sync'}</Badge>
+              {st.appliedAt && (
+                <Text fz="sm" c="dimmed">
+                  last applied <TimeAgo at={st.appliedAt} />
+                </Text>
+              )}
+              {plan.data && (
+                <Text fz="sm" c="dimmed">
+                  plan: {plan.data.filter((p) => p.action === 'create').length} to create, {plan.data.filter((p) => p.action === 'update').length} to update,{' '}
+                  {plan.data.filter((p) => p.action === 'delete').length} to delete
+                </Text>
+              )}
+            </Group>
+          </>
+        )}
+      </QueryView>
       <QueryView q={info}>
         {(i) => (
           <>

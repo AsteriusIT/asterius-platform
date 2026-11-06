@@ -12,6 +12,7 @@ import { findEntity } from '../catalog/entities.js';
 import { scorecardLevels } from '../catalog/scorecards.js';
 import { compact, validate } from '../catalog/validation.js';
 import type { ObjectSchema } from '@asterius/shared';
+import { emit } from '../events.js';
 import { metrics } from '../metrics.js';
 import { withSpan } from '../tracing.js';
 import { getInvoker } from './invokers/index.js';
@@ -278,8 +279,8 @@ export async function complete(runId: string, stepId: string, from: StepRow['sta
     },
     owner,
   );
-  const type = await tx(async (d) => {
-    const { rows } = await d.query<{ type: string }>(`${sql} RETURNING type`, params);
+  const row = await tx(async (d) => {
+    const { rows } = await d.query<{ type: string; name: string }>(`${sql} RETURNING type, name`, params);
     if (!rows.length) return undefined;
     if (c.log) await addLog(runId, c.log, 'error', stepId, d);
     await addLog(
@@ -289,10 +290,15 @@ export async function complete(runId: string, stepId: string, from: StepRow['sta
       stepId,
       d,
     );
-    return rows[0].type;
+    return rows[0];
   });
-  if (type === undefined) return false;
-  metrics.stepFinished(type, c.status);
+  if (row === undefined) return false;
+  metrics.stepFinished(row.type, c.status);
+  await emit({
+    type: 'step.finished',
+    blueprint: null,
+    data: { runId, stepId, name: row.name, stepType: row.type, status: c.status, statusLabel: c.statusLabel ?? null, link: c.link ?? null },
+  });
   await emitRun(runId, 'run.updated');
   await advance(runId);
   return true;
@@ -404,6 +410,7 @@ export async function executeStep(runId: string, stepId: string, owner: Owner) {
     return void (await setStep(runId, stepId, 'RUNNING', { status: 'CANCELLED', ended_at: now(), locked_until: null }, owner));
   const rows = await loadSteps(runId);
   const row = rows.find((s) => s.step_id === stepId)!;
+  await emit({ type: 'step.started', blueprint: null, data: { runId, stepId, name: row.name, stepType: row.type, attempt: Number(row.attempt) } });
   await addLog(runId, `Started${Number(row.attempt) > 1 ? ` (attempt ${row.attempt}/${def.retries + 1})` : ''}`, 'info', stepId);
   await emitRun(runId, 'run.updated');
   let secrets: string[] = [];

@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import type { FastifyBaseLogger } from 'fastify';
 import { parseAllDocuments, stringify } from 'yaml';
 import { config } from './config.js';
-import { all, withAdvisoryLock } from './db.js';
+import { all, now, one, run, tryAdvisoryLock } from './db.js';
 import { configFile, type ConfigFile } from './schemas.js';
 import { errorMessage } from './lib/errors.js';
 import { audit, SYSTEM } from './audit.js';
@@ -70,6 +70,7 @@ export function readConfigDir(dir = config.CONFIG_DIR): LoadedConfig {
 
 async function applyKind<T extends { identifier: string }>(
   log: FastifyBaseLogger,
+  errors: string[],
   kind: string,
   declared: T[],
   existing: { identifier: string; managed: boolean }[],
@@ -84,6 +85,7 @@ async function applyKind<T extends { identifier: string }>(
       if (created) log.info(`config: ${kind} ${item.identifier} created`);
       else if (was && !was.managed) log.warn(`config: ${kind} ${item.identifier} created in the UI is now managed by configuration`);
     } catch (err) {
+      errors.push(`${kind} ${item.identifier}: ${errorMessage(err)}`);
       log.error(`config: ${kind} ${item.identifier}: ${errorMessage(err)}`);
     }
   }
@@ -95,11 +97,14 @@ async function applyKind<T extends { identifier: string }>(
       );
 }
 
-export async function applyConfig(loaded: LoadedConfig, log: FastifyBaseLogger) {
+/** Apply the declared resources; returns the per-item errors (the rest is applied regardless). */
+export async function applyConfig(loaded: LoadedConfig, log: FastifyBaseLogger): Promise<string[]> {
   const { data } = loaded;
+  const errs: string[] = [];
   const m = { managed: true };
   await applyKind(
     log,
+    errs,
     'team',
     data.teams,
     await listTeams(),
@@ -109,6 +114,7 @@ export async function applyConfig(loaded: LoadedConfig, log: FastifyBaseLogger) 
   const knownTargets = new Set([...data.blueprints.map((b) => b.identifier), ...(await listBlueprints()).map((b) => b.identifier)]);
   await applyKind(
     log,
+    errs,
     'blueprint',
     data.blueprints,
     await listBlueprints(),
@@ -117,6 +123,7 @@ export async function applyConfig(loaded: LoadedConfig, log: FastifyBaseLogger) 
   );
   await applyKind(
     log,
+    errs,
     'action',
     data.actions,
     await listActions(),
@@ -125,6 +132,7 @@ export async function applyConfig(loaded: LoadedConfig, log: FastifyBaseLogger) 
   );
   await applyKind(
     log,
+    errs,
     'integration',
     data.integrations,
     await listIntegrations(),
@@ -133,6 +141,7 @@ export async function applyConfig(loaded: LoadedConfig, log: FastifyBaseLogger) 
   );
   await applyKind(
     log,
+    errs,
     'webhook',
     data.webhooks,
     await listWebhooks(),
@@ -141,6 +150,7 @@ export async function applyConfig(loaded: LoadedConfig, log: FastifyBaseLogger) 
   );
   await applyKind(
     log,
+    errs,
     'scorecard',
     data.scorecards,
     await listScorecards(),
@@ -153,6 +163,7 @@ export async function applyConfig(loaded: LoadedConfig, log: FastifyBaseLogger) 
   );
   await applyKind(
     log,
+    errs,
     'dashboard',
     data.dashboards,
     await listDashboards(),
@@ -183,13 +194,101 @@ export async function applyConfig(loaded: LoadedConfig, log: FastifyBaseLogger) 
   for (const id of removed) log.warn(`config: blueprint ${id} is no longer declared but cannot be removed: ${errors.get(id)}`);
   for (const e of data.entities) {
     const { blueprint, ...entity } = e;
-    await upsertEntity(blueprint, entity, { source: 'config', skipExisting: true }).catch((err) =>
-      log.error(`config: entity ${blueprint}/${e.identifier}: ${errorMessage(err)}`),
-    );
+    await upsertEntity(blueprint, entity, { source: 'config', skipExisting: true }).catch((err) => {
+      errs.push(`entity ${blueprint}/${e.identifier}: ${errorMessage(err)}`);
+      log.error(`config: entity ${blueprint}/${e.identifier}: ${errorMessage(err)}`);
+    });
   }
+  return errs;
 }
 
 let lastHash: string | undefined;
+let failedAttempts = 0;
+const MAX_RETRIES = 5;
+
+export interface ConfigStatus {
+  dir: string;
+  /** Hash of the files on disk now (this replica). */
+  currentHash: string | null;
+  /** Hash last applied by any replica, when, and the errors it ended with. */
+  appliedHash: string | null;
+  appliedAt: string | null;
+  files: string[];
+  errors: string[];
+  /** The files cannot be read or validated: the previous configuration stays in force. */
+  readError: string | null;
+  inSync: boolean;
+}
+
+let readError: string | null = null;
+
+export async function configStatus(): Promise<ConfigStatus> {
+  let currentHash: string | null = null;
+  try {
+    currentHash = readConfigDir().hash;
+    readError = null;
+  } catch (err) {
+    readError = errorMessage(err);
+  }
+  const row = await one<{ hash: string; files: string; errors: string; applied_at: string }>('SELECT * FROM config_status WHERE id = 1');
+  const errors: string[] = row ? JSON.parse(row.errors) : [];
+  return {
+    dir: config.CONFIG_DIR,
+    currentHash,
+    appliedHash: row?.hash ?? null,
+    appliedAt: row?.applied_at ?? null,
+    files: row ? JSON.parse(row.files) : [],
+    errors,
+    readError,
+    inSync: !readError && !errors.length && (row?.hash ?? '') === (currentHash ?? ''),
+  };
+}
+
+async function recordStatus(loaded: LoadedConfig, errors: string[]) {
+  const files = JSON.stringify(loaded.files.map((f) => path.relative(config.CONFIG_DIR, f)));
+  const vals = [loaded.hash, files, JSON.stringify(errors.slice(0, 100)), now()];
+  const { changes } = await run('UPDATE config_status SET hash = ?, files = ?, errors = ?, applied_at = ? WHERE id = 1', ...vals);
+  if (!changes) await run('INSERT INTO config_status (hash, files, errors, applied_at, id) VALUES (?, ?, ?, ?, 1)', ...vals);
+}
+
+type PlanAction = 'create' | 'update' | 'delete' | 'unchanged';
+export interface PlanItem {
+  kind: string;
+  identifier: string;
+  action: PlanAction;
+  /** Top-level fields that differ (update). */
+  changes?: string[];
+}
+
+/** What applying the files would do, without doing it: compares declared resources with the stored ones. */
+export async function planConfig(loaded: LoadedConfig = readConfigDir()): Promise<PlanItem[]> {
+  const out: PlanItem[] = [];
+  // Actions are stored normalised (legacy `invoker` becomes `steps`/`trigger`): those fields cannot be compared textually.
+  const plan = (kind: string, declared: Array<{ identifier: string }>, existing: Array<{ identifier: string; managed: boolean }>, ignore: string[] = []) => {
+    const have = new Map(existing.map((e) => [e.identifier, e as unknown as Record<string, unknown>]));
+    for (const d of declared) {
+      const cur = have.get(d.identifier);
+      if (!cur) {
+        out.push({ kind, identifier: d.identifier, action: 'create' });
+        continue;
+      }
+      const diff = Object.entries(d as Record<string, unknown>)
+        .filter(([k, v]) => v !== undefined && !ignore.includes(k) && k in cur && JSON.stringify(cur[k]) !== JSON.stringify(v))
+        .map(([k]) => k);
+      if (!cur.managed) diff.push('managed');
+      out.push({ kind, identifier: d.identifier, action: diff.length ? 'update' : 'unchanged', ...(diff.length ? { changes: diff } : {}) });
+    }
+    const ids = new Set(declared.map((d) => d.identifier));
+    for (const e of existing) if (e.managed && !ids.has(e.identifier)) out.push({ kind, identifier: e.identifier, action: 'delete' });
+  };
+  const d = loaded.data;
+  plan('team', d.teams, await listTeams());
+  plan('blueprint', d.blueprints, await listBlueprints());
+  plan('action', d.actions, await listActions(), ['trigger', 'steps', 'invoker']);
+  plan('integration', d.integrations, await listIntegrations());
+  plan('webhook', d.webhooks, await listWebhooks());
+  return out;
+}
 
 /** Load once at startup, then watch for changes (ConfigMap updates, git-sync). */
 export async function startConfigLoader(log: FastifyBaseLogger) {
@@ -197,22 +296,33 @@ export async function startConfigLoader(log: FastifyBaseLogger) {
     let loaded: LoadedConfig;
     try {
       loaded = readConfigDir();
+      readError = null;
     } catch (err) {
-      log.error(`config: ${errorMessage(err)} (keeping the current configuration)`);
+      readError = errorMessage(err);
+      log.error(`config: ${readError} (keeping the current configuration)`);
       return;
     }
     if (loaded.hash === lastHash) return;
-    await withAdvisoryLock(LOCK_KEY, async () => {
-      await applyConfig(loaded, log);
-      lastHash = loaded.hash;
+    // Try once: when another replica is applying, skip and look again at the next tick.
+    const value = await tryAdvisoryLock(LOCK_KEY, async () => {
+      const row = await one<{ hash: string; errors: string }>('SELECT hash, errors FROM config_status WHERE id = 1');
+      if (row?.hash === loaded.hash && !JSON.parse(row.errors).length) return 'already-applied' as const; // another replica did it
+      if (row?.hash === loaded.hash && failedAttempts >= MAX_RETRIES) return 'gave-up' as const;
+      const errors = await applyConfig(loaded, log);
+      await recordStatus(loaded, errors);
+      failedAttempts = errors.length ? failedAttempts + 1 : 0;
+      return errors.length ? ('errors' as const) : ('applied' as const);
     });
-    if (loaded.files.length) {
+    if (value === undefined) return;
+    if (value === 'applied' || value === 'already-applied' || value === 'gave-up') lastHash = loaded.hash;
+    if (value === 'applied' && loaded.files.length) {
       log.info(`config: applied ${loaded.files.length} file(s) from ${config.CONFIG_DIR}`);
       await audit(SYSTEM, 'config.applied', config.CONFIG_DIR, {
         files: loaded.files.map((f) => path.relative(config.CONFIG_DIR, f)),
         hash: loaded.hash.slice(0, 12),
       });
     }
+    if (value === 'errors') log.warn(`config: applied with errors, retrying (${failedAttempts}/${MAX_RETRIES})`);
   };
   await check();
   const timer = setInterval(() => check().catch((err) => log.error({ err }, 'config reload failed')), 60_000);
@@ -220,6 +330,7 @@ export async function startConfigLoader(log: FastifyBaseLogger) {
   return {
     reload: async () => {
       lastHash = undefined;
+      failedAttempts = 0;
       await check();
     },
     stop: () => clearInterval(timer),

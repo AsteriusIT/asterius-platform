@@ -20,8 +20,8 @@ import {
 import { deleteTeam, listTeams, upsertTeam } from '../auth/teams.js';
 import { providerInfos } from '../secret-providers/index.js';
 import { deleteSecret, listSecrets, reencryptSecrets, setSecret, shortSecretWarning } from '../secrets.js';
-import { deleteWebhook, getWebhook, listDeliveries, listWebhooks, redeliver, upsertWebhook } from '../webhooks/webhooks.js';
-import { exportConfig, managedCounts } from '../config-loader.js';
+import { deleteWebhook, getWebhook, listDeliveries, listWebhooks, redeliver, redeliverFailed, redeliverMany, upsertWebhook } from '../webhooks/webhooks.js';
+import { configStatus, exportConfig, managedCounts, planConfig } from '../config-loader.js';
 import { config } from '../config.js';
 import { idParam, page } from './util.js';
 import { badRequest, forbidden } from '../lib/errors.js';
@@ -193,13 +193,43 @@ export async function adminRoutes(app: FastifyInstance, opts: { reloadConfig: ()
       return { ok: true };
     });
     admin.get('/webhooks/:id/deliveries', async (req, reply) => {
-      const q = z.object({ limit: z.coerce.number().int().min(1).max(500).default(50), cursor: z.string().max(500).optional() }).parse(req.query);
-      const { deliveries, nextCursor } = await listDeliveries(idParam.parse(req.params).id, q.limit, q.cursor);
+      const q = z
+        .object({
+          status: z.enum(['pending', 'success', 'failed']).optional(),
+          limit: z.coerce.number().int().min(1).max(500).default(50),
+          cursor: z.string().max(500).optional(),
+          offset: z.coerce.number().int().min(0).default(0),
+        })
+        .parse(req.query);
+      const { deliveries, nextCursor } = await listDeliveries({ ...q, webhook: idParam.parse(req.params).id });
       nextPageHeaders(req, reply, nextCursor);
       return deliveries;
     });
+    admin.get('/deliveries', async (req) => {
+      const q = z
+        .object({
+          status: z.enum(['pending', 'success', 'failed']).optional(),
+          webhook: z.string().optional(),
+          limit: z.coerce.number().int().min(1).max(500).default(100),
+          offset: z.coerce.number().int().min(0).default(0),
+        })
+        .parse(req.query);
+      return (await listDeliveries(q)).deliveries;
+    });
+    admin.post('/deliveries/redeliver', async (req) => {
+      const body = z.object({ ids: z.array(z.string()).min(1).max(500) }).parse(req.body);
+      const queued = await redeliverMany(body.ids);
+      await audit(actorOf(req.principal), 'delivery.redelivered_bulk', 'selection', { count: queued });
+      return { queued };
+    });
+    admin.post('/deliveries/redeliver-failed', async (req) => {
+      const body = z.object({ webhook: z.string().optional() }).parse(req.body ?? {});
+      const n = await redeliverFailed(body.webhook);
+      await audit(actorOf(req.principal), 'delivery.redelivered_bulk', body.webhook ?? '*', { count: n });
+      return { requeued: n };
+    });
     admin.post('/deliveries/:id/redeliver', async (req) => {
-      const id = idParam.parse(req.params).id;
+      const { id } = idParam.parse(req.params);
       await redeliver(id);
       await audit(actorOf(req.principal), 'delivery.redelivered', id);
       return { ok: true };
@@ -252,6 +282,8 @@ export async function adminRoutes(app: FastifyInstance, opts: { reloadConfig: ()
     admin.get('/audit/verify', async () => verifyAuditChain());
 
     admin.get('/config', async () => ({ dir: config.CONFIG_DIR, managed: await managedCounts() }));
+    admin.get('/config/status', async () => configStatus());
+    admin.get('/config/plan', async () => planConfig());
     admin.get('/config/export', async (req, reply) => {
       await audit(actorOf(req.principal), 'config.exported', null);
       return reply.type('text/yaml; charset=utf-8').send(await exportConfig());

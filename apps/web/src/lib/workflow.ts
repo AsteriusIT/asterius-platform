@@ -73,3 +73,9 @@ export function triggerBadge(t: NonNullable<Action['trigger']>): { label: string
       return { label: 'webhook', color: 'teal' };
   }
 }
+
+/** CI log lines copied into a run are prefixed `[job] `: split them so the run page can group and filter by job. */
+export function splitJobLog(message: string): { job: string | null; text: string } {
+  const m = /^\[([^\]\s][^\]]{0,60})\] (.*)$/s.exec(message);
+  return m ? { job: m[1]!, text: m[2]! } : { job: null, text: message };
+}

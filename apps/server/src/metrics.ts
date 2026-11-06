@@ -63,6 +63,24 @@ const c = {
     labelNames: ['table'],
     registers: [registry],
   }),
+  httpRetries: new client.Counter({
+    name: 'asterius_http_retries_total',
+    help: 'Outbound HTTP retries, by upstream host and reason',
+    labelNames: ['host', 'reason'],
+    registers: [registry],
+  }),
+  httpRateLimitWait: new client.Counter({
+    name: 'asterius_http_rate_limit_wait_seconds_total',
+    help: 'Seconds spent waiting for upstream rate limits (Retry-After / X-RateLimit-Reset)',
+    labelNames: ['host'],
+    registers: [registry],
+  }),
+  httpCircuitOpened: new client.Counter({
+    name: 'asterius_http_circuit_opened_total',
+    help: 'Times the circuit of an integration was opened after repeated upstream failures',
+    labelNames: ['circuit'],
+    registers: [registry],
+  }),
   events: new client.Counter({ name: 'asterius_events_total', help: 'Domain events emitted', labelNames: ['type'], registers: [registry] }),
 };
 
@@ -114,6 +132,9 @@ export const metrics = {
   auditFailure: () => c.auditFailures.inc(),
   delivery: (result: 'success' | 'retry' | 'failed') => c.deliveries.inc({ result }),
   purged: (table: string, rows: number) => rows && c.purged.inc({ table }, rows),
+  httpRetry: (host: string, reason: string) => c.httpRetries.inc({ host, reason }),
+  httpRateLimitWait: (host: string, seconds: number) => c.httpRateLimitWait.inc({ host }, seconds),
+  httpCircuitOpened: (circuit: string) => c.httpCircuitOpened.inc({ circuit }),
   event: (type: string) => c.events.inc({ type }),
   stepFinished: (type: string, status: string) => c.steps.inc({ type, status }),
   llmTokens: (model: string, input: number, output: number) => {

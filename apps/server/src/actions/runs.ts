@@ -377,7 +377,7 @@ export async function addLog(runId: string, message: string, level: RunLog['leve
   else await run(sql, ...args);
 }
 
-export async function emitRun(id: string, type: 'run.created' | 'run.updated') {
+export async function emitRun(id: string, type: 'run.created' | 'run.updated' | 'approval.requested' | 'approval.decided') {
   const r = await getRunRow(id);
   const steps = (await loadSteps(id)).map((s) => ({ id: s.step_id, name: s.name, type: s.type, status: s.status }));
   const data = { run: { ...toRun(r, (await approvalsOf([id])).get(id) ?? []), steps } };
@@ -451,6 +451,7 @@ async function insertRun(n: NewRun): Promise<{ id: string; replay?: false } | { 
   }
   await audit(actorOf(p), 'run.triggered', `${action.identifier}${n.entity ? ` → ${n.blueprint}/${n.entity}` : ''}`, { runId: id, source: n.source.type });
   await emitRun(id, 'run.created');
+  if (status === 'PENDING_APPROVAL') await emitRun(id, 'approval.requested');
   if (status === 'QUEUED') wake();
   return { id };
 }
@@ -587,6 +588,7 @@ export async function decide(p: Principal, runId: string, decision: 'approved' |
     if (outcome === 'REJECTED') metrics.runFinished(r.action, outcome, 'workflow', null);
   }
   await emitRun(runId, 'run.updated');
+  await emitRun(runId, 'approval.decided');
   return getRun(runId, p);
 }
 

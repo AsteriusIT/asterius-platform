@@ -32,6 +32,9 @@ import { registerTriggerListeners } from './actions/triggers.js';
 import { registerNotificationListeners } from './notifications/dispatch.js';
 import { notificationRoutes } from './routes/notifications.js';
 import { scimRoutes } from './auth/scim.js';
+import { collectRoutes, registerOpenApi } from './openapi.js';
+
+const VERSION = process.env.APP_VERSION ?? '0.1.0';
 
 export interface AppOptions {
   reloadConfig?: () => Promise<void>;
@@ -113,6 +116,7 @@ export async function buildApp(opts: AppOptions = {}): Promise<FastifyInstance> 
     return reply.type(registry.contentType).send(await registry.metrics());
   });
 
+  const routes = collectRoutes(app);
   await app.register(authRoutes);
   await app.register(scimRoutes);
   await app.register(
@@ -125,6 +129,8 @@ export async function buildApp(opts: AppOptions = {}): Promise<FastifyInstance> 
     },
     { prefix: '/api/v1' },
   );
+
+  registerOpenApi(app, routes, VERSION);
 
   if (config.WEB_DIST_DIR && fs.existsSync(config.WEB_DIST_DIR)) {
     await app.register(fastifyStatic, { root: path.resolve(config.WEB_DIST_DIR), wildcard: false, maxAge: '1h' });

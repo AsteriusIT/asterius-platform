@@ -58,6 +58,7 @@ export async function housekeeping(log: FastifyBaseLogger) {
     const deliveries = await deleteInChunks('deliveries', 'id', "status != 'pending' AND created_at < ?", [cutoff]);
     const audit = await deleteInChunks('audit_log', 'id', 'at < ?', [new Date(Date.now() - config.AUDIT_RETENTION_DAYS * 86400_000).toISOString()]);
     await run('DELETE FROM ingest_deliveries WHERE received_at < ?', new Date(Date.now() - 24 * 3600_000).toISOString());
+    await run("DELETE FROM inbound_events WHERE status != 'pending' AND received_at < ?", cutoff);
     // Sync history: RETENTION_DAYS, but always keep the last 20 per integration.
     let syncs = 0;
     for (const { integration } of await all<{ integration: string }>('SELECT DISTINCT integration FROM sync_runs')) {

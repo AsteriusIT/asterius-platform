@@ -496,6 +496,46 @@ export const mappingDef = z.object({
 });
 export type MappingDef = z.infer<typeof mappingDef>;
 
+/** Authentication block of HTTP-based sources and invokers (`config.auth`). Secrets are `${secret:NAME}` references. */
+export const authDef = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('basic'), username: z.string().min(1), password: z.string() }),
+  z.object({ type: z.literal('bearer'), token: z.string().min(1) }),
+  z.object({
+    type: z.literal('oauth2-client-credentials'),
+    tokenUrl: z.string().url(),
+    clientId: z.string().min(1),
+    clientSecret: z.string().min(1),
+    scope: z.string().optional(),
+    audience: z.string().optional(),
+    authStyle: z.enum(['body', 'basic']).default('body'),
+  }),
+  z.object({
+    type: z.literal('github-app'),
+    appId: z.union([z.string(), z.number()]).transform(String),
+    installationId: z.union([z.string(), z.number()]).transform(String),
+    privateKey: z.string().min(1),
+    apiUrl: z.string().url().optional(),
+  }),
+  z.object({ type: z.literal('azure-managed-identity'), resource: z.string().min(1), clientId: z.string().optional() }),
+  z.object({
+    type: z.literal('gcp-service-account'),
+    scope: z.string().default('https://www.googleapis.com/auth/cloud-platform'),
+    /** Service account key (JSON text or object); omitted: the metadata server of the workload. */
+    serviceAccountJson: z.union([z.string(), z.record(z.string(), z.unknown())]).optional(),
+  }),
+  z.object({
+    type: z.literal('aws-sigv4'),
+    region: z.string().min(1),
+    service: z.string().min(1),
+    /** Omitted: IRSA / web identity from the environment. */
+    accessKeyId: z.string().optional(),
+    secretAccessKey: z.string().optional(),
+    sessionToken: z.string().optional(),
+  }),
+  z.object({ type: z.literal('mtls'), cert: z.string().min(1), key: z.string().min(1), ca: z.string().optional() }),
+]);
+export type AuthDef = z.infer<typeof authDef>;
+
 export const integrationDef = z.object({
   identifier: slug,
   title: z.string().min(1).max(100),
@@ -507,10 +547,40 @@ export const integrationDef = z.object({
   intervalMinutes: z.number().int().min(0).max(10080).default(60),
   /** After a successful full sync, delete the entities this integration created that it did not see anymore. */
   deleteMissing: z.boolean().default(false),
+  /** Ownership when several integrations write the same entity: the higher priority owns it (incumbent wins ties). */
+  priority: z.number().int().min(0).max(1000).default(0),
+  /** Blueprints this integration is the primary source of: it outranks any non-primary integration there. */
+  primaryFor: z.array(slug).default([]),
+  /** Cron expression (5 fields, UTC) replacing `intervalMinutes` as the pull schedule. */
+  schedule: z.string().max(100).optional(),
+  /** deleteMissing safety: cancel the deletion when more than this share of the existing entities would be removed. */
+  deleteMaxPercent: z.number().int().min(0).max(100).default(20),
+  /** deleteMissing: only report in the sync log what would be deleted. */
+  deleteDryRun: z.boolean().default(false),
 });
 export type IntegrationDef = z.infer<typeof integrationDef>;
 
-export const WEBHOOK_EVENTS = ['entity.created', 'entity.updated', 'entity.deleted', 'run.created', 'run.updated', 'scorecard.changed'] as const;
+export const WEBHOOK_EVENTS = [
+  'entity.created',
+  'entity.updated',
+  'entity.deleted',
+  'run.created',
+  'run.updated',
+  'approval.requested',
+  'approval.decided',
+  'sync.finished',
+  'sync.failed',
+  'step.started',
+  'step.finished',
+  'team.created',
+  'team.updated',
+  'team.deleted',
+  'user.created',
+  'user.updated',
+  'scorecard.changed',
+] as const;
+
+const RESERVED_HEADERS = /^(host|content-length|content-type|transfer-encoding|connection|x-asterius-.*)$/i;
 
 /** A `${secret:NAME}` / `${env:NAME}` reference (the only form accepted where a credential is configured). */
 export const SECRET_REF = /^\$\{(secret|env):[A-Za-z0-9_.-]+\}$/;
@@ -520,7 +590,13 @@ export const webhookDef = z.object({
   title: z.string().min(1).max(100),
   url: z.string().url(),
   events: z
-    .array(z.string().regex(/^(\*|entity\.\*|run\.\*|scorecard\.\*|entity\.(created|updated|deleted)|run\.(created|updated)|scorecard\.changed)$/))
+    .array(
+      z
+        .string()
+        .regex(
+          /^(\*|(entity|run|approval|sync|step|team|user|scorecard)\.\*|entity\.(created|updated|deleted)|run\.(created|updated)|approval\.(requested|decided)|sync\.(finished|failed)|step\.(started|finished)|team\.(created|updated|deleted)|user\.(created|updated)|scorecard\.changed)$/,
+        ),
+    )
     .min(1),
   blueprints: z.array(slug).default([]),
   /** Signing secret reference (`${secret:NAME}`): deliveries carry `X-Asterius-Signature: sha256=<hmac>`. */
@@ -533,6 +609,15 @@ export const webhookDef = z.object({
     .nullish(),
   /** During a rotation, deliveries are signed with both secrets so receivers can switch without downtime. */
   secondarySecret: z.string().regex(SECRET_REF, 'Secondary signing secret must be a reference: ${secret:NAME} or ${env:NAME}').nullish(),
+  /** Extra request headers (values may be `${secret:NAME}` references), e.g. `Authorization: Bearer ${secret:TOKEN}`. */
+  headers: z
+    .record(z.string().regex(/^[A-Za-z0-9-]+$/), z.string().max(2000))
+    .refine((h) => !Object.keys(h).some((k) => RESERVED_HEADERS.test(k)), 'reserved header name')
+    .default({}),
+  /** JSONata over the event (`{ id, type, at, blueprint, actor, data }`): deliver only when it is truthy. */
+  filter: z.string().max(2000).nullish(),
+  /** JSONata over the event producing the request body (Slack, Teams… shapes). Default: the event itself. */
+  transform: z.string().max(5000).nullish(),
   enabled: z.boolean().default(true),
 });
 export type WebhookDef = z.infer<typeof webhookDef>;

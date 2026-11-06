@@ -1,5 +1,6 @@
 import { config as platform } from '../../config.js';
 import { k8s, kube } from '../../lib/kube.js';
+import type { LogFn } from '../../lib/ci-logs.js';
 import { requireFields, str, stringValues, type Invoker } from '../types.js';
 
 /**
@@ -40,6 +41,42 @@ export function checkTarget(namespace: string | undefined, serviceAccount: strin
     throw new Error(`kubernetes-job: kubeconfig context "${context}" is not allowed (KUBE_JOB_CONTEXTS)`);
 }
 const literal = (v: unknown) => (typeof v === 'string' && v && !v.includes('{{') && !v.includes('${') ? v : undefined);
+
+const MAX_STREAMED_LINES = 5000;
+const LINES_PER_POLL = 500;
+
+/**
+ * Follow the pod log between polls: only lines newer than `state.logCursor` (an RFC 3339 timestamp from
+ * `timestamps: true`) are written, up to LINES_PER_POLL per poll and MAX_STREAMED_LINES overall.
+ */
+async function streamLogs(k: ReturnType<typeof kube>, state: Record<string, unknown>, pod: string | undefined, log: LogFn, final = false) {
+  if (!pod) return state;
+  const sent = Number(state.logLines ?? 0);
+  if (sent >= MAX_STREAMED_LINES) return state;
+  try {
+    const cursor = typeof state.logCursor === 'string' ? state.logCursor : undefined;
+    const out = String(
+      await k.core.readNamespacedPodLog({
+        name: pod,
+        namespace: str(state.namespace),
+        timestamps: true,
+        ...(cursor ? { sinceTime: new Date(cursor) } : { tailLines: final ? 200 : LINES_PER_POLL }),
+      }),
+    );
+    const fresh = out
+      .split('\n')
+      .filter(Boolean)
+      .map((l) => ({ ts: l.slice(0, l.indexOf(' ')), text: l.slice(l.indexOf(' ') + 1) }))
+      .filter((l) => !cursor || l.ts > cursor)
+      .slice(0, LINES_PER_POLL);
+    for (const l of fresh) await log(l.text.length > 1000 ? `${l.text.slice(0, 1000)}…` : l.text);
+    if (!fresh.length) return state;
+    return { ...state, logCursor: fresh.at(-1)!.ts, logLines: sent + fresh.length };
+  } catch (err) {
+    await log(`Could not read job logs: ${(err as Error).message}`, 'warn');
+    return state;
+  }
+}
 
 export const kubernetesJobInvoker: Invoker = {
   info: {
@@ -162,14 +199,15 @@ export const kubernetesJobInvoker: Invoker = {
         return { status: 'FAILURE', state, statusLabel: waiting.state!.waiting!.reason };
       }
       const running = pods.items.some((p) => p.status?.phase === 'Running');
-      return { status: 'IN_PROGRESS', state, statusLabel: running ? 'running' : 'pending' };
+      const next = running ? await streamLogs(k, state, pods.items.at(-1)?.metadata?.name, log) : state;
+      return { status: 'IN_PROGRESS', state: next, statusLabel: running ? 'running' : 'pending' };
     }
     try {
       const pods = await k.core.listNamespacedPod({ namespace: str(state.namespace), labelSelector: `job-name=${state.name}` });
       const pod = pods.items.at(-1)?.metadata?.name;
       if (pod) {
-        const out = await k.core.readNamespacedPodLog({ name: pod, namespace: str(state.namespace), tailLines: 200 });
-        for (const line of String(out).split('\n').filter(Boolean)) await log(line);
+        // Whatever was not streamed yet (or the tail, if streaming never started).
+        await streamLogs(k, state, pod, log, true);
       }
     } catch (err) {
       await log(`Could not read job logs: ${(err as Error).message}`, 'warn');

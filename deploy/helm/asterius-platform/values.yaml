@@ -87,6 +87,32 @@ config:
   existingConfigMap: ""
   # Use the example configuration baked in the image (demo / first steps).
   useImageDefaults: false
+  # Keep the configuration in a repository: a sync sidecar clones it into a shared volume and the platform
+  # re-reads it every minute. Replaces the ConfigMap (`files`, `existingConfigMap`).
+  gitSync:
+    enabled: false
+    repo: "" # https://example.com/acme/platform-config.git
+    ref: main
+    path: "" # sub-directory of the repository that holds the YAML files
+    period: 60s
+    image: registry.k8s.io/git-sync/git-sync:v4.4.0
+    # Secret with `username` and `password` (token) keys, for private repositories over HTTPS. Optional.
+    credentialsSecret: ""
+    resources:
+      requests: { cpu: 10m, memory: 32Mi }
+      limits: { memory: 128Mi }
+
+# ---------- plugins ----------
+# In-process plugins (docs/EXTENDING.md): ES modules loaded at startup. Provide them as a ConfigMap (small plugins)
+# or a PersistentVolumeClaim, and/or list packages that are installed in your image. They run with the server's
+# privileges: install only code you trust.
+plugins:
+  # ConfigMap whose keys are *.mjs files, mounted read-only at /plugins.
+  existingConfigMap: ""
+  # PersistentVolumeClaim holding plugin files, mounted read-only at /plugins.
+  existingClaim: ""
+  # Plugin packages or paths installed in the image (PLUGINS).
+  packages: []
 
 # ---------- outbound HTTP (SSRF guard) ----------
 # Invokers, pull sources and outbound webhooks cannot reach loopback, private (10/8, 172.16/12, 192.168/16),
@@ -101,6 +127,12 @@ settings:
   runPollSeconds: 15
   runTimeoutHours: 24
   httpTimeoutSeconds: 30
+  httpRetries: 3
+  httpRetryBaseMs: 500
+  httpRetryMaxDelaySeconds: 60
+  httpMaxConcurrencyPerHost: 8
+  httpCircuitThreshold: 5
+  httpCircuitCooldownSeconds: 60
   retentionDays: 90
   # Proxies whose X-Forwarded-For is trusted for client IPs (rate limit, login lockout): the ingress controller's
   # CIDR is best, e.g. "10.42.0.0/16". Default: private ranges only (never a client-supplied header from the internet).

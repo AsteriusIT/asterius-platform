@@ -110,7 +110,12 @@ containers:
       - secretRef: { name: {{ include "ap.secretName" .root }} }
     volumeMounts:
       - { name: tmp, mountPath: /tmp }
-      {{- if not $v.config.useImageDefaults }}
+      {{- if or $v.plugins.existingConfigMap $v.plugins.existingClaim }}
+      - { name: plugins, mountPath: /plugins, readOnly: true }
+      {{- end }}
+      {{- if $v.config.gitSync.enabled }}
+      - { name: sync-config, mountPath: /git, readOnly: true }
+      {{- else if not $v.config.useImageDefaults }}
       - { name: config, mountPath: /etc/asterius/config, readOnly: true }
       {{- end }}
     startupProbe:
@@ -133,10 +138,46 @@ containers:
       allowPrivilegeEscalation: false
       readOnlyRootFilesystem: true
       capabilities: { drop: [ALL] }
+  {{- if $v.config.gitSync.enabled }}
+  - name: config-sync
+    image: {{ $v.config.gitSync.image | quote }}
+    args:
+      - --repo={{ required "config.gitSync.repo is required when gitSync is enabled" $v.config.gitSync.repo }}
+      - --ref={{ $v.config.gitSync.ref }}
+      - --root=/git
+      - --link=config
+      - --period={{ $v.config.gitSync.period }}
+      - --depth=1
+    {{- if $v.config.gitSync.credentialsSecret }}
+    env:
+      - name: GITSYNC_USERNAME
+        valueFrom: { secretKeyRef: { name: {{ $v.config.gitSync.credentialsSecret }}, key: username } }
+      - name: GITSYNC_PASSWORD
+        valueFrom: { secretKeyRef: { name: {{ $v.config.gitSync.credentialsSecret }}, key: password } }
+    {{- end }}
+    volumeMounts:
+      - { name: sync-config, mountPath: /git }
+      - { name: tmp, mountPath: /tmp }
+    resources: {{- toYaml $v.config.gitSync.resources | nindent 6 }}
+    securityContext:
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities: { drop: [ALL] }
+  {{- end }}
 volumes:
   - name: tmp
     emptyDir: { sizeLimit: 256Mi }
-  {{- if not $v.config.useImageDefaults }}
+  {{- if $v.plugins.existingClaim }}
+  - name: plugins
+    persistentVolumeClaim: { claimName: {{ $v.plugins.existingClaim }}, readOnly: true }
+  {{- else if $v.plugins.existingConfigMap }}
+  - name: plugins
+    configMap: { name: {{ $v.plugins.existingConfigMap }} }
+  {{- end }}
+  {{- if $v.config.gitSync.enabled }}
+  - name: sync-config
+    emptyDir: { sizeLimit: 256Mi }
+  {{- else if not $v.config.useImageDefaults }}
   - name: config
     configMap: { name: {{ include "ap.configMapName" .root }} }
   {{- end }}

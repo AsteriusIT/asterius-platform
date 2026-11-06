@@ -2,11 +2,12 @@ import { createHmac } from 'node:crypto';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Delivery, Webhook } from '@asterius/shared';
 import { all, bool, json, later, now, one, run } from '../db.js';
-import { errorMessage, managedError, notFound } from '../lib/errors.js';
+import { badRequest, errorMessage, managedError, notFound } from '../lib/errors.js';
 import { http, UpstreamError } from '../lib/http.js';
 import { decodeCursor, encodeCursor } from '../lib/cursor.js';
+import { checkExpression, render } from '../lib/expr.js';
 import { invalidateWebhookCache } from '../events.js';
-import { resolveValue, setSecret } from '../secrets.js';
+import { resolveRef, resolveValue, setSecret } from '../secrets.js';
 import { SECRET_REF, webhookDef, type WebhookDef } from '../schemas.js';
 import { metrics } from '../metrics.js';
 import { beat, registerLoop } from '../health.js';
@@ -26,6 +27,9 @@ interface Row {
   blueprints: string;
   secret: string | null;
   secondary_secret: string | null;
+  headers: string | null;
+  filter: string | null;
+  transform: string | null;
   enabled: number;
   managed: number;
 }
@@ -36,6 +40,9 @@ const toWebhook = (r: Row): Webhook => ({
   url: r.url,
   events: json(r.events, []),
   blueprints: json(r.blueprints, []),
+  headers: json<Record<string, string>>(r.headers, {}),
+  filter: r.filter,
+  transform: r.transform,
   enabled: bool(r.enabled),
   managed: bool(r.managed),
   hasSecret: !!r.secret,
@@ -58,21 +65,44 @@ export async function upsertWebhook(input: unknown, opts: { managed?: boolean } 
   const def: WebhookDef = webhookDef.parse(input);
   const existing = await one<Row>('SELECT * FROM webhooks WHERE identifier = ?', def.identifier);
   if (existing && bool(existing.managed) && !opts.managed) throw managedError('Webhook', def.identifier);
+  for (const [what, expr] of [
+    ['filter', def.filter],
+    ['transform', def.transform],
+  ] as const) {
+    if (!expr) continue;
+    try {
+      checkExpression(expr);
+    } catch (err) {
+      throw badRequest(`${what}: ${errorMessage(err)}`);
+    }
+  }
   const t = now();
   // An omitted secret keeps the current one (the API never returns it).
   const secret = def.secret === undefined ? (existing?.secret ?? null) : (def.secret ?? null);
   const secondary = def.secondarySecret === undefined ? (existing?.secondary_secret ?? null) : (def.secondarySecret ?? null);
-  const vals = [def.title, def.url, JSON.stringify(def.events), JSON.stringify(def.blueprints), secret, secondary, def.enabled ? 1 : 0, opts.managed ? 1 : 0];
+  const vals = [
+    def.title,
+    def.url,
+    JSON.stringify(def.events),
+    JSON.stringify(def.blueprints),
+    secret,
+    secondary,
+    JSON.stringify(def.headers),
+    def.filter ?? null,
+    def.transform ?? null,
+    def.enabled ? 1 : 0,
+    opts.managed ? 1 : 0,
+  ];
   if (existing)
     await run(
-      'UPDATE webhooks SET title = ?, url = ?, events = ?, blueprints = ?, secret = ?, secondary_secret = ?, enabled = ?, managed = ?, updated_at = ? WHERE identifier = ?',
+      'UPDATE webhooks SET title = ?, url = ?, events = ?, blueprints = ?, secret = ?, secondary_secret = ?, headers = ?, filter = ?, transform = ?, enabled = ?, managed = ?, updated_at = ? WHERE identifier = ?',
       ...vals,
       t,
       def.identifier,
     );
   else
     await run(
-      'INSERT INTO webhooks (title, url, events, blueprints, secret, secondary_secret, enabled, managed, created_at, updated_at, identifier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO webhooks (title, url, events, blueprints, secret, secondary_secret, headers, filter, transform, enabled, managed, created_at, updated_at, identifier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       ...vals,
       t,
       t,
@@ -102,29 +132,54 @@ interface DeliveryRow {
   delivered_at: string | null;
 }
 
-export async function listDeliveries(webhook: string, limit = 50, cursor?: string): Promise<{ deliveries: Delivery[]; nextCursor?: string }> {
-  const after = cursor ? decodeCursor(cursor, { s: 'deliveries', d: 'desc', n: 2 }) : undefined;
+const toDelivery = (r: DeliveryRow): Delivery => ({
+  id: r.id,
+  webhook: r.webhook,
+  event: r.event,
+  status: r.status,
+  attempts: Number(r.attempts),
+  responseStatus: r.response_status,
+  lastError: r.last_error,
+  createdAt: r.created_at,
+  deliveredAt: r.delivered_at,
+});
+
+/** Newest first. Page by `cursor` (keyset, cheap on a large outbox) or `offset`; filter by webhook and status. */
+export async function listDeliveries(q: {
+  webhook?: string;
+  status?: Delivery['status'];
+  limit?: number;
+  cursor?: string;
+  offset?: number;
+}): Promise<{ deliveries: Delivery[]; nextCursor?: string }> {
+  const limit = q.limit ?? 50;
+  const where: string[] = [];
+  const args: (string | number)[] = [];
+  if (q.webhook) {
+    where.push('webhook = ?');
+    args.push(q.webhook);
+  }
+  if (q.status) {
+    where.push('status = ?');
+    args.push(q.status);
+  }
+  if (q.cursor) {
+    where.push('(created_at, id) < (?, ?)');
+    args.push(...decodeCursor(q.cursor, { s: 'deliveries', d: 'desc', n: 2 }));
+  }
   const rows = await all<DeliveryRow>(
-    `SELECT * FROM deliveries WHERE webhook = ? ${after ? 'AND (created_at, id) < (?, ?)' : ''} ORDER BY created_at DESC, id DESC LIMIT ?`,
-    webhook,
-    ...(after ?? []),
+    `SELECT * FROM deliveries ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
+    ...args,
     limit + 1,
+    q.cursor ? 0 : (q.offset ?? 0),
   );
   const more = rows.length > limit;
   if (more) rows.pop();
   const last = rows.at(-1);
-  const deliveries = rows.map((r) => ({
-    id: r.id,
-    webhook: r.webhook,
-    event: r.event,
-    status: r.status,
-    attempts: Number(r.attempts),
-    responseStatus: r.response_status,
-    lastError: r.last_error,
-    createdAt: r.created_at,
-    deliveredAt: r.delivered_at,
-  }));
-  return { deliveries, nextCursor: more && last ? encodeCursor({ s: 'deliveries', d: 'desc', v: [last.created_at, last.id] }) : undefined };
+  return {
+    deliveries: rows.map(toDelivery),
+    nextCursor: more && last ? encodeCursor({ s: 'deliveries', d: 'desc', v: [last.created_at, last.id] }) : undefined,
+  };
 }
 
 export async function redeliver(id: string) {
@@ -144,6 +199,27 @@ export function signPayload(payload: string, secrets: (string | undefined)[], at
   return `t=${at},${keys.map((k) => `v1=${createHmac('sha256', k).update(`${at}.${payload}`).digest('hex')}`).join(',')}`;
 }
 
+/** Requeue the given deliveries (any status). Returns how many. */
+export async function redeliverMany(ids: string[]): Promise<number> {
+  if (!ids.length) return 0;
+  const { changes } = await run(
+    `UPDATE deliveries SET status = 'pending', attempts = 0, next_attempt_at = ?, locked_until = NULL WHERE id IN (${ids.map(() => '?').join(',')})`,
+    now(),
+    ...ids,
+  );
+  return Number(changes);
+}
+
+/** Requeue every failed delivery (optionally of one webhook). Returns how many. */
+export async function redeliverFailed(webhook?: string): Promise<number> {
+  const { changes } = await run(
+    `UPDATE deliveries SET status = 'pending', attempts = 0, next_attempt_at = ?, locked_until = NULL WHERE status = 'failed'${webhook ? ' AND webhook = ?' : ''}`,
+    now(),
+    ...(webhook ? [webhook] : []),
+  );
+  return Number(changes);
+}
+
 // ---------- delivery worker ----------
 const MAX_ATTEMPTS = 8;
 const backoffMs = (attempt: number) => Math.min(6 * 3600_000, 30_000 * 2 ** (attempt - 1)); // 30 s … 6 h
@@ -157,10 +233,16 @@ async function deliver(d: DeliveryRow) {
   const attempts = Number(d.attempts) + 1;
   try {
     const headers: Record<string, string> = { 'content-type': 'application/json', 'x-asterius-event': d.event, 'x-asterius-delivery': d.id };
-    const signature = await signPayload(d.payload, [await resolveValue(w.secret), await resolveValue(w.secondary_secret)]);
+    for (const [k, v] of Object.entries(json<Record<string, string>>(w.headers, {}))) {
+      const value = (await render(v, {}, resolveRef)).value;
+      if (typeof value === 'string' && value) headers[k.toLowerCase()] = value;
+    }
+    const signature = signPayload(d.payload, [await resolveValue(w.secret), await resolveValue(w.secondary_secret)]);
     if (signature) headers['x-asterius-signature'] = signature;
-    const res = await withSpan('webhook.deliver', { 'webhook.id': w.identifier, event: d.event }, () =>
-      http(w.url, { method: 'POST', headers, body: d.payload, timeoutMs: 15_000 }),
+    const res = await withSpan(
+      'webhook.deliver',
+      { 'webhook.id': w.identifier, event: d.event },
+      () => http(w.url, { method: 'POST', headers, body: d.payload, timeoutMs: 15_000, retry: false }), // the outbox owns the retries
     );
     await run(
       "UPDATE deliveries SET status = 'success', attempts = ?, response_status = ?, last_error = NULL, delivered_at = ?, locked_until = NULL WHERE id = ?",

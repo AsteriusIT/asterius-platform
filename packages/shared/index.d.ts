@@ -593,13 +593,23 @@ export interface SyncStats {
   failed: number;
 }
 
+export interface SyncItemError {
+  /** Mapping kind the item came from. */
+  mapping: string;
+  /** blueprint/identifier of the entity, or a short key of the raw item. */
+  key: string;
+  message: string;
+}
+
 export interface SyncRun {
   id: string;
   integration: string;
   trigger: 'schedule' | 'manual' | 'webhook' | 'startup';
-  status: 'running' | 'success' | 'failure';
+  status: 'running' | 'success' | 'partial' | 'failure';
   stats: SyncStats;
   logs: string[];
+  /** Structured per-item errors (capped). */
+  errors: SyncItemError[];
   startedAt: string;
   endedAt: string | null;
 }
@@ -614,8 +624,18 @@ export interface Integration {
   mappings: Mapping[];
   intervalMinutes: number;
   deleteMissing: boolean;
+  /** Ownership priority when integrations write the same entity (higher wins). */
+  priority: number;
+  /** Blueprints this integration is the primary source of. */
+  primaryFor: string[];
+  /** Cron expression (UTC) replacing intervalMinutes. */
+  schedule?: string;
+  deleteMaxPercent: number;
+  deleteDryRun: boolean;
   managed: boolean;
   lastSync: SyncRun | null;
+  /** End time of the last fully successful sync (for alerting). */
+  lastSuccessAt: string | null;
   /** Webhook integrations: where third parties POST events. */
   webhookUrl?: string;
 }
@@ -625,9 +645,13 @@ export interface Webhook {
   identifier: string;
   title: string;
   url: string;
-  /** entity.created · entity.updated · entity.deleted · run.created · run.updated, or `*` / `entity.*` */
+  /** entity.* · run.created/updated · approval.requested/decided · sync.finished/failed, or `*` / `entity.*` */
   events: string[];
   blueprints: string[];
+  /** Extra request headers; values are usually `${secret:NAME}` references. */
+  headers: Record<string, string>;
+  filter?: string | null;
+  transform?: string | null;
   enabled: boolean;
   managed: boolean;
   hasSecret: boolean;

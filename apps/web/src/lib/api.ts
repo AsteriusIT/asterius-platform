@@ -250,6 +250,12 @@ export const api = {
     request<string>('GET', v1(`/audit/export${qs({ ...q, format })}`)),
   configInfo: () => request<{ dir: string; managed: Record<string, number> }>('GET', v1('/config')),
   configExport: () => request<string>('GET', v1('/config/export')),
+  configStatus: () =>
+    request<{ currentHash: string | null; appliedHash: string | null; appliedAt: string | null; errors: string[]; readError: string | null; inSync: boolean }>(
+      'GET',
+      v1('/config/status'),
+    ),
+  configPlan: () => request<Array<{ kind: string; identifier: string; action: string; changes?: string[] }>>('GET', v1('/config/plan')),
   configReload: () => request('POST', v1('/config/reload'), {}),
 };
 

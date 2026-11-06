@@ -26,12 +26,15 @@ export const gitlabSource: Source = {
       ],
     },
   },
+  incremental: true,
   validate: (c) => requireFields(c, ['group', 'token'], 'gitlab'),
-  async *list(kind, { config, log }) {
+  async *list(kind, { config, log, state, startedAt, setState, incomplete }) {
+    const since = (state as { since?: string } | undefined)?.since;
+    const q = since ? `&${kind === 'project' ? 'last_activity_after' : 'updated_after'}=${encodeURIComponent(since)}` : '';
     const group = `${str(config.baseUrl || 'https://gitlab.com').replace(/\/$/, '')}/api/v4/groups/${encodeURIComponent(str(config.group))}`;
     let url: string | undefined;
-    if (kind === 'project') url = `${group}/projects?include_subgroups=true&per_page=100`;
-    else if (kind === 'merge-request') url = `${group}/merge_requests?state=opened&per_page=100`;
+    if (kind === 'project') url = `${group}/projects?include_subgroups=true&per_page=100${q}`;
+    else if (kind === 'merge-request') url = `${group}/merge_requests?state=opened&per_page=100${q}`;
     else throw new Error(`gitlab: unknown kind "${kind}"`);
     for (let page = 0; url && page < MAX_PAGES; page++) {
       const res: Awaited<ReturnType<typeof http<unknown[]>>> = await http<unknown[]>(url, { headers: { 'private-token': str(config.token) } });
@@ -39,5 +42,7 @@ export const gitlabSource: Source = {
       yield res.data;
       url = url && nextLink(res.headers, url);
     }
+    if (url) incomplete(`stopped after ${MAX_PAGES} pages`);
+    setState({ since: startedAt });
   },
 };

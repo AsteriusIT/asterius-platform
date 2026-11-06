@@ -1,4 +1,5 @@
 import { all, json, newId, now, run, type Driver, type SqlValue } from './db.js';
+import { evaluate } from './lib/expr.js';
 import { metrics } from './metrics.js';
 import { bumpConfigVersion, onConfigChange, syncCaches } from './lib/config-version.js';
 import { getBlueprintCached } from './catalog/blueprints.js';
@@ -9,7 +10,24 @@ import { getBlueprintCached } from './catalog/blueprints.js';
  * bus means no event is lost when a pod restarts and any replica can deliver.
  */
 
-export type EventType = 'entity.created' | 'entity.updated' | 'entity.deleted' | 'run.created' | 'run.updated' | 'scorecard.changed';
+export type EventType =
+  | 'entity.created'
+  | 'entity.updated'
+  | 'entity.deleted'
+  | 'run.created'
+  | 'run.updated'
+  | 'approval.requested'
+  | 'approval.decided'
+  | 'sync.finished'
+  | 'sync.failed'
+  | 'step.started'
+  | 'step.finished'
+  | 'team.created'
+  | 'team.updated'
+  | 'team.deleted'
+  | 'user.created'
+  | 'user.updated'
+  | 'scorecard.changed';
 
 /** `run.finished` is internal: it fires event triggers of workflows but is not offered to outbound webhooks. */
 export interface DomainEvent {
@@ -23,6 +41,8 @@ interface Sub {
   identifier: string;
   events: string[];
   blueprints: string[];
+  filter: string | null;
+  transform: string | null;
 }
 
 let cache: { at: number; subs: Sub[] } | undefined;
@@ -40,8 +60,16 @@ export async function invalidateWebhookCache() {
 async function subscriptions(): Promise<Sub[]> {
   await syncCaches();
   if (cache && Date.now() - cache.at < CACHE_MS) return cache.subs;
-  const rows = await all<{ identifier: string; events: string; blueprints: string }>('SELECT identifier, events, blueprints FROM webhooks WHERE enabled = 1');
-  const subs = rows.map((r) => ({ identifier: r.identifier, events: json<string[]>(r.events, []), blueprints: json<string[]>(r.blueprints, []) }));
+  const rows = await all<{ identifier: string; events: string; blueprints: string; filter: string | null; transform: string | null }>(
+    'SELECT identifier, events, blueprints, filter, transform FROM webhooks WHERE enabled = 1',
+  );
+  const subs = rows.map((r) => ({
+    identifier: r.identifier,
+    events: json<string[]>(r.events, []),
+    blueprints: json<string[]>(r.blueprints, []),
+    filter: r.filter,
+    transform: r.transform,
+  }));
   cache = { at: Date.now(), subs };
   return subs;
 }
@@ -76,8 +104,23 @@ export async function prepareEvents(events: DomainEvent[]): Promise<(d?: Driver)
     const restricted = e.blueprint && e.type.startsWith('entity.') ? await isReadRestricted(e.blueprint) : false;
     const matching = subs.filter((s) => eventMatches(s, e.type, e.blueprint) && (!restricted || s.blueprints.includes(e.blueprint!)));
     if (!matching.length) continue;
-    const payload = JSON.stringify({ id: newId(), type: e.type, at: now(), blueprint: e.blueprint, actor: e.actor?.email ?? null, data: e.data });
-    for (const s of matching) rows.push([newId(), s.identifier, e.type, payload, 'pending', now(), now()]);
+    const event = { id: newId(), type: e.type, at: now(), blueprint: e.blueprint, actor: e.actor?.email ?? null, data: e.data };
+    for (const s of matching) {
+      let body: unknown = event;
+      try {
+        // JSON round trip: JSONata works on plain data (dates, undefined…).
+        const plain = JSON.parse(JSON.stringify(event)) as unknown;
+        if (s.filter && !(await evaluate(s.filter, plain))) continue;
+        if (s.transform) {
+          body = await evaluate(s.transform, plain);
+          if (body === undefined || body === null) continue; // the transform chose not to send anything
+        }
+      } catch (err) {
+        console.error('[events] webhook filter/transform failed', s.identifier, err);
+        continue;
+      }
+      rows.push([newId(), s.identifier, e.type, JSON.stringify(body), 'pending', now(), now()]);
+    }
   }
   return async (d) => {
     try {

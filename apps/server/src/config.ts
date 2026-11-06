@@ -160,6 +160,20 @@ const schema = z.object({
   HTTP_TIMEOUT_SECONDS: z.coerce.number().default(30),
   /** `database` shares API rate-limit counters between replicas (one upsert per request); `memory` is per pod. */
   RATE_LIMIT_STORE: z.enum(['memory', 'database']).default('memory'),
+  /** Directory of plugin modules (*.mjs / *.js, or sub-directories with an index) loaded at startup. */
+  PLUGIN_DIR: z.string().optional(),
+  /** Comma separated plugin packages or paths loaded at startup (installed in the image). */
+  PLUGINS: z.string().default(''),
+  /** Retries of outbound requests on 429 / 5xx / network errors (0 disables), with jittered exponential backoff. */
+  HTTP_RETRIES: z.coerce.number().int().min(0).max(10).default(3),
+  HTTP_RETRY_BASE_MS: z.coerce.number().int().min(1).default(500),
+  /** Longest single wait between attempts, including waits requested by Retry-After / X-RateLimit-Reset. */
+  HTTP_RETRY_MAX_DELAY_SECONDS: z.coerce.number().min(0).default(60),
+  /** Concurrent outbound requests per upstream host and process (0: unlimited). */
+  HTTP_MAX_CONCURRENCY_PER_HOST: z.coerce.number().int().min(0).default(8),
+  /** Consecutive failures that open the circuit of an integration, and how long it stays open (0 threshold: off). */
+  HTTP_CIRCUIT_THRESHOLD: z.coerce.number().int().min(0).default(5),
+  HTTP_CIRCUIT_COOLDOWN_SECONDS: z.coerce.number().min(1).default(60),
   /** Keep run logs, sync runs, deliveries and audit entries for N days. */
   RETENTION_DAYS: z.coerce.number().int().min(1).default(90),
   /**

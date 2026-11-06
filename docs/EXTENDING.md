@@ -268,3 +268,25 @@ registerInvoker({
 A source (`apps/server/src/integrations/types.ts`) implements `list(kind, { config, log })` as an async generator that yields pages of raw items. Mappings take care of the rest. Register built-ins in `invokers/index.ts` or `sources/index.ts`. Their `info.example` appears as a template in the admin UI.
 
 To give your invoker a form in the action builder, declare `info.fields` (`PluginField` in `packages/shared`): each field has a `key`, a `label` and a `kind` (`text`, `textarea`, `number`, `boolean`, `select` with `options`, `secret`, `list`, `keyvalue`, `json`, `blueprint`), plus optional `required`, `help`, `placeholder` and `advanced`. Without `fields`, the builder shows a JSON editor for the invoker settings.
+
+### Loading plugins without forking
+
+Set `PLUGIN_DIR` (a directory of `*.mjs` / `*.js` files or sub-directories with an `index.mjs`) and/or `PLUGINS` (comma separated packages or paths installed in the image). Each module default-exports a function that receives the `PluginApi` (`registerSource`, `registerInvoker`, `log`); types are in `packages/plugin-sdk`:
+
+```js
+// plugins/jira.mjs
+export default function register(api) {
+  api.registerInvoker({ info: { type: 'jira-ticket', title: 'Jira ticket', description: '…', example: { type: 'jira-ticket' } }, validate() {}, async start({ config }) { /* … */ } });
+}
+```
+
+Plugins load before the configuration files, so declared resources may use them. A plugin that fails to load is logged and skipped. In-process plugins run with the server's privileges: install only code you trust.
+
+### Out-of-process plugins (any language)
+
+The `external` source and invoker call a service of yours over HTTP, so plugins can be written in any language and run isolated. Authenticate with `headers` or an `auth` block (OAuth2 client credentials, GitHub App, cloud identities, SigV4, mTLS).
+
+- Source: `POST {url}/list` with `{ kind, config, cursor, state, startedAt }` answers `{ items, nextCursor?, state?, incomplete? }`. Call again with `cursor = nextCursor` until it is absent. Return `incomplete` when the listing was cut short (nothing is deleted then) and `state` to be handed back on the next run (incremental listings).
+- Invoker: `POST {url}/start` with `{ config, run, action, inputs, entity, trigger, steps }`, then `POST {url}/poll` with `{ config, state, run }` while the answer is `IN_PROGRESS`, and optionally `POST {url}/cancel`. Answers are `{ status: "IN_PROGRESS" | "SUCCESS" | "FAILURE", state?, link?, statusLabel?, result? }`.
+
+`config` is the configuration without `url`, `auth` and `headers`.

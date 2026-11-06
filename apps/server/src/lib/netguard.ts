@@ -104,7 +104,7 @@ export function sameOrigin(a: string | URL, b: string | URL) {
 type LookupCb = (err: NodeJS.ErrnoException | null, address: string | dns.LookupAddress[], family?: number) => void;
 
 /** `dns.lookup` that refuses forbidden addresses: the socket connects to exactly what was validated. */
-function guardedLookup(hostname: string, options: dns.LookupOptions, cb: LookupCb) {
+export function guardedLookup(hostname: string, options: dns.LookupOptions, cb: LookupCb) {
   dns.lookup(hostname, { ...options, all: true }, (err, addrs) => {
     if (err) return cb(err, '', 0);
     try {

@@ -580,6 +580,93 @@ export const MIGRATIONS: Migration[] = [
         CREATE INDEX audit_actor ON audit_log(actor_email);
       `),
   },
+  // Integrations epic (ap-8s5)
+  {
+    id: 25,
+    name: 'integrations: incremental sync state, deletion guards',
+    up: (d) =>
+      d.exec(`
+        ALTER TABLE integrations ADD COLUMN sync_state TEXT;
+        ALTER TABLE integrations ADD COLUMN delete_max_percent INTEGER NOT NULL DEFAULT 20;
+        ALTER TABLE integrations ADD COLUMN delete_dry_run INTEGER NOT NULL DEFAULT 0;
+      `),
+  },
+  {
+    id: 26,
+    name: 'integrations: cron schedule, single-kind sync requests, per-item sync errors',
+    up: (d) =>
+      d.exec(`
+        ALTER TABLE integrations ADD COLUMN schedule TEXT;
+        ALTER TABLE integrations ADD COLUMN requested_kind TEXT;
+        ALTER TABLE sync_runs ADD COLUMN errors TEXT NOT NULL DEFAULT '[]';
+      `),
+  },
+  {
+    id: 27,
+    name: 'integrations: ownership priority',
+    up: (d) => d.exec('ALTER TABLE integrations ADD COLUMN priority INTEGER NOT NULL DEFAULT 0'),
+  },
+  {
+    id: 28,
+    name: 'webhooks: custom headers, filter, transform',
+    up: (d) =>
+      d.exec(`
+        ALTER TABLE webhooks ADD COLUMN headers TEXT NOT NULL DEFAULT '{}';
+        ALTER TABLE webhooks ADD COLUMN filter TEXT;
+        ALTER TABLE webhooks ADD COLUMN transform TEXT;
+      `),
+  },
+  {
+    id: 29,
+    name: 'configuration as code: applied status',
+    up: (d) =>
+      d.exec(`
+        CREATE TABLE config_status (
+          id INTEGER PRIMARY KEY,
+          hash TEXT NOT NULL,
+          files TEXT NOT NULL DEFAULT '[]',
+          errors TEXT NOT NULL DEFAULT '[]',
+          applied_at TEXT NOT NULL,
+          applied_by TEXT
+        );
+      `),
+  },
+  {
+    id: 30,
+    name: 'inbound webhooks: persisted events processed by workers',
+    up: (d) =>
+      d.exec(`
+        CREATE TABLE inbound_events (
+          id TEXT PRIMARY KEY,
+          integration TEXT NOT NULL REFERENCES integrations(identifier) ON DELETE CASCADE,
+          headers TEXT NOT NULL,
+          content_type TEXT NOT NULL,
+          payload TEXT NOT NULL,
+          status TEXT NOT NULL,        -- pending done failed
+          attempts INTEGER NOT NULL DEFAULT 0,
+          error TEXT,
+          next_attempt_at TEXT NOT NULL,
+          locked_until TEXT,
+          received_at TEXT NOT NULL,
+          processed_at TEXT
+        );
+        CREATE INDEX inbound_events_due ON inbound_events(status, next_attempt_at);
+      `),
+  },
+  {
+    id: 31,
+    name: 'ownership: field owners, primary blueprints',
+    up: (d) =>
+      d.exec(`
+        ALTER TABLE entities ADD COLUMN field_owners TEXT;
+        ALTER TABLE integrations ADD COLUMN primary_for TEXT NOT NULL DEFAULT '[]';
+      `),
+  },
+  {
+    id: 32,
+    name: 'integrations: scoped sync requests (push fast path)',
+    up: (d) => d.exec('ALTER TABLE integrations ADD COLUMN requested_scope TEXT'),
+  },
 ];
 
 /**

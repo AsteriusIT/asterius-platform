@@ -1,4 +1,5 @@
 import { createHmac } from 'node:crypto';
+import { validateAuth } from '../../lib/auth.js';
 import { http } from '../../lib/http.js';
 import { requireFields, str, type Invoker } from '../types.js';
 
@@ -26,6 +27,13 @@ export const webhookInvoker: Invoker = {
       },
       { key: 'headers', label: 'Headers', kind: 'keyvalue', help: 'e.g. Authorization: Bearer ${secret:TOKEN}' },
       { key: 'body', label: 'Body', kind: 'json', help: 'Empty: the whole run context (inputs, entity, requester, callback)' },
+      {
+        key: 'auth',
+        label: 'Authentication',
+        kind: 'json',
+        help: 'oauth2-client-credentials, github-app, azure-managed-identity, gcp-service-account, aws-sigv4, mtls, basic, bearer',
+        advanced: true,
+      },
       { key: 'secret', label: 'Signing secret', kind: 'secret', help: 'Adds X-Asterius-Signature: sha256=<HMAC of the body>', advanced: true },
     ],
     example: {
@@ -40,6 +48,7 @@ export const webhookInvoker: Invoker = {
   },
   validate(c) {
     requireFields(c, ['url'], 'webhook');
+    validateAuth(c.auth);
     if (c.mode && !['sync', 'async'].includes(str(c.mode))) throw new Error('webhook invoker: mode is sync or async');
   },
   async start({ ctx, config, log }) {
@@ -53,7 +62,7 @@ export const webhookInvoker: Invoker = {
     if (config.secret) headers['x-asterius-signature'] = `sha256=${createHmac('sha256', str(config.secret)).update(body).digest('hex')}`;
     const method = str(config.method || 'POST').toUpperCase();
     await log(`${method} ${new URL(str(config.url)).origin}${new URL(str(config.url)).pathname}`);
-    const res = await http(str(config.url), { method, headers, body: method === 'GET' ? undefined : body });
+    const res = await http(str(config.url), { method, headers, body: method === 'GET' ? undefined : body, auth: config.auth });
     await log(`Answered ${res.status}`);
     if (config.mode === 'async') return { status: 'IN_PROGRESS', statusLabel: 'Waiting for the service to report' };
     return { status: 'SUCCESS', result: typeof res.data === 'string' ? res.data.slice(0, 4000) || null : res.data };
