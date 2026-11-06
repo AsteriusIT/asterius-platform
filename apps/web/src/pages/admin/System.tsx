@@ -1,10 +1,14 @@
 import { useState } from 'react';
-import { Alert, Badge, Button, Card, Code, Group, SimpleGrid, Stack, Text, TextInput } from '@mantine/core';
+import { Alert, Badge, Button, Card, Code, FileButton, Group, Modal, Select, SimpleGrid, Stack, Text, TextInput } from '@mantine/core';
+import { modals } from '@mantine/modals';
 import { useDebouncedValue } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
-import { IconArrowBackUp, IconDownload, IconRefresh, IconSearch, IconTrash } from '@tabler/icons-react';
+import { IconArrowBackUp, IconDownload, IconRefresh, IconSearch, IconTrash, IconUpload } from '@tabler/icons-react';
 import { api, errorText } from '../../lib/api';
+import { downloadText } from '../../lib/catalogView';
+import { auditToCsv } from '../../lib/auditCsv';
+import { notifyError, useAppMutation } from '../../lib/queryClient';
 import { DataTable } from '../../components/DataTable';
 import { Mono, PageHeader, QueryView, TimeAgo } from '../../components/ui';
 
@@ -13,71 +17,75 @@ const PAGE = 50;
 export function AuditAdmin() {
   const [search, setSearch] = useState('');
   const [debounced] = useDebouncedValue(search, 300);
-  const [action, setAction] = useState('');
-  const [actor, setActor] = useState('');
-  const [dAction] = useDebouncedValue(action, 300);
-  const [dActor] = useDebouncedValue(actor, 300);
+  const [actor, setActor] = useState<string | null>(null);
+  const [action, setAction] = useState<string | null>(null);
+  const [target, setTarget] = useState('');
+  const [debouncedTarget] = useDebouncedValue(target, 300);
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
   const [page, setPage] = useState(1);
-  const filters = { search: debounced, action: dAction, actor: dActor };
-  const exportAs = async (format: 'csv' | 'json') => {
-    const body = await api.auditExport(filters, format);
-    const url = URL.createObjectURL(new Blob([body], { type: format === 'csv' ? 'text/csv' : 'application/x-ndjson' }));
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `asterius-audit-${new Date().toISOString().slice(0, 10)}.${format === 'csv' ? 'csv' : 'ndjson'}`;
-    a.click();
-    URL.revokeObjectURL(url);
+  const facets = useQuery({ queryKey: ['audit-facets'], queryFn: api.auditFacets, staleTime: 60_000 });
+  // `to` is a date: include the whole day.
+  const filters = {
+    search: debounced,
+    actor: actor ?? undefined,
+    action: action ?? undefined,
+    target: debouncedTarget,
+    from: from || undefined,
+    to: to ? `${to}T23:59:59.999Z` : undefined,
   };
   const q = useQuery({
-    queryKey: ['audit', debounced, dAction, dActor, page],
+    queryKey: ['audit', filters, page],
     queryFn: () => api.audit({ ...filters, limit: PAGE + 1, offset: (page - 1) * PAGE }),
     placeholderData: keepPreviousData,
   });
   const rows = q.data?.slice(0, PAGE);
+  const reset =
+    <T,>(set: (v: T) => void) =>
+    (v: T) => {
+      set(v);
+      setPage(1);
+    };
+  const exportCsv = async () => {
+    try {
+      const all = await api.audit({ ...filters, limit: 5000, offset: 0 });
+      downloadText('audit-log.csv', auditToCsv(all));
+    } catch (e) {
+      notifyError(e, 'Export failed');
+    }
+  };
   return (
     <Stack>
-      <PageHeader title="Audit log" description="Who changed what: definitions, catalog writes, runs, approvals, tokens, secrets, sign-ins." />
+      <PageHeader
+        title="Audit log"
+        description="Who changed what: definitions, catalog writes, runs, approvals, tokens, secrets, sign-ins."
+        actions={
+          <Button variant="default" leftSection={<IconDownload size={16} />} onClick={() => void exportCsv()}>
+            Export CSV
+          </Button>
+        }
+      />
       <Group align="flex-end">
         <TextInput
-          placeholder="Filter by action, target or user"
+          label="Search"
+          placeholder="Action, target or user"
           leftSection={<IconSearch size={16} />}
           value={search}
-          onChange={(e) => {
-            setSearch(e.currentTarget.value);
-            setPage(1);
-          }}
-          w={300}
+          onChange={(e) => reset(setSearch)(e.currentTarget.value)}
+          w={240}
         />
-        <TextInput
-          placeholder="Action (token.*)"
-          value={action}
-          onChange={(e) => {
-            setAction(e.currentTarget.value);
-            setPage(1);
-          }}
-          w={160}
-        />
-        <TextInput
-          placeholder="Actor email"
-          value={actor}
-          onChange={(e) => {
-            setActor(e.currentTarget.value);
-            setPage(1);
-          }}
-          w={200}
-        />
-        <Button variant="default" leftSection={<IconDownload size={16} />} onClick={() => void exportAs('csv')}>
-          CSV
-        </Button>
-        <Button variant="default" leftSection={<IconDownload size={16} />} onClick={() => void exportAs('json')}>
-          NDJSON
-        </Button>
+        <Select label="Actor" placeholder="Anyone" searchable clearable data={facets.data?.actors ?? []} value={actor} onChange={reset(setActor)} w={220} />
+        <Select label="Action" placeholder="Any" searchable clearable data={facets.data?.actions ?? []} value={action} onChange={reset(setAction)} w={200} />
+        <TextInput label="Resource" placeholder="Target contains" value={target} onChange={(e) => reset(setTarget)(e.currentTarget.value)} w={180} />
+        <TextInput label="From" type="date" value={from} onChange={(e) => reset(setFrom)(e.currentTarget.value)} />
+        <TextInput label="To" type="date" value={to} onChange={(e) => reset(setTo)(e.currentTarget.value)} />
       </Group>
       <DataTable
         rows={rows}
         loading={q.isPending}
         error={q.error}
         rowKey={(a) => a.id}
+        empty="No audit entry matches"
         columns={[
           { key: 'w', label: 'When', render: (a) => <TimeAgo at={a.at} /> },
           { key: 'u', label: 'Who', render: (a) => <Text fz="sm">{a.actorEmail ?? 'system'}</Text> },
@@ -112,6 +120,7 @@ export function ConfigAdmin() {
   const status = useQuery({ queryKey: ['config-status'], queryFn: api.configStatus, refetchInterval: 30_000 });
   const plan = useQuery({ queryKey: ['config-plan'], queryFn: api.configPlan });
   const [busy, setBusy] = useState(false);
+  const [diffOpen, setDiffOpen] = useState(false);
 
   const download = async () => {
     const yaml = await api.configExport();
@@ -122,7 +131,39 @@ export function ConfigAdmin() {
     a.click();
     URL.revokeObjectURL(url);
   };
+  const diff = useQuery({ queryKey: ['config-diff'], queryFn: api.configDiff, enabled: diffOpen });
+  const importFile = async (file: File | null) => {
+    if (!file) return;
+    try {
+      const yaml = await file.text();
+      const check = await api.configImport(yaml, true);
+      modals.openConfirmModal({
+        title: `Import ${file.name}?`,
+        children: (
+          <Text fz="sm">
+            Creates or updates{' '}
+            {Object.entries(check.counts)
+              .map(([k, n]) => `${n} ${k}`)
+              .join(', ')}{' '}
+            as regular (editable) resources.
+          </Text>
+        ),
+        labels: { confirm: 'Import', cancel: 'Cancel' },
+        onConfirm: () =>
+          void api.configImport(yaml, false).then(
+            () => {
+              notifications.show({ color: 'green', message: 'Imported' });
+              void qc.invalidateQueries();
+            },
+            (e) => notifyError(e, 'Import failed'),
+          ),
+      });
+    } catch (e) {
+      notifyError(e, 'Invalid file');
+    }
+  };
   const reload = async () => {
+    setDiffOpen(false);
     setBusy(true);
     try {
       await api.configReload();
@@ -142,7 +183,14 @@ export function ConfigAdmin() {
         description="Resources declared in the configuration directory are managed: read-only here, updated when the files change (checked every minute)."
         actions={
           <>
-            <Button variant="default" leftSection={<IconRefresh size={16} />} loading={busy} onClick={reload}>
+            <FileButton onChange={(f) => void importFile(f)} accept=".yaml,.yml,.json">
+              {(props) => (
+                <Button variant="default" leftSection={<IconUpload size={16} />} {...props}>
+                  Import YAML
+                </Button>
+              )}
+            </FileButton>
+            <Button variant="default" leftSection={<IconRefresh size={16} />} loading={busy} onClick={() => setDiffOpen(true)}>
               Reload now
             </Button>
             <Button leftSection={<IconDownload size={16} />} onClick={() => void download()}>
@@ -191,6 +239,37 @@ export function ConfigAdmin() {
             <Text fz="sm">
               Directory: <Code>{i.dir}</Code>
             </Text>
+            <Card>
+              <Group gap="xl">
+                <div>
+                  <Text fz="xs" c="dimmed">
+                    Last applied
+                  </Text>
+                  <Text fz="sm">
+                    <TimeAgo at={i.status.lastAppliedAt} />
+                  </Text>
+                </div>
+                <div>
+                  <Text fz="xs" c="dimmed">
+                    Last checked
+                  </Text>
+                  <Text fz="sm">
+                    <TimeAgo at={i.status.lastCheckedAt} />
+                  </Text>
+                </div>
+                <div>
+                  <Text fz="xs" c="dimmed">
+                    Files
+                  </Text>
+                  <Text fz="sm">{i.status.files}</Text>
+                </div>
+              </Group>
+              {i.status.error && (
+                <Alert color="red" mt="sm" title="The last check failed (the previous configuration is kept)">
+                  {i.status.error}
+                </Alert>
+              )}
+            </Card>
             <SimpleGrid cols={{ base: 2, sm: 5 }}>
               {Object.entries(i.managed).map(([k, n]) => (
                 <Card key={k} padding="md">
@@ -206,6 +285,32 @@ export function ConfigAdmin() {
           </>
         )}
       </QueryView>
+      <Modal opened={diffOpen} onClose={() => setDiffOpen(false)} title="Changes a reload would apply" size="lg">
+        <QueryView q={diff}>
+          {(d) =>
+            d.error ? (
+              <Alert color="red" title="Configuration files are invalid">
+                {d.error}
+              </Alert>
+            ) : (
+              <Stack gap="xs">
+                {Object.entries(d.kinds).map(([k, v]) => (
+                  <Text key={k} fz="sm">
+                    <b>{k}</b>: {v.added.length} added{v.added.length ? ` (${v.added.join(', ')})` : ''}, {v.removed.length} removed
+                    {v.removed.length ? ` (${v.removed.join(', ')})` : ''}, {v.kept.length} re-applied
+                  </Text>
+                ))}
+                <Group justify="flex-end" mt="sm">
+                  <Button variant="default" onClick={() => setDiffOpen(false)}>
+                    Cancel
+                  </Button>
+                  <Button onClick={() => void reload()}>Reload</Button>
+                </Group>
+              </Stack>
+            )
+          }
+        </QueryView>
+      </Modal>
       <Card>
         <Text fw={600} mb="xs">
           Moving UI changes to Git
@@ -289,6 +394,74 @@ export function DeletedAdmin() {
                   Purge
                 </Button>
               </Group>
+            ),
+          },
+        ]}
+      />
+    </Stack>
+  );
+}
+
+/** Deliveries of every webhook that did not go through, with bulk redeliver. */
+export function DeliveriesAdmin() {
+  const qc = useQueryClient();
+  const [status, setStatus] = useState<string>('failed');
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const q = useQuery({ queryKey: ['deliveries', 'all', status], queryFn: () => api.allDeliveries({ status, limit: 100 }) });
+  const redeliver = useAppMutation({
+    mutationFn: (ids: string[]) => api.redeliverMany(ids),
+    onSuccess: (r) => {
+      notifications.show({ color: 'green', message: `${r.queued} deliveries queued` });
+      setSelected(new Set());
+      void qc.invalidateQueries({ queryKey: ['deliveries'] });
+    },
+  });
+  return (
+    <Stack>
+      <PageHeader
+        title="Webhook deliveries"
+        description="Outbound events across all webhooks."
+        actions={
+          <Button disabled={!selected.size} loading={redeliver.isPending} onClick={() => redeliver.mutate([...selected])}>
+            Redeliver {selected.size || ''}
+          </Button>
+        }
+      />
+      <Select
+        aria-label="Status"
+        allowDeselect={false}
+        data={[
+          { value: 'failed', label: 'Failed' },
+          { value: 'pending', label: 'Pending' },
+          { value: 'success', label: 'Delivered' },
+        ]}
+        value={status}
+        onChange={(v) => {
+          setStatus(v ?? 'failed');
+          setSelected(new Set());
+        }}
+        w={200}
+      />
+      <DataTable
+        rows={q.data}
+        loading={q.isPending}
+        error={q.error}
+        rowKey={(d) => d.id}
+        empty="No deliveries"
+        selection={{ selected, onChange: setSelected }}
+        columns={[
+          { key: 'w', label: 'When', render: (d) => <TimeAgo at={d.createdAt} /> },
+          { key: 'h', label: 'Webhook', render: (d) => <Mono>{d.webhook}</Mono> },
+          { key: 'e', label: 'Event', render: (d) => <Text fz="sm">{d.event}</Text> },
+          { key: 'a', label: 'Attempts', render: (d) => d.attempts },
+          { key: 'r', label: 'Response', render: (d) => d.responseStatus ?? '—' },
+          {
+            key: 'x',
+            label: 'Error',
+            render: (d) => (
+              <Text fz="xs" c="red">
+                {d.lastError ?? ''}
+              </Text>
             ),
           },
         ]}

@@ -8,6 +8,7 @@ import {
   Burger,
   Group,
   Indicator,
+  Kbd,
   Menu,
   NavLink,
   ScrollArea,
@@ -39,6 +40,7 @@ import {
   IconPlugConnected,
   IconRobot,
   IconRocket,
+  IconSend,
   IconSchema,
   IconSearch,
   IconSettingsAutomation,
@@ -52,6 +54,9 @@ import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { Tour } from './Tour';
 import { tourSteps } from './tourSteps';
+import { useT } from '../lib/i18n';
+import { CommandPalette } from './CommandPalette';
+import { NotificationCenter } from './NotificationCenter';
 import { EntityIcon } from './icons';
 
 const initials = (name = '') =>
@@ -66,6 +71,8 @@ const initials = (name = '') =>
 export function Layout() {
   const [opened, { toggle, open, close }] = useDisclosure();
   const [touring, setTouring] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const t = useT();
   const isMobile = useMediaQuery('(max-width: 48em)');
   const qc = useQueryClient();
   const { user, isAdmin, signOut } = useAuth();
@@ -115,6 +122,15 @@ export function Layout() {
 
   return (
     <AppShell layout="alt" header={{ height: 60 }} navbar={{ width: 264, breakpoint: 'sm', collapsed: { mobile: !opened } }} padding="xl">
+      <a
+        href="#main-content"
+        style={{ position: 'absolute', left: -9999, top: 0, zIndex: 1000, background: 'var(--mantine-color-body)', padding: 8 }}
+        onFocus={(e) => (e.currentTarget.style.left = '8px')}
+        onBlur={(e) => (e.currentTarget.style.left = '-9999px')}
+      >
+        {t('app.skipToContent')}
+      </a>
+      <CommandPalette isAdmin={isAdmin} opened={paletteOpen} onOpenChange={setPaletteOpen} />
       <AppShell.Header className="app-header">
         <Group h="100%" px="lg" justify="space-between" wrap="nowrap" gap="md">
           <Group gap="sm" wrap="nowrap">
@@ -139,6 +155,8 @@ export function Layout() {
               value={search}
               onChange={(e) => setSearch(e.currentTarget.value)}
               aria-label="Search the catalog"
+              rightSection={<Kbd size="xs">Ctrl K</Kbd>}
+              rightSectionWidth={64}
             />
           </form>
           <Group gap={4} wrap="nowrap">
@@ -157,6 +175,7 @@ export function Layout() {
                 </ActionIcon>
               </Indicator>
             </Tooltip>
+            <NotificationCenter />
             <Tooltip label="Runs">
               <ActionIcon component={Link} to="/runs" data-tour="runs" variant={active('/runs') ? 'light' : 'subtle'} color="gray" size="lg" aria-label="Runs">
                 <IconActivity size={19} stroke={1.6} />
@@ -216,6 +235,7 @@ export function Layout() {
               {link('/admin/dashboards', 'Dashboards', <IconLayoutDashboard size={18} stroke={1.6} />)}
               {link('/admin/scorecards', 'Scorecards', <IconMedal size={18} stroke={1.6} />)}
               {link('/admin/webhooks', 'Webhooks', <IconWebhook size={18} stroke={1.6} />)}
+              {link('/admin/deliveries', 'Deliveries', <IconSend size={18} stroke={1.6} />)}
               {link('/admin/teams', 'Teams', <IconUsersGroup size={18} stroke={1.6} />)}
               {link('/admin/users', 'Users & service accounts', <IconKey size={18} stroke={1.6} />)}
               {link('/admin/secrets', 'Secrets', <IconLock size={18} stroke={1.6} />)}
@@ -275,7 +295,7 @@ export function Layout() {
         </AppShell.Section>
       </AppShell.Navbar>
 
-      <AppShell.Main className="app-main">
+      <AppShell.Main className="app-main" id="main-content" tabIndex={-1}>
         <div className="app-content">
           <Outlet />
         </div>

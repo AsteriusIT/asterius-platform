@@ -294,6 +294,65 @@ export async function planConfig(loaded: LoadedConfig = readConfigDir()): Promis
   return out;
 }
 
+const KINDS = ['teams', 'blueprints', 'actions', 'integrations', 'webhooks', 'scorecards', 'dashboards'] as const;
+
+/** What a reload would change: declared vs currently managed identifiers. Nothing is applied. */
+export async function configDiff() {
+  let loaded: LoadedConfig;
+  try {
+    loaded = readConfigDir();
+  } catch (err) {
+    return { error: errorMessage(err), kinds: {} as Record<string, { added: string[]; removed: string[]; kept: string[] }> };
+  }
+  const current: Record<(typeof KINDS)[number], { identifier: string; managed: boolean }[]> = {
+    teams: await listTeams(),
+    blueprints: await listBlueprints(),
+    actions: await listActions(),
+    integrations: await listIntegrations(),
+    webhooks: await listWebhooks(),
+    scorecards: await listScorecards(),
+    dashboards: await listDashboards(),
+  };
+  const kinds: Record<string, { added: string[]; removed: string[]; kept: string[] }> = {};
+  for (const k of KINDS) {
+    const declared = new Set(loaded.data[k].map((d) => d.identifier));
+    const managed = new Set(current[k].filter((c) => c.managed).map((c) => c.identifier));
+    kinds[k] = {
+      added: [...declared].filter((d) => !managed.has(d)),
+      removed: [...managed].filter((m) => !declared.has(m)),
+      kept: [...declared].filter((d) => managed.has(d)),
+    };
+  }
+  return { error: null, pending: loaded.hash !== lastHash, kinds };
+}
+
+/**
+ * Import resources from an exported YAML: validates every document, then (unless `dryRun`) creates or updates them as
+ * regular, editable resources (not managed). Returns counts per kind.
+ */
+export async function importConfig(text: string, dryRun: boolean): Promise<Record<string, number>> {
+  const merged: ConfigFile = configFile.parse({});
+  for (const doc of parseAllDocuments(text, { merge: true })) {
+    if (doc.errors.length) throw new Error(doc.errors[0].message);
+    const raw = doc.toJS();
+    if (raw == null) continue;
+    const parsed = configFile.safeParse(raw);
+    if (!parsed.success) throw new Error(parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; '));
+    for (const k of KINDS) (merged[k] as unknown[]).push(...parsed.data[k]);
+  }
+  const counts = Object.fromEntries(KINDS.map((k) => [k, merged[k].length]));
+  if (dryRun) return counts;
+  for (const t of merged.teams) await upsertTeam(t);
+  const knownTargets = new Set([...merged.blueprints.map((b) => b.identifier), ...(await listBlueprints()).map((b) => b.identifier)]);
+  for (const b of merged.blueprints) await upsertBlueprint(b, { knownTargets });
+  for (const a of merged.actions) await upsertAction(a);
+  for (const i of merged.integrations) await upsertIntegration(i);
+  for (const w of merged.webhooks) await upsertWebhook(w);
+  for (const sc of merged.scorecards) await upsertScorecard(sc, { knownBlueprints: knownTargets });
+  for (const d of merged.dashboards) await upsertDashboard(d);
+  return counts;
+}
+
 /** Load once at startup, then watch for changes (ConfigMap updates, git-sync). */
 export async function startConfigLoader(log: FastifyBaseLogger) {
   const check = async () => {

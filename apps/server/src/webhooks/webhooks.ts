@@ -1,7 +1,7 @@
 import { createHmac } from 'node:crypto';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Delivery, Webhook } from '@asterius/shared';
-import { all, bool, json, later, now, one, run } from '../db.js';
+import { all, bool, json, later, newId, now, one, run } from '../db.js';
 import { badRequest, errorMessage, managedError, notFound } from '../lib/errors.js';
 import { http, UpstreamError } from '../lib/http.js';
 import { decodeCursor, encodeCursor } from '../lib/cursor.js';
@@ -321,4 +321,25 @@ export async function migrateLiteralWebhookSecrets() {
     await run('UPDATE webhooks SET secret = ? WHERE identifier = ?', `\${secret:${name}}`, r.identifier);
   }
   if (rows.length) invalidateWebhookCache();
+}
+
+/** Queue a `webhook.test` delivery for a webhook, whatever its event subscriptions. */
+export async function queueTestDelivery(webhook: string) {
+  const payload = JSON.stringify({
+    id: newId(),
+    type: 'webhook.test',
+    at: now(),
+    blueprint: null,
+    actor: null,
+    data: { message: 'Test delivery from Asterius' },
+  });
+  await run(
+    "INSERT INTO deliveries (id, webhook, event, payload, status, next_attempt_at, created_at) VALUES (?, ?, ?, ?, 'pending', ?, ?)",
+    newId(),
+    webhook,
+    'webhook.test',
+    payload,
+    now(),
+    now(),
+  );
 }

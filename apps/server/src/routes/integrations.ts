@@ -18,6 +18,8 @@ import { deliveryIdOf, ingest, recordDelivery, renderConfig, testIntegration, ve
 import { getSource } from '../integrations/sources/index.js';
 import { mapItem } from '../integrations/mapping.js';
 import { mappingDef } from '../schemas.js';
+import { render } from '../lib/expr.js';
+import { resolveRef } from '../secrets.js';
 import { idParam } from './util.js';
 
 declare module 'fastify' {
@@ -118,6 +120,36 @@ export async function integrationRoutes(app: FastifyInstance) {
     });
 
     /** Test the connection: fetch one page per kind (nothing is written). */
+    /**
+     * Test connection (integration editor): validate an unsaved configuration, fetch the first page of `kind` and return up
+     * to three raw items, so mappings can be previewed against real data. Nothing is written.
+     */
+    admin.post('/integrations/test', async (req) => {
+      const body = z.object({ type: z.string(), config: z.record(z.string(), z.unknown()).default({}), kind: z.string().default('item') }).parse(req.body);
+      try {
+        const source = getSource(body.type);
+        const config = (await render(body.config, { integration: { identifier: 'test' } }, resolveRef)).value as Record<string, unknown>;
+        source.validate(config);
+        if (!source.list) return { ok: true, sample: [], note: 'This source receives pushed events: nothing to fetch.' };
+        const log: string[] = [];
+        const timeout = new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Timed out after 20 s')), 20_000).unref());
+        const first = (async () => {
+          for await (const page of source.list!(body.kind, {
+            config,
+            log: (l) => log.push(l),
+            setState: () => undefined,
+            incomplete: () => undefined,
+            startedAt: new Date().toISOString(),
+          }))
+            return page.slice(0, 3);
+          return [];
+        })();
+        return { ok: true, sample: await Promise.race([first, timeout]), log };
+      } catch (err) {
+        return { ok: false, sample: [], error: (err as Error).message };
+      }
+    });
+
     admin.post('/integrations/:id/test', async (req) => {
       const { id } = idParam.parse(req.params);
       return testIntegration(id);

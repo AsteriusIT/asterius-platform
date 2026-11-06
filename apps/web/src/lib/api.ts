@@ -37,8 +37,44 @@ import type {
   ActionVersionDiff,
   NotificationPrefs,
   NotificationSettings,
+  EntityGraph as SharedGraph,
   DryRunResult,
 } from '@asterius/shared';
+
+export interface SimulationResult {
+  steps: { id: string; type: string; skipped: boolean; error?: string; preview?: unknown }[];
+}
+
+export interface ConfigInfo {
+  dir: string;
+  managed: Record<string, number>;
+  status: { lastCheckedAt: string | null; lastAppliedAt: string | null; hash: string | null; files: number; error: string | null };
+}
+export interface ConfigDiff {
+  error: string | null;
+  pending?: boolean;
+  kinds: Record<string, { added: string[]; removed: string[]; kept: string[] }>;
+}
+
+export interface NotificationItem {
+  id: string;
+  kind: string;
+  title: string;
+  body: string;
+  link: string | null;
+  createdAt: string;
+  read: boolean;
+}
+export interface InboxPrefs {
+  email: boolean;
+  slack: boolean;
+}
+
+export interface EntityGraph {
+  nodes: { id: string; blueprint: string; identifier: string; title: string; depth: number }[];
+  edges: { from: string; to: string; relation: string }[];
+  truncated: boolean;
+}
 
 /** Typed client for the platform API (/api/v1). The session token lives in localStorage. */
 
@@ -125,6 +161,9 @@ export interface ImpactReport {
 export type ActionView = Action & { allowedForMe?: boolean };
 
 export const api = {
+  checkExpression: (expression: string, context?: unknown) =>
+    request<{ ok: boolean; value?: unknown; error?: string }>('POST', v1('/expressions/check'), { expression, context }),
+  simulate: (steps: unknown[], inputs: Record<string, unknown>) => request<SimulationResult>('POST', v1('/actions/dry-run'), { steps, inputs }),
   meta: () => request<Meta>('GET', '/api/meta'),
   login: (email: string, password: string) =>
     request<{ token: string; csrfToken?: string; user: PublicUser }>('POST', '/api/auth/login', { email, password }).then((r) => (setCsrf(r.csrfToken), r)),
@@ -150,10 +189,28 @@ export const api = {
     request<{ migrated: number; total: number }>('POST', v1(`/blueprints/${enc(bp)}/migrate`), { migrations }),
   deleteBlueprint: (bp: string) => request('DELETE', v1(`/blueprints/${enc(bp)}`)),
 
-  entities: (q: { blueprint?: string; search?: string; team?: string; sort?: string; limit?: number; offset?: number; filters?: Record<string, string> }) => {
+  entities: (q: {
+    blueprint?: string;
+    search?: string;
+    team?: string;
+    sort?: string;
+    order?: 'asc' | 'desc';
+    limit?: number;
+    offset?: number;
+    filters?: Record<string, string>;
+  }) => {
     const { blueprint, filters, ...rest } = q;
     const f = Object.fromEntries(Object.entries(filters ?? {}).map(([k, v]) => [`filter.${k}`, v]));
     return request<EntityPage>('GET', v1(`${blueprint ? `/blueprints/${enc(blueprint)}` : ''}/entities${qs({ ...rest, ...f })}`));
+  },
+  entityGraph: async (bp: string, id: string, depth = 2): Promise<EntityGraph> => {
+    const g = await request<SharedGraph>('GET', v1(`/blueprints/${enc(bp)}/entities/${enc(id)}/graph${qs({ depth, direction: 'both' })}`));
+    const key = (n: { blueprint: string; identifier: string }) => `${n.blueprint}/${n.identifier}`;
+    return {
+      nodes: g.nodes.map((n) => ({ id: key(n), blueprint: n.blueprint, identifier: n.identifier, title: n.title, depth: n.depth })),
+      edges: g.edges.map((e) => ({ from: key(e.from), to: key(e.to), relation: e.relation })),
+      truncated: g.truncated,
+    };
   },
   entity: (bp: string, id: string) => request<Entity>('GET', v1(`/blueprints/${enc(bp)}/entities/${enc(id)}`)),
   related: (bp: string, id: string) => request<RelatedEntities>('GET', v1(`/blueprints/${enc(bp)}/entities/${enc(id)}/related`)),
@@ -210,6 +267,14 @@ export const api = {
   saveIntegration: (id: string, body: unknown) => request<Integration>('PUT', v1(`/integrations/${enc(id)}`), body),
   deleteIntegration: (id: string, deleteEntities = false) => request('DELETE', v1(`/integrations/${enc(id)}${qs({ deleteEntities })}`)),
   syncNow: (id: string) => request('POST', v1(`/integrations/${enc(id)}/sync`), {}),
+  testIntegration: (body: { type: string; config: Record<string, unknown>; kind?: string }) =>
+    request<{ ok: boolean; sample: unknown[]; error?: string; note?: string }>('POST', v1('/integrations/test'), body),
+  testWebhook: (id: string) => request<{ queued: boolean }>('POST', v1(`/webhooks/${enc(id)}/test`), {}),
+  notifications: (q: { unread?: boolean; limit?: number; offset?: number } = {}) =>
+    request<{ items: NotificationItem[]; unread: number }>('GET', v1(`/notifications${qs(q)}`)),
+  markNotificationsRead: (body: { ids?: string[]; all?: boolean }) => request<{ changed: number }>('POST', v1('/notifications/read'), body),
+  notificationPrefs: () => request<InboxPrefs>('GET', v1('/notifications/preferences')),
+  saveNotificationPrefs: (p: InboxPrefs) => request<InboxPrefs>('PUT', v1('/notifications/preferences'), p),
   previewMapping: (body: { mapping: unknown; item: unknown }) => request<{ mapped: unknown[]; skipped: number }>('POST', v1('/mappings/preview'), body),
 
   scorecards: (blueprint?: string) => request<Scorecard[]>('GET', v1(`/scorecards${qs({ blueprint })}`)),
@@ -251,9 +316,19 @@ export const api = {
   setSecret: (name: string, value: string, description: string) => request('PUT', v1(`/secrets/${enc(name)}`), { value, description }),
   deleteSecret: (name: string) => request('DELETE', v1(`/secrets/${enc(name)}`)),
 
-  audit: (q: { search?: string; action?: string; actor?: string; limit?: number; offset?: number }) => request<AuditEntry[]>('GET', v1(`/audit${qs(q)}`)),
-  auditExport: (q: { search?: string; action?: string; actor?: string }, format: 'csv' | 'json') =>
+  audit: (q: { search?: string; actor?: string; action?: string; target?: string; from?: string; to?: string; limit?: number; offset?: number }) =>
+    request<AuditEntry[]>('GET', v1(`/audit${qs(q)}`)),
+  auditExport: (q: { search?: string; action?: string; actor?: string; target?: string; from?: string; to?: string }, format: 'csv' | 'json') =>
     request<string>('GET', v1(`/audit/export${qs({ ...q, format })}`)),
+  auditFacets: () =>
+    request<{ actions: { value: string; count: number }[]; actors: { value: string; count: number }[] }>('GET', v1('/audit/facets')).then((f) => ({
+      actions: f.actions.map((x) => x.value),
+      actors: f.actors.map((x) => x.value),
+    })),
+  allDeliveries: (q: { status?: string; limit?: number; offset?: number }) => request<Delivery[]>('GET', v1(`/deliveries${qs(q)}`)),
+  redeliverMany: (ids: string[]) => request<{ queued: number }>('POST', v1('/deliveries/redeliver'), { ids }),
+  configDiff: () => request<ConfigDiff>('GET', v1('/config/diff')),
+  configImport: (yaml: string, dryRun: boolean) => request<{ ok: boolean; counts: Record<string, number> }>('POST', v1('/config/import'), { yaml, dryRun }),
   aiStatus: () => request<AiStatus>('GET', v1('/ai/status')),
   aiUsage: () => request<AiUsageReport>('GET', v1('/ai/usage')),
   aiBudgets: () => request<AiBudget[]>('GET', v1('/ai/budgets')),
@@ -272,7 +347,7 @@ export const api = {
   aiReviews: () => request<AiReview[]>('GET', v1('/ai/reviews')),
   aiRunReview: () => request<AiReview>('POST', v1('/ai/reviews/run'), {}),
 
-  configInfo: () => request<{ dir: string; managed: Record<string, number> }>('GET', v1('/config')),
+  configInfo: () => request<ConfigInfo>('GET', v1('/config')),
   configExport: () => request<string>('GET', v1('/config/export')),
   configStatus: () =>
     request<{ currentHash: string | null; appliedHash: string | null; appliedAt: string | null; errors: string[]; readError: string | null; inSync: boolean }>(

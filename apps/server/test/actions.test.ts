@@ -168,6 +168,46 @@ describe('approvals', () => {
     });
   });
 
+  it('notifies approvers, then the requester, with read state and preferences', async () => {
+    const run = await alice.post('/api/v1/actions/prod-change/runs', { entity: 'api', inputs: { reason: 'notify' } });
+    const carolInbox = (await carol.get('/api/v1/notifications')).data;
+    const asked = carolInbox.items.find((n: { link: string }) => n.link === `/runs/${run.data.id}`);
+    expect(asked).toMatchObject({ kind: 'approval.requested', read: false });
+    expect(carolInbox.unread).toBeGreaterThan(0);
+    expect((await bob.get('/api/v1/notifications')).data.items.some((n: { link: string }) => n.link === `/runs/${run.data.id}`)).toBe(false);
+    expect((await alice.get('/api/v1/notifications')).data.items.some((n: { link: string }) => n.link === `/runs/${run.data.id}`)).toBe(false);
+
+    await carol.post(`/api/v1/runs/${run.data.id}/reject`, { comment: 'no' });
+    const aliceInbox = (await alice.get('/api/v1/notifications?unread=true')).data;
+    expect(aliceInbox.items.some((n: { kind: string; link: string }) => n.kind === 'run.rejected' && n.link === `/runs/${run.data.id}`)).toBe(true);
+
+    expect((await carol.post('/api/v1/notifications/read', { ids: [asked.id] })).data.changed).toBe(1);
+    expect((await carol.post('/api/v1/notifications/read', { ids: [asked.id] })).data.changed).toBe(0);
+    expect((await carol.post('/api/v1/notifications/read', { all: true })).status).toBe(200);
+    expect((await carol.get('/api/v1/notifications')).data.unread).toBe(0);
+
+    expect((await carol.get('/api/v1/notifications/preferences')).data).toEqual({ email: false, slack: false });
+    expect((await carol.put('/api/v1/notifications/preferences', { email: true, slack: false })).data).toEqual({ email: true, slack: false });
+    expect((await carol.get('/api/v1/notifications/preferences')).data.email).toBe(true);
+  });
+
+  it('streams run events over SSE and resumes after Last-Event-ID', async () => {
+    const run = await alice.post('/api/v1/actions/prod-change/runs', { entity: 'api' });
+    await carol.post(`/api/v1/runs/${run.data.id}/reject`, { comment: 'no' });
+    const first = await alice.get(`/api/v1/runs/${run.data.id}/events`);
+    expect(first.status).toBe(200);
+    const body = first.data as string;
+    expect(body).toContain('event: log');
+    expect(body).toContain('event: run');
+    expect(body).toContain('event: done');
+    const lastId = [...body.matchAll(/^id: (\d+)$/gm)].pop()![1];
+    const resumed = (await alice.get(`/api/v1/runs/${run.data.id}/events`, { 'last-event-id': lastId })).data as string;
+    expect(resumed).not.toContain('event: log'); // nothing new after the cursor
+    expect(resumed).toContain('event: done');
+    expect((await bob.get(`/api/v1/runs/${run.data.id}/events`)).status).toBe(404); // not a viewer of this run (see canViewRun)
+    expect((await client(app).get(`/api/v1/runs/${run.data.id}/events`)).status).toBe(401);
+  });
+
   it('rejects with a reason, and lets the requester cancel', async () => {
     const r1 = await alice.post('/api/v1/actions/prod-change/runs', { entity: 'api' });
     expect((await carol.post(`/api/v1/runs/${r1.data.id}/reject`, {})).status).toBe(400);

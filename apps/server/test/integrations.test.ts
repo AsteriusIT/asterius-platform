@@ -441,3 +441,30 @@ entities:
     expect(() => readConfigDir(dir)).toThrow(/a\.yaml: blueprints\.0\.identifier/);
   });
 });
+
+describe('editor helpers', () => {
+  it('tests a connection and returns sample items without writing anything', async () => {
+    items = [
+      { code: 'a1', name: 'Alpha' },
+      { code: 'b2', name: 'Beta' },
+      { code: 'c3', name: 'Gamma' },
+    ];
+    const ok = await admin.post('/api/v1/integrations/test', {
+      type: 'http',
+      config: { url: `${api.url}/apps?page=1`, itemsPath: 'data', pagination: { type: 'next', nextUrl: 'next' } },
+    });
+    expect(ok.data.ok, JSON.stringify(ok.data)).toBe(true);
+    expect(ok.data.sample.length).toBeGreaterThan(0);
+    const bad = await admin.post('/api/v1/integrations/test', { type: 'http', config: {} });
+    expect(bad.data.ok).toBe(false);
+    expect((await member.post('/api/v1/integrations/test', { type: 'http', config: {} })).status).toBe(403);
+  });
+
+  it('queues a test delivery for a webhook', async () => {
+    await admin.put('/api/v1/webhooks/hook', { title: 'Hook', url: `${api.url}/hook`, events: ['entity.created'] });
+    expect((await admin.post('/api/v1/webhooks/hook/test', {})).data).toEqual({ queued: true });
+    const d = await admin.get('/api/v1/webhooks/hook/deliveries');
+    expect(d.data.map((x: { event: string }) => x.event)).toContain('webhook.test');
+    expect((await admin.post('/api/v1/webhooks/nope/test', {})).status).toBe(404);
+  });
+});

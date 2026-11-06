@@ -34,8 +34,24 @@ export function validateValues(schema: ObjectSchema, values: FormValues): Record
     if (v === undefined || v === null || v === '' || (Array.isArray(v) && !v.length)) errors[k] = 'Required';
   }
   for (const [k, p] of Object.entries(schema.properties ?? {})) {
+    if (errors[k]) continue;
     const v = values[k];
-    if (typeof v === 'string' && v && p.pattern && !new RegExp(p.pattern).test(v)) errors[k] = p.description ?? `Must match ${p.pattern}`;
+    if (typeof v === 'string' && v) {
+      if (p.pattern && !new RegExp(p.pattern).test(v)) errors[k] = p.description ?? `Must match ${p.pattern}`;
+      else if (p.minLength !== undefined && v.length < p.minLength) errors[k] = `At least ${p.minLength} characters`;
+      else if (p.maxLength !== undefined && v.length > p.maxLength) errors[k] = `At most ${p.maxLength} characters`;
+      else if (p.format === 'email' && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v)) errors[k] = 'Must be an email address';
+      else if (p.format === 'url' && !/^https?:\/\/\S+$/.test(v)) errors[k] = 'Must be an http(s) URL';
+    } else if (typeof v === 'number') {
+      if (p.minimum !== undefined && v < p.minimum) errors[k] = `At least ${p.minimum}`;
+      else if (p.maximum !== undefined && v > p.maximum) errors[k] = `At most ${p.maximum}`;
+      else if (p.type === 'integer' && !Number.isInteger(v)) errors[k] = 'Must be a whole number';
+    } else if (Array.isArray(v)) {
+      const min = p.minItems as number | undefined;
+      const max = p.maxItems as number | undefined;
+      if (min !== undefined && v.length < min) errors[k] = `At least ${min} items`;
+      else if (max !== undefined && v.length > max) errors[k] = `At most ${max} items`;
+    }
   }
   return errors;
 }

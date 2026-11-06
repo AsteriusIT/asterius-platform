@@ -31,6 +31,7 @@ import { githubRoutes } from '../auth/github.js';
 import { samlRoutes } from '../auth/saml.js';
 import { effectivePermissions } from '../auth/access.js';
 import { invokerInfos } from '../actions/invokers/index.js';
+import { MODELS } from '../actions/models.js';
 import { sourceInfos } from '../integrations/sources/index.js';
 
 const VERSION = process.env.APP_VERSION ?? '0.1.0';
@@ -53,6 +54,7 @@ export async function authRoutes(app: FastifyInstance) {
     allowRegistration: config.AUTH_PROVIDERS.includes('local') && config.ALLOW_REGISTRATION,
     invokers: invokerInfos(),
     sources: sourceInfos(),
+    models: MODELS,
     sessionCookie: config.SESSION_COOKIE,
   }));
 

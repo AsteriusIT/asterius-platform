@@ -103,10 +103,34 @@ describe('catalog', () => {
     expect(found.data.items.map((e: { identifier: string }) => e.identifier)).toEqual(['worker']);
     const tier1 = await bob.get('/api/v1/blueprints/service/entities?filter.tier=1');
     expect(tier1.data.total).toBe(1);
+    const asc = await bob.get('/api/v1/blueprints/service/entities?sort=identifier');
+    const desc = await bob.get('/api/v1/blueprints/service/entities?sort=identifier&order=desc');
+    const ids = (r: { data: { items: { identifier: string }[] } }) => r.data.items.map((e) => e.identifier);
+    expect(ids(desc)).toEqual(ids(asc).reverse());
+    expect((await bob.get('/api/v1/blueprints/service/entities?sort=prop.tier')).status).toBe(200);
+    expect((await bob.get('/api/v1/blueprints/service/entities?sort=prop.x;drop')).status).toBe(400);
     const rel = await bob.get('/api/v1/blueprints/service/entities/api/related');
     expect(Object.keys(rel.data.incoming)).toEqual(['service.dependsOn']);
     const out = await bob.get('/api/v1/blueprints/service/entities/worker/related');
     expect(out.data.outgoing.dependsOn.map((e: { source: string }) => e.source)).toEqual(['ui', 'missing']);
+  });
+
+  it('serves the relation graph and the change history of an entity', async () => {
+    const g = await bob.get('/api/v1/blueprints/service/entities/worker/graph?depth=2');
+    expect(g.status, JSON.stringify(g.data)).toBe(200);
+    const ids = g.data.nodes.map((n: { blueprint: string; identifier: string }) => `${n.blueprint}/${n.identifier}`);
+    expect(ids).toContain('service/worker');
+    expect(ids).toContain('service/api');
+    expect(
+      g.data.edges.some(
+        (e: { from: { blueprint: string; identifier: string }; to: { blueprint: string; identifier: string }; relation: string }) =>
+          e.from.identifier === 'worker' && e.to.identifier === 'api' && e.relation === 'dependsOn',
+      ),
+    ).toBe(true);
+    expect(g.data.nodes.find((n: { identifier: string }) => n.identifier === 'worker').depth).toBe(0);
+    const h = await bob.get('/api/v1/blueprints/service/entities/worker/history');
+    expect(h.data.items[0]).toMatchObject({ op: expect.stringMatching(/create|update/), actor: 'alice@example.com' });
+    expect((await bob.get('/api/v1/blueprints/service/entities/nope/history')).status).toBe(404);
   });
 
   it('accepts identifiers with slashes (third-party ids)', async () => {

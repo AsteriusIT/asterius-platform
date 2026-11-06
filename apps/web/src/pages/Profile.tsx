@@ -7,6 +7,7 @@ import { IconCopy, IconTrash } from '@tabler/icons-react';
 import type { ApiToken } from '@asterius/shared';
 import { api, errorText } from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { useAppMutation } from '../lib/queryClient';
 import { DataTable } from '../components/DataTable';
 import { PageHeader, TimeAgo } from '../components/ui';
 
@@ -32,16 +33,17 @@ export function NewTokenAlert({ token, onClose }: { token: string | null; onClos
 export function TokenTable({ all }: { all?: boolean }) {
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ['tokens', !!all], queryFn: () => api.tokens(all) });
+  const revokeToken = useAppMutation({
+    mutationFn: (id: string) => api.deleteToken(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['tokens'] }),
+  });
   const revoke = (t: ApiToken) =>
     modals.openConfirmModal({
       title: `Revoke "${t.name}"?`,
       children: <Text fz="sm">Anything using this token stops working immediately.</Text>,
       labels: { confirm: 'Revoke', cancel: 'Cancel' },
       confirmProps: { color: 'red' },
-      onConfirm: async () => {
-        await api.deleteToken(t.id);
-        void qc.invalidateQueries({ queryKey: ['tokens'] });
-      },
+      onConfirm: () => revokeToken.mutate(t.id),
     });
   return (
     <DataTable

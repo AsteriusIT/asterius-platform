@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { audit } from '../audit.js';
 import { actorOf, requireAdmin, requireUser } from '../auth/users.js';
 import { mailConfigured, postSlack, postTeams, sendMail } from '../notifications/channels.js';
+import { getPrefs, listNotifications, markRead, setPrefs } from '../inbox.js';
+import { page } from './util.js';
 import { getNotificationPrefs, getNotificationSettings, setNotificationPrefs, setNotificationSettings } from '../notifications/settings.js';
 
 export async function notificationRoutes(app: FastifyInstance) {
@@ -14,6 +16,17 @@ export async function notificationRoutes(app: FastifyInstance) {
       const s = await getNotificationSettings();
       return { email: await mailConfigured(), slack: !!s.slack.botToken };
     });
+    // In-app inbox (bell icon): one row per (user, event), see inbox.ts.
+    scoped.get('/notifications', async (req) => {
+      const q = page.extend({ unread: z.enum(['true', 'false']).optional() }).parse(req.query);
+      return listNotifications(req.principal.id, { unread: q.unread === 'true', limit: q.limit, offset: q.offset });
+    });
+    scoped.post('/notifications/read', async (req) => {
+      const body = z.object({ ids: z.array(z.string()).max(200).optional(), all: z.boolean().optional() }).parse(req.body ?? {});
+      return { changed: await markRead(req.principal.id, body.all ? 'all' : (body.ids ?? [])) };
+    });
+    scoped.get('/notifications/preferences', async (req) => getPrefs(req.principal.id));
+    scoped.put('/notifications/preferences', async (req) => setPrefs(req.principal.id, z.object({ email: z.boolean(), slack: z.boolean() }).parse(req.body)));
     scoped.get('/me/notifications', async (req) => getNotificationPrefs(req.principal.id));
     scoped.put('/me/notifications', async (req) => setNotificationPrefs(req.principal.id, req.body));
 

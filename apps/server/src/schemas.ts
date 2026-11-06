@@ -692,7 +692,8 @@ export type ConfigFile = z.infer<typeof configFile>;
 
 // ---------- catalog queries (POST /entities/query, shared with the query-string parser) ----------
 const scalar = z.union([z.string().max(500), z.number(), z.boolean()]);
-export const SORT_RE = /^(title|updated|identifier|relevance|prop:[A-Za-z_][A-Za-z0-9_]{0,63})$/;
+/** `prop:<name>` and the web app's `prop.<name>` both sort by a property; `team` sorts by owner team. */
+export const SORT_RE = /^(title|updated|identifier|team|relevance|prop[:.][A-Za-z_][A-Za-z0-9_]{0,63})$/;
 export const entityQueryBody = z.object({
   blueprint: z.string().max(64).optional(),
   search: z.string().max(200).optional(),

@@ -100,7 +100,7 @@ export const STATUS_COLORS: Record<RunStatus, string> = {
   REJECTED: 'orange',
   CANCELLED: 'gray',
 };
-const STATUS_LABELS: Record<RunStatus, string> = {
+export const STATUS_LABELS: Record<RunStatus, string> = {
   PENDING_APPROVAL: 'Waiting for approval',
   QUEUED: 'Queued',
   IN_PROGRESS: 'In progress',

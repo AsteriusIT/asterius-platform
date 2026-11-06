@@ -4,7 +4,8 @@ import { all, forUpdate, json, newId, now, one, run, tx, type Driver, type SqlVa
 import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
 import { emit } from '../events.js';
 import { audit } from '../audit.js';
-import { actorOf, automationPrincipal, isAdmin, matchesSubjects, type Principal } from '../auth/users.js';
+import { actorOf, automationPrincipal, isAdmin, matchesSubjects, principalOf, type Principal, type UserRow } from '../auth/users.js';
+import { notify } from '../inbox.js';
 import { getEntity } from '../catalog/entities.js';
 import { compact, validate } from '../catalog/validation.js';
 import { canTrigger, getAction } from './actions.js';
@@ -168,13 +169,25 @@ const LOG_TAIL = 1000;
  * A run with its steps and log lines. Logs are bounded: the newest LOG_TAIL lines, or only the lines past `after`
  * (sequence number) for incremental polling. `GET /runs/:id/logs` pages through the whole log.
  */
-export async function getRun(id: string, p: Principal, opts: { after?: number } = {}): Promise<Run> {
+/** Log lines after `seq` (exclusive), oldest first. `seq` is the cursor of the incremental log stream (SSE). */
+export async function runLogsAfter(id: string, seq: number, limit = 500): Promise<(RunLog & { seq: number })[]> {
+  const rows = await all<RunLog & { seq: number }>(
+    'SELECT seq, at, level, message, step_id AS "stepId" FROM run_logs WHERE run_id = ? AND seq > ? ORDER BY seq LIMIT ?',
+    id,
+    seq,
+    limit,
+  );
+  return rows.map((l) => ({ ...l, seq: Number(l.seq) }));
+}
+
+export async function getRun(id: string, p: Principal, opts: { after?: number; logs?: boolean } = {}): Promise<Run> {
   const r = await getRunRow(id);
   const approvals = (await approvalsOf([id])).get(id) ?? [];
   if (!(await canViewRun(p, r, approvals))) throw notFound('Run'); // same answer as a missing run: do not reveal existence
   let logs: RunLog[];
   let logsTruncated = false;
-  if (opts.after !== undefined)
+  if (opts.logs === false) logs = [];
+  else if (opts.after !== undefined)
     logs = await all<RunLog>(`SELECT ${LOG_COLUMNS} FROM run_logs WHERE run_id = ? AND seq > ? ORDER BY seq LIMIT 2000`, id, opts.after);
   else {
     const newest = await all<RunLog>(`SELECT ${LOG_COLUMNS} FROM run_logs WHERE run_id = ? ORDER BY seq DESC LIMIT ?`, id, LOG_TAIL + 1);
@@ -385,6 +398,47 @@ export async function emitRun(id: string, type: 'run.created' | 'run.updated' | 
   const data = { run: { ...toRun(r, (await approvalsOf([id])).get(id) ?? []), steps } };
   await emit({ type, blueprint: r.blueprint, data });
   if (type === 'run.updated' && FINAL.includes(r.status)) await emit({ type: 'run.finished', blueprint: r.blueprint, data });
+  if (type === 'run.created' || type === 'run.updated') await notifyRun(r).catch((err) => console.error('[notifications] could not notify', id, err));
+}
+
+const FINAL_TEXT: Partial<Record<RunStatus, string>> = { SUCCESS: 'succeeded', FAILURE: 'failed', REJECTED: 'was rejected', CANCELLED: 'was cancelled' };
+
+/** In-app notifications for a run lifecycle change: approvers when a decision is needed, the requester when it ends. */
+async function notifyRun(r: RunRow) {
+  const link = `/runs/${r.id}`;
+  const finalText = FINAL_TEXT[r.status];
+  if (finalText) {
+    await notify(r.triggered_by, { kind: `run.${r.status.toLowerCase()}`, title: `${r.action_title} ${finalText}`, link, dedupe: `run:${r.id}:${r.status}` });
+    return;
+  }
+  const wantsApproval = r.status === 'PENDING_APPROVAL';
+  const waitingSteps = r.status === 'IN_PROGRESS' ? (await loadSteps(r.id)).filter((s) => s.status === 'WAITING_APPROVAL') : [];
+  if (!wantsApproval && !waitingSteps.length) return;
+  const approvals = (await approvalsOf([r.id])).get(r.id) ?? [];
+  const stepApprovals = await stepApprovalsOf([r.id]);
+  const defs = stepDefs(r);
+  for (const u of await all<UserRow>("SELECT * FROM users WHERE active = 1 AND provider != 'service'")) {
+    const p = await principalOf(u);
+    if (wantsApproval && canApprove(p, r, approvals))
+      await notify(u.id, {
+        kind: 'approval.requested',
+        title: `Approval requested: ${r.action_title}`,
+        body: `By ${r.user_name ?? 'someone'}`,
+        link,
+        dedupe: `approval:${r.id}`,
+      });
+    for (const row of waitingSteps) {
+      const def = defs.find((d) => d.id === row.step_id);
+      if (def && canApproveStep(p, r, def, row, stepApprovals.get(`${r.id}/${row.step_id}`) ?? []))
+        await notify(u.id, {
+          kind: 'approval.requested',
+          title: `Approval requested: ${row.name}`,
+          body: `${r.action_title}, by ${r.user_name ?? 'someone'}`,
+          link: `${link}?step=${row.step_id}`,
+          dedupe: `approval:${r.id}:${row.step_id}`,
+        });
+    }
+  }
 }
 
 // ---------- trigger ----------

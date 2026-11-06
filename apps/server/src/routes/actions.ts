@@ -6,7 +6,9 @@ import { actorOf, authenticate, bearer, isAdmin, requireAdmin, requireUser } fro
 import { getEntity } from '../catalog/entities.js';
 import { blueprintOf, canTrigger, isRunnable, deleteAction, forViewer, getAction, listActions, upsertAction } from '../actions/actions.js';
 import { nextPageHeaders } from '../lib/cursor.js';
-import { addLog, cancelRun, decide, getRun, getRunLogs, getRunRow, listRuns, pendingApprovals, triggerRun } from '../actions/runs.js';
+import { addLog, cancelRun, decide, getRun, getRunLogs, getRunRow, listRuns, pendingApprovals, runLogsAfter, triggerRun } from '../actions/runs.js';
+import { workflowStep } from '../schemas.js';
+import { previewExpression, simulateWorkflow } from '../actions/simulate.js';
 import { cancelSteps, decideStep, runningInvokeStep, updateStep } from '../actions/engine.js';
 import { dryRun } from '../actions/dryrun.js';
 import { diffVersions, getVersion, listVersions } from '../actions/versions.js';
@@ -136,6 +138,17 @@ export async function actionRoutes(app: FastifyInstance) {
       return action;
     });
     /** Test a workflow without side effects: renders templates, evaluates expressions, validates invokers and secrets. */
+    /** Editor helpers (admin): check/preview a JSONata expression, simulate a draft workflow on sample inputs. Nothing is executed. */
+    scoped.post('/expressions/check', { preHandler: requireAdmin }, async (req) => {
+      const b = z.object({ expression: z.string().max(4000), context: z.unknown().optional() }).parse(req.body);
+      return previewExpression(b.expression, b.context ?? {});
+    });
+    scoped.post('/actions/dry-run', { preHandler: requireAdmin }, async (req) => {
+      const b = z
+        .object({ steps: z.array(workflowStep).max(40), inputs: z.record(z.string(), z.unknown()).default({}), entity: z.unknown().optional() })
+        .parse(req.body);
+      return { steps: await simulateWorkflow(b.steps, { inputs: b.inputs, entity: b.entity }) };
+    });
     scoped.post('/actions/:id/dry-run', { preHandler: requireAdmin, config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async (req) => {
       const { id } = idParam.parse(req.params);
       const body = z
@@ -220,6 +233,58 @@ export async function actionRoutes(app: FastifyInstance) {
     scoped.get('/runs/:id', async (req) => {
       const q = z.object({ after: z.coerce.number().int().min(0).optional() }).parse(req.query);
       return getRun(idParam.parse(req.params).id, req.principal, q);
+    });
+    /**
+     * Server-Sent Events for one run: `log` events carry new lines (event id = log seq, so a reconnect with
+     * Last-Event-ID resumes without gaps), `run` events carry the run without logs when it changed, `done` ends the stream.
+     * State is read from the database on every tick, so any replica can serve any stream.
+     */
+    scoped.get('/runs/:id/events', async (req, reply) => {
+      const { id } = idParam.parse(req.params);
+      await getRun(id, req.principal, { logs: false }); // 404 / access check before switching to a stream
+      const header = Number(req.headers['last-event-id']);
+      const query = Number((req.query as { after?: string }).after);
+      let cursor = Number.isFinite(header) && header > 0 ? header : Number.isFinite(query) && query > 0 ? query : 0;
+      reply.hijack();
+      const res = reply.raw;
+      res.writeHead(200, {
+        'content-type': 'text/event-stream; charset=utf-8',
+        'cache-control': 'no-cache, no-transform',
+        connection: 'keep-alive',
+        'x-accel-buffering': 'no',
+      });
+      let closed = false;
+      req.raw.on('close', () => (closed = true));
+      const send = (event: string, data: unknown, evId?: number) =>
+        res.write(`${evId !== undefined ? `id: ${evId}\n` : ''}event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+      let lastSnapshot = '';
+      const FINAL_STATUSES = ['SUCCESS', 'FAILURE', 'REJECTED', 'CANCELLED'];
+      const deadline = Date.now() + 30 * 60_000;
+      try {
+        while (!closed && Date.now() < deadline) {
+          const lines = await runLogsAfter(id, cursor);
+          if (lines.length) {
+            cursor = lines[lines.length - 1]!.seq;
+            send('log', lines, cursor);
+          }
+          const run = await getRun(id, req.principal, { logs: false });
+          const snap = JSON.stringify(run);
+          if (snap !== lastSnapshot) {
+            lastSnapshot = snap;
+            send('run', run);
+          }
+          if (FINAL_STATUSES.includes(run.status) && !lines.length) {
+            send('done', { status: run.status });
+            break;
+          }
+          if (!lines.length) res.write(': keep-alive\n\n');
+          await new Promise((r) => setTimeout(r, lines.length ? 100 : 1000));
+        }
+      } catch (err) {
+        if (!closed) send('error', { message: (err as Error).message });
+      } finally {
+        res.end();
+      }
     });
     scoped.get('/runs/:id/logs', async (req) => {
       const q = z

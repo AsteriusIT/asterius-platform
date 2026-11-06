@@ -6,6 +6,10 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import { IconCopy, IconRefresh, IconSend } from '@tabler/icons-react';
 import type { Action, Blueprint, Dashboard, Integration, Scorecard, Webhook } from '@asterius/shared';
+import { useAppMutation } from '../../lib/queryClient';
+import { FormEditor } from '../../components/builder/FormEditor';
+import { IntegrationForm } from '../../components/builder/IntegrationForm';
+import { WebhookForm } from '../../components/builder/WebhookForm';
 import { api, errorText } from '../../lib/api';
 import { DataTable } from '../../components/DataTable';
 import { EntityIcon } from '../../components/icons';
@@ -173,6 +177,13 @@ export function IntegrationsAdmin() {
       save={api.saveIntegration}
       remove={(i) => api.deleteIntegration(i.identifier)}
       removeWarning={() => 'Entities it ingested stay in the catalog.'}
+      editor={(p) => (
+        <FormEditor
+          {...p}
+          title={p.isNew ? 'New integration' : `${p.readOnly ? 'View' : 'Edit'} ${String(p.value?.identifier ?? '')}`}
+          form={(doc, patch) => <IntegrationForm doc={doc} patch={patch} isNew={p.isNew} />}
+        />
+      )}
     >
       <IntegrationDrawer integration={detail} onClose={() => setDetail(null)} />
     </ResourceAdmin>
@@ -401,6 +412,13 @@ export function WebhooksAdmin() {
       toEditable={async (w) => strip(await api.webhook(w.identifier), ['managed', 'hasSecret', 'hasSecondarySecret'])}
       save={api.saveWebhook}
       remove={(w) => api.deleteWebhook(w.identifier)}
+      editor={(p) => (
+        <FormEditor
+          {...p}
+          title={p.isNew ? 'New webhook' : `${p.readOnly ? 'View' : 'Edit'} ${String(p.value?.identifier ?? '')}`}
+          form={(doc, patch) => <WebhookForm doc={doc} patch={patch} isNew={p.isNew} />}
+        />
+      )}
     >
       <DeliveriesDrawer webhook={detail} onClose={() => setDetail(null)} />
     </ResourceAdmin>
@@ -409,6 +427,10 @@ export function WebhooksAdmin() {
 
 function DeliveriesDrawer({ webhook, onClose }: { webhook: Webhook | null; onClose: () => void }) {
   const qc = useQueryClient();
+  const redeliver = useAppMutation({
+    mutationFn: (id: string) => api.redeliver(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['deliveries'] }),
+  });
   const q = useQuery({
     queryKey: ['deliveries', webhook?.identifier],
     queryFn: () => api.deliveries(webhook!.identifier),
@@ -446,13 +468,7 @@ function DeliveriesDrawer({ webhook, onClose }: { webhook: Webhook | null; onClo
             render: (d) =>
               d.status === 'failed' ? (
                 <Tooltip label="Redeliver">
-                  <ActionIcon
-                    variant="subtle"
-                    onClick={async () => {
-                      await api.redeliver(d.id);
-                      void qc.invalidateQueries({ queryKey: ['deliveries'] });
-                    }}
-                  >
+                  <ActionIcon variant="subtle" aria-label="Redeliver" onClick={() => redeliver.mutate(d.id)}>
                     <IconSend size={16} />
                   </ActionIcon>
                 </Tooltip>

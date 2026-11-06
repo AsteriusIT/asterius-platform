@@ -766,6 +766,15 @@ export interface NotificationPrefs {
   runs: ('email' | 'slack')[];
 }
 
+export interface ModelInfo {
+  value: string;
+  label: string;
+  description: string;
+  /** $ per million tokens. */
+  inputPrice: number;
+  outputPrice: number;
+}
+
 export interface Meta {
   name: string;
   version: string;
@@ -778,6 +787,8 @@ export interface Meta {
   allowRegistration: boolean;
   invokers: PluginInfo[];
   sources: PluginInfo[];
+  /** Models offered to agent steps. */
+  models: ModelInfo[];
 }
 
 // ---------- AI ----------

@@ -149,7 +149,7 @@ export function trigramSchema(): Promise<string | null> {
 }
 
 // ---------- the compiled query ----------
-export type SortKey = 'title' | 'updated' | 'identifier' | 'relevance' | `prop:${string}`;
+export type SortKey = 'title' | 'updated' | 'identifier' | 'team' | 'relevance' | `prop:${string}`;
 
 export interface Compiled {
   where: string;
@@ -195,7 +195,7 @@ export async function compileEntityQuery(q: EntityQueryBody): Promise<Compiled> 
   for (const f of q.filters ?? []) where.push(propertyClause(f, params));
   for (const r of q.relations ?? []) where.push(relationClause(r, params));
 
-  const sort = (q.sort ?? (terms.length ? 'relevance' : 'title')) as SortKey;
+  const sort = (q.sort ?? (terms.length ? 'relevance' : 'title')).replace(/^prop\./, 'prop:') as SortKey;
   const orderParams: SqlValue[] = [];
   let orderBy: string;
   let keyset: string[] | undefined;
@@ -220,6 +220,8 @@ export async function compileEntityQuery(q: EntityQueryBody): Promise<Compiled> 
   } else if (sort === 'title' || sort === 'identifier' || sort === 'updated') {
     keyset = KEYSETS[sort];
     orderBy = keyset.map((c) => `${c} ${D()}`).join(', ');
+  } else if (sort === 'team') {
+    orderBy = `team IS NULL, team ${D()}, title, blueprint, identifier`;
   } else if (sort.startsWith('prop:')) {
     const k = sort.slice(5);
     if (!PROP.test(k)) throw badRequest(`Invalid sort property "${k}"`);

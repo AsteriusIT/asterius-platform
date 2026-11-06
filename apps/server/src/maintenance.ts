@@ -5,6 +5,7 @@ import { purgeExpiredAuth } from './auth/users.js';
 import { refreshBlueprintStats } from './catalog/blueprints.js';
 import { purgeRateLimits } from './lib/rate-limit-store.js';
 import { metrics } from './metrics.js';
+import { purgeNotifications } from './inbox.js';
 import { purgeExpiredTombstones } from './catalog/entities.js';
 import { purgeVersions } from './catalog/history.js';
 import { evaluateEverything, purgeScorecardHistory } from './catalog/scorecards.js';
@@ -45,6 +46,7 @@ export async function deleteInChunks(
 export async function housekeeping(log: FastifyBaseLogger) {
   await withAdvisoryLock(726203, async () => {
     await purgeExpiredAuth();
+    await purgeNotifications();
     metrics.purged('rate_limits', await purgeRateLimits());
     const cutoff = new Date(Date.now() - config.RETENTION_DAYS * 86400_000).toISOString();
     const horizon = new Date(Date.now() - DELIVERY_HORIZON_DAYS * 86400_000).toISOString();

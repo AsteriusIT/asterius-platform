@@ -202,6 +202,8 @@ export async function catalogRoutes(app: FastifyInstance) {
     source: z.string().optional(),
     sort: z.string().regex(SORT_RE, 'title | updated | identifier | relevance | prop:<name>').optional(),
     dir: z.enum(['asc', 'desc']).optional(),
+    /** Alias of `dir` (the web app's table sorting). */
+    order: z.enum(['asc', 'desc']).optional(),
     cursor: z.string().max(2000).optional(),
     count: z
       .enum(['true', 'false'])
@@ -211,22 +213,28 @@ export async function catalogRoutes(app: FastifyInstance) {
 
   app.get('/entities', async (req, reply) => {
     const q = listQuery.extend({ blueprint: z.string().optional() }).parse(req.query);
-    const result = await searchEntities({ ...q, ...parseFilterParams(req.query as Record<string, unknown>), viewer: req.principal });
+    const result = await searchEntities({ ...q, dir: q.dir ?? q.order, ...parseFilterParams(req.query as Record<string, unknown>), viewer: req.principal });
     nextPageHeaders(req, reply, result.nextCursor);
     return result;
   });
   app.get('/blueprints/:bp/entities', async (req, reply) => {
     const { bp } = bpParam.parse(req.params);
     const q = listQuery.parse(req.query);
-    const result = await searchEntities({ ...q, blueprint: bp, ...parseFilterParams(req.query as Record<string, unknown>), viewer: req.principal });
+    const result = await searchEntities({
+      ...q,
+      dir: q.dir ?? q.order,
+      blueprint: bp,
+      ...parseFilterParams(req.query as Record<string, unknown>),
+      viewer: req.principal,
+    });
     nextPageHeaders(req, reply, result.nextCursor);
     return result;
   });
   /** Complex queries as a JSON body (the same structure the query-string form compiles to). */
-  app.post('/entities/query', async (req) => searchEntities(entityQueryBody.parse(req.body)));
+  app.post('/entities/query', async (req) => searchEntities({ ...entityQueryBody.parse(req.body), viewer: req.principal }));
   app.post('/blueprints/:bp/entities/query', async (req) => {
     const { bp } = bpParam.parse(req.params);
-    return searchEntities({ ...entityQueryBody.parse(req.body), blueprint: bp });
+    return searchEntities({ ...entityQueryBody.parse(req.body), blueprint: bp, viewer: req.principal });
   });
   app.get('/blueprints/:bp/entities/:id', async (req, reply) => {
     const { bp, id } = entityParam.parse(req.params);
@@ -248,7 +256,19 @@ export async function catalogRoutes(app: FastifyInstance) {
     app.get(url, async (req) => {
       const { bp, id } = entityParam.parse(req.params);
       const q = graphQuery.parse(req.query);
-      return entityGraph(bp, id, { depth: q.depth, direction: q.direction, maxNodes: q.limit });
+      if (!(await canRead(req.principal, await getEntity(bp, id)))) throw notFound(`Entity ${bp}/${id}`);
+      const g = await entityGraph(bp, id, { depth: q.depth, direction: q.direction, maxNodes: q.limit });
+      if (isAdmin(req.principal)) return g;
+      // Neighbours the viewer may not read are left out (missing placeholders carry no data and stay), with their edges.
+      const key = (n: { blueprint: string; identifier: string }) => `${n.blueprint}/${n.identifier}`;
+      const hidden = new Set<string>();
+      for (const n of g.nodes) if (!n.missing && !(await canRead(req.principal, n))) hidden.add(key(n));
+      if (!hidden.size) return g;
+      return {
+        ...g,
+        nodes: g.nodes.filter((n) => !hidden.has(key(n))),
+        edges: g.edges.filter((e) => !hidden.has(key(e.from)) && !hidden.has(key(e.to))),
+      };
     });
   app.get('/blueprints/:bp/entities/:id/related', async (req) => {
     const { bp, id } = entityParam.parse(req.params);
@@ -262,7 +282,12 @@ export async function catalogRoutes(app: FastifyInstance) {
     app.get(path, async (req) => {
       const { bp, id } = entityParam.parse(req.params);
       const q = historyQuery.parse(req.query);
-      return listVersions(bp, id, q.limit, q.offset);
+      const current = await findEntity(bp, id);
+      // Same answer as a missing entity when the viewer may not read it; the history of a deleted one is for admins.
+      if (current ? !(await canRead(req.principal, current)) : !isAdmin(req.principal)) throw notFound(`Entity ${bp}/${id}`);
+      const page = await listVersions(bp, id, q.limit, q.offset);
+      if (!current && !page.total) throw notFound(`Entity ${bp}/${id}`);
+      return page;
     });
   /** Write an old snapshot back: a new version (`revert`) is recorded, nothing is rewritten. */
   app.post('/blueprints/:bp/entities/:id/history/:version/revert', async (req) => {

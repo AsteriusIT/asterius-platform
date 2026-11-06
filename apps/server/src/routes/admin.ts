@@ -20,8 +20,18 @@ import {
 import { deleteTeam, listTeams, upsertTeam } from '../auth/teams.js';
 import { providerInfos } from '../secret-providers/index.js';
 import { deleteSecret, listSecrets, reencryptSecrets, setSecret, shortSecretWarning } from '../secrets.js';
-import { deleteWebhook, getWebhook, listDeliveries, listWebhooks, redeliver, redeliverFailed, redeliverMany, upsertWebhook } from '../webhooks/webhooks.js';
-import { configStatus, exportConfig, managedCounts, planConfig } from '../config-loader.js';
+import {
+  deleteWebhook,
+  getWebhook,
+  listDeliveries,
+  listWebhooks,
+  redeliver,
+  redeliverFailed,
+  redeliverMany,
+  upsertWebhook,
+  queueTestDelivery,
+} from '../webhooks/webhooks.js';
+import { configDiff, configStatus, exportConfig, importConfig, managedCounts, planConfig } from '../config-loader.js';
 import { config } from '../config.js';
 import { idParam, page } from './util.js';
 import { badRequest, errorMessage, forbidden } from '../lib/errors.js';
@@ -193,6 +203,13 @@ export async function adminRoutes(app: FastifyInstance, opts: { reloadConfig: ()
       await audit(actorOf(req.principal), 'webhook.deleted', id);
       return { ok: true };
     });
+    /** Queue a `webhook.test` delivery for this webhook, whatever its event subscriptions. */
+    admin.post('/webhooks/:id/test', async (req) => {
+      const { id } = idParam.parse(req.params);
+      await getWebhook(id); // 404 when unknown
+      await queueTestDelivery(id);
+      return { queued: true };
+    });
     admin.get('/webhooks/:id/deliveries', async (req, reply) => {
       const q = z
         .object({
@@ -236,13 +253,19 @@ export async function adminRoutes(app: FastifyInstance, opts: { reloadConfig: ()
       return { ok: true };
     });
 
+    // A date (2026-01-31) or a timestamp with an offset.
+    const date = z
+      .string()
+      .max(40)
+      .refine((v) => !Number.isNaN(Date.parse(v)), 'invalid date')
+      .optional();
     const auditQuery = z.object({
       search: z.string().max(200).optional(),
       action: z.string().max(100).optional(),
       actor: z.string().max(200).optional(),
       target: z.string().max(200).optional(),
-      from: z.string().datetime({ offset: true }).optional(),
-      to: z.string().datetime({ offset: true }).optional(),
+      from: date,
+      to: date,
     });
     admin.get('/audit', async (req, reply) => {
       const { entries, nextCursor } = await listAudit(
@@ -282,9 +305,34 @@ export async function adminRoutes(app: FastifyInstance, opts: { reloadConfig: ()
     /** Recompute the hash chain (AUDIT_HASH_CHAIN): detects modified, removed or reordered entries. */
     admin.get('/audit/verify', async () => verifyAuditChain());
 
-    admin.get('/config', async () => ({ dir: config.CONFIG_DIR, managed: await managedCounts() }));
+    admin.get('/config', async () => {
+      const st = await configStatus();
+      return {
+        dir: config.CONFIG_DIR,
+        managed: await managedCounts(),
+        // Summary for the admin page header (details: /config/status and /config/plan).
+        status: {
+          lastCheckedAt: new Date().toISOString(),
+          lastAppliedAt: st.appliedAt,
+          hash: st.appliedHash ? st.appliedHash.slice(0, 12) : null,
+          files: st.files.length,
+          error: st.readError ?? st.errors[0] ?? null,
+        },
+      };
+    });
     admin.get('/config/status', async () => configStatus());
     admin.get('/config/plan', async () => planConfig());
+    admin.get('/config/diff', async () => configDiff());
+    admin.post('/config/import', async (req) => {
+      const body = z.object({ yaml: z.string().max(2_000_000), dryRun: z.boolean().default(false) }).parse(req.body);
+      try {
+        const counts = await importConfig(body.yaml, body.dryRun);
+        if (!body.dryRun) await audit(actorOf(req.principal), 'config.imported', null, counts);
+        return { ok: true, counts };
+      } catch (err) {
+        throw badRequest(errorMessage(err));
+      }
+    });
     admin.get('/config/export', async (req, reply) => {
       await audit(actorOf(req.principal), 'config.exported', null);
       return reply.type('text/yaml; charset=utf-8').send(await exportConfig());

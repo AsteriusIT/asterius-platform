@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Alert, Button, Group, Modal, Stack, Text } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
@@ -7,6 +7,7 @@ import { IconShieldCheck } from '@tabler/icons-react';
 import type { Action, ApprovalPolicy, ObjectSchema } from '@asterius/shared';
 import { api, errorText } from '../lib/api';
 import { formOf } from '../lib/permissions';
+import { clearDraft, loadDraft, pushRecent, saveDraft } from '../lib/drafts';
 import { initialValues, SchemaForm, validateValues, type FormValues } from './SchemaForm';
 import { Markdown } from './ui';
 
@@ -29,15 +30,18 @@ const NO_APPROVAL: ApprovalPolicy = { required: false };
 export function ActionRunModal({
   action,
   entity,
+  prefill,
   onClose,
 }: {
   action: Action | null;
   entity?: { blueprint: string; identifier: string; title: string } | null;
+  /** Initial input values (e.g. from `?inputs=`); they win over a saved draft. */
+  prefill?: Record<string, unknown> | null;
   onClose: () => void;
 }) {
   return (
     <Modal opened={!!action} onClose={onClose} title={<Text fw={600}>{action?.title}</Text>} size="lg">
-      {action && <RunForm key={action.identifier} action={action} entity={entity ?? null} onClose={onClose} />}
+      {action && <RunForm key={action.identifier} action={action} entity={entity ?? null} prefill={prefill ?? null} onClose={onClose} />}
     </Modal>
   );
 }
@@ -45,21 +49,33 @@ export function ActionRunModal({
 function RunForm({
   action,
   entity,
+  prefill,
   onClose,
 }: {
   action: Action;
   entity: { blueprint: string; identifier: string; title: string } | null;
+  prefill: Record<string, unknown> | null;
   onClose: () => void;
 }) {
   const inputs = formOf(action)?.inputs ?? NO_INPUTS;
   const approval = formOf(action)?.approval ?? NO_APPROVAL;
-  const [values, setValues] = useState<FormValues>(() => initialValues(inputs));
+  const [values, setValues] = useState<FormValues>(() =>
+    initialValues(inputs, (prefill ?? loadDraft(action.identifier, entity?.identifier ?? null) ?? {}) as FormValues),
+  );
+  const entityId = entity?.identifier ?? null;
+  // Keep a draft so closing the dialog does not lose what was typed.
+  useEffect(() => {
+    const t = setTimeout(() => saveDraft(action.identifier, entityId, values), 400);
+    return () => clearTimeout(t);
+  }, [action.identifier, entityId, values]);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const navigate = useNavigate();
   const qc = useQueryClient();
   const run = useMutation({
     mutationFn: () => api.trigger(action.identifier, { entity: entity?.identifier ?? null, inputs: values }),
     onSuccess: (r) => {
+      clearDraft(action.identifier, entityId);
+      pushRecent(action.identifier);
       void qc.invalidateQueries({ queryKey: ['runs'] });
       notifications.show({
         color: r.status === 'PENDING_APPROVAL' ? 'yellow' : 'green',

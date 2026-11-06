@@ -11,13 +11,13 @@ import {
   Group,
   MultiSelect,
   NativeSelect,
-  ScrollArea,
   SegmentedControl,
+  Select,
   Stack,
   Table,
   Text,
-  Select,
   Textarea,
+  TextInput,
   Timeline,
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
@@ -27,7 +27,10 @@ import { IconCheck, IconExternalLink, IconPlayerPlay, IconPlayerStop, IconRepeat
 import type { Run, RunStatus, RunStep } from '@asterius/shared';
 import { api, errorText } from '../lib/api';
 import { DataTable } from '../components/DataTable';
-import { duration, Empty, Markdown, PageHeader, QueryView, StatusBadge, STATUS_COLORS, TimeAgo } from '../components/ui';
+import { useUrlParams } from '../lib/urlState';
+import { useRunStream } from '../lib/runStream';
+import { LogViewer } from '../components/LogViewer';
+import { duration, Empty, Markdown, PageHeader, QueryView, StatusBadge, STATUS_COLORS, STATUS_LABELS, TimeAgo } from '../components/ui';
 import { WorkflowGraph } from '../components/WorkflowGraph';
 import { ExplainRun } from '../components/AiAssistant';
 import { splitJobLog, STEP_STATUS_COLORS, STEP_STATUS_LABELS, STEP_TYPES } from '../lib/workflow';
@@ -35,6 +38,7 @@ import { PropertyValue } from '../components/PropertyValue';
 import { initialValues, SchemaForm, validateValues, type FormValues } from '../components/SchemaForm';
 
 const PAGE = 30;
+const onError = (e: unknown) => notifications.show({ color: 'red', message: errorText(e) });
 const ACTIVE: RunStatus[] = ['PENDING_APPROVAL', 'QUEUED', 'IN_PROGRESS'];
 
 const runColumns = [
@@ -61,24 +65,31 @@ const runColumns = [
 ];
 
 export function Runs() {
-  const [params, setParams] = useSearchParams();
+  const [params, set] = useUrlParams();
   const navigate = useNavigate();
   const scope = params.get('scope') ?? 'mine';
   const status = params.get('status')?.split(',').filter(Boolean) ?? [];
   const page = Number(params.get('page') ?? 1);
+  const action = params.get('action');
+  const blueprint = params.get('blueprint');
+  const entity = params.get('entity');
+  const blueprints = useQuery({ queryKey: ['blueprints'], queryFn: api.blueprints, staleTime: 30_000 });
+  const actions = useQuery({ queryKey: ['actions', 'all'], queryFn: () => api.actions(), staleTime: 60_000 });
   const q = useQuery({
-    queryKey: ['runs', scope, status.join(','), page],
-    queryFn: () => api.runs({ mine: scope === 'mine', status: status.join(',') || undefined, limit: PAGE, offset: (page - 1) * PAGE }),
+    queryKey: ['runs', scope, status.join(','), action, blueprint, entity, page],
+    queryFn: () =>
+      api.runs({
+        mine: scope === 'mine',
+        status: status.join(',') || undefined,
+        action: action ?? undefined,
+        blueprint: blueprint ?? undefined,
+        entity: entity ?? undefined,
+        limit: PAGE,
+        offset: (page - 1) * PAGE,
+      }),
     placeholderData: keepPreviousData,
     refetchInterval: (query) => (query.state.data?.items.some((r) => ACTIVE.includes(r.status)) ? 5_000 : 30_000),
   });
-  const set = (k: string, v: string) => {
-    const n = new URLSearchParams(params);
-    if (v) n.set(k, v);
-    else n.delete(k);
-    if (k !== 'page') n.delete('page');
-    setParams(n, { replace: true });
-  };
   return (
     <Stack>
       <PageHeader title="Runs" description="Every self-service request and its execution." />
@@ -91,7 +102,41 @@ export function Runs() {
             { value: 'all', label: 'Everyone' },
           ]}
         />
-        <MultiSelect placeholder="Any status" clearable data={Object.keys(STATUS_COLORS)} value={status} onChange={(v) => set('status', v.join(','))} w={360} />
+        <MultiSelect
+          placeholder="Any status"
+          aria-label="Filter by status"
+          clearable
+          data={(Object.keys(STATUS_COLORS) as RunStatus[]).map((k) => ({ value: k, label: STATUS_LABELS[k] }))}
+          value={status}
+          onChange={(v) => set('status', v.join(','))}
+          w={320}
+        />
+        <Select
+          placeholder="Any blueprint"
+          aria-label="Filter by blueprint"
+          clearable
+          data={(blueprints.data ?? []).map((b) => ({ value: b.identifier, label: b.title }))}
+          value={blueprint}
+          onChange={(v) => set('blueprint', v ?? '')}
+          w={200}
+        />
+        <TextInput
+          placeholder="Entity identifier"
+          aria-label="Filter by entity"
+          value={entity ?? ''}
+          onChange={(e) => set('entity', e.currentTarget.value)}
+          w={200}
+        />
+        <Select
+          placeholder="Any action"
+          aria-label="Filter by action"
+          searchable
+          clearable
+          data={(actions.data ?? []).map((a) => ({ value: a.identifier, label: a.title }))}
+          value={action}
+          onChange={(v) => set('action', v ?? '')}
+          w={240}
+        />
       </Group>
       <DataTable
         rows={q.data?.items}
@@ -107,17 +152,74 @@ export function Runs() {
   );
 }
 
+const approvalKey = (r: Run) => `${r.id}/${r.pendingStep?.id ?? ''}`;
+
 export function Approvals() {
   const q = useQuery({ queryKey: ['approvals'], queryFn: api.approvals, refetchInterval: 15_000 });
   const navigate = useNavigate();
+  const qc = useQueryClient();
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [comment, setComment] = useState('');
+  const decide = useMutation({
+    mutationFn: async (d: 'approve' | 'reject') => {
+      const targets = (q.data ?? []).filter((r) => selected.has(approvalKey(r)));
+      const results = await Promise.allSettled(
+        targets.map((r) => {
+          if (r.pendingStep) return d === 'approve' ? api.approveStep(r.id, r.pendingStep.id, comment) : api.rejectStep(r.id, r.pendingStep.id, comment);
+          return d === 'approve' ? api.approve(r.id, comment) : api.reject(r.id, comment);
+        }),
+      );
+      return { d, ok: results.filter((x) => x.status === 'fulfilled').length, failed: results.filter((x) => x.status === 'rejected').length };
+    },
+    onSuccess: ({ d, ok, failed }) => {
+      notifications.show({
+        color: failed ? 'orange' : 'green',
+        message: `${ok} ${d === 'approve' ? 'approved' : 'rejected'}${failed ? `, ${failed} failed` : ''}`,
+      });
+      setSelected(new Set());
+      setComment('');
+      void qc.invalidateQueries({ queryKey: ['approvals'] });
+      void qc.invalidateQueries({ queryKey: ['runs'] });
+    },
+    onError,
+  });
   return (
     <Stack>
       <PageHeader title="Approvals" description="Requests and workflow steps waiting for a decision you can make." />
+      {selected.size > 0 && (
+        <Group align="flex-end">
+          <Text fz="sm">{selected.size} selected</Text>
+          <Textarea
+            aria-label="Comment for the decision"
+            placeholder="Comment (required to reject)"
+            value={comment}
+            onChange={(e) => setComment(e.currentTarget.value)}
+            autosize
+            minRows={1}
+            style={{ flex: 1, maxWidth: 420 }}
+          />
+          <Button color="green" size="xs" leftSection={<IconCheck size={14} />} loading={decide.isPending} onClick={() => decide.mutate('approve')}>
+            Approve selected
+          </Button>
+          <Button
+            color="red"
+            variant="light"
+            size="xs"
+            leftSection={<IconX size={14} />}
+            loading={decide.isPending}
+            disabled={!comment.trim()}
+            onClick={() => decide.mutate('reject')}
+          >
+            Reject selected
+          </Button>
+        </Group>
+      )}
       <DataTable
+        selection={{ selected, onChange: setSelected }}
         rows={q.data}
         loading={q.isPending}
         error={q.error}
-        rowKey={(r) => `${r.id}/${r.pendingStep?.id ?? ''}`}
+        rowKey={approvalKey}
         onRowClick={(r) => navigate(`/runs/${r.id}${r.pendingStep ? `?step=${r.pendingStep.id}` : ''}`)}
         empty={<Empty title="Nothing to approve">You are all caught up.</Empty>}
         columns={[
@@ -151,7 +253,9 @@ export function Approvals() {
 
 export function RunPage() {
   const { id = '' } = useParams();
+  // Live updates over SSE; polling is only the fallback while the stream is not connected.
   const qc = useQueryClient();
+  const live = useRunStream(id, true);
   const q = useQuery({
     queryKey: ['run', id],
     // Poll incrementally: fetch only the log lines past the last one we hold and append them.
@@ -161,12 +265,10 @@ export function RunPage() {
       const r = await api.run(id, after);
       return after === undefined ? r : { ...r, logs: [...(prev?.logs ?? []), ...(r.logs ?? [])] };
     },
-    refetchInterval: (query) => (query.state.data && !ACTIVE.includes(query.state.data.status) ? false : 2_500),
+    refetchInterval: (query) => (live || (query.state.data && !ACTIVE.includes(query.state.data.status)) ? false : 2_500),
   });
   return <QueryView q={q}>{(r) => <RunView r={r} />}</QueryView>;
 }
-
-const LOG_COLORS = { info: undefined, warn: 'var(--mantine-color-yellow-6)', error: 'var(--mantine-color-red-6)' } as const;
 
 /** The step to show first: ?step=, else the one needing attention, else the last that ran. */
 function defaultStep(r: Run, requested: string | null) {
@@ -194,7 +296,6 @@ function RunView({ r }: { r: Run }) {
     void qc.invalidateQueries({ queryKey: ['approvals'] });
     void qc.invalidateQueries({ queryKey: ['runs'] });
   };
-  const onError = (e: unknown) => notifications.show({ color: 'red', message: errorText(e) });
   const decide = useMutation({
     mutationFn: (d: 'approve' | 'reject') => (d === 'approve' ? api.approve(r.id, comment) : api.reject(r.id, comment)),
     onSuccess: (run) => {
@@ -410,31 +511,7 @@ function RunView({ r }: { r: Run }) {
                   )}
                 </Group>
               </Group>
-              <ScrollArea h={420} type="auto">
-                <pre
-                  className="log-view"
-                  style={{ margin: 0, padding: 14, minHeight: '100%', fontSize: 12.5, lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
-                >
-                  {logs.length === 0 && <span style={{ opacity: 0.55 }}>No log lines yet.</span>}
-                  {logs.map((l, i) => (
-                    <div key={i} style={{ color: LOG_COLORS[l.level] }}>
-                      <span style={{ opacity: 0.55 }}>{new Date(l.at).toLocaleTimeString()} </span>
-                      {allLogs && l.stepId && <span style={{ opacity: 0.7 }}>[{l.stepId}] </span>}
-                      {(() => {
-                        const { job: j, text } = splitJobLog(l.message);
-                        return j ? (
-                          <>
-                            <span style={{ opacity: 0.7, fontWeight: 600 }}>[{j}] </span>
-                            {text}
-                          </>
-                        ) : (
-                          text
-                        );
-                      })()}
-                    </div>
-                  ))}
-                </pre>
-              </ScrollArea>
+              <LogViewer lines={logs} showStep={allLogs} filename={`run-${r.id}.log`} follow={ACTIVE.includes(r.status)} />
             </Card>
           </Stack>
         </Grid.Col>
