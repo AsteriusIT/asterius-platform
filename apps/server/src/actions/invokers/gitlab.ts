@@ -1,3 +1,4 @@
+import { emitJobLog, type LogFn } from '../../lib/ci-logs.js';
 import { http } from '../../lib/http.js';
 import { requireFields, str, stringValues, type InvokeResult, type Invoker } from '../types.js';
 
@@ -20,6 +21,23 @@ function fromPipeline(p: Pipeline): InvokeResult {
   return { status: p.status === 'success' ? 'SUCCESS' : 'FAILURE', ...base };
 }
 
+/** Copy the job traces of a finished pipeline into the run log. */
+async function copyJobLogs(config: Record<string, unknown>, pipelineId: unknown, log: LogFn, failed: boolean) {
+  try {
+    const jobs = await http<Array<{ id: number; name: string; status: string }>>(`${project(config)}/pipelines/${pipelineId}/jobs?per_page=50`, {
+      headers: headers(config),
+    });
+    const ordered = [...jobs.data].sort((a, b) => Number(b.status === 'failed') - Number(a.status === 'failed')).slice(0, 10);
+    for (const j of ordered) {
+      if (j.status === 'skipped' || j.status === 'manual' || j.status === 'created') continue;
+      const res = await http<string>(`${project(config)}/jobs/${j.id}/trace`, { headers: headers(config) });
+      await emitJobLog(log, j.name, res.text, j.status === 'failed', j.status === 'failed' || failed ? 300 : 30);
+    }
+  } catch (err) {
+    await log(`Could not fetch the job logs: ${(err as Error).message}`, 'warn');
+  }
+}
+
 export const gitlabInvoker: Invoker = {
   info: {
     type: 'gitlab-pipeline',
@@ -30,6 +48,7 @@ export const gitlabInvoker: Invoker = {
       { key: 'ref', label: 'Branch / ref', kind: 'text', placeholder: 'main' },
       { key: 'token', label: 'Token', kind: 'secret', required: true, help: 'api scope' },
       { key: 'variables', label: 'Variables', kind: 'keyvalue' },
+      { key: 'logs', label: 'Copy job logs when finished', kind: 'boolean', advanced: true },
       { key: 'baseUrl', label: 'GitLab URL', kind: 'text', placeholder: 'https://gitlab.com', advanced: true },
     ],
     example: {
@@ -53,7 +72,10 @@ export const gitlabInvoker: Invoker = {
   async poll({ config, log }, state) {
     const r = await http<Pipeline>(`${project(config)}/pipelines/${state.pipelineId}`, { headers: headers(config) });
     const out = fromPipeline(r.data);
-    if (out.status !== 'IN_PROGRESS') await log(`Pipeline finished: ${r.data.status}`, out.status === 'SUCCESS' ? 'info' : 'error');
+    if (out.status !== 'IN_PROGRESS') {
+      await log(`Pipeline finished: ${r.data.status}`, out.status === 'SUCCESS' ? 'info' : 'error');
+      if (config.logs !== false) await copyJobLogs(config, state.pipelineId, log, out.status === 'FAILURE');
+    }
     return out;
   },
   async cancel({ config }, state) {

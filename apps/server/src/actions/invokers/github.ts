@@ -1,3 +1,4 @@
+import { emitJobLog, type LogFn } from '../../lib/ci-logs.js';
 import { http } from '../../lib/http.js';
 import { requireFields, str, stringValues, type InvokeResult, type Invoker } from '../types.js';
 
@@ -28,6 +29,25 @@ function fromRun(r: WorkflowRun): InvokeResult {
   return { status: r.conclusion === 'success' ? 'SUCCESS' : 'FAILURE', state: { runId: r.id }, link: r.html_url, statusLabel: label };
 }
 
+/** Copy the logs of the jobs of a finished run into the run log (failed jobs in full, others briefly). */
+async function copyJobLogs(config: Record<string, unknown>, runId: unknown, log: LogFn, failed: boolean) {
+  try {
+    const jobs = await http<{ jobs: Array<{ id: number; name: string; conclusion: string | null }> }>(
+      `${repoPath(config)}/actions/runs/${runId}/jobs?per_page=30`,
+      {
+        headers: headers(config),
+      },
+    );
+    const ordered = [...(jobs.data.jobs ?? [])].sort((a, b) => Number(b.conclusion === 'failure') - Number(a.conclusion === 'failure')).slice(0, 10);
+    for (const j of ordered) {
+      const res = await http<string>(`${repoPath(config)}/actions/jobs/${j.id}/logs`, { headers: headers(config) });
+      await emitJobLog(log, j.name, res.text, j.conclusion === 'failure', j.conclusion === 'failure' || failed ? 300 : 30);
+    }
+  } catch (err) {
+    await log(`Could not fetch the job logs: ${(err as Error).message}`, 'warn');
+  }
+}
+
 export const githubInvoker: Invoker = {
   info: {
     type: 'github-workflow',
@@ -40,6 +60,7 @@ export const githubInvoker: Invoker = {
       { key: 'ref', label: 'Branch / ref', kind: 'text', placeholder: 'main' },
       { key: 'token', label: 'Token', kind: 'secret', required: true, help: 'Actions: write on the repository' },
       { key: 'inputs', label: 'Workflow inputs', kind: 'keyvalue', help: 'Must match the on.workflow_dispatch.inputs of the workflow' },
+      { key: 'logs', label: 'Copy job logs when finished', kind: 'boolean', advanced: true },
       { key: 'apiUrl', label: 'API URL', kind: 'text', placeholder: 'https://api.github.com', help: 'GitHub Enterprise Server', advanced: true },
     ],
     example: {
@@ -80,7 +101,10 @@ export const githubInvoker: Invoker = {
     }
     const r = await http<WorkflowRun>(`${repoPath(config)}/actions/runs/${state.runId}`, { headers: headers(config) });
     const out = fromRun(r.data);
-    if (out.status !== 'IN_PROGRESS') await log(`Workflow run finished: ${r.data.conclusion}`, out.status === 'SUCCESS' ? 'info' : 'error');
+    if (out.status !== 'IN_PROGRESS') {
+      await log(`Workflow run finished: ${r.data.conclusion}`, out.status === 'SUCCESS' ? 'info' : 'error');
+      if (config.logs !== false) await copyJobLogs(config, state.runId, log, out.status === 'FAILURE');
+    }
     return out;
   },
   async cancel({ config }, state) {
