@@ -168,6 +168,7 @@ export type Integration = {
   intervalMinutes?: number;
   deleteMissing?: boolean;
   priority?: number;
+  primaryFor?: Array<string>;
   schedule?: string;
   deleteMaxPercent?: number;
   deleteDryRun?: boolean;
@@ -379,6 +380,7 @@ export type ConfigFile = {
     intervalMinutes?: number;
     deleteMissing?: boolean;
     priority?: number;
+    primaryFor?: Array<string>;
     schedule?: string;
     deleteMaxPercent?: number;
     deleteDryRun?: boolean;
@@ -478,6 +480,7 @@ export type IntegrationView = {
   intervalMinutes: number;
   deleteMissing: boolean;
   priority: number;
+  primaryFor: Array<string>;
   schedule?: string;
   deleteMaxPercent: number;
   deleteDryRun: boolean;

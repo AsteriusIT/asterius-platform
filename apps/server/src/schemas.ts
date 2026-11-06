@@ -268,6 +268,8 @@ export const integrationDef = z.object({
   deleteMissing: z.boolean().default(false),
   /** Ownership when several integrations write the same entity: the higher priority owns it (incumbent wins ties). */
   priority: z.number().int().min(0).max(1000).default(0),
+  /** Blueprints this integration is the primary source of: it outranks any non-primary integration there. */
+  primaryFor: z.array(slug).default([]),
   /** Cron expression (5 fields, UTC) replacing `intervalMinutes` as the pull schedule. */
   schedule: z.string().max(100).optional(),
   /** deleteMissing safety: cancel the deletion when more than this share of the existing entities would be removed. */

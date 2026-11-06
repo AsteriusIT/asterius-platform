@@ -371,6 +371,8 @@ export interface Integration {
   deleteMissing: boolean;
   /** Ownership priority when integrations write the same entity (higher wins). */
   priority: number;
+  /** Blueprints this integration is the primary source of. */
+  primaryFor: string[];
   /** Cron expression (UTC) replacing intervalMinutes. */
   schedule?: string;
   deleteMaxPercent: number;

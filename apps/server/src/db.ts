@@ -433,6 +433,15 @@ export const MIGRATIONS: Migration[] = [
         CREATE INDEX inbound_events_due ON inbound_events(status, next_attempt_at);
       `),
   },
+  {
+    id: 10,
+    name: 'ownership: field owners, primary blueprints',
+    up: (d) =>
+      d.exec(`
+        ALTER TABLE entities ADD COLUMN field_owners TEXT;
+        ALTER TABLE integrations ADD COLUMN primary_for TEXT NOT NULL DEFAULT '[]';
+      `),
+  },
 ];
 
 /** Apply pending numbered migrations (idempotent; serialized across replicas by an advisory lock on Postgres). */

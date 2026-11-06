@@ -820,6 +820,14 @@
             "minimum": 0,
             "maximum": 1000
           },
+          "primaryFor": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+            }
+          },
           "schedule": {
             "type": "string",
             "maxLength": 100
@@ -1849,6 +1857,14 @@
                   "minimum": 0,
                   "maximum": 1000
                 },
+                "primaryFor": {
+                  "default": [],
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                  }
+                },
                 "schedule": {
                   "type": "string",
                   "maxLength": 100
@@ -2311,6 +2327,14 @@
             "minimum": 0,
             "maximum": 1000
           },
+          "primaryFor": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+            }
+          },
           "schedule": {
             "type": "string",
             "maxLength": 100
@@ -2469,6 +2493,7 @@
           "intervalMinutes",
           "deleteMissing",
           "priority",
+          "primaryFor",
           "deleteMaxPercent",
           "deleteDryRun",
           "managed",

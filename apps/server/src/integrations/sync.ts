@@ -78,54 +78,92 @@ export async function renderConfig(r: IntegrationRow) {
 }
 
 /**
- * Ownership of entities written by several integrations (`entities.source` names the owner):
- *  - an entity owned by an integration with a higher or equal `priority` keeps its owner (the incumbent wins ties);
+ * Ownership of entities written by several integrations (`entities.source` names the owner, `entities.field_owners`
+ * records, per property, who wrote it when that is not the owner):
+ *  - priority: `priority`, plus a large bonus for the integrations listed in `primaryFor` for that blueprint;
+ *  - an entity owned by an integration with a higher or equal priority keeps its owner (the incumbent wins ties);
  *  - a mapping with `merge: false` then skips the entity (reported as a CONFLICT in the sync log);
- *  - a mapping with `merge: true` only fills the properties and relations the owner left unset (ownership stays);
- *  - a higher priority integration takes the entity over, whatever was there.
+ *  - a mapping with `merge: true` writes the properties that are unset or whose current writer it outranks, and
+ *    records itself as their owner (field-level ownership); the entity owner does not change;
+ *  - a higher priority integration takes the entity over; the fields it does not map keep their writers;
+ *  - an owner never overwrites a field another integration owns with a higher priority.
  * Entities of unknown / removed integrations, manual and config entities are taken over as before.
  */
-const priorities = new Map<string, number>();
-async function priorityOf(source: string): Promise<number> {
-  if (!source.startsWith('integration:')) return Number.NEGATIVE_INFINITY;
+export interface Me {
+  priority: number;
+  primaryFor: string[];
+}
+const PRIMARY_BONUS = 1_000_000;
+const effective = (m: Me, blueprint: string) => m.priority + (m.primaryFor.includes(blueprint) ? PRIMARY_BONUS : 0);
+
+const infos = new Map<string, Me | null>();
+async function infoOf(source: string): Promise<Me | null> {
+  if (!source.startsWith('integration:')) return null;
   const id = source.slice('integration:'.length);
-  const hit = priorities.get(id);
-  if (hit !== undefined) return hit;
-  const row = await one<{ priority: number }>('SELECT priority FROM integrations WHERE identifier = ?', id);
-  const p = row ? Number(row.priority) : Number.NEGATIVE_INFINITY;
-  priorities.set(id, p);
-  return p;
+  if (infos.has(id)) return infos.get(id)!;
+  const row = await one<{ priority: number; primary_for: string | null }>('SELECT priority, primary_for FROM integrations WHERE identifier = ?', id);
+  const info = row ? { priority: Number(row.priority), primaryFor: json<string[]>(row.primary_for, []) } : null;
+  infos.set(id, info);
+  return info;
 }
 
 type Ownership =
-  | { action: 'write' }
+  | { action: 'write'; oldSource?: string; oldKeys: string[]; hadOwners: boolean }
   | { action: 'skip'; owner: string }
-  | { action: 'fill'; owner: string; properties: Record<string, unknown>; relations: Record<string, unknown> };
+  | { action: 'fill'; source: string; owner: string; properties: Record<string, unknown>; relations: Record<string, unknown>; owners: Record<string, string> };
 
-export async function resolveOwnership(integration: string, priority: number, m: Mapped, merge: boolean): Promise<Ownership> {
+export async function resolveOwnership(integration: string, me: Me, m: Mapped, merge: boolean): Promise<Ownership> {
   const mine = entitySource(integration);
-  const row = await one<{ source: string; properties: string; relations: string }>(
-    'SELECT source, properties, relations FROM entities WHERE blueprint = ? AND identifier = ?',
+  const row = await one<{ source: string; properties: string; relations: string; field_owners: string | null }>(
+    'SELECT source, properties, relations, field_owners FROM entities WHERE blueprint = ? AND identifier = ?',
     m.blueprint,
     m.identifier,
   );
-  if (!row || row.source === mine || !row.source.startsWith('integration:')) return { action: 'write' };
-  const theirs = await priorityOf(row.source);
-  if (priority > theirs) return { action: 'write' };
-  if (!merge) return { action: 'skip', owner: row.source };
+  const plain: Ownership = { action: 'write', oldKeys: [], hadOwners: false };
+  if (!row || (row.source !== mine && !row.source.startsWith('integration:'))) return plain;
+  const owners = json<Record<string, string>>(row.field_owners, {});
   const have = json<Record<string, unknown>>(row.properties, {});
   const haveRel = json<Record<string, unknown>>(row.relations, {});
-  const gaps = (incoming: Record<string, unknown>, existing: Record<string, unknown>) =>
-    Object.fromEntries(Object.entries(incoming).filter(([k]) => existing[k] === undefined || existing[k] === null));
-  return {
-    action: 'fill',
-    owner: row.source,
-    properties: gaps(m.properties ?? {}, have),
-    relations: gaps((m.relations ?? {}) as Record<string, unknown>, haveRel),
+  const myEff = effective(me, m.blueprint);
+  const foreign = Object.values(owners).some((o) => o !== mine);
+
+  if (row.source === mine && !foreign) return { action: 'write', oldKeys: [], hadOwners: Object.keys(owners).length > 0 };
+  if (row.source !== mine) {
+    const theirs = await infoOf(row.source);
+    if (myEff > (theirs ? effective(theirs, m.blueprint) : Number.NEGATIVE_INFINITY))
+      return {
+        action: 'write',
+        oldSource: row.source,
+        oldKeys: [...Object.keys(have), ...Object.keys(haveRel).map((k) => `rel:${k}`)],
+        hadOwners: Object.keys(owners).length > 0,
+      };
+    if (!merge) return { action: 'skip', owner: row.source };
+  }
+  // Field level: write what is unset or whose writer we outrank.
+  const canWrite = async (key: string, existing: Record<string, unknown>, ownerKey: string) => {
+    if (existing[key.replace(/^rel:/, '')] === undefined || existing[key.replace(/^rel:/, '')] === null) return true;
+    const writer = owners[ownerKey] ?? row.source;
+    if (writer === mine) return true;
+    const info = await infoOf(writer);
+    return myEff > (info ? effective(info, m.blueprint) : Number.NEGATIVE_INFINITY);
   };
+  const properties: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(m.properties ?? {})) if (await canWrite(k, have, k)) properties[k] = v;
+  const relations: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries((m.relations ?? {}) as Record<string, unknown>)) if (await canWrite(k, haveRel, `rel:${k}`)) relations[k] = v;
+  return { action: 'fill', source: row.source, owner: row.source, properties, relations, owners };
 }
 
-async function applyMapped(integration: string, priority: number, kind: string, m: Mapped, merge: boolean, stats: SyncStats, log: SyncLog, seen?: Set<string>) {
+async function recordOwners(blueprint: string, identifier: string, owners: Record<string, string> | null) {
+  await run(
+    'UPDATE entities SET field_owners = ? WHERE blueprint = ? AND identifier = ?',
+    owners && Object.keys(owners).length ? JSON.stringify(owners) : null,
+    blueprint,
+    identifier,
+  );
+}
+
+async function applyMapped(integration: string, me: Me, kind: string, m: Mapped, merge: boolean, stats: SyncStats, log: SyncLog, seen?: Set<string>) {
   try {
     if (m.delete) {
       await deleteEntity(m.blueprint, m.identifier, SYSTEM_ACTOR).then(
@@ -134,26 +172,36 @@ async function applyMapped(integration: string, priority: number, kind: string, 
       );
       return;
     }
-    const own = await resolveOwnership(integration, priority, m, merge);
+    const own = await resolveOwnership(integration, me, m, merge);
     if (own.action === 'skip') {
       log.conflict(`CONFLICT ${m.blueprint}/${m.identifier} is owned by ${own.owner} (higher or equal priority): not written`);
       stats.skipped++;
       return;
     }
-    const res =
-      own.action === 'fill'
-        ? await upsertEntity(
-            m.blueprint,
-            { identifier: m.identifier, properties: own.properties, relations: own.relations },
-            { source: own.owner, actor: SYSTEM_ACTOR, merge: true },
-          )
-        : await upsertEntity(
-            m.blueprint,
-            { identifier: m.identifier, title: m.title, team: m.team, properties: m.properties, relations: m.relations },
-            { source: entitySource(integration), actor: SYSTEM_ACTOR, merge },
-          );
-    if (own.action === 'fill' && res.changed)
-      log.conflict(`CONFLICT ${m.blueprint}/${m.identifier} owned by ${own.owner}: filled only the fields it leaves empty`);
+    const mine = entitySource(integration);
+    let res;
+    if (own.action === 'fill') {
+      res = await upsertEntity(
+        m.blueprint,
+        { identifier: m.identifier, properties: own.properties, relations: own.relations },
+        { source: own.source, actor: SYSTEM_ACTOR, merge: true },
+      );
+      const written = [...Object.keys(own.properties), ...Object.keys(own.relations).map((k) => `rel:${k}`)];
+      if (written.length) await recordOwners(m.blueprint, m.identifier, { ...own.owners, ...Object.fromEntries(written.map((k) => [k, mine])) });
+      if (res.changed)
+        log.conflict(`CONFLICT ${m.blueprint}/${m.identifier} owned by ${own.owner}: wrote ${written.length} field(s) it does not own at a higher priority`);
+    } else {
+      res = await upsertEntity(
+        m.blueprint,
+        { identifier: m.identifier, title: m.title, team: m.team, properties: m.properties, relations: m.relations },
+        { source: mine, actor: SYSTEM_ACTOR, merge },
+      );
+      if (own.oldSource && merge) {
+        // Taken over from another owner: the fields this mapping does not write keep their writer.
+        const written = new Set([...Object.keys(m.properties ?? {}), ...Object.keys(m.relations ?? {}).map((k) => `rel:${k}`)]);
+        await recordOwners(m.blueprint, m.identifier, Object.fromEntries(own.oldKeys.filter((k) => !written.has(k)).map((k) => [k, own.oldSource!])));
+      } else if (own.hadOwners || own.oldSource) await recordOwners(m.blueprint, m.identifier, null);
+    }
     seen?.add(`${m.blueprint}/${m.identifier}`);
     if (res.changed) stats.upserted++;
     else stats.skipped++;
@@ -168,7 +216,17 @@ async function processItem(r: IntegrationRow, mapping: MappingDef, item: unknown
   try {
     const { mapped, skipped } = await mapItem(mapping, item, bindings);
     stats.skipped += skipped;
-    for (const m of mapped) await applyMapped(r.identifier, Number(r.priority ?? 0), mapping.kind, m, mapping.merge, stats, log, seen);
+    for (const m of mapped)
+      await applyMapped(
+        r.identifier,
+        { priority: Number(r.priority ?? 0), primaryFor: json<string[]>(r.primary_for, []) },
+        mapping.kind,
+        m,
+        mapping.merge,
+        stats,
+        log,
+        seen,
+      );
   } catch (err) {
     stats.failed++;
     log.error(`mapping ${mapping.kind} → ${mapping.entity.blueprint}: ${errorMessage(err)}`, {
@@ -189,7 +247,7 @@ export async function runSync(identifier: string, trigger: SyncRun['trigger'], o
     t,
   );
   if (!changes) return undefined;
-  priorities.clear(); // ownership priorities are read afresh by every run
+  infos.clear(); // ownership priorities are read afresh by every run
   const r = await getIntegrationRow(identifier);
   const id = newId();
   await run("INSERT INTO sync_runs (id, integration, trigger, status, started_at) VALUES (?, ?, ?, 'running', ?)", id, identifier, trigger, t);

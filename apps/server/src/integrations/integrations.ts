@@ -22,6 +22,7 @@ export interface IntegrationRow {
   sync_state: string | null;
   schedule: string | null;
   priority: number;
+  primary_for: string | null;
   requested_kind: string | null;
   managed: number;
   next_sync_at: string | null;
@@ -70,6 +71,7 @@ export function toIntegration(r: IntegrationRow, lastSync: SyncRun | null, lastS
     managed: bool(r.managed),
     schedule: r.schedule ?? undefined,
     priority: Number(r.priority ?? 0),
+    primaryFor: json<string[]>(r.primary_for, []),
     lastSync,
     lastSuccessAt,
     ...(r.type === 'webhook' ? { webhookUrl: webhookUrl(r.identifier) } : {}),
@@ -159,18 +161,19 @@ export async function upsertIntegration(input: unknown, opts: { managed?: boolea
     def.deleteDryRun ? 1 : 0,
     def.schedule ?? null,
     def.priority,
+    JSON.stringify(def.primaryFor),
     opts.managed ? 1 : 0,
   ];
   if (existing)
     await run(
-      'UPDATE integrations SET title = ?, type = ?, enabled = ?, config = ?, mappings = ?, interval_minutes = ?, delete_missing = ?, delete_max_percent = ?, delete_dry_run = ?, schedule = ?, priority = ?, managed = ?, sync_state = NULL, updated_at = ? WHERE identifier = ?',
+      'UPDATE integrations SET title = ?, type = ?, enabled = ?, config = ?, mappings = ?, interval_minutes = ?, delete_missing = ?, delete_max_percent = ?, delete_dry_run = ?, schedule = ?, priority = ?, primary_for = ?, managed = ?, sync_state = NULL, updated_at = ? WHERE identifier = ?',
       ...vals,
       t,
       def.identifier,
     );
   else
     await run(
-      'INSERT INTO integrations (title, type, enabled, config, mappings, interval_minutes, delete_missing, delete_max_percent, delete_dry_run, schedule, priority, managed, created_at, updated_at, next_sync_at, identifier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO integrations (title, type, enabled, config, mappings, interval_minutes, delete_missing, delete_max_percent, delete_dry_run, schedule, priority, primary_for, managed, created_at, updated_at, next_sync_at, identifier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       ...vals,
       t,
       t,
