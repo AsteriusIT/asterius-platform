@@ -124,7 +124,7 @@ export async function runSync(identifier: string, trigger: SyncRun['trigger']): 
     id,
   );
   await run('UPDATE integrations SET locked_until = NULL, next_sync_at = ? WHERE identifier = ?', interval > 0 ? later(interval * 60_000) : null, identifier);
-  metrics.sync(identifier, status, stats.upserted, stats.deleted);
+  metrics.sync(identifier, status, stats.upserted, stats.deleted, (Date.now() - Date.parse(t)) / 1000);
   return toSyncRun({
     id,
     integration: identifier,

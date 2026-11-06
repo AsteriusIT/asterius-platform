@@ -141,6 +141,7 @@ async function deliver(d: DeliveryRow) {
       d.id,
     );
     metrics.delivery('success');
+    metrics.deliveryLatency(Math.max(0, (Date.now() - Date.parse(d.created_at)) / 1000));
   } catch (err) {
     const status = err instanceof UpstreamError ? err.status : null;
     const final = attempts >= MAX_ATTEMPTS || (status !== null && status >= 400 && status < 500 && status !== 408 && status !== 429);

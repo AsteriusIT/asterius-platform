@@ -1,4 +1,5 @@
 import { config } from '../config.js';
+import { metrics } from '../metrics.js';
 
 /** Outbound HTTP for invokers, sources and webhooks: timeout, JSON handling, errors with a body excerpt. */
 
@@ -40,6 +41,7 @@ export async function http<T = unknown>(url: string, req: HttpRequest = {}): Pro
     signal: AbortSignal.timeout(req.timeoutMs ?? config.HTTP_TIMEOUT_SECONDS * 1000),
     redirect: 'follow',
   });
+  metrics.upstream(new URL(url).host, res.status);
   const text = await res.text();
   let data: unknown = text;
   if (text && (res.headers.get('content-type') ?? '').includes('json')) {

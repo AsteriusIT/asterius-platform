@@ -104,4 +104,10 @@ Guarantees:
 
 - `/healthz` (liveness), `/readyz` (database), `/metrics` (Prometheus; optional `METRICS_TOKEN`).
 - Metrics: `asterius_runs_finished_total{action,status}`, `asterius_run_duration_seconds{invoker}`, `asterius_syncs_total{integration,status}`, `asterius_sync_entities_total`, `asterius_webhook_deliveries_total{result}`, `asterius_events_total{type}`. Cluster-wide gauges: `asterius_queue_runs{status}`, `asterius_queue_deliveries_pending`, `asterius_catalog_entities{blueprint}`.
+- Further metrics (labels are bounded: route patterns, configured integration ids and upstream hosts, never raw URLs or entity ids):
+  - `asterius_http_request_duration_seconds{method,route,status}` histogram of inbound requests (rate is `_count`; `/metrics` and probes excluded).
+  - `asterius_sync_duration_seconds{integration}` histogram; `asterius_integration_last_success_timestamp_seconds{integration}` gauge read from `sync_runs` (cluster-wide, alert on `time() - value`).
+  - `asterius_webhook_delivery_latency_seconds` histogram from event creation to successful delivery.
+  - `asterius_db_pool_connections`, `asterius_db_pool_idle_connections`, `asterius_db_pool_waiting_requests` (per process; waiting > 0 means pool saturation, see `DATABASE_POOL_SIZE`).
+  - `asterius_upstream_responses_total{host,class}` and `asterius_upstream_rate_limited_total{host}` (429s from GitHub, GitLab, ADO, webhook targets).
 - OpenTelemetry tracing (`OTEL_EXPORTER_OTLP_ENDPOINT`): `action.run`, `integration.sync` and `webhook.deliver` spans, with outgoing HTTP calls as children.

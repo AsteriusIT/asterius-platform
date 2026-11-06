@@ -405,6 +405,9 @@ async function open(): Promise<Driver> {
   return postgresDriver(pool);
 }
 
+/** Connection pool occupancy (Postgres only), for the metrics endpoint. */
+export const poolStats = () => (pool ? { total: pool.totalCount, idle: pool.idleCount, waiting: pool.waitingCount } : undefined);
+
 export const driver = await open();
 export const dialect = driver.dialect;
 

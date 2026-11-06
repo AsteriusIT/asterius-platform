@@ -8,7 +8,7 @@ import { ZodError } from 'zod';
 import { config } from './config.js';
 import { HttpError } from './lib/errors.js';
 import { ready } from './health.js';
-import { registry } from './metrics.js';
+import { metrics, registry } from './metrics.js';
 import { authRoutes } from './routes/auth.js';
 import { catalogRoutes } from './routes/catalog.js';
 import { actionRoutes } from './routes/actions.js';
@@ -26,6 +26,14 @@ export async function buildApp(opts: AppOptions = {}): Promise<FastifyInstance> 
     logger: opts.logger === false ? false : { level: config.LOG_LEVEL, redact: ['req.headers.authorization', 'req.headers["x-asterius-token"]'] },
     bodyLimit: 5 * 1024 * 1024,
     trustProxy: true, // behind the ingress controller: client IPs for rate limiting
+  });
+
+  // HTTP metrics: route pattern (never the raw URL) keeps label cardinality bounded.
+  const SKIP = new Set(['/metrics', '/healthz', '/readyz']);
+  app.addHook('onResponse', async (req, reply) => {
+    const route = req.routeOptions.url ?? 'unmatched';
+    if (SKIP.has(route)) return;
+    metrics.httpRequest(req.method, route, reply.statusCode, reply.elapsedTime / 1000);
   });
 
   // Keep the raw body: inbound webhooks verify HMAC signatures over the exact bytes.
