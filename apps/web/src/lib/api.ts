@@ -21,6 +21,7 @@ import type {
   ScorecardResult,
   ScorecardSummary,
   SecretInfo,
+  SecretProviderInfo,
   SyncRun,
   Team,
   Tombstone,
@@ -55,6 +56,16 @@ export const tokenStore = {
   },
 };
 
+/**
+ * Cookie sessions (SESSION_COOKIE on the server): the browser holds an httpOnly cookie, so the token store only keeps
+ * the marker `cookie`, and unsafe requests carry a CSRF token (kept in memory, restored from /api/auth/me).
+ */
+export const COOKIE_SESSION = 'cookie';
+let csrf: string | null = null;
+export const setCsrf = (t: string | undefined) => {
+  if (t) csrf = t;
+};
+
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -71,9 +82,15 @@ export const setUnauthorizedHandler = (fn: () => void) => {
 
 export async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const token = tokenStore.get();
+  const viaCookie = token === COOKIE_SESSION;
   const res = await fetch(path, {
     method,
-    headers: { ...(token ? { authorization: `Bearer ${token}` } : {}), ...(body !== undefined ? { 'content-type': 'application/json' } : {}) },
+    credentials: 'same-origin',
+    headers: {
+      ...(token && !viaCookie ? { authorization: `Bearer ${token}` } : {}),
+      ...(viaCookie && csrf ? { 'x-csrf-token': csrf } : {}),
+      ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
+    },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (res.status === 401 && !path.startsWith('/api/auth/login')) onUnauthorized();
@@ -103,11 +120,17 @@ export type ActionView = Action & { allowedForMe?: boolean };
 
 export const api = {
   meta: () => request<Meta>('GET', '/api/meta'),
-  login: (email: string, password: string) => request<{ token: string; user: PublicUser }>('POST', '/api/auth/login', { email, password }),
+  login: (email: string, password: string) =>
+    request<{ token: string; csrfToken?: string; user: PublicUser }>('POST', '/api/auth/login', { email, password }).then((r) => (setCsrf(r.csrfToken), r)),
   register: (email: string, name: string, password: string, bootstrapToken?: string) =>
-    request<{ token: string; user: PublicUser }>('POST', '/api/auth/register', { email, name, password, ...(bootstrapToken ? { bootstrapToken } : {}) }),
+    request<{ token: string; csrfToken?: string; user: PublicUser }>('POST', '/api/auth/register', {
+      email,
+      name,
+      password,
+      ...(bootstrapToken ? { bootstrapToken } : {}),
+    }).then((r) => (setCsrf(r.csrfToken), r)),
   logout: () => request('POST', '/api/auth/logout'),
-  me: () => request<PublicUser>('GET', '/api/auth/me'),
+  me: () => request<PublicUser & { csrfToken?: string }>('GET', '/api/auth/me').then((u) => (setCsrf(u.csrfToken), u)),
   setTourCompleted: (completed: boolean) => request<PublicUser>('PUT', '/api/auth/me/tour', { completed }),
 
   home: () => request<HomeSummary>('GET', v1('/home')),
@@ -218,10 +241,13 @@ export const api = {
   deleteToken: (id: string) => request('DELETE', v1(`/tokens/${enc(id)}`)),
 
   secrets: () => request<SecretInfo[]>('GET', v1('/secrets')),
+  secretProviders: () => request<SecretProviderInfo[]>('GET', v1('/secret-providers')),
   setSecret: (name: string, value: string, description: string) => request('PUT', v1(`/secrets/${enc(name)}`), { value, description }),
   deleteSecret: (name: string) => request('DELETE', v1(`/secrets/${enc(name)}`)),
 
-  audit: (q: { search?: string; limit?: number; offset?: number }) => request<AuditEntry[]>('GET', v1(`/audit${qs(q)}`)),
+  audit: (q: { search?: string; action?: string; actor?: string; limit?: number; offset?: number }) => request<AuditEntry[]>('GET', v1(`/audit${qs(q)}`)),
+  auditExport: (q: { search?: string; action?: string; actor?: string }, format: 'csv' | 'json') =>
+    request<string>('GET', v1(`/audit/export${qs({ ...q, format })}`)),
   configInfo: () => request<{ dir: string; managed: Record<string, number> }>('GET', v1('/config')),
   configExport: () => request<string>('GET', v1('/config/export')),
   configReload: () => request('POST', v1('/config/reload'), {}),

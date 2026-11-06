@@ -4,7 +4,7 @@ import { mapItem } from '../src/integrations/mapping.js';
 import { mappingDef } from '../src/schemas.js';
 
 const secrets: Record<string, string> = { TOKEN: 'tok-123456', TPL: '{{ inputs.x }}' };
-const resolve = async (kind: 'secret' | 'env', name: string) => {
+const resolve = async (kind: string, name: string) => {
   if (kind === 'secret' && secrets[name]) return secrets[name];
   throw new Error(`no ${kind} ${name}`);
 };

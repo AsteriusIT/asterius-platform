@@ -2,7 +2,8 @@ import Anthropic from '@anthropic-ai/sdk';
 import type { ObjectSchema, PropertySchema } from '@asterius/shared';
 import { config } from '../config.js';
 import { listBlueprints } from '../catalog/blueprints.js';
-import { findEntity, searchEntities } from '../catalog/entities.js';
+import { canRead, findEntity, searchEntities } from '../catalog/entities.js';
+import { ANONYMOUS, visibleBlueprints } from '../auth/access.js';
 import { validator } from '../catalog/validation.js';
 import { metrics } from '../metrics.js';
 import type { WorkflowStepDef } from '../schemas.js';
@@ -98,14 +99,21 @@ const str = (v: unknown) => (typeof v === 'string' ? v : '');
 async function runCatalogTool(name: string, input: Record<string, unknown>): Promise<string> {
   if (name === 'list_blueprints')
     return JSON.stringify(
-      (await listBlueprints()).map((b) => ({ identifier: b.identifier, title: b.title, properties: Object.keys(b.schema.properties), relations: b.relations })),
+      (await visibleBlueprints(ANONYMOUS, await listBlueprints())).map((b) => ({
+        identifier: b.identifier,
+        title: b.title,
+        properties: Object.keys(b.schema.properties),
+        relations: b.relations,
+      })),
     );
   if (name === 'search_catalog') {
-    const page = await searchEntities({ search: str(input.query), blueprint: str(input.blueprint) || undefined, limit: 20, offset: 0 });
+    const page = await searchEntities({ search: str(input.query), blueprint: str(input.blueprint) || undefined, limit: 20, offset: 0, viewer: ANONYMOUS });
     return JSON.stringify({ total: page.total, items: page.items.map(({ createdAt: _c, ...e }) => e) });
   }
   if (name === 'get_entity') {
     const e = await findEntity(str(input.blueprint), str(input.identifier));
+    // Agents run unattended: they only see what has no read rule.
+    if (e && !(await canRead(ANONYMOUS, e))) return `No entity ${str(input.blueprint)}/${str(input.identifier)}`;
     return e ? JSON.stringify(e) : `No entity ${str(input.blueprint)}/${str(input.identifier)}`;
   }
   throw new Error(`Unknown tool ${name}`);

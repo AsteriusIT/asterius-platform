@@ -45,7 +45,9 @@ export function sampleOf(schema: ObjectSchema | undefined): Record<string, unkno
   return out;
 }
 
-async function secretExists(kind: 'secret' | 'env', name: string, missing: Set<string>, allowed?: string[]) {
+async function secretExists(kind: string, name: string, missing: Set<string>, allowed?: string[]) {
+  // References to external secret managers (vault:, awssm:, ...) are not looked up in a dry run: the provider is not called.
+  if (kind !== 'secret' && kind !== 'env') return;
   if (allowed && !allowed.includes(kind === 'env' ? `env:${name}` : name)) {
     missing.add(`\${${kind}:${name}} (not in the allow-list)`);
     return;

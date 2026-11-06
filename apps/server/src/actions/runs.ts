@@ -8,6 +8,8 @@ import { actorOf, automationPrincipal, isAdmin, matchesSubjects, type Principal 
 import { getEntity } from '../catalog/entities.js';
 import { compact, validate } from '../catalog/validation.js';
 import { canTrigger, getAction } from './actions.js';
+import { assertCan } from '../auth/access.js';
+import { getBlueprintCached } from '../catalog/blueprints.js';
 import { metrics } from '../metrics.js';
 import { wake } from './wake.js';
 import { notifyPendingDecision } from '../notifications/dispatch.js';
@@ -117,7 +119,7 @@ const toRun = (r: RunRow, approvals: RunApproval[]): Run => ({
 /** Approvers default to admins when the policy names nobody. */
 const approversOf = (policy: ApprovalPolicy) => {
   const a = policy.approvers;
-  return a && (a.roles?.length || a.teams?.length || a.users?.length || a.ownerTeam) ? a : { roles: ['admin' as const] };
+  return a && (a.roles?.length || a.teams?.length || a.users?.length || a.ownerTeam) ? a : { roles: ['admin', 'approver'] };
 };
 
 export function canApprove(p: Principal, r: RunRow, approvals: RunApproval[]) {
@@ -478,6 +480,7 @@ export async function triggerRun(
     const e = await getEntity(trigger.blueprint!, body.entity);
     entityTeam = e.team;
     entityId = e.identifier;
+    assertCan(p, await getBlueprintCached(trigger.blueprint!), 'run', e.team);
   }
   if (!canTrigger(action, p, entityTeam)) throw forbidden(`You are not allowed to run "${action.title}"`);
   const inputs = compact(body.inputs ?? {});

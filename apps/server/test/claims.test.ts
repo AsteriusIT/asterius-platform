@@ -38,7 +38,7 @@ beforeAll(async () => {
   admin = client(app, (await register(app, 'admin@example.com')).token);
   const a = await register(app, 'alice@example.com');
   alice = client(app, a.token);
-  aliceP = { id: a.user.id, email: 'alice@example.com', name: 'alice', role: 'member', provider: 'local', teams: [] };
+  aliceP = { id: a.user.id, email: 'alice@example.com', name: 'alice', role: 'member', provider: 'local', teams: [], roles: [] };
   const base = { trigger: 'create', approval: { required: false } };
   await admin.put('/api/v1/actions/noop', { title: 'Noop', ...base, steps: [{ id: 't', type: 'transform', output: { ok: 'true' } }] });
   await admin.put('/api/v1/actions/gated', {

@@ -15,6 +15,8 @@ import { compact, validate } from './validation.js';
 import { compileEntityQuery } from './query.js';
 import { canonicalJson, entitySearchText } from './search.js';
 import type { Actor } from '../audit.js';
+import { can, readFilter } from '../auth/access.js';
+import type { Principal } from '../auth/users.js';
 
 interface Row {
   blueprint: string;
@@ -58,6 +60,8 @@ export async function findEntity(blueprint: string, identifier: string): Promise
 }
 
 export interface EntityQuery extends EntityQueryBody {
+  /** Restrict results to what this principal may read (omit for internal callers such as syncs). */
+  viewer?: Principal;
   limit: number;
   offset: number;
 }
@@ -66,6 +70,15 @@ export async function searchEntities(q: EntityQuery): Promise<EntityPage> {
   const c = await compileEntityQuery(q);
   let where = c.where;
   const params = [...c.params];
+  const base = { where: c.where, params: [...c.params] };
+  const vf = q.viewer ? await readFilter(q.viewer) : undefined;
+  if (vf) {
+    const clause = where ? ` AND ${vf.sql}` : `WHERE ${vf.sql}`;
+    where += clause;
+    base.where += clause;
+    params.push(...vf.params);
+    base.params.push(...vf.params);
+  }
   if (q.cursor) {
     if (!c.keyset) throw badRequest(`Cursor pagination is not available when sorting by ${c.sort}; use offset`);
     const cur = decodeCursor(q.cursor, { s: c.sort, d: c.dir, n: c.keyset.length });
@@ -90,13 +103,18 @@ export async function searchEntities(q: EntityQuery): Promise<EntityPage> {
   }
   // The total costs a second scan: skip it on cursor pages unless asked, or when the client opts out (count=false).
   if (q.count ?? !q.cursor) {
-    const [total] = await all<{ n: number }>(`SELECT count(*) AS n FROM entities ${c.where}`, ...c.params);
+    const [total] = await all<{ n: number }>(`SELECT count(*) AS n FROM entities ${base.where}`, ...base.params);
     page.total = Number(total?.n ?? 0);
   }
   return page;
 }
 
-export async function related(blueprint: string, identifier: string): Promise<RelatedEntities> {
+/** Can the viewer read this entity (per-blueprint read rule, optionally limited to the owner team)? */
+export async function canRead(viewer: Principal, e: Pick<Entity, 'blueprint' | 'team'>): Promise<boolean> {
+  return can(viewer, await getBlueprintCached(e.blueprint), 'read', e.team);
+}
+
+export async function related(blueprint: string, identifier: string, viewer?: Principal): Promise<RelatedEntities> {
   const e = await getEntity(blueprint, identifier);
   const bp = await getBlueprintCached(blueprint);
   const outgoing: RelatedEntities['outgoing'] = {};
@@ -141,6 +159,16 @@ export async function related(blueprint: string, identifier: string): Promise<Re
       const rel = sbp?.relations[r.relation];
       incomingTitles[key] = rel?.inverseTitle ?? `${sbp?.title ?? r.blueprint} · ${rel?.title ?? r.relation}`;
     }
+  }
+  if (viewer) {
+    // Hide neighbours the viewer cannot read (missing placeholders carry no data and stay).
+    const readable = async (list: Entity[]) => {
+      const kept: Entity[] = [];
+      for (const e of list) if (e.source === 'missing' || (await canRead(viewer, e))) kept.push(e);
+      return kept;
+    };
+    for (const k of Object.keys(outgoing)) outgoing[k] = await readable(outgoing[k]!);
+    for (const k of Object.keys(incoming)) incoming[k] = await readable(incoming[k]!);
   }
   return { outgoing, incoming, incomingTitles };
 }

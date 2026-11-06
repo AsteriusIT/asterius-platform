@@ -2,9 +2,19 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { HomeSummary, ObjectSchema } from '@asterius/shared';
 import { audit } from '../audit.js';
-import { actorOf, canEditEntity, isAdmin, requireAdmin, requireUser, type Principal } from '../auth/users.js';
-import { deleteBlueprint, getBlueprint, homeBlueprints, listBlueprints, repairRelationIndex, upsertBlueprint } from '../catalog/blueprints.js';
+import { assertCan, can, effectivePermissions, invalidateAccessCache, requireRole, visibleBlueprints } from '../auth/access.js';
+import { actorOf, isAdmin, requireAdmin, requireUser, type Principal } from '../auth/users.js';
 import {
+  deleteBlueprint,
+  getBlueprint,
+  getBlueprintCached,
+  homeBlueprints,
+  listBlueprints,
+  repairRelationIndex,
+  upsertBlueprint,
+} from '../catalog/blueprints.js';
+import {
+  canRead,
   deleteEntity,
   listTombstones,
   purgeTombstone,
@@ -19,7 +29,7 @@ import {
 import { entityGraph, MAX_DEPTH, MAX_NODES } from '../catalog/graph.js';
 import { parseFilterParams } from '../catalog/query.js';
 import { nextPageHeaders } from '../lib/cursor.js';
-import { badRequest, forbidden } from '../lib/errors.js';
+import { badRequest, forbidden, notFound } from '../lib/errors.js';
 import { dashboardData, deleteDashboard, getDashboard, listDashboards, resolveDashboard, upsertDashboard } from '../catalog/dashboards.js';
 import { getVersion, listVersions } from '../catalog/history.js';
 import { checkEntities, getReport, migrateEntities, migrationList } from '../catalog/impact.js';
@@ -38,13 +48,18 @@ import { blueprintDef, entityInput, entityQueryBody, SORT_RE, type EntityInput }
 import type { Entity } from '@asterius/shared';
 import { bpParam, entityParam, idParam, page } from './util.js';
 
-/** Humans write entities of their teams (admins: all); API tokens of service accounts follow the same rule. */
-function assertCanWrite(p: Principal, existing: Entity | undefined, team: string | null | undefined) {
+/**
+ * Writes follow the blueprint's `write` rule; by default humans write entities of their teams (admins: all) and
+ * API tokens of service accounts follow the same rule.
+ */
+async function assertCanWrite(p: Principal, bp: string, existing: Entity | undefined, team: string | null | undefined) {
+  const blueprint = await getBlueprintCached(bp);
   if (existing?.source.startsWith('integration:'))
     throw badRequest(`This entity is written by ${existing.source}; manual changes would be overwritten at the next sync`);
-  if (existing && !canEditEntity(p, existing.team)) throw forbidden(`Only members of team "${existing.team ?? '—'}" or admins can change this entity`);
+  if (existing && !can(p, blueprint, 'write', existing.team))
+    throw forbidden(`You are not allowed to change this entity (owner team "${existing.team ?? '—'}")`);
   const nextTeam = team === undefined ? (existing?.team ?? null) : team;
-  if (!isAdmin(p) && !canEditEntity(p, nextTeam)) throw forbidden('Assign the entity to one of your teams');
+  if (!isAdmin(p) && !can(p, blueprint, 'write', nextTeam)) throw forbidden('You are not allowed to write entities with this owner team');
 }
 
 const etag = (e: Entity) => `"${e.version}"`;
@@ -59,9 +74,11 @@ function ifMatchOf(header: string | undefined): number | undefined {
 export async function catalogRoutes(app: FastifyInstance) {
   app.addHook('preHandler', requireUser);
 
+  app.get('/permissions', async (req) => effectivePermissions(req.principal));
+
   app.get('/home', async (req): Promise<HomeSummary> => {
-    const bps = await homeBlueprints();
-    const recent = await searchEntities({ sort: 'updated', limit: 8, offset: 0 });
+    const bps = await visibleBlueprints(req.principal, await homeBlueprints());
+    const recent = await searchEntities({ sort: 'updated', limit: 8, offset: 0, viewer: req.principal });
     return {
       blueprints: bps.map((b) => ({ identifier: b.identifier, title: b.title, icon: b.icon, count: b.entityCount ?? 0 })),
       pendingApprovals: await countPendingApprovals(req.principal),
@@ -71,16 +88,22 @@ export async function catalogRoutes(app: FastifyInstance) {
   });
 
   // ---- blueprints ----
-  app.get('/blueprints', async () => listBlueprints());
-  app.get('/blueprints/:bp', async (req) => getBlueprint(bpParam.parse(req.params).bp));
-  app.put('/blueprints/:bp', { preHandler: requireAdmin }, async (req) => {
+  app.get('/blueprints', async (req) => visibleBlueprints(req.principal, await listBlueprints()));
+  app.get('/blueprints/:bp', async (req) => {
+    const bp = await getBlueprint(bpParam.parse(req.params).bp);
+    if (!(await visibleBlueprints(req.principal, [bp])).length) throw notFound(`Blueprint ${bp.identifier}`);
+    return bp;
+  });
+  const blueprintAdmin = requireRole('blueprint-owner');
+  app.put('/blueprints/:bp', { preHandler: blueprintAdmin }, async (req) => {
     const { bp } = bpParam.parse(req.params);
     const { blueprint, created } = await upsertBlueprint({ ...(req.body as object), identifier: bp });
+    invalidateAccessCache();
     await audit(actorOf(req.principal), created ? 'blueprint.created' : 'blueprint.updated', bp);
     return blueprint;
   });
   /** Dry run: how many existing entities would be invalid under a proposed definition (after optional migrations). */
-  app.post('/blueprints/:bp/impact', { preHandler: requireAdmin }, async (req) => {
+  app.post('/blueprints/:bp/impact', { preHandler: blueprintAdmin }, async (req) => {
     const { bp } = bpParam.parse(req.params);
     const body = z.object({ blueprint: z.unknown(), migrations: migrationList.default([]) }).parse(req.body);
     const def = blueprintDef.parse({ ...(body.blueprint as object), identifier: bp });
@@ -88,7 +111,7 @@ export async function catalogRoutes(app: FastifyInstance) {
     return checkEntities(bp, { schema: def.schema as ObjectSchema, relations: def.relations }, body.migrations, 5000);
   });
   /** Apply data migrations (rename, default, remove) to the properties of every entity of the blueprint. */
-  app.post('/blueprints/:bp/migrate', { preHandler: requireAdmin }, async (req) => {
+  app.post('/blueprints/:bp/migrate', { preHandler: blueprintAdmin }, async (req) => {
     const { bp } = bpParam.parse(req.params);
     const { migrations } = z.object({ migrations: migrationList.min(1) }).parse(req.body);
     const result = await migrateEntities(bp, migrations, actorOf(req.principal));
@@ -96,16 +119,17 @@ export async function catalogRoutes(app: FastifyInstance) {
     return result;
   });
   /** Report of the last background validation (after a blueprint save). */
-  app.get('/blueprints/:bp/validation', { preHandler: requireAdmin }, async (req) => getReport(bpParam.parse(req.params).bp));
-  app.post('/blueprints/:bp/repair-relations', { preHandler: requireAdmin }, async (req) => {
+  app.get('/blueprints/:bp/validation', { preHandler: blueprintAdmin }, async (req) => getReport(bpParam.parse(req.params).bp));
+  app.post('/blueprints/:bp/repair-relations', { preHandler: blueprintAdmin }, async (req) => {
     const { bp } = bpParam.parse(req.params);
     const result = await repairRelationIndex(bp);
     await audit(actorOf(req.principal), 'blueprint.relations_repaired', bp, result);
     return result;
   });
-  app.delete('/blueprints/:bp', { preHandler: requireAdmin }, async (req) => {
+  app.delete('/blueprints/:bp', { preHandler: blueprintAdmin }, async (req) => {
     const { bp } = bpParam.parse(req.params);
     await deleteBlueprint(bp);
+    invalidateAccessCache();
     await audit(actorOf(req.principal), 'blueprint.deleted', bp);
     return { ok: true };
   });
@@ -187,14 +211,14 @@ export async function catalogRoutes(app: FastifyInstance) {
 
   app.get('/entities', async (req, reply) => {
     const q = listQuery.extend({ blueprint: z.string().optional() }).parse(req.query);
-    const result = await searchEntities({ ...q, ...parseFilterParams(req.query as Record<string, unknown>) });
+    const result = await searchEntities({ ...q, ...parseFilterParams(req.query as Record<string, unknown>), viewer: req.principal });
     nextPageHeaders(req, reply, result.nextCursor);
     return result;
   });
   app.get('/blueprints/:bp/entities', async (req, reply) => {
     const { bp } = bpParam.parse(req.params);
     const q = listQuery.parse(req.query);
-    const result = await searchEntities({ ...q, blueprint: bp, ...parseFilterParams(req.query as Record<string, unknown>) });
+    const result = await searchEntities({ ...q, blueprint: bp, ...parseFilterParams(req.query as Record<string, unknown>), viewer: req.principal });
     nextPageHeaders(req, reply, result.nextCursor);
     return result;
   });
@@ -207,6 +231,8 @@ export async function catalogRoutes(app: FastifyInstance) {
   app.get('/blueprints/:bp/entities/:id', async (req, reply) => {
     const { bp, id } = entityParam.parse(req.params);
     const e = await getEntity(bp, id);
+    // 404 rather than 403: do not reveal that a hidden entity exists.
+    if (!(await canRead(req.principal, e))) throw notFound(`Entity ${bp}/${id}`);
     return reply.header('etag', etag(e)).send(e);
   });
   /**
@@ -226,7 +252,8 @@ export async function catalogRoutes(app: FastifyInstance) {
     });
   app.get('/blueprints/:bp/entities/:id/related', async (req) => {
     const { bp, id } = entityParam.parse(req.params);
-    return related(bp, id);
+    if (!(await canRead(req.principal, await getEntity(bp, id)))) throw notFound(`Entity ${bp}/${id}`);
+    return related(bp, id, req.principal);
   });
 
   // ---- history ----
@@ -242,7 +269,7 @@ export async function catalogRoutes(app: FastifyInstance) {
     const { bp, id } = entityParam.parse(req.params);
     const { version } = z.object({ version: z.coerce.number().int().min(1) }).parse(req.params);
     const v = await getVersion(bp, id, version);
-    assertCanWrite(req.principal, await findEntity(bp, id), v.snapshot.team);
+    await assertCanWrite(req.principal, bp, await findEntity(bp, id), v.snapshot.team);
     const { entity } = await upsertEntity(
       bp,
       { identifier: id, ...v.snapshot },
@@ -278,7 +305,7 @@ export async function catalogRoutes(app: FastifyInstance) {
       source: req.principal.provider === 'service' ? 'api' : 'ui',
       actor: actorOf(req.principal),
       createOnly: true,
-      authorize: (i, existing) => assertCanWrite(req.principal, existing, i.team ?? null),
+      authorize: (i, existing) => assertCanWrite(req.principal, bp, existing, i.team ?? null),
     });
     await audit(actorOf(req.principal), 'entity.created', `${bp}/${entity.identifier}`);
     return reply.code(201).header('etag', etag(entity)).send(entity);
@@ -294,7 +321,7 @@ export async function catalogRoutes(app: FastifyInstance) {
         actor: actorOf(req.principal),
         merge: method === 'patch',
         ifMatch: ifMatchOf(req.headers['if-match']),
-        authorize: (i, existing) => assertCanWrite(req.principal, existing, i.team),
+        authorize: (i, existing) => assertCanWrite(req.principal, bp, existing, i.team),
       });
       if (changed) await audit(actorOf(req.principal), created ? 'entity.created' : 'entity.updated', `${bp}/${id}`);
       return reply.header('etag', etag(entity)).send(entity);
@@ -303,7 +330,7 @@ export async function catalogRoutes(app: FastifyInstance) {
   app.delete('/blueprints/:bp/entities/:id', async (req) => {
     const { bp, id } = entityParam.parse(req.params);
     const existing = await getEntity(bp, id);
-    if (!canEditEntity(req.principal, existing.team)) throw forbidden();
+    assertCan(req.principal, await getBlueprintCached(bp), 'delete', existing.team);
     await deleteEntity(bp, id, actorOf(req.principal));
     await audit(actorOf(req.principal), 'entity.deleted', `${bp}/${id}`);
     return { ok: true };
@@ -322,7 +349,7 @@ export async function catalogRoutes(app: FastifyInstance) {
       source: 'api',
       actor: actorOf(req.principal),
       merge: body.merge,
-      authorize: (i: EntityInput, existing) => assertCanWrite(req.principal, existing, i.team),
+      authorize: (i: EntityInput, existing) => assertCanWrite(req.principal, bp, existing, i.team),
     });
     for (const [index, r] of outcomes.entries()) {
       if (!r.ok) result.errors.push({ index, error: r.error });

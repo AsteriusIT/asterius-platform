@@ -1,10 +1,12 @@
-import { createHash, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { config, isLocalUrl } from '../config.js';
 import { all, json, later, newId, now, one, run, tx } from '../db.js';
 import type { ApiToken, PublicUser, Role, Subjects, TeamRef, UserProvider } from '@asterius/shared';
-import { badRequest, conflict, notFound } from '../lib/errors.js';
+import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
 import { purgeLoginFailures } from './lockout.js';
+import { audit } from '../audit.js';
+import { blueprintOfPath, grants, ipAllowed, requiredScope, type Scope } from './scopes.js';
 
 // ---------- passwords & tokens ----------
 export function hashPassword(password: string) {
@@ -41,6 +43,7 @@ export interface UserRow {
   role_override: number;
   last_login_at: string | null;
   tour_completed_at: string | null;
+  extra_roles: string | null;
   created_at: string;
 }
 
@@ -50,8 +53,12 @@ export interface Principal {
   email: string;
   name: string;
   role: Role;
+  /** Delegated / custom roles on top of `role`. */
+  roles: string[];
   provider: UserProvider;
   teams: string[];
+  /** Set when the request authenticated with an API token that carries restrictions. */
+  token?: { id: string; scopes: string[] | null; blueprints: string[] | null };
 }
 
 export async function teamsOf(userId: string): Promise<TeamRef[]> {
@@ -60,7 +67,15 @@ export async function teamsOf(userId: string): Promise<TeamRef[]> {
 
 export async function principalOf(u: UserRow): Promise<Principal> {
   const teams = await teamsOf(u.id);
-  return { id: u.id, email: u.email, name: u.name, role: u.role, provider: u.provider, teams: teams.map((t) => t.identifier) };
+  return {
+    id: u.id,
+    email: u.email,
+    name: u.name,
+    role: u.role,
+    roles: json<string[]>(u.extra_roles, []),
+    provider: u.provider,
+    teams: teams.map((t) => t.identifier),
+  };
 }
 
 export async function publicUser(u: UserRow): Promise<PublicUser> {
@@ -70,6 +85,7 @@ export async function publicUser(u: UserRow): Promise<PublicUser> {
     name: u.name,
     provider: u.provider,
     role: u.role,
+    roles: json<string[]>(u.extra_roles, []),
     active: u.active === 1,
     teams: await teamsOf(u.id),
     lastLoginAt: u.last_login_at,
@@ -115,38 +131,77 @@ export async function createLocalUser(email: string, name: string, password: str
 }
 
 /**
- * Role of an Entra user, recomputed from the claims on every sign-in and re-sync: admin when a group in
- * ENTRA_ADMIN_GROUPS (or ADMIN_EMAILS) matches, member otherwise, so removing someone from the group demotes them.
- * Only a role set by hand (role_override) is kept.
+ * Role of an externally authenticated user, recomputed from the claims on every sign-in and re-sync: admin when a group
+ * in the provider's admin groups (or a verified ADMIN_EMAILS address) matches, member otherwise, so removing someone from
+ * the group demotes them. Only a role set by hand (role_override) is kept.
  */
-export function entraRole(user: Pick<UserRow, 'role' | 'role_override'> | undefined, email: string, groups: string[]): Role {
-  if (groups.some((g) => config.ENTRA_ADMIN_GROUPS.includes(g)) || config.ADMIN_EMAILS.includes(email.toLowerCase())) return 'admin';
+export function externalRole(
+  user: Pick<UserRow, 'role' | 'role_override'> | undefined,
+  p: { email: string; groups: string[]; adminGroups?: string[]; emailVerified?: boolean },
+): Role {
+  const groupAdmin = p.groups.some((g) => p.adminGroups?.includes(g));
+  const emailAdmin = p.emailVerified !== false && config.ADMIN_EMAILS.includes(p.email.toLowerCase());
+  if (groupAdmin || emailAdmin) return 'admin';
   if (user && Number(user.role_override) === 1) return user.role;
   return 'member';
 }
 
-/** Entra ID sign-in: upsert the user, then synchronise team memberships and admin role from group claims. */
-export async function upsertEntraUser(p: { externalId: string; email: string; name: string; groups: string[] }) {
-  let user = await one<UserRow>("SELECT * FROM users WHERE provider = 'entra' AND external_id = ?", p.externalId);
+export const entraRole = (user: Pick<UserRow, 'role' | 'role_override'> | undefined, email: string, groups: string[]): Role =>
+  externalRole(user, { email, groups, adminGroups: config.ENTRA_ADMIN_GROUPS });
+
+export type ExternalProvider = 'entra' | 'oidc' | 'github' | 'saml';
+
+export interface ExternalIdentity {
+  /** Stable subject, namespaced by the issuer (never the email). */
+  externalId: string;
+  email: string;
+  /** Only verified emails may bootstrap the admin role through ADMIN_EMAILS. */
+  emailVerified?: boolean;
+  name: string;
+  groups: string[];
+  /** Groups whose members are admins. */
+  adminGroups?: string[];
+}
+
+/** Link a SCIM-provisioned account to the identity of the first SSO sign-in (same verified email). */
+export async function adoptScimUser(provider: string, externalId: string, email: string, emailVerified: boolean | undefined) {
+  if (emailVerified === false) return false;
+  const { changes } = await run(
+    "UPDATE users SET provider = ?, external_id = ? WHERE provider = 'scim' AND email = ? AND NOT EXISTS (SELECT 1 FROM users o WHERE o.provider = ? AND o.email = ?)",
+    provider,
+    externalId,
+    email.toLowerCase(),
+    provider,
+    email.toLowerCase(),
+  );
+  return changes > 0;
+}
+
+/** Sign-in through an identity provider: upsert the user, then synchronise team memberships and the admin role from groups. */
+export async function upsertExternalUser(provider: ExternalProvider, p: ExternalIdentity) {
+  // Accounts provisioned in advance by SCIM are claimed by the first SSO sign-in with the same verified email.
+  if (provider !== 'github') await adoptScimUser(provider, p.externalId, p.email, p.emailVerified);
+  let user = await one<UserRow>('SELECT * FROM users WHERE provider = ? AND external_id = ?', provider, p.externalId);
   if (user) {
     await run(
       'UPDATE users SET email = ?, name = ?, groups = ?, role = ?, last_login_at = ? WHERE id = ?',
       p.email,
       p.name,
       JSON.stringify(p.groups),
-      entraRole(user, p.email, p.groups),
+      externalRole(user, p),
       now(),
       user.id,
     );
   } else {
     const id = newId();
-    const fromClaims = entraRole(undefined, p.email, p.groups) === 'admin';
+    const fromClaims = externalRole(undefined, p) === 'admin';
     // Bootstrap (no admin yet): the first account becomes admin and keeps it until an admin changes it.
-    const role: Role = fromClaims ? 'admin' : await initialRole(p.email);
+    const role: Role = fromClaims ? 'admin' : p.emailVerified === false ? 'member' : await initialRole(p.email);
     const override = !fromClaims && role === 'admin' ? 1 : 0;
     await run(
-      "INSERT INTO users (id, provider, external_id, email, name, groups, role, role_override, last_login_at, created_at) VALUES (?, 'entra', ?, ?, ?, ?, ?, ?, ?, ?)",
+      'INSERT INTO users (id, provider, external_id, email, name, groups, role, role_override, last_login_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       id,
+      provider,
       p.externalId,
       p.email,
       p.name,
@@ -158,18 +213,22 @@ export async function upsertEntraUser(p: { externalId: string; email: string; na
     );
     user = await getUser(id);
   }
-  await syncEntraTeams(user!.id, p.groups);
+  await syncEntraTeams(user!.id, p.groups, provider);
   return (await getUser(user!.id))!;
 }
 
-export async function syncEntraTeams(userId: string, groups: string[]) {
+export const upsertEntraUser = (p: { externalId: string; email: string; name: string; groups: string[] }) =>
+  upsertExternalUser('entra', { ...p, adminGroups: config.ENTRA_ADMIN_GROUPS });
+
+/** Teams bound to an IdP group (`entraGroupId`, the group id/name whatever the provider) follow the user's groups. */
+export async function syncEntraTeams(userId: string, groups: string[], via: ExternalProvider = 'entra') {
   const teams = await all<{ identifier: string; entra_group_id: string }>('SELECT identifier, entra_group_id FROM teams WHERE entra_group_id IS NOT NULL');
   const wanted = new Set(teams.filter((t) => groups.includes(t.entra_group_id)).map((t) => t.identifier));
   await tx(async (d) => {
-    await d.query("DELETE FROM team_members WHERE user_id = ? AND via = 'entra'", [userId]);
+    await d.query('DELETE FROM team_members WHERE user_id = ? AND via = ?', [userId, via]);
     for (const team of wanted) {
       const existing = await d.query('SELECT team FROM team_members WHERE team = ? AND user_id = ?', [team, userId]);
-      if (!existing.rows.length) await d.query("INSERT INTO team_members (team, user_id, via) VALUES (?, ?, 'entra')", [team, userId]);
+      if (!existing.rows.length) await d.query('INSERT INTO team_members (team, user_id, via) VALUES (?, ?, ?)', [team, userId, via]);
     }
   });
 }
@@ -208,13 +267,17 @@ export async function listUsers(): Promise<PublicUser[]> {
   return Promise.all(users.map(publicUser));
 }
 
-export async function updateUser(id: string, patch: { role?: Role; active?: boolean; teams?: string[] }) {
+export async function updateUser(id: string, patch: { role?: Role; roles?: string[]; active?: boolean; teams?: string[] }) {
   const u = await getUser(id);
   if (!u) throw notFound('User');
   if (patch.role) await run('UPDATE users SET role = ?, role_override = 1 WHERE id = ?', patch.role, id);
+  if (patch.roles) await run('UPDATE users SET extra_roles = ? WHERE id = ?', JSON.stringify([...new Set(patch.roles)]), id);
   if (patch.active !== undefined) {
     await run('UPDATE users SET active = ? WHERE id = ?', patch.active ? 1 : 0, id);
-    if (!patch.active) await run('DELETE FROM sessions WHERE user_id = ?', id);
+    if (!patch.active) {
+      await run('DELETE FROM sessions WHERE user_id = ?', id);
+      await run('DELETE FROM api_tokens WHERE user_id = ?', id);
+    }
   }
   if (patch.teams) {
     const teams = patch.teams;
@@ -230,11 +293,70 @@ export async function updateUser(id: string, patch: { role?: Role; active?: bool
 }
 
 // ---------- sessions ----------
-export async function createSession(userId: string) {
+export async function createSession(userId: string, ctx: { ip?: string; userAgent?: string } = {}) {
   const token = randomToken();
-  await run('INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)', sha256(token), userId, later(config.SESSION_DAYS * 86400_000));
+  const t = now();
+  await run(
+    'INSERT INTO sessions (token_hash, user_id, expires_at, created_at, last_seen_at, ip, user_agent) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    sha256(token),
+    userId,
+    later(config.SESSION_DAYS * 86400_000),
+    t,
+    t,
+    ctx.ip ?? null,
+    (ctx.userAgent ?? '').slice(0, 200) || null,
+  );
   await run('UPDATE users SET last_login_at = ? WHERE id = ?', now(), userId);
   return token;
+}
+
+export interface SessionInfo {
+  id: string;
+  createdAt: string | null;
+  lastSeenAt: string | null;
+  expiresAt: string;
+  ip: string | null;
+  userAgent: string | null;
+  current: boolean;
+}
+
+/** Session ids are a prefix of the stored token hash: enough to address a session, useless as a credential. */
+export async function listSessions(userId: string, currentToken?: string): Promise<SessionInfo[]> {
+  const current = currentToken ? sha256(currentToken) : '';
+  const rows = await all<{
+    token_hash: string;
+    created_at: string | null;
+    last_seen_at: string | null;
+    expires_at: string;
+    ip: string | null;
+    user_agent: string | null;
+  }>(
+    'SELECT token_hash, created_at, last_seen_at, expires_at, ip, user_agent FROM sessions WHERE user_id = ? AND expires_at > ? ORDER BY created_at DESC',
+    userId,
+    now(),
+  );
+  return rows.map((r) => ({
+    id: r.token_hash.slice(0, 16),
+    createdAt: r.created_at,
+    lastSeenAt: r.last_seen_at,
+    expiresAt: r.expires_at,
+    ip: r.ip,
+    userAgent: r.user_agent,
+    current: r.token_hash === current,
+  }));
+}
+
+export async function revokeSession(userId: string, id: string) {
+  const rows = await all<{ token_hash: string }>('SELECT token_hash FROM sessions WHERE user_id = ?', userId);
+  const hit = rows.find((r) => r.token_hash.slice(0, 16) === id);
+  if (!hit) throw notFound('Session');
+  await run('DELETE FROM sessions WHERE token_hash = ?', hit.token_hash);
+}
+
+/** Sign out everywhere, optionally keeping the session making the request. */
+export async function revokeAllSessions(userId: string, keepToken?: string) {
+  if (keepToken) return (await run('DELETE FROM sessions WHERE user_id = ? AND token_hash != ?', userId, sha256(keepToken))).changes;
+  return (await run('DELETE FROM sessions WHERE user_id = ?', userId)).changes;
 }
 
 export async function deleteSession(token: string) {
@@ -249,11 +371,31 @@ export async function purgeExpiredAuth() {
 }
 
 // ---------- API tokens ----------
-export async function createApiToken(p: { name: string; userId: string; createdBy: string; expiresInDays?: number | null }) {
+export interface TokenRestrictions {
+  /** Null: all rights of the user (tokens created before scopes existed). */
+  scopes?: string[] | null;
+  /** Null: every blueprint. Only combinable with catalog scopes. */
+  blueprints?: string[] | null;
+  ipAllow?: string[] | null;
+}
+
+/** Org policy: API_TOKEN_MAX_DAYS caps the lifetime and makes an expiry mandatory. */
+export function tokenLifetime(requested: number | null | undefined, fallback: number | null): number | null {
+  const max = config.API_TOKEN_MAX_DAYS;
+  const days = requested === undefined ? fallback : requested;
+  if (!max) return days;
+  if (days === null || days > max) throw badRequest(`API tokens expire after at most ${max} days`);
+  return days;
+}
+
+export async function createApiToken(p: { name: string; userId: string; createdBy: string; expiresInDays?: number | null } & TokenRestrictions) {
+  if (p.blueprints?.length && p.scopes?.some((s) => s.startsWith('runs:') || s === 'admin'))
+    throw badRequest('Tokens restricted to blueprints can only carry catalog scopes');
+  if (p.blueprints?.length && !p.scopes?.length) throw badRequest('Blueprint-restricted tokens need explicit catalog scopes');
   const token = `${API_TOKEN_PREFIX}${randomToken()}`;
   const id = newId();
   await run(
-    'INSERT INTO api_tokens (id, name, token_hash, prefix, user_id, created_by, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    'INSERT INTO api_tokens (id, name, token_hash, prefix, user_id, created_by, created_at, expires_at, scopes, blueprints, ip_allow) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
     id,
     p.name,
     sha256(token),
@@ -262,6 +404,9 @@ export async function createApiToken(p: { name: string; userId: string; createdB
     p.createdBy,
     now(),
     p.expiresInDays ? later(p.expiresInDays * 86400_000) : null,
+    p.scopes?.length ? JSON.stringify([...new Set(p.scopes)]) : null,
+    p.blueprints?.length ? JSON.stringify(p.blueprints) : null,
+    p.ipAllow?.length ? JSON.stringify(p.ipAllow) : null,
   );
   return { id, token };
 }
@@ -276,8 +421,11 @@ export async function listApiTokens(userId?: string): Promise<ApiToken[]> {
     created_at: string;
     expires_at: string | null;
     last_used_at: string | null;
+    scopes: string | null;
+    blueprints: string | null;
+    ip_allow: string | null;
   }>(
-    `SELECT t.id, t.name, t.prefix, t.user_id, u.name AS user_name, t.created_at, t.expires_at, t.last_used_at
+    `SELECT t.id, t.name, t.prefix, t.user_id, u.name AS user_name, t.created_at, t.expires_at, t.last_used_at, t.scopes, t.blueprints, t.ip_allow
      FROM api_tokens t JOIN users u ON u.id = t.user_id ${userId ? 'WHERE t.user_id = ?' : ''} ORDER BY t.created_at DESC`,
     ...(userId ? [userId] : []),
   );
@@ -290,6 +438,9 @@ export async function listApiTokens(userId?: string): Promise<ApiToken[]> {
     createdAt: r.created_at,
     expiresAt: r.expires_at,
     lastUsedAt: r.last_used_at,
+    scopes: json<string[] | null>(r.scopes, null),
+    blueprints: json<string[] | null>(r.blueprints, null),
+    ipAllow: json<string[] | null>(r.ip_allow, null),
   }));
 }
 
@@ -302,22 +453,51 @@ export async function deleteApiToken(id: string, userId?: string) {
 
 const lastUsedWrites = new Map<string, number>();
 
-async function userFromBearer(token: string): Promise<UserRow | undefined> {
+interface Resolved {
+  user: UserRow;
+  token?: NonNullable<Principal['token']> & { ipAllow: string[] | null };
+}
+
+async function userFromBearer(token: string, ip: string): Promise<Resolved | undefined> {
   const hash = sha256(token);
   if (token.startsWith(API_TOKEN_PREFIX)) {
-    const row = await one<UserRow & { token_id: string; token_expires: string | null }>(
-      'SELECT u.*, t.id AS token_id, t.expires_at AS token_expires FROM api_tokens t JOIN users u ON u.id = t.user_id WHERE t.token_hash = ?',
+    const row = await one<
+      UserRow & { token_id: string; token_expires: string | null; t_scopes: string | null; t_blueprints: string | null; t_ip: string | null }
+    >(
+      `SELECT u.*, t.id AS token_id, t.expires_at AS token_expires, t.scopes AS t_scopes, t.blueprints AS t_blueprints, t.ip_allow AS t_ip
+       FROM api_tokens t JOIN users u ON u.id = t.user_id WHERE t.token_hash = ?`,
       hash,
     );
     if (!row || (row.token_expires && row.token_expires < now())) return undefined;
-    // Record usage at most once a minute per token.
+    const ipAllow = json<string[] | null>(row.t_ip, null);
+    if (ipAllow?.length && !ipAllowed(ip, ipAllow)) return undefined; // same answer as an unknown token
+    // Record usage at most once a minute per token; admin tokens leave an audit trail.
     if ((lastUsedWrites.get(row.token_id) ?? 0) < Date.now() - 60_000) {
       lastUsedWrites.set(row.token_id, Date.now());
       void run('UPDATE api_tokens SET last_used_at = ? WHERE id = ?', now(), row.token_id).catch(() => undefined);
+      if (row.role === 'admin') void audit({ id: row.id, email: row.email }, 'token.used', row.token_id, { ip });
     }
-    return row;
+    return {
+      user: row,
+      token: { id: row.token_id, scopes: json<string[] | null>(row.t_scopes, null), blueprints: json<string[] | null>(row.t_blueprints, null), ipAllow },
+    };
   }
-  return one<UserRow>('SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires_at > ?', hash, now());
+  const s = await one<UserRow & { last_seen_at: string | null }>(
+    'SELECT u.*, s.last_seen_at FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires_at > ?',
+    hash,
+    now(),
+  );
+  if (!s) return undefined;
+  if (config.SESSION_IDLE_MINUTES && s.last_seen_at && Date.parse(s.last_seen_at) < Date.now() - config.SESSION_IDLE_MINUTES * 60_000) {
+    await run('DELETE FROM sessions WHERE token_hash = ?', hash);
+    return undefined;
+  }
+  // Refresh the idle clock at most once a minute per session.
+  if ((lastUsedWrites.get(hash) ?? 0) < Date.now() - 60_000) {
+    lastUsedWrites.set(hash, Date.now());
+    void run('UPDATE sessions SET last_seen_at = ? WHERE token_hash = ?', now(), hash).catch(() => undefined);
+  }
+  return { user: s };
 }
 
 declare module 'fastify' {
@@ -331,13 +511,79 @@ export const bearer = (req: FastifyRequest) => {
   return h?.startsWith('Bearer ') ? h.slice(7).trim() : undefined;
 };
 
-/** Resolve the caller from a session or API token (Authorization: Bearer …). */
+// ---------- cookie sessions (SESSION_COOKIE) ----------
+export const SESSION_COOKIE = '__Host-asterius_session';
+const cookieName = () => (config.PUBLIC_URL.startsWith('https://') ? SESSION_COOKIE : 'asterius_session');
+
+function cookieOf(req: FastifyRequest, name: string) {
+  for (const part of (req.headers.cookie ?? '').split(';')) {
+    const i = part.indexOf('=');
+    if (i > 0 && part.slice(0, i).trim() === name) return decodeURIComponent(part.slice(i + 1).trim());
+  }
+  return undefined;
+}
+
+/** CSRF token bound to the session: only someone who holds the (httpOnly) session token can compute it. */
+export const csrfFor = (sessionToken: string) => createHmac('sha256', sessionToken).update('asterius-csrf-v1').digest('base64url');
+
+export function sessionCookie(token: string | null) {
+  const https = config.PUBLIC_URL.startsWith('https://');
+  const age = token ? config.SESSION_DAYS * 86400 : 0;
+  // __Host- prefix on https: no Domain, Path=/, Secure. SameSite=Lax lets the IdP redirect back while blocking cross-site POSTs.
+  return `${cookieName()}=${token ?? ''}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${age}${https ? '; Secure' : ''}`;
+}
+
+/** The session token of a request, from the Authorization header or the session cookie. */
+export const sessionToken = (req: FastifyRequest) => bearer(req) ?? (config.SESSION_COOKIE ? cookieOf(req, cookieName()) : undefined);
+
+/** Cookie-authenticated unsafe requests must prove they come from the app: same origin and the session-bound CSRF token. */
+function assertCsrf(req: FastifyRequest, token: string) {
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return;
+  const origin = req.headers.origin;
+  if (origin && origin !== new URL(config.PUBLIC_URL).origin) throw forbidden('Cross-origin request refused');
+  const sent = req.headers['x-csrf-token'];
+  const want = csrfFor(token);
+  if (typeof sent !== 'string' || sent.length !== want.length || !timingSafeEqual(Buffer.from(sent), Buffer.from(want)))
+    throw forbidden('Missing or invalid CSRF token');
+}
+
+/** Resolve the caller from a session or API token (Authorization: Bearer …, or the session cookie). */
 export async function authenticate(req: FastifyRequest): Promise<Principal | undefined> {
-  const token = bearer(req);
-  const user = token ? await userFromBearer(token) : undefined;
-  if (!user || user.active !== 1) return undefined;
-  req.principal = await principalOf(user);
+  const header = bearer(req);
+  const cookie = !header && config.SESSION_COOKIE ? cookieOf(req, cookieName()) : undefined;
+  if (cookie && !cookie.startsWith(API_TOKEN_PREFIX)) {
+    const found = await userFromBearer(cookie, req.ip);
+    if (!found || found.user.active !== 1) return undefined;
+    assertCsrf(req, cookie);
+    req.principal = await principalOf(found.user);
+    return req.principal;
+  }
+  const token = header;
+  const found = token ? await userFromBearer(token, req.ip) : undefined;
+  if (!found || found.user.active !== 1) return undefined;
+  const principal = await principalOf(found.user);
+  if (found.token && (found.token.scopes || found.token.blueprints)) {
+    principal.token = { id: found.token.id, scopes: found.token.scopes, blueprints: found.token.blueprints };
+    enforceTokenRestrictions(principal, req);
+  }
+  req.principal = principal;
   return req.principal;
+}
+
+/** Scope and blueprint restrictions of API tokens (403 with the missing scope named). */
+function enforceTokenRestrictions(p: Principal, req: FastifyRequest) {
+  const t = p.token!;
+  if (t.scopes) {
+    const needed: Scope = requiredScope(req.method, req.url);
+    if (!grants(t.scopes, needed)) throw forbidden(`This API token lacks the "${needed}" scope`);
+  }
+  if (t.blueprints) {
+    const bp = blueprintOfPath(req.url);
+    const queried = new URL(req.url, 'http://x').searchParams.get('blueprint');
+    const target = bp ?? queried;
+    // Cross-blueprint endpoints (home, global search) would reveal other blueprints: require an explicit one.
+    if (!target || !t.blueprints.includes(target)) throw forbidden('This API token is restricted to other blueprints');
+  }
 }
 
 /** preHandler: signed-in users and API tokens. */
@@ -362,7 +608,7 @@ export function matchesSubjects(p: Principal, s: Subjects | undefined, ownerTeam
   if (!s) return true;
   const hasRules = !!(s.roles?.length || s.teams?.length || s.users?.length || s.ownerTeam);
   if (!hasRules) return true;
-  if (s.roles?.includes(p.role)) return true;
+  if (s.roles?.some((r) => r === p.role || p.roles.includes(r))) return true;
   if (s.teams?.some((t) => p.teams.includes(t))) return true;
   if (s.users?.some((u) => u.toLowerCase() === p.email.toLowerCase())) return true;
   if (s.ownerTeam && ownerTeam && p.teams.includes(ownerTeam)) return true;

@@ -230,6 +230,7 @@ function ServiceAccountModal({
 export function SecretsAdmin() {
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ['secrets'], queryFn: api.secrets });
+  const providers = useQuery({ queryKey: ['secret-providers'], queryFn: api.secretProviders });
   const [name, setName] = useState('');
   const [value, setValue] = useState('');
   const [description, setDescription] = useState('');
@@ -254,6 +255,24 @@ export function SecretsAdmin() {
           </>
         }
       />
+      <Card>
+        <Stack gap={4}>
+          <Text fw={600} fz="sm">
+            External secret managers
+          </Text>
+          {(providers.data ?? []).map((p) => (
+            <Group key={p.kind} gap="xs">
+              <Text fz="sm" w={220}>
+                {p.title}
+              </Text>
+              <Mono>{p.example}</Mono>
+              <Text fz="xs" c={p.enabled ? 'green' : 'dimmed'}>
+                {p.enabled ? 'configured' : 'not configured'}
+              </Text>
+            </Group>
+          ))}
+        </Stack>
+      </Card>
       <Card>
         <Stack gap="sm">
           <Group grow align="flex-start">

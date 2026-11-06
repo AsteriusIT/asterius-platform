@@ -1,6 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
-import { BlueprintBuilder, blueprintProblems, draftsToRelations, relationsToDrafts, toBlueprintDoc } from '../src/components/builder/BlueprintBuilder';
+import {
+  BlueprintBuilder,
+  blueprintProblems,
+  cleanPermissions,
+  draftsToRelations,
+  relationsToDrafts,
+  toBlueprintDoc,
+} from '../src/components/builder/BlueprintBuilder';
 import { schemaToFields } from '../src/components/builder/fields';
 import { renderUi } from './render';
 
@@ -26,6 +33,14 @@ describe('blueprint relations', () => {
       'Relation 2: choose the blueprint it points to',
       'Relation 3: the key "owner" is used twice',
     ]);
+  });
+});
+
+describe('blueprint access rules', () => {
+  it('drops empty rules and keeps real ones', () => {
+    expect(cleanPermissions(undefined)).toBeUndefined();
+    expect(cleanPermissions({ read: {}, write: { teams: [] } })).toBeUndefined();
+    expect(cleanPermissions({ read: { ownerTeam: true, roles: ['auditor'] }, run: {} })).toEqual({ read: { ownerTeam: true, roles: ['auditor'] } });
   });
 });
 
@@ -73,6 +88,31 @@ describe('BlueprintBuilder', () => {
     const [id, saved] = onSave.mock.calls[0] as unknown as [string, Record<string, unknown>];
     expect(id).toBe('database');
     expect(saved).toMatchObject({ title: 'Database', relations: { owningSystem: { target: 'system' } } });
+  });
+
+  it('shows existing access rules in an Access tab and saves them unchanged', async () => {
+    const onSave = vi.fn(async () => undefined);
+    renderUi(
+      <BlueprintBuilder
+        isNew={false}
+        value={{
+          identifier: 'secretproj',
+          title: 'Secret',
+          schema: { properties: {} },
+          relations: {},
+          permissions: { read: { roles: ['auditor'], ownerTeam: true } },
+        }}
+        onSave={onSave}
+        onClose={() => undefined}
+      />,
+    );
+    fireEvent.click(await screen.findByRole('tab', { name: /Access/ }));
+    expect(screen.getByText('Who can see entities')).toBeTruthy();
+    expect(screen.getAllByText('auditor').length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByText('Save'));
+    await waitFor(() => expect(onSave).toHaveBeenCalled());
+    const [, saved] = onSave.mock.calls[0] as unknown as [string, Record<string, unknown>];
+    expect(saved.permissions).toEqual({ read: { roles: ['auditor'], ownerTeam: true } });
   });
 
   it('refuses to save an incomplete blueprint', async () => {

@@ -1,15 +1,15 @@
 import { useState } from 'react';
 import { ActionIcon, Alert, Badge, Button, Card, Checkbox, Group, Select, SimpleGrid, Stack, Switch, Tabs, Text, Textarea, TextInput } from '@mantine/core';
 import { useQuery } from '@tanstack/react-query';
-import { IconArrowDown, IconArrowUp, IconInfoCircle, IconLink, IconListDetails, IconPlus, IconSettings, IconTrash } from '@tabler/icons-react';
-import type { BlueprintRelation, EntityMigration, ObjectSchema } from '@asterius/shared';
+import { IconArrowDown, IconArrowUp, IconInfoCircle, IconLock, IconLink, IconListDetails, IconPlus, IconSettings, IconTrash } from '@tabler/icons-react';
+import type { BlueprintPermissions, BlueprintRelation, EntityMigration, ObjectSchema } from '@asterius/shared';
 import { api, errorText, type ImpactReport } from '../../lib/api';
 import { ImpactDialog } from './ImpactDialog';
 import { EntityIcon, ICON_NAMES } from '../icons';
 import { Empty } from '../ui';
 import { FIELD_NAME, fieldProblems, fieldsToSchema, nameFromLabel, newId, schemaToFields, type FieldDraft } from './fields';
 import { BLUEPRINT_PROPERTIES, FieldsEditor } from './FieldsEditor';
-import { MONO_INPUT } from './blocks';
+import { MONO_INPUT, SubjectsEditor } from './blocks';
 import { BuilderFooter, BuilderModal, CodePanels, CodeTabs, ManagedNotice, ReadOnlyFieldset, slugify, useCodeView, useSave } from './shell';
 
 /**
@@ -25,6 +25,7 @@ export interface BlueprintDoc {
   icon: string | null;
   schema: ObjectSchema;
   relations: Record<string, BlueprintRelation>;
+  permissions?: BlueprintPermissions;
   [k: string]: unknown;
 }
 
@@ -85,6 +86,16 @@ export const draftsToRelations = (drafts: RelationDraft[]): Record<string, Bluep
       ]),
   );
 
+/** Drop empty rules so that an untouched block is not saved (an empty rule would mean the default again). */
+export function cleanPermissions(p: BlueprintPermissions | undefined): BlueprintPermissions | undefined {
+  const out: BlueprintPermissions = {};
+  for (const op of ['read', 'write', 'delete', 'run'] as const) {
+    const s = p?.[op];
+    if (s && (s.roles?.length || s.teams?.length || s.users?.length || s.ownerTeam)) out[op] = s;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
 export function blueprintProblems(doc: BlueprintDoc, fields: FieldDraft[], relations: RelationDraft[]): string[] {
   const out: string[] = [];
   if (!SLUG.test(doc.identifier)) out.push('Identifier: lowercase letters, digits, - and _, starting with a letter');
@@ -143,7 +154,9 @@ function Builder({
   const set = (patch: Partial<BlueprintDoc>) => setDoc((d) => ({ ...d, ...patch }));
   const body = (): Record<string, unknown> => {
     const { entityCount: _count, ...rest } = doc as BlueprintDoc & { entityCount?: unknown };
-    return { ...rest, schema: fieldsToSchema(fields), relations: draftsToRelations(relations) };
+    const { permissions, ...others } = rest;
+    const cleaned = cleanPermissions(permissions);
+    return { ...others, schema: fieldsToSchema(fields), relations: draftsToRelations(relations), ...(cleaned ? { permissions: cleaned } : {}) };
   };
   const code = useCodeView({
     body,
@@ -215,6 +228,13 @@ function Builder({
             rightSection={relations.length ? <Badge size="xs">{relations.length}</Badge> : undefined}
           >
             Relations
+          </Tabs.Tab>
+          <Tabs.Tab
+            value="access"
+            leftSection={<IconLock size={16} />}
+            rightSection={cleanPermissions(doc.permissions) ? <Badge size="xs">custom</Badge> : undefined}
+          >
+            Access
           </Tabs.Tab>
           <CodeTabs />
         </Tabs.List>
@@ -288,6 +308,10 @@ function Builder({
             />
           </Tabs.Panel>
 
+          <Tabs.Panel value="access">
+            <AccessEditor value={doc.permissions} onChange={(permissions) => set({ permissions })} />
+          </Tabs.Panel>
+
           <Tabs.Panel value="relations">
             <RelationsEditor relations={relations} onChange={setRelations} self={doc.identifier} selfTitle={doc.title} />
           </Tabs.Panel>
@@ -317,6 +341,47 @@ function Builder({
         onSave={save}
         onClose={onClose}
       />
+    </Stack>
+  );
+}
+
+const ACCESS_RULES: { op: keyof BlueprintPermissions; label: string; help: string; emptyMeans: string }[] = [
+  {
+    op: 'read',
+    label: 'Who can see entities',
+    help: 'Hidden entities are left out of lists, search, relations, webhooks and the AI agent.',
+    emptyMeans: 'every signed-in user',
+  },
+  {
+    op: 'write',
+    label: 'Who can create and change entities',
+    help: 'Integrations always write; admins can always do everything.',
+    emptyMeans: 'members of the owning team',
+  },
+  { op: 'delete', label: 'Who can delete entities', help: '', emptyMeans: 'members of the owning team' },
+  { op: 'run', label: 'Who can run actions on entities', help: 'Applies on top of each action’s own allowed users.', emptyMeans: 'every signed-in user' },
+];
+
+/** Per-blueprint access rules (read, write, delete, run). Roles may be delegated or custom role names. */
+function AccessEditor({ value, onChange }: { value: BlueprintPermissions | undefined; onChange: (p: BlueprintPermissions) => void }) {
+  return (
+    <Stack gap="md">
+      <Text fz="sm" c="dimmed">
+        Optional rules; leave a rule empty to keep the default. Restricting who can <b>see</b> entities is enforced by the server in every list and lookup.
+      </Text>
+      {ACCESS_RULES.map((r) => (
+        <Card key={r.op} shadow="none" withBorder radius="lg" padding="md">
+          <Text fw={500} fz="sm">
+            {r.label}
+          </Text>
+          {r.help && (
+            <Text fz="xs" c="dimmed" mb="xs">
+              {r.help}
+            </Text>
+          )}
+          <SubjectsEditor value={value?.[r.op]} onChange={(s) => onChange({ ...value, [r.op]: s })} allowOwnerTeam emptyMeans={`default (${r.emptyMeans})`} />
+        </Card>
+      ))}
     </Stack>
   );
 }

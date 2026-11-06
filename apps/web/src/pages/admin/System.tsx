@@ -13,26 +13,66 @@ const PAGE = 50;
 export function AuditAdmin() {
   const [search, setSearch] = useState('');
   const [debounced] = useDebouncedValue(search, 300);
+  const [action, setAction] = useState('');
+  const [actor, setActor] = useState('');
+  const [dAction] = useDebouncedValue(action, 300);
+  const [dActor] = useDebouncedValue(actor, 300);
   const [page, setPage] = useState(1);
+  const filters = { search: debounced, action: dAction, actor: dActor };
+  const exportAs = async (format: 'csv' | 'json') => {
+    const body = await api.auditExport(filters, format);
+    const url = URL.createObjectURL(new Blob([body], { type: format === 'csv' ? 'text/csv' : 'application/x-ndjson' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `asterius-audit-${new Date().toISOString().slice(0, 10)}.${format === 'csv' ? 'csv' : 'ndjson'}`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
   const q = useQuery({
-    queryKey: ['audit', debounced, page],
-    queryFn: () => api.audit({ search: debounced, limit: PAGE + 1, offset: (page - 1) * PAGE }),
+    queryKey: ['audit', debounced, dAction, dActor, page],
+    queryFn: () => api.audit({ ...filters, limit: PAGE + 1, offset: (page - 1) * PAGE }),
     placeholderData: keepPreviousData,
   });
   const rows = q.data?.slice(0, PAGE);
   return (
     <Stack>
       <PageHeader title="Audit log" description="Who changed what: definitions, catalog writes, runs, approvals, tokens, secrets, sign-ins." />
-      <TextInput
-        placeholder="Filter by action, target or user"
-        leftSection={<IconSearch size={16} />}
-        value={search}
-        onChange={(e) => {
-          setSearch(e.currentTarget.value);
-          setPage(1);
-        }}
-        maw={400}
-      />
+      <Group align="flex-end">
+        <TextInput
+          placeholder="Filter by action, target or user"
+          leftSection={<IconSearch size={16} />}
+          value={search}
+          onChange={(e) => {
+            setSearch(e.currentTarget.value);
+            setPage(1);
+          }}
+          w={300}
+        />
+        <TextInput
+          placeholder="Action (token.*)"
+          value={action}
+          onChange={(e) => {
+            setAction(e.currentTarget.value);
+            setPage(1);
+          }}
+          w={160}
+        />
+        <TextInput
+          placeholder="Actor email"
+          value={actor}
+          onChange={(e) => {
+            setActor(e.currentTarget.value);
+            setPage(1);
+          }}
+          w={200}
+        />
+        <Button variant="default" leftSection={<IconDownload size={16} />} onClick={() => void exportAs('csv')}>
+          CSV
+        </Button>
+        <Button variant="default" leftSection={<IconDownload size={16} />} onClick={() => void exportAs('json')}>
+          NDJSON
+        </Button>
+      </Group>
       <DataTable
         rows={rows}
         loading={q.isPending}

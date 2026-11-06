@@ -4,7 +4,8 @@ import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from 'jose';
 import { config } from '../config.js';
 import { all, one, run, withAdvisoryLock } from '../db.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { createSession, entraRole, syncEntraTeams, upsertEntraUser, type UserRow } from './users.js';
+import { entraRole, syncEntraTeams, upsertEntraUser, type UserRow } from './users.js';
+import { finishLogin } from './oauth.js';
 import { audit } from '../audit.js';
 
 /**
@@ -197,10 +198,7 @@ export async function entraRoutes(app: FastifyInstance) {
       if (user.active !== 1) return reply.redirect(fail('Your account is disabled'));
       await audit({ id: user.id, email: user.email }, 'auth.login', null, { provider: 'entra' });
 
-      const token = await createSession(user.id);
-      // Fragment: never sent to servers or written to access logs.
-      const hash = new URLSearchParams({ token, returnTo: st.return_to });
-      return reply.redirect(`${config.PUBLIC_URL.replace(/\/$/, '')}/auth/callback#${hash}`);
+      return finishLogin(req, reply, user.id, st.return_to);
     } catch (err) {
       req.log.warn({ err }, 'entra sign-in failed');
       return reply.redirect(fail(`Microsoft sign-in failed: ${(err as Error).message}`));

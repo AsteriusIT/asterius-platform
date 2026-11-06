@@ -1,7 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { audit } from '../audit.js';
-import { actorOf, requireAdmin } from '../auth/users.js';
+import { actorOf } from '../auth/users.js';
+import { requireRole } from '../auth/access.js';
 import { bool } from '../db.js';
 import {
   deleteIntegration,
@@ -50,7 +51,7 @@ export async function integrationRoutes(app: FastifyInstance) {
   });
 
   await app.register(async (admin) => {
-    admin.addHook('preHandler', requireAdmin);
+    admin.addHook('preHandler', requireRole('integration-admin'));
 
     admin.get('/integrations', async () => listIntegrations());
     admin.get('/integrations/:id', async (req) => getIntegration(idParam.parse(req.params).id));
@@ -78,6 +79,7 @@ export async function integrationRoutes(app: FastifyInstance) {
     /** Try a mapping on a sample item without writing anything (mapping editor). */
     admin.post('/mappings/preview', async (req) => {
       const body = z.object({ mapping: mappingDef, item: z.unknown(), headers: z.record(z.string(), z.unknown()).default({}) }).parse(req.body);
+      await audit(actorOf(req.principal), 'integration.mapping_previewed', null);
       return mapItem(body.mapping, body.item, { headers: body.headers, integration: { identifier: 'preview', config: {} } });
     });
   });

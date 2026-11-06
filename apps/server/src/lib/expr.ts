@@ -58,9 +58,10 @@ function normalize(v: unknown): unknown {
   return v;
 }
 
-export type RefResolver = (kind: 'secret' | 'env', name: string) => Promise<string>;
+/** `secret` / `env` plus the external secret manager kinds (vault, awssm, azkv, gcpsm, k8s). */
+export type RefResolver = (kind: string, name: string) => Promise<string>;
 
-const TOKEN = /\{\{((?:(?!\}\})[\s\S])+)\}\}|\$\{(secret|env):([A-Za-z0-9_.-]+)\}/g;
+const TOKEN = /\{\{((?:(?!\}\})[\s\S])+)\}\}|\$\{(secret|env|vault|awssm|azkv|gcpsm|k8s):([^}\s]+)\}/g;
 
 /** `"{{ expr }}"` alone (whitespace aside) keeps the expression's type (object, number…) instead of a string. */
 function wholeExpression(t: string): string | undefined {
@@ -94,7 +95,7 @@ export async function render(template: unknown, ctx: unknown, resolveRef: RefRes
         if (m[1] !== undefined) {
           out += stringify(await evaluate(m[1], ctx));
         } else {
-          const secret = await resolveRef(m[2] as 'secret' | 'env', m[3]);
+          const secret = await resolveRef(m[2], m[3]);
           if (secret) secrets.push(secret);
           out += secret;
         }

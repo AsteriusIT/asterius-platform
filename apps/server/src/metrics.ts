@@ -22,6 +22,11 @@ const c = {
     buckets: [1, 5, 15, 60, 300, 900, 1800, 3600, 4 * 3600],
     registers: [registry],
   }),
+  auditFailures: new client.Counter({
+    name: 'asterius_audit_write_failures_total',
+    help: 'Audit entries that could not be written (retried in memory)',
+    registers: [registry],
+  }),
   syncs: new client.Counter({
     name: 'asterius_syncs_total',
     help: 'Integration syncs, by integration and status',
@@ -106,6 +111,7 @@ export const metrics = {
     if (upserted) c.syncEntities.inc({ integration, op: 'upsert' }, upserted);
     if (deleted) c.syncEntities.inc({ integration, op: 'delete' }, deleted);
   },
+  auditFailure: () => c.auditFailures.inc(),
   delivery: (result: 'success' | 'retry' | 'failed') => c.deliveries.inc({ result }),
   purged: (table: string, rows: number) => rows && c.purged.inc({ table }, rows),
   event: (type: string) => c.events.inc({ type }),

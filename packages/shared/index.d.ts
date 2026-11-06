@@ -5,7 +5,8 @@
 
 // ---------- identity ----------
 export type Role = 'admin' | 'member';
-export type UserProvider = 'local' | 'entra' | 'service';
+/** Delegated roles (integration-admin, blueprint-owner, approver), granted on top of `member` (any other slug is a custom role usable in permission subjects). */
+export type UserProvider = 'local' | 'entra' | 'oidc' | 'github' | 'saml' | 'scim' | 'service';
 
 export interface TeamRef {
   identifier: string;
@@ -18,6 +19,8 @@ export interface PublicUser {
   name: string;
   provider: UserProvider;
   role: Role;
+  /** Additional (delegated or custom) roles. */
+  roles: string[];
   teams: TeamRef[];
   active: boolean;
   lastLoginAt?: string | null;
@@ -29,7 +32,7 @@ export interface Team {
   identifier: string;
   title: string;
   description: string;
-  /** Members of this Entra ID group are members of the team (synchronised at sign-in). */
+  /** Members of this identity-provider group (Entra group id, OIDC group claim value, GitHub `org/team`) are members of the team (synchronised at sign-in). */
   entraGroupId: string | null;
   managed: boolean;
   members: { id: string; name: string; email: string }[];
@@ -44,6 +47,10 @@ export interface ApiToken {
   createdAt: string;
   expiresAt: string | null;
   lastUsedAt: string | null;
+  /** Null: all rights of the owning user. */
+  scopes?: string[] | null;
+  blueprints?: string[] | null;
+  ipAllow?: string[] | null;
 }
 
 // ---------- catalog ----------
@@ -104,6 +111,8 @@ export interface Blueprint {
   schema: ObjectSchema;
   relations: Record<string, BlueprintRelation>;
   computed?: Record<string, ComputedProperty>;
+  /** Who may read / write / delete entities and run actions on them. Unset: read and run by everyone, write by the owner team. */
+  permissions?: BlueprintPermissions;
   managed: boolean;
   entityCount?: number;
   createdAt: string;
@@ -225,10 +234,25 @@ export type ActionTrigger = 'create' | 'day-2' | 'delete';
 
 /** Who: roles, teams, users (emails), and/or the team owning the target entity. Empty = everyone. */
 export interface Subjects {
-  roles?: Role[];
+  roles?: string[];
   teams?: string[];
   users?: string[];
   ownerTeam?: boolean;
+}
+
+export interface BlueprintPermissions {
+  read?: Subjects;
+  write?: Subjects;
+  delete?: Subjects;
+  run?: Subjects;
+}
+
+/** Effective access of the caller on one blueprint: `team` means only entities of the caller's teams. */
+export type Access = boolean | 'team';
+export interface EffectivePermissions {
+  roles: string[];
+  admin: boolean;
+  blueprints: Record<string, { read: Access; write: Access; delete: Access; run: Access }>;
 }
 
 export interface ApprovalPolicy {
@@ -623,6 +647,14 @@ export interface Delivery {
 }
 
 // ---------- admin ----------
+/** An external secret manager available on this deployment. */
+export interface SecretProviderInfo {
+  kind: string;
+  title: string;
+  enabled: boolean;
+  example: string;
+}
+
 export interface SecretInfo {
   name: string;
   description: string;
@@ -684,7 +716,12 @@ export interface NotificationPrefs {
 export interface Meta {
   name: string;
   version: string;
-  authProviders: ('local' | 'entra')[];
+  authProviders: ('local' | 'entra' | 'oidc' | 'github' | 'saml')[];
+  /** Labels of the generic OIDC / SAML sign-in buttons. */
+  oidcTitle?: string;
+  /** Browser sessions use an httpOnly cookie and a CSRF header. */
+  sessionCookie?: boolean;
+  samlTitle?: string;
   allowRegistration: boolean;
   invokers: PluginInfo[];
   sources: PluginInfo[];

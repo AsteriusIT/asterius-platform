@@ -17,6 +17,7 @@ interface Row {
   schema: string;
   relations: string;
   computed?: string;
+  permissions: string | null;
   managed: number;
   created_at: string;
   updated_at: string;
@@ -31,6 +32,7 @@ const toBlueprint = (r: Row): Blueprint => ({
   schema: json(r.schema, { properties: {} }),
   relations: json(r.relations, {}),
   computed: json(r.computed, {}),
+  ...(r.permissions ? { permissions: json(r.permissions, {}) } : {}),
   managed: bool(r.managed),
   createdAt: r.created_at,
   updatedAt: r.updated_at,
@@ -132,18 +134,19 @@ export async function upsertBlueprint(input: unknown, opts: WriteOpts = {}): Pro
     JSON.stringify(def.schema),
     JSON.stringify(def.relations),
     JSON.stringify(def.computed),
+    def.permissions ? JSON.stringify(def.permissions) : null,
     opts.managed ? 1 : 0,
   ];
   if (existing)
     await run(
-      'UPDATE blueprints SET title = ?, description = ?, icon = ?, schema = ?, relations = ?, computed = ?, managed = ?, updated_at = ? WHERE identifier = ?',
+      'UPDATE blueprints SET title = ?, description = ?, icon = ?, schema = ?, relations = ?, computed = ?, permissions = ?, managed = ?, updated_at = ? WHERE identifier = ?',
       ...values,
       t,
       def.identifier,
     );
   else
     await run(
-      'INSERT INTO blueprints (title, description, icon, schema, relations, computed, managed, created_at, updated_at, identifier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO blueprints (title, description, icon, schema, relations, computed, permissions, managed, created_at, updated_at, identifier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       ...values,
       t,
       t,

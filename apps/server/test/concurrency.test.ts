@@ -45,7 +45,7 @@ beforeAll(async () => {
     const u = await register(app, `${n}@example.com`);
     await admin.patch(`/api/v1/users/${u.user.id}`, { teams: ['platform'] });
     approvers.push(client(app, u.token));
-    principals.push({ id: u.user.id, email: `${n}@example.com`, name: n, role: 'member', provider: 'local', teams: ['platform'] });
+    principals.push({ id: u.user.id, email: `${n}@example.com`, name: n, role: 'member', provider: 'local', teams: ['platform'], roles: [] });
   }
   stops.push(startRunWorker(silentLog));
 });

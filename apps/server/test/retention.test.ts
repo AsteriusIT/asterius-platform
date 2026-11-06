@@ -12,7 +12,7 @@ import type { Principal } from '../src/auth/users.js';
 import { addLog, listRuns } from '../src/actions/runs.js';
 import { homeBlueprints, refreshBlueprintStats } from '../src/catalog/blueprints.js';
 
-const ADMIN: Principal = { id: 'admin', email: 'admin@example.com', name: 'Admin', role: 'admin', provider: 'local', teams: [] };
+const ADMIN: Principal = { id: 'admin', email: 'admin@example.com', name: 'Admin', role: 'admin', provider: 'local', teams: [], roles: [] };
 let app: FastifyInstance;
 let admin: Api;
 let userId: string;

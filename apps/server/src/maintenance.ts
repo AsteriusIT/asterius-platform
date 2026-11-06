@@ -41,7 +41,7 @@ export async function deleteInChunks(
   return total;
 }
 
-/** Hourly housekeeping (one replica at a time): expired sessions, data past RETENTION_DAYS. */
+/** Hourly housekeeping (one replica at a time): expired sessions, data past RETENTION_DAYS (audit: AUDIT_RETENTION_DAYS). */
 export async function housekeeping(log: FastifyBaseLogger) {
   await withAdvisoryLock(726203, async () => {
     await purgeExpiredAuth();
@@ -56,7 +56,7 @@ export async function housekeeping(log: FastifyBaseLogger) {
     );
     metrics.purged('deliveries_expired', stale.changes);
     const deliveries = await deleteInChunks('deliveries', 'id', "status != 'pending' AND created_at < ?", [cutoff]);
-    const audit = await deleteInChunks('audit_log', 'id', 'at < ?', [cutoff]);
+    const audit = await deleteInChunks('audit_log', 'id', 'at < ?', [new Date(Date.now() - config.AUDIT_RETENTION_DAYS * 86400_000).toISOString()]);
     await run('DELETE FROM ingest_deliveries WHERE received_at < ?', new Date(Date.now() - 24 * 3600_000).toISOString());
     // Sync history: RETENTION_DAYS, but always keep the last 20 per integration.
     let syncs = 0;

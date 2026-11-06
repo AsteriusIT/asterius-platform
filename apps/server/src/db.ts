@@ -545,6 +545,41 @@ export const MIGRATIONS: Migration[] = [
         ALTER TABLE runs ADD COLUMN allowed_secrets TEXT;     -- snapshot at trigger time
       `),
   },
+  // Identity & access epic (ap-m49)
+  {
+    id: 22,
+    name: 'fine-grained RBAC: blueprint permissions, delegated roles',
+    up: (d) => d.exec('ALTER TABLE blueprints ADD COLUMN permissions TEXT; ALTER TABLE users ADD COLUMN extra_roles TEXT'),
+  },
+  {
+    id: 23,
+    name: 'API token scopes and IP allow-list, session metadata',
+    up: (d) =>
+      d.exec(`
+        ALTER TABLE api_tokens ADD COLUMN scopes TEXT;
+        ALTER TABLE api_tokens ADD COLUMN blueprints TEXT;
+        ALTER TABLE api_tokens ADD COLUMN ip_allow TEXT;
+        ALTER TABLE sessions ADD COLUMN created_at TEXT;
+        ALTER TABLE sessions ADD COLUMN last_seen_at TEXT;
+        ALTER TABLE sessions ADD COLUMN ip TEXT;
+        ALTER TABLE sessions ADD COLUMN user_agent TEXT;
+      `),
+  },
+  {
+    id: 24,
+    name: 'audit log: SIEM streaming marker and hash chain',
+    up: (d) =>
+      d.exec(`
+        ALTER TABLE audit_log ADD COLUMN streamed_at TEXT;
+        ALTER TABLE audit_log ADD COLUMN chain_seq INTEGER;
+        ALTER TABLE audit_log ADD COLUMN prev_hash TEXT;
+        ALTER TABLE audit_log ADD COLUMN hash TEXT;
+        CREATE INDEX audit_unstreamed ON audit_log(at) WHERE streamed_at IS NULL;
+        CREATE UNIQUE INDEX audit_chain_seq ON audit_log(chain_seq) WHERE chain_seq IS NOT NULL;
+        CREATE INDEX audit_action ON audit_log(action);
+        CREATE INDEX audit_actor ON audit_log(actor_email);
+      `),
+  },
 ];
 
 /**

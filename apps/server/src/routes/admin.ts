@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { audit, listAudit } from '../audit.js';
+import { Readable } from 'node:stream';
+import { audit, auditFacets, CSV_HEADER, csvRow, exportAudit, listAudit, verifyAuditChain } from '../audit.js';
 import { nextPageHeaders } from '../lib/cursor.js';
 import {
   actorOf,
@@ -13,15 +14,19 @@ import {
   publicUser,
   requireAdmin,
   requireUser,
+  tokenLifetime,
   updateUser,
 } from '../auth/users.js';
 import { deleteTeam, listTeams, upsertTeam } from '../auth/teams.js';
-import { deleteSecret, listSecrets, setSecret, shortSecretWarning } from '../secrets.js';
+import { providerInfos } from '../secret-providers/index.js';
+import { deleteSecret, listSecrets, reencryptSecrets, setSecret, shortSecretWarning } from '../secrets.js';
 import { deleteWebhook, getWebhook, listDeliveries, listWebhooks, redeliver, upsertWebhook } from '../webhooks/webhooks.js';
 import { exportConfig, managedCounts } from '../config-loader.js';
 import { config } from '../config.js';
 import { idParam, page } from './util.js';
-import { badRequest } from '../lib/errors.js';
+import { badRequest, forbidden } from '../lib/errors.js';
+import { grants, ipAllowSchema, scopeSchema, SCOPES } from '../auth/scopes.js';
+import { roleName } from '../schemas.js';
 
 export async function adminRoutes(app: FastifyInstance, opts: { reloadConfig: () => Promise<void> }) {
   // ---- for every signed-in user ----
@@ -36,9 +41,39 @@ export async function adminRoutes(app: FastifyInstance, opts: { reloadConfig: ()
       return listApiTokens(all ? undefined : req.principal.id);
     });
     user.post('/tokens', async (req, reply) => {
-      const body = z.object({ name: z.string().min(1).max(100), expiresInDays: z.number().int().min(1).max(730).nullish() }).parse(req.body);
-      const t = await createApiToken({ name: body.name, userId: req.principal.id, createdBy: req.principal.id, expiresInDays: body.expiresInDays ?? 90 });
-      await audit(actorOf(req.principal), 'token.created', body.name, { tokenId: t.id });
+      const body = z
+        .object({
+          name: z.string().min(1).max(100),
+          expiresInDays: z.number().int().min(1).max(730).nullish(),
+          scopes: z
+            .array(scopeSchema.exclude(['scim']))
+            .max(SCOPES.length)
+            .optional(),
+          blueprints: z.array(z.string().max(64)).max(100).optional(),
+          ipAllow: ipAllowSchema.optional(),
+        })
+        .parse(req.body);
+      // A restricted token cannot mint tokens (it would escape its own restrictions): only unrestricted callers or `admin` scope.
+      if (req.principal.token && (req.principal.token.blueprints || !req.principal.token.scopes?.includes('admin')))
+        throw forbidden('This API token cannot create tokens');
+      if (req.principal.token?.scopes && body.scopes?.some((s) => !grants(req.principal.token!.scopes!, s)))
+        throw forbidden('A token cannot grant scopes it lacks');
+      if (!isAdmin(req.principal) && body.scopes?.includes('admin')) throw forbidden('Only admins can create tokens with the admin scope');
+      const t = await createApiToken({
+        name: body.name,
+        userId: req.principal.id,
+        createdBy: req.principal.id,
+        expiresInDays: tokenLifetime(body.expiresInDays, 90),
+        scopes: body.scopes,
+        blueprints: body.blueprints,
+        ipAllow: body.ipAllow,
+      });
+      await audit(actorOf(req.principal), 'token.created', body.name, {
+        tokenId: t.id,
+        scopes: body.scopes ?? null,
+        blueprints: body.blueprints ?? null,
+        ipAllow: body.ipAllow ?? null,
+      });
       return reply.code(201).send(t);
     });
     user.delete('/tokens/:id', async (req) => {
@@ -57,7 +92,12 @@ export async function adminRoutes(app: FastifyInstance, opts: { reloadConfig: ()
     admin.patch('/users/:id', async (req) => {
       const { id } = idParam.parse(req.params);
       const body = z
-        .object({ role: z.enum(['admin', 'member']).optional(), active: z.boolean().optional(), teams: z.array(z.string()).optional() })
+        .object({
+          role: z.enum(['admin', 'member']).optional(),
+          roles: z.array(roleName).max(50).optional(),
+          active: z.boolean().optional(),
+          teams: z.array(z.string()).optional(),
+        })
         .parse(req.body);
       if (id === req.principal.id && (body.role === 'member' || body.active === false)) throw badRequest('You cannot demote or disable yourself');
       const u = await updateUser(id, body);
@@ -65,6 +105,20 @@ export async function adminRoutes(app: FastifyInstance, opts: { reloadConfig: ()
       return u;
     });
     /** Service accounts: non-human identities for CI pipelines and scripts (API tokens only). */
+    /** SCIM provisioning token: a dedicated service account whose token carries only the `scim` scope. */
+    admin.post('/scim/token', async (req, reply) => {
+      const body = z.object({ expiresInDays: z.number().int().min(1).max(730).default(365) }).parse(req.body ?? {});
+      const sa = await createServiceAccount('SCIM provisioning', 'member');
+      const t = await createApiToken({
+        name: 'SCIM provisioning',
+        userId: sa.id,
+        createdBy: req.principal.id,
+        expiresInDays: tokenLifetime(body.expiresInDays, 365),
+        scopes: ['scim'],
+      });
+      await audit(actorOf(req.principal), 'scim.token_created', sa.email, { tokenId: t.id });
+      return reply.code(201).send({ token: t.token, baseUrl: `${config.PUBLIC_URL}/scim/v2` });
+    });
     admin.post('/service-accounts', async (req, reply) => {
       const body = z
         .object({
@@ -76,7 +130,12 @@ export async function adminRoutes(app: FastifyInstance, opts: { reloadConfig: ()
         .parse(req.body);
       const sa = await createServiceAccount(body.name, body.role);
       if (body.teams.length) await updateUser(sa.id, { teams: body.teams });
-      const t = await createApiToken({ name: `${body.name} token`, userId: sa.id, createdBy: req.principal.id, expiresInDays: body.expiresInDays ?? null });
+      const t = await createApiToken({
+        name: `${body.name} token`,
+        userId: sa.id,
+        createdBy: req.principal.id,
+        expiresInDays: tokenLifetime(body.expiresInDays, null),
+      });
       await audit(actorOf(req.principal), 'service_account.created', body.name, { role: body.role });
       return reply.code(201).send({ user: await publicUser(sa), token: t.token });
     });
@@ -95,6 +154,13 @@ export async function adminRoutes(app: FastifyInstance, opts: { reloadConfig: ()
     });
 
     admin.get('/secrets', async () => listSecrets());
+    /** External secret managers available on this deployment (with a reference example each). */
+    admin.get('/secret-providers', async () => providerInfos());
+    admin.post('/secrets/reencrypt', async (req) => {
+      const r = await reencryptSecrets();
+      await audit(actorOf(req.principal), 'secrets.reencrypted', null, { reencrypted: r.reencrypted, failed: r.failed.length });
+      return r;
+    });
     admin.put('/secrets/:id', async (req) => {
       const { id } = idParam.parse(req.params);
       const body = z.object({ value: z.string().min(1).max(64_000), description: z.string().max(500).default('') }).parse(req.body);
@@ -133,20 +199,63 @@ export async function adminRoutes(app: FastifyInstance, opts: { reloadConfig: ()
       return deliveries;
     });
     admin.post('/deliveries/:id/redeliver', async (req) => {
-      await redeliver(idParam.parse(req.params).id);
+      const id = idParam.parse(req.params).id;
+      await redeliver(id);
+      await audit(actorOf(req.principal), 'delivery.redelivered', id);
       return { ok: true };
     });
 
+    const auditQuery = z.object({
+      search: z.string().max(200).optional(),
+      action: z.string().max(100).optional(),
+      actor: z.string().max(200).optional(),
+      target: z.string().max(200).optional(),
+      from: z.string().datetime({ offset: true }).optional(),
+      to: z.string().datetime({ offset: true }).optional(),
+    });
     admin.get('/audit', async (req, reply) => {
       const { entries, nextCursor } = await listAudit(
-        page.extend({ search: z.string().max(200).optional(), cursor: z.string().max(500).optional() }).parse(req.query),
+        page
+          .merge(auditQuery)
+          .extend({ cursor: z.string().max(500).optional() })
+          .parse(req.query),
       );
       nextPageHeaders(req, reply, nextCursor);
       return entries;
     });
+    admin.get('/audit/facets', async (req) => auditFacets(auditQuery.parse(req.query)));
+    /** Export with the same filters: CSV (spreadsheet-safe) or NDJSON. Exporting is itself audited. */
+    admin.get('/audit/export', async (req, reply) => {
+      const q = auditQuery.extend({ format: z.enum(['csv', 'json']).default('csv') }).parse(req.query);
+      const { format, ...filters } = q;
+      await audit(actorOf(req.principal), 'audit.exported', null, { format, ...filters });
+      const rows = exportAudit(filters);
+      const stream =
+        format === 'csv'
+          ? Readable.from(
+              (async function* () {
+                yield CSV_HEADER;
+                for await (const e of rows) yield csvRow(e);
+              })(),
+            )
+          : Readable.from(
+              (async function* () {
+                for await (const e of rows) yield `${JSON.stringify(e)}\n`;
+              })(),
+            );
+      return reply
+        .type(format === 'csv' ? 'text/csv; charset=utf-8' : 'application/x-ndjson; charset=utf-8')
+        .header('content-disposition', `attachment; filename="audit.${format === 'csv' ? 'csv' : 'ndjson'}"`)
+        .send(stream);
+    });
+    /** Recompute the hash chain (AUDIT_HASH_CHAIN): detects modified, removed or reordered entries. */
+    admin.get('/audit/verify', async () => verifyAuditChain());
 
     admin.get('/config', async () => ({ dir: config.CONFIG_DIR, managed: await managedCounts() }));
-    admin.get('/config/export', async (_req, reply) => reply.type('text/yaml; charset=utf-8').send(await exportConfig()));
+    admin.get('/config/export', async (req, reply) => {
+      await audit(actorOf(req.principal), 'config.exported', null);
+      return reply.type('text/yaml; charset=utf-8').send(await exportConfig());
+    });
     admin.post('/config/reload', async (req) => {
       await opts.reloadConfig();
       await audit(actorOf(req.principal), 'config.reload_requested', config.CONFIG_DIR);
