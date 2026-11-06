@@ -1,4 +1,5 @@
 import { one } from './db.js';
+import { metrics } from './metrics.js';
 
 /**
  * /readyz checks only what this pod needs to serve traffic: the database. Third-party systems (GitHub, ADO,
@@ -21,6 +22,7 @@ export function registerLoop(name: string, maxSilenceMs: number) {
 export function beat(name: string) {
   const l = loops.get(name);
   if (l) l.lastBeat = Date.now();
+  metrics.loopTick(name);
 }
 
 /** Loops that have been silent for too long (empty when everything is healthy). */

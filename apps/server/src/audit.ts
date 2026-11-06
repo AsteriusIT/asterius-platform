@@ -3,6 +3,7 @@ import { all, dialect, json, newId, now, one, run, tx, type SqlValue } from './d
 import { config } from './config.js';
 import { likeEscape } from './db.js';
 import { metrics } from './metrics.js';
+import { componentLogger } from './logger.js';
 import type { AuditEntry } from '@asterius/shared';
 import { decodeCursor, encodeCursor } from './lib/cursor.js';
 
@@ -19,6 +20,8 @@ export interface Actor {
   id: string | null;
   email: string | null;
 }
+
+const log = componentLogger('audit');
 
 export const SYSTEM: Actor = { id: null, email: 'system' };
 
@@ -80,7 +83,7 @@ export async function audit(actor: Actor, action: string, target: string | null,
     for (let e = retryQueue.shift(); e; e = retryQueue.shift()) await insert(e.actor, e.action, e.target, e.detail);
   } catch (err) {
     metrics.auditFailure();
-    console.error(JSON.stringify({ level: 'error', msg: 'audit write failed', action, error: (err as Error).message }));
+    log.error({ err, action, target }, 'audit write failed'); // never break the action itself
     if (retryQueue.length < 1000) retryQueue.push({ actor, action, target, detail });
   }
 }

@@ -1,5 +1,6 @@
 import { all, json, newId, now, run, type Driver, type SqlValue } from './db.js';
 import { evaluate } from './lib/expr.js';
+import { componentLogger } from './logger.js';
 import { metrics } from './metrics.js';
 import { bumpConfigVersion, onConfigChange, syncCaches } from './lib/config-version.js';
 import { getBlueprintCached } from './catalog/blueprints.js';
@@ -44,6 +45,8 @@ interface Sub {
   filter: string | null;
   transform: string | null;
 }
+
+const log = componentLogger('events');
 
 let cache: { at: number; subs: Sub[] } | undefined;
 const CACHE_MS = 15_000;
@@ -116,7 +119,7 @@ export async function prepareEvents(events: DomainEvent[]): Promise<(d?: Driver)
           if (body === undefined || body === null) continue; // the transform chose not to send anything
         }
       } catch (err) {
-        console.error('[events] webhook filter/transform failed', s.identifier, err);
+        log.error({ err, webhook: s.identifier }, 'webhook filter/transform failed');
         continue;
       }
       rows.push([newId(), s.identifier, e.type, JSON.stringify(body), 'pending', now(), now()]);
@@ -132,7 +135,7 @@ export async function prepareEvents(events: DomainEvent[]): Promise<(d?: Driver)
       }
     } catch (err) {
       if (d) throw err;
-      console.error('[events] could not enqueue', events[0]?.type, err);
+      log.error({ err, type: events[0]?.type }, 'could not enqueue event');
     }
   };
 }
@@ -149,7 +152,7 @@ export function onEvent(l: Listener) {
 
 /** Run the in-process subscribers. Callers that wrote through `prepareEvents` + a transaction call this after the commit. */
 export async function notifyListeners(events: DomainEvent[]) {
-  for (const e of events) for (const l of listeners) await l(e).catch((err) => console.error('[events] listener failed', e.type, err));
+  for (const e of events) for (const l of listeners) await l(e).catch((err) => log.error({ err, type: e.type }, 'event listener failed'));
 }
 
 const OUTBOX_CHUNK = 100;
@@ -166,6 +169,6 @@ export async function emitMany(events: DomainEvent[]) {
     )();
     await notifyListeners(events);
   } catch (err) {
-    console.error('[events] could not enqueue', events[0]?.type, err);
+    log.error({ err, type: events[0]?.type }, 'could not enqueue event');
   }
 }

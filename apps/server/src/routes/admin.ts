@@ -24,9 +24,10 @@ import { deleteWebhook, getWebhook, listDeliveries, listWebhooks, redeliver, red
 import { configStatus, exportConfig, managedCounts, planConfig } from '../config-loader.js';
 import { config } from '../config.js';
 import { idParam, page } from './util.js';
-import { badRequest, forbidden } from '../lib/errors.js';
+import { badRequest, errorMessage, forbidden } from '../lib/errors.js';
 import { grants, ipAllowSchema, scopeSchema, SCOPES } from '../auth/scopes.js';
 import { roleName } from '../schemas.js';
+import { exportArchive, importArchive } from '../archive.js';
 
 export async function adminRoutes(app: FastifyInstance, opts: { reloadConfig: () => Promise<void> }) {
   // ---- for every signed-in user ----
@@ -287,6 +288,32 @@ export async function adminRoutes(app: FastifyInstance, opts: { reloadConfig: ()
     admin.get('/config/export', async (req, reply) => {
       await audit(actorOf(req.principal), 'config.exported', null);
       return reply.type('text/yaml; charset=utf-8').send(await exportConfig());
+    });
+    // Portable archive (definitions + entities + secret names, never secret values) for backup / migration between environments.
+    admin.get('/archive', async (req, reply) => {
+      const archive = await exportArchive();
+      await audit(actorOf(req.principal), 'archive.exported', null, { entities: archive.entities.length });
+      return reply
+        .header('content-disposition', `attachment; filename="asterius-archive-${archive.exportedAt.slice(0, 10)}.json"`)
+        .type('application/json')
+        .send(archive);
+    });
+    admin.post('/archive/import', { bodyLimit: 512 * 1024 * 1024 }, async (req) => {
+      const q = z.object({ mode: z.enum(['skip', 'overwrite']).default('skip'), dryRun: z.enum(['true', 'false']).default('false') }).parse(req.query);
+      let report;
+      try {
+        report = await importArchive(req.body, { mode: q.mode, dryRun: q.dryRun === 'true' });
+      } catch (err) {
+        throw badRequest(errorMessage(err));
+      }
+      await audit(actorOf(req.principal), 'archive.imported', null, {
+        mode: q.mode,
+        dryRun: report.dryRun,
+        created: report.created,
+        updated: report.updated,
+        failed: report.failed,
+      });
+      return report;
     });
     admin.post('/config/reload', async (req) => {
       await opts.reloadConfig();

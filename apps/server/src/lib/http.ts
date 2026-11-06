@@ -114,6 +114,7 @@ async function httpOnce<T = unknown>(url: string, req: HttpRequest = {}, dispatc
     dispatcher,
     redirect: req.redirect ?? 'follow',
   });
+  metrics.upstream(new URL(url).host, res.status);
   const text = await res.text();
   let data: unknown = text;
   if (text && (res.headers.get('content-type') ?? '').includes('json')) {

@@ -53,6 +53,29 @@ database:
     storage: 10Gi
     storageClass: ""
     imageName: "" # e.g. ghcr.io/cloudnative-pg/postgresql:17
+    # Continuous WAL archiving + base backups to an object store (Barman Cloud), enabling point-in-time recovery.
+    backup:
+      enabled: false
+      destinationPath: "" # s3://my-bucket/asterius, https://<account>.blob.core.windows.net/<container>, gs://…
+      endpointURL: "" # S3-compatible endpoints (MinIO, Ceph); empty for AWS S3 / Azure / GCS
+      retentionPolicy: 30d
+      schedule: "0 0 2 * * *" # ScheduledBackup cron, 6 fields (seconds first): daily at 02:00
+      compression: gzip # gzip | bzip2 | snappy
+      # Name of an existing Secret with the object store credentials, and which keys to read (S3 shown;
+      # for Azure/GCS set `credentials` to the CloudNativePG barmanObjectStore block verbatim instead).
+      s3Credentials:
+        secretName: ""
+        accessKeyIdKey: ACCESS_KEY_ID
+        secretAccessKeyKey: ACCESS_SECRET_KEY
+      credentials: {} # optional raw barmanObjectStore credentials (azureCredentials / googleCredentials), merged as-is
+    # Disaster recovery: create the cluster from a backup of another cluster instead of an empty database.
+    # Set only when restoring (see docs/OPERATIONS.md); remove afterwards.
+    recovery:
+      enabled: false
+      sourceClusterName: "" # name of the cluster whose backups are read
+      destinationPath: "" # object store path of that cluster's backups
+      endpointURL: ""
+      targetTime: "" # point-in-time target, e.g. "2026-11-06 10:15:00+00"; empty = latest
 
 # ---------- secrets ----------
 # Keys read from the Secret: DATABASE_URL, SECRETS_KEY (32 bytes, base64 or hex), ENTRA_CLIENT_SECRET, METRICS_TOKEN, ANTHROPIC_API_KEY (agent steps),
@@ -138,14 +161,14 @@ settings:
   # CIDR is best, e.g. "10.42.0.0/16". Default: private ranges only (never a client-supplied header from the internet).
   trustProxy: "loopback,linklocal,uniquelocal"
   stepTimeoutMinutes: 1440 # default timeout of one step; runTimeoutHours bounds the whole run
+  # memory: per-pod counters (fine for one replica). database: shared across API replicas, one upsert per request.
+  rateLimitStore: database
 # Schema migrations. With job.enabled, a Helm hook Job migrates and pods start with MIGRATE_ON_START=false;
 # otherwise every pod migrates at startup under a database advisory lock (fine for additive migrations).
 migrations:
   job:
     enabled: false
     timeoutSeconds: 600
-  # memory: per-pod counters (fine for one replica). database: shared across API replicas, one upsert per request.
-  rateLimitStore: database
 # Extra non-secret environment variables.
 extraEnv: {}
 
@@ -198,13 +221,19 @@ rbac:
   # Other kubeconfig contexts the Job invoker may target (default: only the in-cluster one).
   jobContexts: []
 
+# One ServiceAccount per role: the API never receives a Kubernetes token, only the worker (Kubernetes source / Job invoker) is bound to RBAC.
 serviceAccount:
   create: true
-  name: ""
-  annotations: {} # e.g. azure.workload.identity/client-id for Entra workload identity
+  name: "" # set to use a single existing ServiceAccount for both roles (legacy); otherwise <fullname>-api / <fullname>-worker
+  annotations: {} # both roles, e.g. azure.workload.identity/client-id for Entra workload identity
+  api: { name: "", annotations: {} }
+  worker: { name: "", annotations: {} }
 
 # ---------- observability ----------
 metrics:
+  # /metrics is served on this port by a separate listener, reachable through the Services only (never the ingress).
+  # Set to 0 to serve /metrics on the HTTP port instead.
+  port: 9090
   # /metrics is protected by a METRICS_TOKEN (generated in the chart-managed Secret and used by the ServiceMonitor).
   # With secrets.existingSecret, put METRICS_TOKEN in it and set this to true so the ServiceMonitor sends it.
   tokenInExistingSecret: false
@@ -212,5 +241,26 @@ metrics:
     enabled: false
     interval: 30s
     labels: {}
+  # Alerts for the Prometheus operator (queue age, failed syncs, delivery failures, worker loop age, database).
+  prometheusRule:
+    enabled: false
+    labels: {} # e.g. release: kube-prometheus-stack
+    thresholds:
+      runQueueSeconds: 300 # oldest QUEUED run waiting longer than this
+      deliveryBacklogSeconds: 600 # oldest due webhook delivery waiting longer than this
+      syncStaleSeconds: 86400 # no successful sync of an integration for this long (scheduled integrations only)
+      workerLoopSeconds: 120 # a worker loop (runs, deliveries, syncs) has not completed an iteration
+      http5xxRatio: 0.05 # share of 5xx responses over 10 minutes
+  # Grafana dashboard in a ConfigMap picked up by the Grafana sidecar (label grafana_dashboard=1).
+  dashboard:
+    enabled: false
+    labels: { grafana_dashboard: "1" }
+    annotations: {}
 tracing:
   otlpEndpoint: "" # http://otel-collector.monitoring:4318
+
+# ---------- extension points ----------
+# Extra volumes / mounts for the platform container (CA bundles, CSI secrets, …) and extra sidecars (log shipper, cloud-sql-proxy, …).
+extraVolumes: []
+extraVolumeMounts: []
+extraContainers: []

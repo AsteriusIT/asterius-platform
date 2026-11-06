@@ -18,6 +18,8 @@
     "openapi:export": "npm run openapi:export -w apps/server --",
     "clients:generate": "npm run clients:generate -w apps/server --",
     "config:validate": "npm run config:validate -w apps/server --",
+    "loadtest:seed": "tsx loadtest/seed.mts",
+    "loadtest:sink": "tsx loadtest/sink.mts",
     "lint": "eslint . && prettier --check .",
     "format": "prettier --write ."
   },

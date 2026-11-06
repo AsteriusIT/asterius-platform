@@ -3,7 +3,8 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { SyncItemError, SyncRun, SyncStats } from '@asterius/shared';
 import { all, bool, json, later, newId, now, one, run } from '../db.js';
 import { badRequest, errorMessage } from '../lib/errors.js';
-import { redact, render } from '../lib/expr.js';
+import { render } from '../lib/expr.js';
+import { maskText } from '../lib/mask.js';
 import { resolveRef } from '../secrets.js';
 import { deleteEntities, upsertEntities, upsertEntity } from '../catalog/entities.js';
 import { emit } from '../events.js';
@@ -59,7 +60,7 @@ class SyncLog {
   /** Structured per-item errors (mapping kind, item key, message), capped. */
   items: SyncItemError[] = [];
   add = (line: string) => {
-    if (this.lines.length < MAX_LOG_LINES) this.lines.push(`${new Date().toISOString().slice(11, 19)} ${redact(line, this.secrets)}`);
+    if (this.lines.length < MAX_LOG_LINES) this.lines.push(`${new Date().toISOString().slice(11, 19)} ${maskText(line, this.secrets)}`);
   };
   private conflicts = 0;
   /** Ownership conflicts: logged (capped) without counting as errors. */
@@ -403,7 +404,7 @@ export async function runSync(identifier: string, trigger: SyncRun['trigger'], o
     identifier,
     owner,
   );
-  metrics.sync(identifier, status, stats.upserted, stats.deleted);
+  metrics.sync(identifier, status, stats.upserted, stats.deleted, (Date.now() - Date.parse(t)) / 1000);
   await audit(SYSTEM, 'integration.synced', identifier, { trigger, status, ...stats });
   await emit({
     type: status === 'failure' ? 'sync.failed' : 'sync.finished',
@@ -645,6 +646,7 @@ export function startSyncScheduler(log: FastifyBaseLogger) {
       now(),
       MAX_PARALLEL_SYNCS - running,
     );
+    metrics.loopTick('syncs');
     for (const d of due) {
       if (getSource(d.type).push) {
         await run('UPDATE integrations SET next_sync_at = NULL WHERE identifier = ?', d.identifier);

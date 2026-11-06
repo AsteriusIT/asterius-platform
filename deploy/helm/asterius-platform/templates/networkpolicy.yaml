@@ -21,11 +21,11 @@ spec:
     - from:
         - namespaceSelector:
             matchLabels: {{- toYaml $v.networkPolicy.monitoringNamespaceSelector | nindent 14 }}
-      ports: [{ port: 8080, protocol: TCP }] # numeric: named ports are not resolved by every CNI
+      ports: [{ port: {{ $v.metrics.port | default 8080 }}, protocol: TCP }] # numeric: named ports are not resolved by every CNI
     # Same release (helm test, pod-to-pod)
     - from:
         - podSelector: { matchLabels: { app.kubernetes.io/instance: {{ .Release.Name }} } }
-      ports: [{ port: 8080, protocol: TCP }] # numeric: named ports are not resolved by every CNI
+      ports: [{ port: 8080, protocol: TCP }{{ if $v.metrics.port }}, { port: {{ $v.metrics.port }}, protocol: TCP }{{ end }}] # numeric: named ports are not resolved by every CNI
   {{- if $v.networkPolicy.egress }}
   egress:
     - ports: [{ port: 53, protocol: UDP }, { port: 53, protocol: TCP }]

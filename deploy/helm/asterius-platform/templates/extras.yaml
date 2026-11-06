@@ -12,7 +12,7 @@ spec:
       app.kubernetes.io/name: {{ .Chart.Name }}
       app.kubernetes.io/instance: {{ .Release.Name }}
   endpoints:
-    - port: http
+    - port: {{ if $v.metrics.port }}metrics{{ else }}http{{ end }}
       path: /metrics
       interval: {{ $v.metrics.serviceMonitor.interval }}
       {{- if or (not $v.secrets.existingSecret) (hasKey $v.secrets.values "METRICS_TOKEN") $v.metrics.tokenInExistingSecret }}
@@ -32,8 +32,42 @@ spec:
   {{- with $v.database.cnpg.imageName }}
   imageName: {{ . }}
   {{- end }}
+  {{- if $v.database.cnpg.recovery.enabled }}
+  bootstrap:
+    recovery:
+      source: {{ $v.database.cnpg.recovery.sourceClusterName | required "database.cnpg.recovery.sourceClusterName is required" }}
+      database: platform
+      owner: platform
+      {{- with $v.database.cnpg.recovery.targetTime }}
+      recoveryTarget:
+        targetTime: {{ . | quote }}
+      {{- end }}
+  externalClusters:
+    - name: {{ $v.database.cnpg.recovery.sourceClusterName }}
+      barmanObjectStore:
+        destinationPath: {{ $v.database.cnpg.recovery.destinationPath | required "database.cnpg.recovery.destinationPath is required" | quote }}
+        {{- with $v.database.cnpg.recovery.endpointURL }}
+        endpointURL: {{ . | quote }}
+        {{- end }}
+        {{- include "ap.barmanCredentials" $ | nindent 8 }}
+  {{- else }}
   bootstrap:
     initdb: { database: platform, owner: platform }
+  {{- end }}
+  {{- if $v.database.cnpg.backup.enabled }}
+  backup:
+    retentionPolicy: {{ $v.database.cnpg.backup.retentionPolicy | quote }}
+    barmanObjectStore:
+      destinationPath: {{ $v.database.cnpg.backup.destinationPath | required "database.cnpg.backup.destinationPath is required" | quote }}
+      {{- with $v.database.cnpg.backup.endpointURL }}
+      endpointURL: {{ . | quote }}
+      {{- end }}
+      {{- include "ap.barmanCredentials" $ | nindent 6 }}
+      wal:
+        compression: {{ $v.database.cnpg.backup.compression }}
+      data:
+        compression: {{ $v.database.cnpg.backup.compression }}
+  {{- end }}
   storage:
     size: {{ $v.database.cnpg.storage }}
     {{- with $v.database.cnpg.storageClass }}
@@ -41,4 +75,18 @@ spec:
     {{- end }}
   monitoring:
     enablePodMonitor: {{ $v.metrics.serviceMonitor.enabled }}
+{{- end }}
+{{- if and $v.database.cnpg.enabled $v.database.cnpg.backup.enabled }}
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: {{ include "ap.cnpgName" . }}
+  labels: {{- include "ap.labels" . | nindent 4 }}
+spec:
+  schedule: {{ $v.database.cnpg.backup.schedule | quote }}
+  backupOwnerReference: self
+  immediate: true
+  cluster:
+    name: {{ include "ap.cnpgName" . }}
 {{- end }}

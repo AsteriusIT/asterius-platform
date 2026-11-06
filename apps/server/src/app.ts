@@ -3,14 +3,16 @@ import fastifyStatic from '@fastify/static';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import fs from 'node:fs';
-import { timingSafeEqual } from 'node:crypto';
+import { context, SpanStatusCode, trace, type Span } from '@opentelemetry/api';
 import path from 'node:path';
 import { ZodError } from 'zod';
 import { config } from './config.js';
 import { DatabaseRateLimitStore } from './lib/rate-limit-store.js';
 import { HttpError } from './lib/errors.js';
 import { ready, stuckLoops } from './health.js';
-import { registry } from './metrics.js';
+import { loggerOptions } from './logger.js';
+import { startRequestSpan } from './tracing.js';
+import { metrics, registerMetricsRoute } from './metrics.js';
 import { authRoutes } from './routes/auth.js';
 import { catalogRoutes } from './routes/catalog.js';
 import { actionRoutes } from './routes/actions.js';
@@ -49,9 +51,33 @@ export async function buildApp(opts: AppOptions = {}): Promise<FastifyInstance> 
   registerTriggerListeners();
   registerNotificationListeners();
   const app = Fastify({
-    logger: opts.logger === false ? false : { level: config.LOG_LEVEL, redact: ['req.headers.authorization', 'req.headers["x-asterius-token"]'] },
+    logger: opts.logger === false ? false : loggerOptions,
     bodyLimit: 5 * 1024 * 1024,
     trustProxy: trustProxy(config.TRUST_PROXY), // behind the ingress controller: client IPs for rate limiting and lockout
+  });
+
+  // HTTP metrics: route pattern (never the raw URL) keeps label cardinality bounded.
+  const SKIP = new Set(['/metrics', '/healthz', '/readyz']);
+  // Tracing: one server span per request (continues an inbound traceparent); handlers and logs run inside it.
+  const spans = new WeakMap<object, Span>();
+  app.addHook('onRequest', (req, _reply, done) => {
+    const route = req.url.split('?')[0] ?? '';
+    if (SKIP.has(route)) return done();
+    const span = startRequestSpan(req.method, route, req.headers);
+    spans.set(req, span);
+    context.with(trace.setSpan(context.active(), span), done);
+  });
+  app.addHook('onResponse', async (req, reply) => {
+    const route = req.routeOptions.url ?? 'unmatched';
+    const span = spans.get(req);
+    if (span) {
+      span.updateName(`${req.method} ${route}`);
+      span.setAttributes({ 'http.route': route, 'http.response.status_code': reply.statusCode });
+      if (reply.statusCode >= 500) span.setStatus({ code: SpanStatusCode.ERROR });
+      span.end();
+    }
+    if (SKIP.has(route)) return;
+    metrics.httpRequest(req.method, route, reply.statusCode, reply.elapsedTime / 1000);
   });
 
   // Keep the raw body: inbound webhooks verify HMAC signatures over the exact bytes.
@@ -106,17 +132,8 @@ export async function buildApp(opts: AppOptions = {}): Promise<FastifyInstance> 
     const r = await ready();
     return reply.code(r.ok ? 200 : 503).send(r);
   });
-  app.get('/metrics', { config: { rateLimit: false } }, async (req, reply) => {
-    if (config.METRICS_TOKEN) {
-      const got = Buffer.from(req.headers.authorization ?? '');
-      const want = Buffer.from(`Bearer ${config.METRICS_TOKEN}`);
-      if (got.length !== want.length || !timingSafeEqual(got, want)) return reply.code(401).send({ error: 'unauthorized' });
-    } else if (req.headers['x-forwarded-for'] || req.headers.forwarded || req.headers['x-real-ip']) {
-      // No token configured: scrapers inside the cluster reach the pod directly; anything that came through the ingress is refused.
-      return reply.code(404).send({ error: 'not found' });
-    }
-    return reply.type(registry.contentType).send(await registry.metrics());
-  });
+  // With METRICS_PORT the endpoint lives on its own listener (metrics-server.ts), unreachable through the ingress.
+  if (!config.METRICS_PORT) registerMetricsRoute(app);
 
   const routes = collectRoutes(app);
   await app.register(authRoutes);

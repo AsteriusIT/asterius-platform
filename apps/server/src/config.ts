@@ -49,9 +49,13 @@ const schema = z.object({
    */
   CALLBACK_KEYS: z.string().optional(),
   METRICS_TOKEN: z.string().optional(),
+  /** Serve /metrics (and probes) on this separate port only, so the ingress cannot reach it. Unset: /metrics on PORT. */
+  METRICS_PORT: z.coerce.number().int().optional(),
   /** Serve the built web UI from the API process (production image). */
   WEB_DIST_DIR: z.string().optional(),
   LOG_LEVEL: z.string().default('info'),
+  /** json (default, one object per line) | pretty (human readable, local development; needs pino-pretty). */
+  LOG_FORMAT: z.enum(['json', 'pretty']).default('json'),
 
   // ---- sign-in ----
   AUTH_PROVIDERS: z

@@ -7,6 +7,8 @@ import { config, paths } from './config.js';
 import { entitySearchText } from './catalog/search.js';
 import { CATALOG_MIGRATIONS } from './catalog/migrations.js';
 import { AI_MIGRATIONS } from './ai/migrations.js';
+import { componentLogger } from './logger.js';
+import { dbSpan } from './tracing.js';
 
 /**
  * Storage: Postgres in production (DATABASE_URL, any number of replicas) or SQLite for local development.
@@ -51,6 +53,16 @@ const toPg = (sql: string) => {
   let i = 0;
   return sql.replace(/\?/g, () => `$${++i}`);
 };
+
+/** Every query becomes a `db.<OP>` span (no-op unless tracing is enabled). */
+function traced(d: Driver): Driver {
+  return {
+    dialect: d.dialect,
+    query: (sql, params) => dbSpan(d.dialect, sql, () => d.query(sql, params)),
+    exec: (sql) => d.exec(sql),
+    close: () => d.close(),
+  };
+}
 
 export function postgresDriver(conn: pg.Pool | pg.PoolClient): Driver {
   return {
@@ -710,6 +722,7 @@ async function assertMigrated(d: Driver) {
   }
 }
 
+const log = componentLogger('db');
 let pool: pg.Pool | undefined;
 
 async function open(): Promise<Driver> {
@@ -719,7 +732,7 @@ async function open(): Promise<Driver> {
     return d;
   }
   pool = new pg.Pool({ connectionString: config.DATABASE_URL, max: config.DATABASE_POOL_SIZE });
-  pool.on('error', (err) => console.error('[db] idle client error', err.message)); // never crash on a dropped idle connection
+  pool.on('error', (err) => log.error({ err }, 'idle client error')); // never crash on a dropped idle connection
   // The database may start after the pods (fresh install, failover): wait instead of crash-looping.
   let client: pg.PoolClient | undefined;
   for (let attempt = 1; !client; attempt++) {
@@ -727,7 +740,7 @@ async function open(): Promise<Driver> {
       client = await pool.connect();
     } catch (err) {
       if (attempt >= 30) throw err;
-      console.warn(`[db] waiting for PostgreSQL (attempt ${attempt}/30): ${(err as Error).message}`);
+      log.warn({ attempt, err: (err as Error).message }, 'waiting for PostgreSQL');
       await new Promise((r) => setTimeout(r, Math.min(1000 * attempt, 5000)));
     }
   }
@@ -744,7 +757,10 @@ async function open(): Promise<Driver> {
   return postgresDriver(pool);
 }
 
-export const driver = await open();
+/** Connection pool occupancy (Postgres only), for the metrics endpoint. */
+export const poolStats = () => (pool ? { total: pool.totalCount, idle: pool.idleCount, waiting: pool.waitingCount } : undefined);
+
+export const driver = traced(await open());
 export const dialect = driver.dialect;
 /** Row lock suffix for `SELECT … FOR UPDATE` inside `tx` (SQLite serializes transactions in-process instead). */
 export const forUpdate = dialect === 'postgres' ? ' FOR UPDATE' : '';
@@ -774,7 +790,7 @@ export async function tx<T>(fn: (d: Driver) => Promise<T>): Promise<T> {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const r = await fn(postgresDriver(client));
+    const r = await fn(traced(postgresDriver(client)));
     await client.query('COMMIT');
     return r;
   } catch (err) {

@@ -1,14 +1,21 @@
 {{- $v := .Values -}}
 {{- if $v.serviceAccount.create }}
+{{- range $role := (list "api" "worker") }}
+{{- if or (not $v.serviceAccount.name) (eq $role "api") }}
+---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: {{ include "ap.serviceAccountName" . }}
-  labels: {{- include "ap.labels" . | nindent 4 }}
-  {{- with $v.serviceAccount.annotations }}
+  name: {{ include "ap.serviceAccountName" (dict "root" $ "role" $role) }}
+  labels: {{- include "ap.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $role }}
+  {{- $ann := merge (deepCopy (index $v.serviceAccount $role).annotations) $v.serviceAccount.annotations }}
+  {{- with $ann }}
   annotations: {{- toYaml . | nindent 4 }}
   {{- end }}
 automountServiceAccountToken: false
+{{- end }}
+{{- end }}
 {{- end }}
 {{- if $v.rbac.clusterRead.enabled }}
 ---
@@ -26,7 +33,7 @@ metadata:
   labels: {{- include "ap.labels" . | nindent 4 }}
 roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: {{ include "ap.fullname" . }}-read }
 subjects:
-  - { kind: ServiceAccount, name: {{ include "ap.serviceAccountName" . }}, namespace: {{ .Release.Namespace }} }
+  - { kind: ServiceAccount, name: {{ include "ap.serviceAccountName" (dict "root" . "role" "worker") }}, namespace: {{ .Release.Namespace }} }
 {{- end }}
 {{- range $ns := $v.rbac.jobNamespaces }}
 ---
@@ -61,5 +68,5 @@ metadata:
   labels: {{- include "ap.labels" $ | nindent 4 }}
 roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: {{ include "ap.fullname" $ }}-jobs }
 subjects:
-  - { kind: ServiceAccount, name: {{ include "ap.serviceAccountName" $ }}, namespace: {{ $.Release.Namespace }} }
+  - { kind: ServiceAccount, name: {{ include "ap.serviceAccountName" (dict "root" $ "role" "worker") }}, namespace: {{ $.Release.Namespace }} }
 {{- end }}
