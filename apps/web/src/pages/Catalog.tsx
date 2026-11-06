@@ -45,6 +45,9 @@ function columnsFor(bp: Blueprint): Column<Entity>[] {
       label: bp.schema.properties[k].title ?? k,
       render: (e: Entity) => <PropertyValue schema={bp.schema.properties[k]} value={e.properties[k]} compact />,
     })),
+    ...Object.entries(bp.computed ?? {})
+      .slice(0, 3)
+      .map(([k, c]) => ({ key: `computed-${k}`, label: c.title ?? k, render: (e: Entity) => <PropertyValue value={e.computed?.[k]} compact /> })),
     { key: 'updated', label: 'Updated', render: (e) => <TimeAgo at={e.updatedAt} /> },
   ];
 }

@@ -3,6 +3,8 @@ import { all, bool, json, now, one, run } from '../db.js';
 import { badRequest, conflict, managedError, notFound } from '../lib/errors.js';
 import { blueprintDef, type BlueprintDef } from '../schemas.js';
 import { validator } from './validation.js';
+import { invalidateComputed, recomputeBlueprint } from './computed.js';
+import { checkExpression } from '../lib/expr.js';
 
 interface Row {
   identifier: string;
@@ -11,6 +13,7 @@ interface Row {
   icon: string | null;
   schema: string;
   relations: string;
+  computed?: string;
   managed: number;
   created_at: string;
   updated_at: string;
@@ -24,6 +27,7 @@ const toBlueprint = (r: Row): Blueprint => ({
   icon: r.icon,
   schema: json(r.schema, { properties: {} }),
   relations: json(r.relations, {}),
+  computed: json(r.computed, {}),
   managed: bool(r.managed),
   createdAt: r.created_at,
   updatedAt: r.updated_at,
@@ -67,26 +71,52 @@ export async function upsertBlueprint(input: unknown, opts: WriteOpts = {}): Pro
     if (!(await one('SELECT identifier FROM blueprints WHERE identifier = ?', rel.target)))
       throw badRequest(`Relation "${name}": blueprint "${rel.target}" does not exist`);
   }
+  for (const [name, c] of Object.entries(def.computed)) {
+    if (def.schema.properties[name] || def.relations[name]) throw badRequest(`Computed property "${name}" clashes with a property or relation`);
+    if (c.kind === 'calculated') checkExpression(c.expression);
+    else if (c.kind === 'mirror') {
+      if (!def.relations[c.relation]) throw badRequest(`Computed "${name}": relation "${c.relation}" does not exist`);
+    } else {
+      if (c.function !== 'count' && !c.property) throw badRequest(`Computed "${name}": ${c.function} needs a property`);
+      if (c.filter) checkExpression(c.filter);
+      const source = c.blueprint === def.identifier ? def : opts.knownTargets?.has(c.blueprint) ? undefined : await getBlueprint(c.blueprint).catch(() => null);
+      if (source === null) throw badRequest(`Computed "${name}": blueprint "${c.blueprint}" does not exist`);
+      if (source && source.relations[c.relation]?.target !== def.identifier)
+        throw badRequest(`Computed "${name}": "${c.blueprint}.${c.relation}" is not a relation to "${def.identifier}"`);
+    }
+  }
   const existing = await one<Row>('SELECT * FROM blueprints WHERE identifier = ?', def.identifier);
   if (existing && bool(existing.managed) && !opts.managed) throw managedError('Blueprint', def.identifier);
   const t = now();
-  const values = [def.title, def.description, def.icon ?? null, JSON.stringify(def.schema), JSON.stringify(def.relations), opts.managed ? 1 : 0];
+  const values = [
+    def.title,
+    def.description,
+    def.icon ?? null,
+    JSON.stringify(def.schema),
+    JSON.stringify(def.relations),
+    JSON.stringify(def.computed),
+    opts.managed ? 1 : 0,
+  ];
   if (existing)
     await run(
-      'UPDATE blueprints SET title = ?, description = ?, icon = ?, schema = ?, relations = ?, managed = ?, updated_at = ? WHERE identifier = ?',
+      'UPDATE blueprints SET title = ?, description = ?, icon = ?, schema = ?, relations = ?, computed = ?, managed = ?, updated_at = ? WHERE identifier = ?',
       ...values,
       t,
       def.identifier,
     );
   else
     await run(
-      'INSERT INTO blueprints (title, description, icon, schema, relations, managed, created_at, updated_at, identifier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO blueprints (title, description, icon, schema, relations, computed, managed, created_at, updated_at, identifier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       ...values,
       t,
       t,
       def.identifier,
     );
   cache.delete(def.identifier);
+  invalidateComputed();
+  // Materialised values follow the definitions: recompute in the background when they changed.
+  if (JSON.stringify(def.computed) !== (existing?.computed ?? '{}'))
+    void recomputeBlueprint(def.identifier).catch((err) => console.error(`[computed] ${def.identifier}: ${(err as Error).message}`));
   return { blueprint: await getBlueprint(def.identifier), created: !existing };
 }
 
@@ -104,4 +134,5 @@ export async function deleteBlueprint(id: string, opts: { managed?: boolean } = 
       throw conflict(`Blueprint "${other.identifier}" has a relation to "${id}"`);
   await run('DELETE FROM blueprints WHERE identifier = ?', id);
   cache.delete(id);
+  invalidateComputed();
 }

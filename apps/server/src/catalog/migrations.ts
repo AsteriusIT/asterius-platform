@@ -88,4 +88,12 @@ export const CATALOG_MIGRATIONS: CatalogMigration[] = [
         ),
       ),
   },
+  {
+    id: 22,
+    name: 'computed properties',
+    up: async (d) => {
+      await d.exec("ALTER TABLE blueprints ADD COLUMN computed TEXT NOT NULL DEFAULT '{}'");
+      await d.exec("ALTER TABLE entities ADD COLUMN computed TEXT NOT NULL DEFAULT '{}'");
+    },
+  },
 ];

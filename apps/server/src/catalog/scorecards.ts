@@ -109,6 +109,7 @@ async function contextOf(e: Entity, withRelated: boolean) {
     source: e.source,
     properties: e.properties,
     relations: e.relations,
+    computed: e.computed ?? {},
     createdAt: e.createdAt,
     updatedAt: e.updatedAt,
     related: {},

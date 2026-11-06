@@ -84,6 +84,12 @@ export interface BlueprintRelation {
   required?: boolean;
 }
 
+/** Derived property: `calculated` on read, `mirror` / `aggregation` materialised on write (filterable). */
+export type ComputedProperty =
+  | { kind: 'calculated'; title?: string; expression: string }
+  | { kind: 'mirror'; title?: string; relation: string; property: string }
+  | { kind: 'aggregation'; title?: string; blueprint: string; relation: string; function: 'count' | 'sum' | 'min' | 'max'; property?: string; filter?: string };
+
 export interface Blueprint {
   identifier: string;
   title: string;
@@ -91,6 +97,7 @@ export interface Blueprint {
   icon: string | null;
   schema: ObjectSchema;
   relations: Record<string, BlueprintRelation>;
+  computed?: Record<string, ComputedProperty>;
   managed: boolean;
   entityCount?: number;
   createdAt: string;
@@ -106,6 +113,8 @@ export interface Entity {
   team: string | null;
   properties: Record<string, unknown>;
   relations: Record<string, RelationValue>;
+  /** Computed, mirror and aggregation values of the blueprint's `computed` properties. */
+  computed?: Record<string, unknown>;
   /** Who writes this entity: an integration identifier, `api`, `ui` or `config`. */
   source: string;
   createdAt: string;

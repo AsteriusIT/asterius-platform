@@ -7,6 +7,7 @@ import { getBlueprintCached } from './blueprints.js';
 import { compact, validate } from './validation.js';
 import type { Actor } from '../audit.js';
 import { recordVersion, snapshotOf } from './history.js';
+import { refreshAfterWrite, withCalculated } from './computed.js';
 import { evaluateEntity, removeEntityResults } from './scorecards.js';
 
 interface Row {
@@ -17,6 +18,7 @@ interface Row {
   properties: string;
   relations: string;
   source: string;
+  computed?: string;
   created_at: string;
   updated_at: string;
 }
@@ -28,6 +30,7 @@ export const toEntity = (r: Row): Entity => ({
   team: r.team,
   properties: json(r.properties, {}),
   relations: json(r.relations, {}),
+  computed: json(r.computed, {}),
   source: r.source,
   createdAt: r.created_at,
   updatedAt: r.updated_at,
@@ -36,7 +39,7 @@ export const toEntity = (r: Row): Entity => ({
 export async function getEntity(blueprint: string, identifier: string): Promise<Entity> {
   const r = await one<Row>('SELECT * FROM entities WHERE blueprint = ? AND identifier = ?', blueprint, identifier);
   if (!r) throw notFound(`Entity ${blueprint}/${identifier}`);
-  return toEntity(r);
+  return (await withCalculated([toEntity(r)]))[0];
 }
 
 export async function findEntity(blueprint: string, identifier: string): Promise<Entity | undefined> {
@@ -46,6 +49,8 @@ export async function findEntity(blueprint: string, identifier: string): Promise
 
 const PROP = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
 const jsonText = (prop: string) => (dialect === 'postgres' ? `(properties::jsonb ->> '${prop}')` : `CAST(json_extract(properties, '$.${prop}') AS TEXT)`);
+/** Materialised (mirror, aggregation) values are filterable like properties. */
+const computedText = (prop: string) => (dialect === 'postgres' ? `(computed::jsonb ->> '${prop}')` : `CAST(json_extract(computed, '$.${prop}') AS TEXT)`);
 
 export interface EntityQuery {
   blueprint?: string;
@@ -72,13 +77,13 @@ export async function searchEntities(q: EntityQuery): Promise<EntityPage> {
   if (q.search) add("search LIKE ? ESCAPE '\\'", `%${likeEscape(q.search.toLowerCase())}%`);
   for (const [k, v] of Object.entries(q.filters ?? {})) {
     if (!PROP.test(k)) throw badRequest(`Invalid filter property "${k}"`);
-    add(`${jsonText(k)} = ?`, dialect === 'sqlite' && (v === 'true' || v === 'false') ? (v === 'true' ? '1' : '0') : v);
+    add(`COALESCE(${jsonText(k)}, ${computedText(k)}) = ?`, dialect === 'sqlite' && (v === 'true' || v === 'false') ? (v === 'true' ? '1' : '0') : v);
   }
   const w = where.length ? `WHERE ${where.join(' AND ')}` : '';
   const order = q.sort === 'updated' ? 'updated_at DESC' : q.sort === 'identifier' ? 'identifier' : 'title, identifier';
   const [total] = await all<{ n: number }>(`SELECT count(*) AS n FROM entities ${w}`, ...params);
   const rows = await all<Row>(`SELECT * FROM entities ${w} ORDER BY ${order} LIMIT ? OFFSET ?`, ...params, q.limit, q.offset);
-  return { items: rows.map(toEntity), total: Number(total?.n ?? 0) };
+  return { items: await withCalculated(rows.map(toEntity)), total: Number(total?.n ?? 0) };
 }
 
 export async function related(blueprint: string, identifier: string): Promise<RelatedEntities> {
@@ -206,6 +211,7 @@ export async function upsertEntity(blueprint: string, raw: unknown, opts: Upsert
       after: snapshotOf({ ...next }),
     });
   });
+  await refreshAfterWrite(blueprint, input.identifier, existing?.relations ?? null, relations, bp.relations);
   const entity = await getEntity(blueprint, input.identifier);
   await emit({ type: existing ? 'entity.updated' : 'entity.created', blueprint, data: { entity, before: existing ?? null }, actor: opts.actor });
   await evaluateEntity(entity);
@@ -232,6 +238,7 @@ export async function deleteEntity(blueprint: string, identifier: string, actor?
     await recordVersion(d, { blueprint, entity: identifier, op: 'delete', actor, source: actor ? 'user' : 'system', before: snapshotOf(entity), after: null });
   });
   await removeEntityResults(blueprint, identifier);
+  await refreshAfterWrite(blueprint, identifier, entity.relations, null, (await getBlueprintCached(blueprint)).relations);
   await emit({ type: 'entity.deleted', blueprint, data: { entity }, actor });
   return entity;
 }

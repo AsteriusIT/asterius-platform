@@ -166,6 +166,18 @@ function EntityView({ bp, e }: { bp: Blueprint; e: Entity }) {
                         </Table.Td>
                       </Table.Tr>
                     ))}
+                    {Object.entries(bp.computed ?? {}).map(([k, c]) => (
+                      <Table.Tr key={`computed-${k}`}>
+                        <Table.Td w="35%" c="dimmed" fz="sm" style={{ verticalAlign: 'top' }}>
+                          <Tooltip label={`Computed (${c.kind})`}>
+                            <span>{c.title ?? k}</span>
+                          </Tooltip>
+                        </Table.Td>
+                        <Table.Td>
+                          <PropertyValue value={e.computed?.[k]} />
+                        </Table.Td>
+                      </Table.Tr>
+                    ))}
                     {Object.keys(e.properties)
                       .filter((k) => !bp.schema.properties[k])
                       .map((k) => (

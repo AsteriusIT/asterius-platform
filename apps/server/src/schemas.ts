@@ -45,6 +45,40 @@ export const subjects = z
   })
   .default({});
 
+/**
+ * Derived properties. `calculated` is evaluated when an entity is read; `mirror` and `aggregation` are
+ * materialised when the entity or the entities it relates to are written, so they stay filterable.
+ */
+export const computedDef = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('calculated'),
+    title: z.string().max(100).optional(),
+    /** JSONata over the entity (`properties`, `relations`, `computed`, `title`, `team`…). */
+    expression: z.string().min(1).max(2000),
+  }),
+  z.object({
+    kind: z.literal('mirror'),
+    title: z.string().max(100).optional(),
+    /** A relation of this blueprint… */
+    relation: fieldName,
+    /** …and what to copy from the related entity: a property name, `title`, `team` or `identifier`. */
+    property: z.string().min(1).max(64).default('title'),
+  }),
+  z.object({
+    kind: z.literal('aggregation'),
+    title: z.string().max(100).optional(),
+    /** Entities of this blueprint pointing to the entity through `relation`. */
+    blueprint: slug,
+    relation: fieldName,
+    function: z.enum(['count', 'sum', 'min', 'max']),
+    /** sum, min and max: the numeric property to aggregate. */
+    property: z.string().min(1).max(64).optional(),
+    /** JSONata over the pointing entity (`properties`, `team`…): only those where it is truthy are aggregated. */
+    filter: z.string().max(2000).optional(),
+  }),
+]);
+export type ComputedDef = z.infer<typeof computedDef>;
+
 export const blueprintDef = z.object({
   identifier: slug,
   title: z.string().min(1).max(100),
@@ -62,6 +96,7 @@ export const blueprintDef = z.object({
       }),
     )
     .default({}),
+  computed: z.record(fieldName, computedDef).default({}),
 });
 export type BlueprintDef = z.infer<typeof blueprintDef>;
 
