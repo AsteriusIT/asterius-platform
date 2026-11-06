@@ -84,6 +84,20 @@ config:
   existingConfigMap: ""
   # Use the example configuration baked in the image (demo / first steps).
   useImageDefaults: false
+  # Keep the configuration in a repository: a sync sidecar clones it into a shared volume and the platform
+  # re-reads it every minute. Replaces the ConfigMap (`files`, `existingConfigMap`).
+  gitSync:
+    enabled: false
+    repo: "" # https://example.com/acme/platform-config.git
+    ref: main
+    path: "" # sub-directory of the repository that holds the YAML files
+    period: 60s
+    image: registry.k8s.io/git-sync/git-sync:v4.4.0
+    # Secret with `username` and `password` (token) keys, for private repositories over HTTPS. Optional.
+    credentialsSecret: ""
+    resources:
+      requests: { cpu: 10m, memory: 32Mi }
+      limits: { memory: 128Mi }
 
 # ---------- settings ----------
 settings:

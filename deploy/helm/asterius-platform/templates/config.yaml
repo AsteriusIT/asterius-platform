@@ -7,7 +7,7 @@ metadata:
   labels: {{- include "ap.labels" . | nindent 4 }}
 data:
   PUBLIC_URL: {{ $v.publicUrl | quote }}
-  CONFIG_DIR: /etc/asterius/config
+  CONFIG_DIR: {{ if $v.config.gitSync.enabled }}{{ printf "/git/config/%s" $v.config.gitSync.path | trimSuffix "/" | quote }}{{ else }}/etc/asterius/config{{ end }}
   LOG_LEVEL: {{ $v.settings.logLevel | quote }}
   DATABASE_POOL_SIZE: {{ $v.database.poolSize | quote }}
   WORKER_CONCURRENCY: {{ $v.worker.concurrency | quote }}
