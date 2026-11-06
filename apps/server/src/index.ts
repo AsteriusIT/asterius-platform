@@ -6,6 +6,7 @@ initTracing(config.PLATFORM_ROLE);
 const { buildApp } = await import('./app.js');
 const { closeDb } = await import('./db.js');
 const { startConfigLoader } = await import('./config-loader.js');
+const { loadPlugins } = await import('./plugins.js');
 const { startRunWorker, WORKER_ID } = await import('./actions/worker.js');
 const { startSyncScheduler } = await import('./integrations/sync.js');
 const { startInboundWorker } = await import('./integrations/inbound.js');
@@ -21,6 +22,7 @@ const { startMaintenance } = await import('./maintenance.js');
  */
 // reloadConfig is only called by HTTP requests, after the loader exists.
 const app = await buildApp({ reloadConfig: () => loader.reload() });
+await loadPlugins(app.log); // before the configuration: it may use plugin types
 const loader = await startConfigLoader(app.log);
 
 const stops: (() => unknown)[] = [loader.stop];

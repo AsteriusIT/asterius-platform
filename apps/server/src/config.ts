@@ -62,6 +62,10 @@ const schema = z.object({
   RUN_TIMEOUT_HOURS: z.coerce.number().default(24),
   /** Outbound HTTP timeout for invokers, sources and webhooks. */
   HTTP_TIMEOUT_SECONDS: z.coerce.number().default(30),
+  /** Directory of plugin modules (*.mjs / *.js, or sub-directories with an index) loaded at startup. */
+  PLUGIN_DIR: z.string().optional(),
+  /** Comma separated plugin packages or paths loaded at startup (installed in the image). */
+  PLUGINS: z.string().default(''),
   /** Retries of outbound requests on 429 / 5xx / network errors (0 disables), with jittered exponential backoff. */
   HTTP_RETRIES: z.coerce.number().int().min(0).max(10).default(3),
   HTTP_RETRY_BASE_MS: z.coerce.number().int().min(1).default(500),

@@ -5,6 +5,7 @@
   "description": "Internal developer portal: software catalog, self-service actions with approvals, pipeline/webhook automation and third-party data ingestion.",
   "workspaces": [
     "packages/shared",
+    "packages/plugin-sdk",
     "apps/server",
     "apps/web"
   ],
