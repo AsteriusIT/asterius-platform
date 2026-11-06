@@ -1,6 +1,6 @@
 import type { Blueprint, Entity, EntityPage, RelatedEntities, RelationValue } from '@asterius/shared';
 import { all, dialect, json, likeEscape, now, one, tx, type Driver, type SqlValue } from '../db.js';
-import { badRequest, notFound } from '../lib/errors.js';
+import { badRequest, conflict, notFound } from '../lib/errors.js';
 import { emit } from '../events.js';
 import { entityInput, type EntityInput } from '../schemas.js';
 import { getBlueprintCached } from './blueprints.js';
@@ -118,13 +118,22 @@ export async function related(blueprint: string, identifier: string): Promise<Re
     blueprint,
     identifier,
   );
-  for (const r of refs) (incoming[`${r.blueprint}.${r.relation}`] ??= []).push(toEntity(r));
-  return { outgoing, incoming };
+  const incomingTitles: Record<string, string> = {};
+  for (const r of refs) {
+    const key = `${r.blueprint}.${r.relation}`;
+    (incoming[key] ??= []).push(toEntity(r));
+    if (!incomingTitles[key]) {
+      const sbp = await getBlueprintCached(r.blueprint).catch(() => undefined);
+      const rel = sbp?.relations[r.relation];
+      incomingTitles[key] = rel?.inverseTitle ?? `${sbp?.title ?? r.blueprint} · ${rel?.title ?? r.relation}`;
+    }
+  }
+  return { outgoing, incoming, incomingTitles };
 }
 
 export const relationIds = (v: RelationValue | undefined): string[] => (v == null ? [] : Array.isArray(v) ? v : [v]);
 
-function checkRelations(bp: Blueprint, relations: Record<string, RelationValue>) {
+async function checkRelations(bp: Blueprint, relations: Record<string, RelationValue>, source: string) {
   const out: Record<string, RelationValue> = {};
   for (const [name, value] of Object.entries(relations)) {
     const rel = bp.relations[name];
@@ -137,6 +146,20 @@ function checkRelations(bp: Blueprint, relations: Record<string, RelationValue>)
     } else out[name] = String(value);
   }
   for (const [name, rel] of Object.entries(bp.relations)) if (rel.required && !out[name]) throw badRequest(`Relation "${name}" is required`);
+  // Hand-written entities may not point at nothing when the relation says so (ingestion may point ahead).
+  if (source === 'ui' || source === 'api')
+    for (const [name, value] of Object.entries(out)) {
+      const rel = bp.relations[name];
+      if (!rel.requireExisting) continue;
+      const ids = relationIds(value);
+      const found = await all<{ identifier: string }>(
+        `SELECT identifier FROM entities WHERE blueprint = ? AND identifier IN (${ids.map(() => '?').join(',')})`,
+        rel.target,
+        ...ids,
+      );
+      const missing = ids.filter((id) => !found.some((f) => f.identifier === id));
+      if (missing.length) throw badRequest(`Relation "${name}": ${rel.target} ${missing.join(', ')} does not exist`);
+    }
   return out;
 }
 
@@ -157,6 +180,8 @@ export interface UpsertOpts {
   createOnly?: boolean;
   /** Seed entities: never touch an existing entity. */
   skipExisting?: boolean;
+  /** With `merge`: relations replace the existing ones instead of being merged key by key (detaching removes keys). */
+  replaceRelations?: boolean;
   /** History label of the change (a revert is recorded as such). */
   op?: 'revert';
 }
@@ -175,7 +200,11 @@ export async function upsertEntity(blueprint: string, raw: unknown, opts: Upsert
 
   const properties = compact(opts.merge && existing ? { ...existing.properties, ...input.properties } : input.properties);
   validate(bp.schema, properties, `properties of ${blueprint}/${input.identifier}`);
-  const relations = checkRelations(bp, opts.merge && existing ? { ...existing.relations, ...input.relations } : input.relations);
+  const relations = await checkRelations(
+    bp,
+    opts.merge && existing && !opts.replaceRelations ? { ...existing.relations, ...input.relations } : input.relations,
+    opts.source,
+  );
   const team = input.team === undefined ? (existing?.team ?? null) : input.team;
   await assertTeam(team);
   const title = input.title?.trim() || existing?.title || input.identifier;
@@ -231,8 +260,78 @@ async function writeRelations(d: Driver, bp: Blueprint, identifier: string, rela
       ]);
 }
 
+interface Referrer {
+  blueprint: string;
+  identifier: string;
+  relation: string;
+}
+
+const referrersOf = (blueprint: string, identifier: string) =>
+  all<Referrer>(
+    'SELECT DISTINCT blueprint, identifier, relation FROM entity_relations WHERE target_blueprint = ? AND target_identifier = ? AND NOT (blueprint = ? AND identifier = ?)',
+    blueprint,
+    identifier,
+    blueprint,
+    identifier,
+  );
+
+interface DeletePlan {
+  remove: Entity[];
+  detach: Map<string, { entity: Entity; relation: string; target: string }[]>;
+}
+
+/** Work out what deleting an entity does to its referrers (restrict / cascade / detach) before touching anything. */
+async function planDelete(entity: Entity, plan: DeletePlan, seen: Set<string>) {
+  const key = `${entity.blueprint}/${entity.identifier}`;
+  if (seen.has(key)) return;
+  seen.add(key);
+  plan.remove.push(entity);
+  for (const ref of await referrersOf(entity.blueprint, entity.identifier)) {
+    if (seen.has(`${ref.blueprint}/${ref.identifier}`)) continue;
+    const rel = (await getBlueprintCached(ref.blueprint)).relations[ref.relation];
+    const policy = rel?.onDelete ?? 'ignore';
+    if (policy === 'restrict') throw conflict(`${ref.blueprint}/${ref.identifier} still points to ${key} (relation "${ref.relation}" restricts deletion)`);
+    if (policy === 'ignore') continue;
+    const referrer = await findEntity(ref.blueprint, ref.identifier);
+    if (!referrer) continue;
+    if (policy === 'cascade') await planDelete(referrer, plan, seen);
+    else {
+      if (rel?.required && !rel.many)
+        throw conflict(`${ref.blueprint}/${ref.identifier} requires relation "${ref.relation}": it cannot be detached from ${key}`);
+      const list = plan.detach.get(`${ref.blueprint}/${ref.identifier}`) ?? [];
+      list.push({ entity: referrer, relation: ref.relation, target: entity.identifier });
+      plan.detach.set(`${ref.blueprint}/${ref.identifier}`, list);
+    }
+  }
+}
+
+/**
+ * Delete an entity, honouring the `onDelete` policy of the relations pointing to it: `restrict` refuses (409),
+ * `cascade` deletes the referrers too, `detach` removes the reference from them. Returns the entity.
+ */
 export async function deleteEntity(blueprint: string, identifier: string, actor?: Actor) {
   const entity = await getEntity(blueprint, identifier);
+  const plan: DeletePlan = { remove: [], detach: new Map() };
+  await planDelete(entity, plan, new Set());
+  const removing = new Set(plan.remove.map((e) => `${e.blueprint}/${e.identifier}`));
+  for (const [key, edits] of plan.detach) {
+    if (removing.has(key)) continue;
+    const { entity: ref } = edits[0];
+    const relations = { ...ref.relations };
+    for (const { relation, target } of edits) {
+      const left = relationIds(relations[relation]).filter((id) => id !== target);
+      if (left.length) relations[relation] = Array.isArray(relations[relation]) ? left : left[0];
+      else delete relations[relation];
+    }
+    await upsertEntity(ref.blueprint, { identifier: ref.identifier, relations }, { source: ref.source, actor, merge: true, replaceRelations: true });
+  }
+  // Referrers first, then the entity itself.
+  for (const e of [...plan.remove].reverse()) await deleteOne(e, actor);
+  return entity;
+}
+
+async function deleteOne(entity: Entity, actor?: Actor) {
+  const { blueprint, identifier } = entity;
   await tx(async (d) => {
     await d.query('DELETE FROM entities WHERE blueprint = ? AND identifier = ?', [blueprint, identifier]);
     await recordVersion(d, { blueprint, entity: identifier, op: 'delete', actor, source: actor ? 'user' : 'system', before: snapshotOf(entity), after: null });
@@ -240,5 +339,4 @@ export async function deleteEntity(blueprint: string, identifier: string, actor?
   await removeEntityResults(blueprint, identifier);
   await refreshAfterWrite(blueprint, identifier, entity.relations, null, (await getBlueprintCached(blueprint)).relations);
   await emit({ type: 'entity.deleted', blueprint, data: { entity }, actor });
-  return entity;
 }

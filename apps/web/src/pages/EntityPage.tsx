@@ -203,7 +203,10 @@ function EntityView({ bp, e }: { bp: Blueprint; e: Entity }) {
                   {(rel) => (
                     <>
                       <RelationCard title="Relations" groups={Object.entries(bp.relations).map(([name, r]) => [r.title ?? name, rel.outgoing[name] ?? []])} />
-                      <RelationCard title="Referenced by" groups={Object.entries(rel.incoming).map(([k, list]) => [k.replace('.', ' · '), list])} />
+                      <RelationCard
+                        title="Referenced by"
+                        groups={Object.entries(rel.incoming).map(([k, list]) => [rel.incomingTitles?.[k] ?? k.replace('.', ' · '), list])}
+                      />
                     </>
                   )}
                 </QueryView>

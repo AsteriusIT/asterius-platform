@@ -34,6 +34,9 @@ export interface RelationDraft {
   target: string;
   many: boolean;
   required: boolean;
+  onDelete: NonNullable<BlueprintRelation['onDelete']>;
+  inverseTitle: string;
+  requireExisting: boolean;
 }
 
 const SLUG = /^[a-z][a-z0-9_-]{0,63}$/;
@@ -51,11 +54,34 @@ export function toBlueprintDoc(v: Record<string, unknown>): BlueprintDoc {
 }
 
 export const relationsToDrafts = (r: Record<string, BlueprintRelation>): RelationDraft[] =>
-  Object.entries(r).map(([name, rel]) => ({ id: newId(), name, title: rel.title ?? '', target: rel.target, many: !!rel.many, required: !!rel.required }));
+  Object.entries(r).map(([name, rel]) => ({
+    id: newId(),
+    name,
+    title: rel.title ?? '',
+    target: rel.target,
+    many: !!rel.many,
+    required: !!rel.required,
+    onDelete: rel.onDelete ?? 'ignore',
+    inverseTitle: rel.inverseTitle ?? '',
+    requireExisting: !!rel.requireExisting,
+  }));
 
 export const draftsToRelations = (drafts: RelationDraft[]): Record<string, BlueprintRelation> =>
   Object.fromEntries(
-    drafts.filter((d) => d.name).map((d) => [d.name, { ...(d.title ? { title: d.title } : {}), target: d.target, many: d.many, required: d.required }]),
+    drafts
+      .filter((d) => d.name)
+      .map((d) => [
+        d.name,
+        {
+          ...(d.title ? { title: d.title } : {}),
+          target: d.target,
+          many: d.many,
+          required: d.required,
+          ...(d.onDelete !== 'ignore' ? { onDelete: d.onDelete } : {}),
+          ...(d.inverseTitle ? { inverseTitle: d.inverseTitle } : {}),
+          ...(d.requireExisting ? { requireExisting: true } : {}),
+        },
+      ]),
   );
 
 export function blueprintProblems(doc: BlueprintDoc, fields: FieldDraft[], relations: RelationDraft[]): string[] {
@@ -348,7 +374,34 @@ function RelationsEditor({
             <Group gap="xl">
               <Switch label="Many (a list of entities)" checked={r.many} onChange={(e) => update(r.id, { many: e.currentTarget.checked })} />
               <Checkbox label="Required" checked={r.required} onChange={(e) => update(r.id, { required: e.currentTarget.checked })} />
+              <Checkbox
+                label="Target must exist"
+                description="For entities written by hand (UI, API)"
+                checked={r.requireExisting}
+                onChange={(e) => update(r.id, { requireExisting: e.currentTarget.checked })}
+              />
             </Group>
+            <SimpleGrid cols={{ base: 1, sm: 2 }}>
+              <Select
+                label="When the target is deleted"
+                data={[
+                  { value: 'ignore', label: 'Keep the reference (shown as missing)' },
+                  { value: 'detach', label: 'Remove the reference' },
+                  { value: 'cascade', label: 'Delete this entity too' },
+                  { value: 'restrict', label: 'Refuse the deletion' },
+                ]}
+                value={r.onDelete}
+                onChange={(v) => update(r.id, { onDelete: (v as RelationDraft['onDelete']) ?? 'ignore' })}
+                allowDeselect={false}
+              />
+              <TextInput
+                label="Reverse label"
+                description="How the target's page names these entities"
+                placeholder="Used by"
+                value={r.inverseTitle}
+                onChange={(e) => update(r.id, { inverseTitle: e.currentTarget.value })}
+              />
+            </SimpleGrid>
           </Stack>
         </Card>
       ))}
@@ -358,7 +411,12 @@ function RelationsEditor({
           color="gray"
           c="var(--mantine-color-text)"
           leftSection={<IconPlus size={16} />}
-          onClick={() => onChange([...relations, { id: newId(), name: '', title: '', target: '', many: false, required: false }])}
+          onClick={() =>
+            onChange([
+              ...relations,
+              { id: newId(), name: '', title: '', target: '', many: false, required: false, onDelete: 'ignore', inverseTitle: '', requireExisting: false },
+            ])
+          }
         >
           Add a relation
         </Button>

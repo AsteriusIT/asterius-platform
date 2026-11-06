@@ -82,6 +82,12 @@ export interface BlueprintRelation {
   target: string;
   many?: boolean;
   required?: boolean;
+  /** Deleting the target: restrict (refuse), cascade (delete the referrers), detach (drop the reference), ignore (default). */
+  onDelete?: 'restrict' | 'cascade' | 'detach' | 'ignore';
+  /** Name of the reverse relation shown on the target's page. */
+  inverseTitle?: string;
+  /** UI/API writes must point to existing entities. */
+  requireExisting?: boolean;
 }
 
 /** Derived property: `calculated` on read, `mirror` / `aggregation` materialised on write (filterable). */
@@ -149,6 +155,8 @@ export interface RelatedEntities {
   outgoing: Record<string, Entity[]>;
   /** Entities pointing to this one: `<blueprint>.<relation>` → entities. */
   incoming: Record<string, Entity[]>;
+  /** Display names of the `incoming` groups (the relation's `inverseTitle`). */
+  incomingTitles?: Record<string, string>;
 }
 
 // ---------- self-service ----------

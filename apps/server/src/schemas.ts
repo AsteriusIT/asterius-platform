@@ -93,6 +93,15 @@ export const blueprintDef = z.object({
         target: slug,
         many: z.boolean().default(false),
         required: z.boolean().default(false),
+        /**
+         * What deleting the target does to entities pointing to it: restrict (refuse), cascade (delete them too),
+         * detach (remove the reference) or ignore (keep it; it shows as missing).
+         */
+        onDelete: z.enum(['restrict', 'cascade', 'detach', 'ignore']).default('ignore'),
+        /** How the target's page names the entities pointing to it (e.g. "Used by"). */
+        inverseTitle: z.string().max(100).optional(),
+        /** Entities written by hand (UI, API) must point to entities that exist; ingestion may point ahead. */
+        requireExisting: z.boolean().default(false),
       }),
     )
     .default({}),

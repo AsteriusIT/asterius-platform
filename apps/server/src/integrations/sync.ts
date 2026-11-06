@@ -154,11 +154,21 @@ async function deleteMissing(r: IntegrationRow, mappings: MappingDef[], seen: Se
     log.add(`SKIPPED deleting ${stale.length} entities: the source returned nothing`);
     return;
   }
+  let deleted = 0;
   for (const e of stale) {
-    await deleteEntity(e.blueprint, e.identifier, SYSTEM_ACTOR);
-    stats.deleted++;
+    // A relation may restrict the deletion (onDelete: restrict): keep the entity, report it.
+    await deleteEntity(e.blueprint, e.identifier, SYSTEM_ACTOR).then(
+      () => {
+        stats.deleted++;
+        deleted++;
+      },
+      (err) => {
+        stats.skipped++;
+        log.add(`NOT deleted ${e.blueprint}/${e.identifier}: ${(err as Error).message}`);
+      },
+    );
   }
-  log.add(`${stale.length} entities no longer in the source were deleted`);
+  log.add(`${deleted} entities no longer in the source were deleted`);
 }
 
 // ---------- inbound webhooks ----------

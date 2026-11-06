@@ -1,5 +1,5 @@
 import type { Blueprint } from '@asterius/shared';
-import { all, bool, json, now, one, run } from '../db.js';
+import { all, bool, json, now, one, run, tx } from '../db.js';
 import { badRequest, conflict, managedError, notFound } from '../lib/errors.js';
 import { blueprintDef, type BlueprintDef } from '../schemas.js';
 import { validator } from './validation.js';
@@ -114,10 +114,55 @@ export async function upsertBlueprint(input: unknown, opts: WriteOpts = {}): Pro
     );
   cache.delete(def.identifier);
   invalidateComputed();
+  if (existing) await syncRelationIndex(def.identifier, def.relations);
   // Materialised values follow the definitions: recompute in the background when they changed.
   if (JSON.stringify(def.computed) !== (existing?.computed ?? '{}'))
     void recomputeBlueprint(def.identifier).catch((err) => console.error(`[computed] ${def.identifier}: ${(err as Error).message}`));
   return { blueprint: await getBlueprint(def.identifier), created: !existing };
+}
+
+/**
+ * The relation index (`entity_relations`) denormalises each relation's target blueprint. When a blueprint changes,
+ * retarget the rows of relations whose target changed and drop those of relations that no longer exist.
+ */
+async function syncRelationIndex(id: string, relations: Record<string, { target: string }>) {
+  const names = Object.keys(relations);
+  for (const [name, rel] of Object.entries(relations))
+    await run(
+      'UPDATE entity_relations SET target_blueprint = ? WHERE blueprint = ? AND relation = ? AND target_blueprint != ?',
+      rel.target,
+      id,
+      name,
+      rel.target,
+    );
+  if (names.length) await run(`DELETE FROM entity_relations WHERE blueprint = ? AND relation NOT IN (${names.map(() => '?').join(',')})`, id, ...names);
+  else await run('DELETE FROM entity_relations WHERE blueprint = ?', id);
+}
+
+/** Rebuild the relation index of a blueprint from the entities' own relation documents (repairs any drift). */
+export async function repairRelationIndex(id: string): Promise<{ entities: number; references: number }> {
+  const bp = await getBlueprint(id);
+  let references = 0;
+  const rows = await all<{ identifier: string; relations: string }>('SELECT identifier, relations FROM entities WHERE blueprint = ?', id);
+  await tx(async (d) => {
+    await d.query('DELETE FROM entity_relations WHERE blueprint = ?', [id]);
+    for (const r of rows)
+      for (const [name, value] of Object.entries(json<Record<string, string | string[] | null>>(r.relations, {}))) {
+        const rel = bp.relations[name];
+        if (!rel) continue;
+        for (const target of Array.isArray(value) ? value : value ? [value] : []) {
+          await d.query('INSERT INTO entity_relations (blueprint, identifier, relation, target_blueprint, target_identifier) VALUES (?, ?, ?, ?, ?)', [
+            id,
+            r.identifier,
+            name,
+            rel.target,
+            target,
+          ]);
+          references++;
+        }
+      }
+  });
+  return { entities: rows.length, references };
 }
 
 export async function deleteBlueprint(id: string, opts: { managed?: boolean } = {}) {

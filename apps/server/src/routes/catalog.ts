@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { HomeSummary } from '@asterius/shared';
 import { audit } from '../audit.js';
 import { actorOf, canEditEntity, isAdmin, requireAdmin, requireUser, type Principal } from '../auth/users.js';
-import { deleteBlueprint, getBlueprint, listBlueprints, upsertBlueprint } from '../catalog/blueprints.js';
+import { deleteBlueprint, getBlueprint, listBlueprints, repairRelationIndex, upsertBlueprint } from '../catalog/blueprints.js';
 import { deleteEntity, findEntity, getEntity, related, searchEntities, upsertEntity } from '../catalog/entities.js';
 import { badRequest, forbidden } from '../lib/errors.js';
 import { getVersion, listVersions } from '../catalog/history.js';
@@ -53,6 +53,12 @@ export async function catalogRoutes(app: FastifyInstance) {
     const { blueprint, created } = await upsertBlueprint({ ...(req.body as object), identifier: bp });
     await audit(actorOf(req.principal), created ? 'blueprint.created' : 'blueprint.updated', bp);
     return blueprint;
+  });
+  app.post('/blueprints/:bp/repair-relations', { preHandler: requireAdmin }, async (req) => {
+    const { bp } = bpParam.parse(req.params);
+    const result = await repairRelationIndex(bp);
+    await audit(actorOf(req.principal), 'blueprint.relations_repaired', bp, result);
+    return result;
   });
   app.delete('/blueprints/:bp', { preHandler: requireAdmin }, async (req) => {
     const { bp } = bpParam.parse(req.params);
