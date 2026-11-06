@@ -6,6 +6,7 @@ import { azureDevOpsSource } from './azure-devops.js';
 import { gitlabSource } from './gitlab.js';
 import { kubernetesSource } from './kubernetes.js';
 import { sqlSource } from './sql.js';
+import { descriptorsSource } from './descriptors.js';
 import { externalSource } from './external.js';
 import { graphqlSource, httpSource, webhookSource } from './http.js';
 
@@ -16,7 +17,18 @@ export function registerSource(s: Source) {
   registry.set(s.info.type, s);
 }
 
-for (const s of [githubSource, azureDevOpsSource, gitlabSource, kubernetesSource, httpSource, graphqlSource, sqlSource, externalSource, webhookSource])
+for (const s of [
+  githubSource,
+  azureDevOpsSource,
+  gitlabSource,
+  kubernetesSource,
+  httpSource,
+  graphqlSource,
+  sqlSource,
+  descriptorsSource,
+  externalSource,
+  webhookSource,
+])
   registerSource(s);
 
 export function getSource(type: string): Source {

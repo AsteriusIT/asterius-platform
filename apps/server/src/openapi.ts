@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import { DESCRIPTOR_SCHEMA } from './integrations/sources/descriptors.js';
 import { actionDef, blueprintDef, configFile, entityInput, integrationDef, teamDef, webhookDef } from './schemas.js';
 
 /**
@@ -74,8 +75,10 @@ export function buildOpenApi(routes: RouteInfo[], version = '0.1.0') {
     const segs = url.split('/').filter((s) => s && !s.startsWith('{'));
     paths[url] ??= {};
     paths[url]![method] = {
-      operationId: camel(`${method}-${segs.slice(2).join('-') || 'root'}${params.length ? `-by-${params.map((p) => p.name).join('-')}` : ''}`),
-      tags: [segs[2] ?? 'api'],
+      operationId: camel(
+        `${method}-${segs.filter((x) => x !== 'api' && x !== 'v1').join('-') || 'root'}${params.length ? `-by-${params.map((p) => p.name).join('-')}` : ''}`,
+      ),
+      tags: [segs.filter((x) => x !== 'api' && x !== 'v1')[0] ?? 'api'],
       summary: `${r.method} ${url}`,
       parameters: params,
       ...(body ? { requestBody: { required: true, content: { 'application/json': { schema: { $ref: `#/components/schemas/${body}` } } } } } : {}),
@@ -120,6 +123,7 @@ export function renderDocs(spec: ReturnType<typeof buildOpenApi>): string {
 
 /** Serve /api/openapi.json and /api/docs from the routes collected so far (call after all routes are registered). */
 export function registerOpenApi(app: FastifyInstance, routes: RouteInfo[], version: string) {
+  app.get('/api/descriptor-schema.json', async () => DESCRIPTOR_SCHEMA);
   let spec: ReturnType<typeof buildOpenApi> | undefined;
   const get = () => (spec ??= buildOpenApi(routes, version));
   app.get('/api/openapi.json', { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async () => get());
