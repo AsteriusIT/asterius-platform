@@ -3,7 +3,7 @@ import { config } from './config.js';
 import { all, run, withAdvisoryLock } from './db.js';
 import { purgeExpiredAuth } from './auth/users.js';
 
-/** Hourly housekeeping (one replica at a time): expired sessions, data past RETENTION_DAYS. */
+/** Hourly housekeeping (one replica at a time): expired sessions, data past RETENTION_DAYS (audit: AUDIT_RETENTION_DAYS). */
 export async function housekeeping(log: FastifyBaseLogger) {
   await withAdvisoryLock(726203, async () => {
     await purgeExpiredAuth();
@@ -11,7 +11,7 @@ export async function housekeeping(log: FastifyBaseLogger) {
     const finished = "('SUCCESS', 'FAILURE', 'REJECTED', 'CANCELLED')";
     const runs = await run(`DELETE FROM runs WHERE status IN ${finished} AND ended_at < ?`, cutoff);
     const deliveries = await run("DELETE FROM deliveries WHERE status != 'pending' AND created_at < ?", cutoff);
-    const audit = await run('DELETE FROM audit_log WHERE at < ?', cutoff);
+    const audit = await run('DELETE FROM audit_log WHERE at < ?', new Date(Date.now() - config.AUDIT_RETENTION_DAYS * 86400_000).toISOString());
     // Sync history: RETENTION_DAYS, but always keep the last 20 per integration.
     let syncs = 0;
     for (const { integration } of await all<{ integration: string }>('SELECT DISTINCT integration FROM sync_runs')) {

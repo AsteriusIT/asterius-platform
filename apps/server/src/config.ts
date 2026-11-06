@@ -107,6 +107,19 @@ const schema = z.object({
   HTTP_TIMEOUT_SECONDS: z.coerce.number().default(30),
   /** Keep run logs, sync runs, deliveries and audit entries for N days. */
   RETENTION_DAYS: z.coerce.number().int().min(1).default(90),
+  /** Audit entries are kept longer than operational data. */
+  AUDIT_RETENTION_DAYS: z.coerce.number().int().min(1).default(365),
+  /** Link audit entries in a hash chain (tamper evidence). With AUDIT_CHAIN_KEY the hashes are HMACs only the platform can produce. */
+  AUDIT_HASH_CHAIN: bool(false),
+  AUDIT_CHAIN_KEY: z.string().optional(),
+  /** Maximum rows of one audit export. */
+  AUDIT_EXPORT_MAX: z.coerce.number().int().min(1).default(100_000),
+  /** Stream audit entries to a SIEM: HTTPS endpoint and/or syslog (udp:// or tcp://). */
+  AUDIT_STREAM_URL: z.string().optional(),
+  AUDIT_STREAM_TOKEN: z.string().optional(),
+  AUDIT_STREAM_SECRET: z.string().optional(),
+  AUDIT_SYSLOG_URL: z.string().optional(),
+  AUDIT_STREAM_INTERVAL_SECONDS: z.coerce.number().int().min(1).default(10),
   KUBECONFIG_PATH: z.string().optional(),
 
   // ---- external secret managers (references ${vault:…} ${awssm:…} ${azkv:…} ${gcpsm:…} ${k8s:…}) ----

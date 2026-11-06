@@ -7,6 +7,7 @@ import { render } from '../lib/expr.js';
 import { resolveRef } from '../secrets.js';
 import { deleteEntity, upsertEntity } from '../catalog/entities.js';
 import { metrics } from '../metrics.js';
+import { audit, SYSTEM } from '../audit.js';
 import { withSpan } from '../tracing.js';
 import type { MappingDef } from '../schemas.js';
 import { getSource } from './sources/index.js';
@@ -125,6 +126,7 @@ export async function runSync(identifier: string, trigger: SyncRun['trigger']): 
   );
   await run('UPDATE integrations SET locked_until = NULL, next_sync_at = ? WHERE identifier = ?', interval > 0 ? later(interval * 60_000) : null, identifier);
   metrics.sync(identifier, status, stats.upserted, stats.deleted);
+  await audit(SYSTEM, 'integration.synced', identifier, { trigger, status, ...stats });
   return toSyncRun({
     id,
     integration: identifier,
@@ -200,6 +202,7 @@ export async function ingest(r: IntegrationRow, payload: unknown, headers: Recor
     t,
   );
   metrics.sync(r.identifier, stats.failed ? 'failure' : 'success', stats.upserted, stats.deleted);
+  await audit(SYSTEM, 'integration.ingested', r.identifier, { ...stats });
   return { ...stats, errors: log.lines };
 }
 

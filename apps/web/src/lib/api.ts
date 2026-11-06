@@ -157,7 +157,9 @@ export const api = {
   setSecret: (name: string, value: string, description: string) => request('PUT', v1(`/secrets/${enc(name)}`), { value, description }),
   deleteSecret: (name: string) => request('DELETE', v1(`/secrets/${enc(name)}`)),
 
-  audit: (q: { search?: string; limit?: number; offset?: number }) => request<AuditEntry[]>('GET', v1(`/audit${qs(q)}`)),
+  audit: (q: { search?: string; action?: string; actor?: string; limit?: number; offset?: number }) => request<AuditEntry[]>('GET', v1(`/audit${qs(q)}`)),
+  auditExport: (q: { search?: string; action?: string; actor?: string }, format: 'csv' | 'json') =>
+    request<string>('GET', v1(`/audit/export${qs({ ...q, format })}`)),
   configInfo: () => request<{ dir: string; managed: Record<string, number> }>('GET', v1('/config')),
   configExport: () => request<string>('GET', v1('/config/export')),
   configReload: () => request('POST', v1('/config/reload'), {}),

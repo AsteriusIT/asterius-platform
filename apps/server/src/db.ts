@@ -381,6 +381,21 @@ export const MIGRATIONS: Migration[] = [
         ALTER TABLE sessions ADD COLUMN user_agent TEXT;
       `),
   },
+  {
+    id: 102,
+    name: 'audit log: SIEM streaming marker and hash chain',
+    up: (d) =>
+      d.exec(`
+        ALTER TABLE audit_log ADD COLUMN streamed_at TEXT;
+        ALTER TABLE audit_log ADD COLUMN chain_seq INTEGER;
+        ALTER TABLE audit_log ADD COLUMN prev_hash TEXT;
+        ALTER TABLE audit_log ADD COLUMN hash TEXT;
+        CREATE INDEX audit_unstreamed ON audit_log(at) WHERE streamed_at IS NULL;
+        CREATE UNIQUE INDEX audit_chain_seq ON audit_log(chain_seq) WHERE chain_seq IS NOT NULL;
+        CREATE INDEX audit_action ON audit_log(action);
+        CREATE INDEX audit_actor ON audit_log(actor_email);
+      `),
+  },
 ];
 
 /** Apply pending numbered migrations (idempotent; serialized across replicas by an advisory lock on Postgres). */

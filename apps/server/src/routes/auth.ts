@@ -64,6 +64,10 @@ export async function authRoutes(app: FastifyInstance) {
     const user = await one<UserRow>("SELECT * FROM users WHERE provider = 'local' AND email = ?", email);
     if (!user || !verifyPassword(body.password, user.password_hash) || user.active !== 1) {
       failed(email);
+      await audit({ id: user?.id ?? null, email }, 'auth.login_failed', null, {
+        ip: req.ip,
+        reason: !user ? 'unknown account' : user.active === 1 ? 'bad password' : 'disabled',
+      });
       return reply.code(401).send({ error: 'Invalid email or password' });
     }
     failures.delete(email);

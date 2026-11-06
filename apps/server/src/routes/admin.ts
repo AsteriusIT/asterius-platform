@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { audit, listAudit } from '../audit.js';
+import { Readable } from 'node:stream';
+import { audit, auditFacets, CSV_HEADER, csvRow, exportAudit, listAudit, verifyAuditChain } from '../audit.js';
 import {
   actorOf,
   createApiToken,
@@ -175,14 +176,54 @@ export async function adminRoutes(app: FastifyInstance, opts: { reloadConfig: ()
     });
     admin.get('/webhooks/:id/deliveries', async (req) => listDeliveries(idParam.parse(req.params).id));
     admin.post('/deliveries/:id/redeliver', async (req) => {
-      await redeliver(idParam.parse(req.params).id);
+      const id = idParam.parse(req.params).id;
+      await redeliver(id);
+      await audit(actorOf(req.principal), 'delivery.redelivered', id);
       return { ok: true };
     });
 
-    admin.get('/audit', async (req) => listAudit(page.extend({ search: z.string().max(200).optional() }).parse(req.query)));
+    const auditQuery = z.object({
+      search: z.string().max(200).optional(),
+      action: z.string().max(100).optional(),
+      actor: z.string().max(200).optional(),
+      target: z.string().max(200).optional(),
+      from: z.string().datetime({ offset: true }).optional(),
+      to: z.string().datetime({ offset: true }).optional(),
+    });
+    admin.get('/audit', async (req) => listAudit(page.merge(auditQuery).parse(req.query)));
+    admin.get('/audit/facets', async (req) => auditFacets(auditQuery.parse(req.query)));
+    /** Export with the same filters: CSV (spreadsheet-safe) or NDJSON. Exporting is itself audited. */
+    admin.get('/audit/export', async (req, reply) => {
+      const q = auditQuery.extend({ format: z.enum(['csv', 'json']).default('csv') }).parse(req.query);
+      const { format, ...filters } = q;
+      await audit(actorOf(req.principal), 'audit.exported', null, { format, ...filters });
+      const rows = exportAudit(filters);
+      const stream =
+        format === 'csv'
+          ? Readable.from(
+              (async function* () {
+                yield CSV_HEADER;
+                for await (const e of rows) yield csvRow(e);
+              })(),
+            )
+          : Readable.from(
+              (async function* () {
+                for await (const e of rows) yield `${JSON.stringify(e)}\n`;
+              })(),
+            );
+      return reply
+        .type(format === 'csv' ? 'text/csv; charset=utf-8' : 'application/x-ndjson; charset=utf-8')
+        .header('content-disposition', `attachment; filename="audit.${format === 'csv' ? 'csv' : 'ndjson'}"`)
+        .send(stream);
+    });
+    /** Recompute the hash chain (AUDIT_HASH_CHAIN): detects modified, removed or reordered entries. */
+    admin.get('/audit/verify', async () => verifyAuditChain());
 
     admin.get('/config', async () => ({ dir: config.CONFIG_DIR, managed: await managedCounts() }));
-    admin.get('/config/export', async (_req, reply) => reply.type('text/yaml; charset=utf-8').send(await exportConfig()));
+    admin.get('/config/export', async (req, reply) => {
+      await audit(actorOf(req.principal), 'config.exported', null);
+      return reply.type('text/yaml; charset=utf-8').send(await exportConfig());
+    });
     admin.post('/config/reload', async (req) => {
       await opts.reloadConfig();
       await audit(actorOf(req.principal), 'config.reload_requested', config.CONFIG_DIR);
