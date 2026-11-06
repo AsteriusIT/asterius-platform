@@ -4,6 +4,7 @@ import { all, forUpdate, json, newId, now, one, run, tx, type Driver, type SqlVa
 import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
 import { emit } from '../events.js';
 import { audit } from '../audit.js';
+import { maskText } from '../lib/mask.js';
 import { actorOf, automationPrincipal, isAdmin, matchesSubjects, principalOf, type Principal, type UserRow } from '../auth/users.js';
 import { notify } from '../inbox.js';
 import { getEntity } from '../catalog/entities.js';
@@ -384,7 +385,7 @@ export async function addLog(runId: string, message: string, level: RunLog['leve
     runId,
     now(),
     truncated ? 'warn' : level,
-    truncated ? `Log limit of ${max} lines reached: further lines are dropped` : message.slice(0, 8000),
+    truncated ? `Log limit of ${max} lines reached: further lines are dropped` : maskText(message, []).slice(0, 8000), // callers redact known secrets; this also masks credential shapes
     stepId,
   ];
   const sql = 'INSERT INTO run_logs (run_id, at, level, message, step_id) VALUES (?, ?, ?, ?, ?)';

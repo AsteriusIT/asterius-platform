@@ -3,6 +3,8 @@ import { all, later, newId, now, run } from '../db.js';
 import { errorMessage } from '../lib/errors.js';
 import { getIntegrationRow, type IntegrationRow } from './integrations.js';
 import { ingest } from './sync.js';
+import { beat, registerLoop } from '../health.js';
+import { maskText } from '../lib/mask.js';
 
 /**
  * Inbound webhooks are acknowledged immediately and processed by workers: the raw payload is persisted in
@@ -80,7 +82,7 @@ async function handle(ev: InboundRow) {
       'UPDATE inbound_events SET status = ?, attempts = ?, error = ?, next_attempt_at = ?, locked_until = NULL WHERE id = ?',
       final ? 'failed' : 'pending',
       attempts,
-      errorMessage(err).slice(0, 500),
+      maskText(errorMessage(err), []).slice(0, 500), // error text may echo credentials
       later(Math.min(600_000, 5_000 * 2 ** attempts)),
       ev.id,
     );
@@ -117,8 +119,15 @@ export function startInboundWorker(log: FastifyBaseLogger) {
     busy = true;
     processInbound()
       .catch((err) => log.error({ err }, 'inbound event processing failed'))
-      .finally(() => (busy = false));
+      .finally(() => {
+        busy = false;
+        beat('inbound-events');
+      });
   }, 2_000);
   timer.unref();
-  return () => clearInterval(timer);
+  const unregister = registerLoop('inbound-events', 120_000);
+  return () => {
+    clearInterval(timer);
+    unregister();
+  };
 }

@@ -685,9 +685,14 @@ const jsonText = (prop: string) => (dialect === 'postgres' ? `(properties::jsonb
 const computedText = (prop: string) => (dialect === 'postgres' ? `(computed::jsonb ->> '${prop}')` : `CAST(json_extract(computed, '$.${prop}') AS TEXT)`);
 
 /** Number of entities of a blueprint (exact-match filters on properties), or their distribution by `groupBy`. */
-export async function countEntities(blueprint: string, filters: Record<string, string> = {}, groupBy?: string) {
+export async function countEntities(blueprint: string, filters: Record<string, string> = {}, groupBy?: string, viewer?: Principal) {
   const where = ['blueprint = ?'];
   const params: SqlValue[] = [blueprint];
+  const vf = viewer ? await readFilter(viewer) : undefined; // blueprints with a read rule: only what the viewer may see
+  if (vf) {
+    where.push(vf.sql);
+    params.push(...vf.params);
+  }
   for (const [k, v] of Object.entries(filters)) {
     if (!PROP.test(k)) throw badRequest(`Invalid filter property "${k}"`);
     where.push(`COALESCE(${jsonText(k)}, ${computedText(k)}) = ?`);

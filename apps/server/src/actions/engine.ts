@@ -733,9 +733,10 @@ export async function claimRuns(worker: string, limit: number, spawn: (fn: () =>
   if (limit <= 0) return 0;
   const t = now();
   const { rows } = await driver.query<{ id: string }>(
-    `UPDATE runs SET status = 'IN_PROGRESS', worker = ?, started_at = ?, updated_at = ?
-     WHERE status = 'QUEUED' AND id IN (SELECT id FROM runs WHERE status = 'QUEUED' ORDER BY created_at LIMIT ?${skipLocked}) RETURNING id`,
-    [worker, t, t, limit],
+    `WITH picked AS MATERIALIZED (SELECT id FROM runs WHERE status = 'QUEUED' ORDER BY created_at LIMIT ?${skipLocked})
+     UPDATE runs SET status = 'IN_PROGRESS', worker = ?, started_at = ?, updated_at = ?
+     WHERE status = 'QUEUED' AND id IN (SELECT id FROM picked) RETURNING id`,
+    [limit, worker, t, t],
   );
   for (const { id } of rows) spawn(() => initRun(id));
   return rows.length;
@@ -746,13 +747,14 @@ export async function claimSteps(worker: string, slots: number, spawn: (fn: () =
   if (slots <= 0) return 0;
   const t = now();
   const { rows } = await driver.query<StepRow>(
-    `UPDATE run_steps SET status = 'RUNNING', attempt = attempt + 1, worker = ?,
+    `WITH picked AS MATERIALIZED (
+       SELECT run_id, step_id FROM run_steps WHERE status = 'QUEUED' AND (next_at IS NULL OR next_at <= ?)
+       ORDER BY next_at NULLS FIRST LIMIT ?${skipLocked})
+     UPDATE run_steps SET status = 'RUNNING', attempt = attempt + 1, worker = ?,
        locked_until = CASE type WHEN 'agent' THEN ? WHEN 'transform' THEN ? ELSE ? END,
        started_at = COALESCE(started_at, ?), next_at = NULL, status_label = NULL
-     WHERE status = 'QUEUED' AND (run_id, step_id) IN (
-       SELECT run_id, step_id FROM run_steps WHERE status = 'QUEUED' AND (next_at IS NULL OR next_at <= ?)
-       ORDER BY next_at NULLS FIRST LIMIT ?${skipLocked}) RETURNING *`,
-    [worker, later(LEASES.agent), later(LEASES.transform), later(LEASES.invoke), t, t, slots],
+     WHERE status = 'QUEUED' AND (run_id, step_id) IN (SELECT run_id, step_id FROM picked) RETURNING *`,
+    [t, slots, worker, later(LEASES.agent), later(LEASES.transform), later(LEASES.invoke), t],
   );
   for (const s of rows) spawn(() => executeStep(s.run_id, s.step_id, { worker, attempt: Number(s.attempt) }));
   return rows.length;
@@ -762,11 +764,12 @@ export async function claimSteps(worker: string, slots: number, spawn: (fn: () =
 export async function claimPolls(slots: number, spawn: (fn: () => Promise<void>) => void) {
   if (slots <= 0) return 0;
   const { rows } = await driver.query<{ run_id: string; step_id: string }>(
-    `UPDATE run_steps SET next_at = ?
-     WHERE status = 'RUNNING' AND next_at IS NOT NULL AND (run_id, step_id) IN (
+    `WITH picked AS MATERIALIZED (
        SELECT run_id, step_id FROM run_steps WHERE status = 'RUNNING' AND next_at IS NOT NULL AND next_at <= ?
-       ORDER BY next_at LIMIT ?${skipLocked}) RETURNING run_id, step_id`,
-    [later(5 * 60_000), now(), slots],
+       ORDER BY next_at LIMIT ?${skipLocked})
+     UPDATE run_steps SET next_at = ?
+     WHERE status = 'RUNNING' AND next_at IS NOT NULL AND (run_id, step_id) IN (SELECT run_id, step_id FROM picked) RETURNING run_id, step_id`,
+    [now(), slots, later(5 * 60_000)],
   );
   for (const s of rows) spawn(() => pollStep(s.run_id, s.step_id));
   return rows.length;

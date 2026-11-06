@@ -6,6 +6,8 @@ import { countPendingApprovals, listRuns, pendingApprovals } from '../actions/ru
 import type { Principal } from '../auth/users.js';
 import { countEntities, searchEntities } from './entities.js';
 import { getScorecard, scorecardSummary } from './scorecards.js';
+import { getBlueprintCached } from './blueprints.js';
+import { visibleBlueprints } from '../auth/access.js';
 
 /**
  * Dashboards: a set of widgets (entity counts, scorecard levels, recent runs, pending approvals, saved table
@@ -91,9 +93,11 @@ export async function resolveDashboard(p: Principal, blueprint?: string): Promis
 async function widgetData(w: DashboardWidget, p: Principal): Promise<WidgetData> {
   switch (w.type) {
     case 'count':
-      return { type: 'count', ...(await countEntities(w.blueprint, w.filters, w.groupBy)) };
+      return { type: 'count', ...(await countEntities(w.blueprint, w.filters, w.groupBy, p)) };
     case 'scorecard': {
       const sc = await getScorecard(w.scorecard);
+      // Aggregates of a blueprint the viewer cannot read are as private as its rows.
+      if (!(await visibleBlueprints(p, [await getBlueprintCached(sc.blueprint)])).length) return { error: 'You cannot see this scorecard' };
       const s = await scorecardSummary(w.scorecard, 1);
       return { type: 'scorecard', scorecard: sc.identifier, title: sc.title, levels: sc.levels, distribution: s.distribution, total: s.total };
     }
@@ -113,6 +117,7 @@ async function widgetData(w: DashboardWidget, p: Principal): Promise<WidgetData>
         sort: w.sort,
         limit: w.limit,
         offset: 0,
+        viewer: p,
       });
       return { type: 'table', blueprint: w.blueprint, items: r.items, total: r.total ?? r.items.length };
     }

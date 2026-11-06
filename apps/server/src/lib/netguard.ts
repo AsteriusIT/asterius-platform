@@ -1,6 +1,6 @@
 import dns from 'node:dns';
 import net from 'node:net';
-import { Agent } from 'undici';
+import { Agent, fetch as undiciFetch } from 'undici';
 import { config } from '../config.js';
 
 /**
@@ -118,3 +118,28 @@ export function guardedLookup(hostname: string, options: dns.LookupOptions, cb: 
 }
 
 export const guardedAgent = new Agent({ connect: { lookup: guardedLookup as never } });
+
+/**
+ * For non-HTTP clients (database drivers): refuse a host that is, or resolves to, a forbidden address. The driver then
+ * connects on its own, so this is a check at call time (not pinned like `guardedAgent`): good against configuration
+ * pointing at internal systems, not a defence against DNS rebinding.
+ */
+export async function assertHostAllowed(host: string) {
+  const h = host.replace(/^\[|\]$/g, '').toLowerCase();
+  if (net.isIP(h)) return assertAddressAllowed(h, h);
+  if (hostMatches(deny, h)) throw new Error(`Outbound request to ${h} is denied (OUTBOUND_DENY)`);
+  for (const a of await dns.promises.lookup(h, { all: true })) assertAddressAllowed(h, a.address);
+}
+
+/** fetch with the SSRF guard that does not follow redirects (binary-safe alternative to `http()` for file downloads). */
+export function guardedDownload(url: string, init: { headers?: Record<string, string>; timeoutMs?: number } = {}) {
+  assertUrlAllowed(url);
+  return undiciFetch(url, {
+    headers: init.headers,
+    redirect: 'error',
+    dispatcher: guardedAgent,
+    signal: AbortSignal.timeout(init.timeoutMs ?? config.HTTP_TIMEOUT_SECONDS * 1000),
+  }).catch((e: Error) => {
+    throw e.cause instanceof Error ? e.cause : e;
+  });
+}

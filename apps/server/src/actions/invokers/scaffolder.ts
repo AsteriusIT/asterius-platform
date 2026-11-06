@@ -1,4 +1,5 @@
 import { http } from '../../lib/http.js';
+import { guardedDownload } from '../../lib/netguard.js';
 import { requireFields, str, stringValues, type Invoker } from '../types.js';
 
 /**
@@ -122,7 +123,7 @@ async function gitlabTemplate(c: Record<string, unknown>): Promise<TemplateFile[
   checkLimits(paths.map(() => 0));
   const out: TemplateFile[] = [];
   for (const p of paths) {
-    const res = await fetch(`${glApi(c)}/projects/${project}/repository/files/${encodeURIComponent(p)}/raw?ref=${encodeURIComponent(ref)}`, {
+    const res = await guardedDownload(`${glApi(c)}/projects/${project}/repository/files/${encodeURIComponent(p)}/raw?ref=${encodeURIComponent(ref)}`, {
       headers: glHeaders(c),
     });
     if (!res.ok) throw new Error(`gitlab: cannot read template file ${p} (${res.status})`);

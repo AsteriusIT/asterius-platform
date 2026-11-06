@@ -2,6 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { requireFields, str } from '../../actions/types.js';
 import { MAX_PAGES, type Source } from '../types.js';
 import { assertReadOnly, validateIdent } from '../../lib/sql-guard.js';
+import { assertHostAllowed } from '../../lib/netguard.js';
 
 /**
  * Ingest rows of a read-only SQL query (a CMDB, a licence database…). One query per kind (`queries`), the connection
@@ -32,7 +33,19 @@ const optional = async (name: string): Promise<Loose> => {
   }
 };
 
+/** Host of a connection string: `scheme://user:pw@host:port/db`, or the `Server=host,port;…` form of SQL Server. */
+function hostOf(url: string): string | undefined {
+  try {
+    return new URL(url).hostname || undefined;
+  } catch {
+    return /(?:server|data source|host)\s*=\s*(?:tcp:)?([^,;:\s]+)/i.exec(url)?.[1];
+  }
+}
+
 async function connect(driver: Driver, url: string, timeoutMs: number): Promise<Conn> {
+  // The SSRF guard covers database hosts too: a source must not be a way to reach internal systems.
+  const host = driver === 'sqlite' ? undefined : hostOf(url);
+  if (host) await assertHostAllowed(host);
   switch (driver) {
     case 'postgres': {
       const pg = await import('pg');

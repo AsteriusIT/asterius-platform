@@ -8,7 +8,8 @@ import { LEASES, stepHousekeeping } from '../src/actions/engine.js';
 import { addLog } from '../src/actions/runs.js';
 import { registerInvoker } from '../src/actions/invokers/index.js';
 import { config } from '../src/config.js';
-import { all, driver, migrate, one, sqliteDriver } from '../src/db.js';
+import * as events from '../src/events.js';
+import { all, migrate, one, sqliteDriver } from '../src/db.js';
 import { beat, registerLoop } from '../src/health.js';
 
 /**
@@ -136,11 +137,15 @@ describe('outbox atomicity (ap-na0.5)', () => {
     expect((await admin.put('/api/v1/blueprints/thing/entities/ok', { properties: { n: 1 } })).status).toBe(200);
     expect(Number((await one<{ n: number }>("SELECT count(*) AS n FROM deliveries WHERE event = 'entity.created'"))?.n)).toBe(1);
 
-    const real = driver.query.bind(driver);
-    const spy = vi.spyOn(driver, 'query').mockImplementation(((sql: string, params?: never) => {
-      if (/insert into deliveries/i.test(sql)) return Promise.reject(new Error('outbox unavailable'));
-      return real(sql, params);
-    }) as typeof driver.query);
+    // The outbox insert runs on the write's own transaction connection (a pooled client on Postgres): fail it there.
+    const realPrepare = events.prepareEvents;
+    const spy = vi.spyOn(events, 'prepareEvents').mockImplementation(async (list) => {
+      const write = await realPrepare(list);
+      return async (d) => {
+        if (d) throw new Error('outbox unavailable');
+        return write(d);
+      };
+    });
     const res = await admin.put('/api/v1/blueprints/thing/entities/lost', { properties: { n: 2 } });
     spy.mockRestore();
     expect(res.status).toBeGreaterThanOrEqual(500);

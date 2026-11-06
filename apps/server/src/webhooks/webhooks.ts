@@ -4,6 +4,7 @@ import type { Delivery, Webhook } from '@asterius/shared';
 import { all, bool, json, later, newId, now, one, run } from '../db.js';
 import { badRequest, errorMessage, managedError, notFound } from '../lib/errors.js';
 import { http, UpstreamError } from '../lib/http.js';
+import { maskText } from '../lib/mask.js';
 import { decodeCursor, encodeCursor } from '../lib/cursor.js';
 import { checkExpression, render } from '../lib/expr.js';
 import { invalidateWebhookCache } from '../events.js';
@@ -261,7 +262,7 @@ async function deliver(d: DeliveryRow) {
       final ? 'failed' : 'pending',
       attempts,
       status,
-      errorMessage(err).slice(0, 500),
+      maskText(errorMessage(err), []).slice(0, 500),
       later(backoffMs(attempts)),
       d.id,
     );

@@ -1,3 +1,4 @@
+import { beat, registerLoop } from '../health.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { all, json, now, one, run } from '../db.js';
 import { conflict, errorMessage, notFound } from '../lib/errors.js';
@@ -65,9 +66,19 @@ export async function fireDueSchedules(log?: Pick<FastifyBaseLogger, 'error' | '
 }
 
 export function startTriggerScheduler(log: FastifyBaseLogger) {
-  const timer = setInterval(() => fireDueSchedules(log).catch((err) => log.error({ err }, 'schedule tick failed')), 15_000);
+  const timer = setInterval(
+    () =>
+      fireDueSchedules(log)
+        .catch((err) => log.error({ err }, 'schedule tick failed'))
+        .finally(() => beat('trigger-scheduler')),
+    15_000,
+  );
   timer.unref();
-  return () => clearInterval(timer);
+  const unregister = registerLoop('trigger-scheduler', 180_000);
+  return () => {
+    clearInterval(timer);
+    unregister();
+  };
 }
 
 // ---------- events ----------

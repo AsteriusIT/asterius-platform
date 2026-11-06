@@ -113,8 +113,11 @@ describe('wait step', () => {
     const { run } = await import('../src/db.js');
     await run("UPDATE run_steps SET deadline_at = '2020-01-01T00:00:00.000Z' WHERE run_id = ?", id);
     const { stepHousekeeping } = await import('../src/actions/engine.js');
-    await stepHousekeeping(silentLog);
-    const r = await finished(alice, id);
+    // Housekeeping runs under a database-wide advisory lock: when another test file holds it (Postgres), try again.
+    const r = await waitFor(async () => {
+      await stepHousekeeping(silentLog);
+      return (await get(alice, id)).status === 'FAILURE' ? await finished(alice, id) : undefined;
+    });
     expect(stepOf(r, 'w').statusLabel).toBe('Timed out');
   });
 });

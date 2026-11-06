@@ -1,3 +1,4 @@
+import { beat, registerLoop } from './health.js';
 import { createHmac } from 'node:crypto';
 import dgram from 'node:dgram';
 import net from 'node:net';
@@ -102,9 +103,14 @@ export function startAuditStream(log: FastifyBaseLogger) {
       log.warn({ err: (err as Error).message }, 'audit stream failed; will retry');
     } finally {
       busy = false;
+      beat('audit-stream');
     }
   };
   const timer = setInterval(() => void tick(), config.AUDIT_STREAM_INTERVAL_SECONDS * 1000);
   timer.unref();
-  return () => clearInterval(timer);
+  const unregister = registerLoop('audit-stream', Math.max(120_000, config.AUDIT_STREAM_INTERVAL_SECONDS * 6000));
+  return () => {
+    clearInterval(timer);
+    unregister();
+  };
 }

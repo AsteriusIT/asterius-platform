@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import type { HomeSummary, ObjectSchema } from '@asterius/shared';
+import type { HomeSummary, ObjectSchema, Scorecard } from '@asterius/shared';
 import { audit } from '../audit.js';
 import { assertCan, can, effectivePermissions, invalidateAccessCache, requireRole, visibleBlueprints } from '../auth/access.js';
 import { actorOf, isAdmin, requireAdmin, requireUser, type Principal } from '../auth/users.js';
@@ -156,11 +156,30 @@ export async function catalogRoutes(app: FastifyInstance) {
   });
 
   // ---- scorecards ----
-  app.get('/scorecards', async (req) => listScorecards(z.object({ blueprint: z.string().optional() }).parse(req.query).blueprint));
-  app.get('/scorecards/:id', async (req) => getScorecard(idParam.parse(req.params).id));
+  // Scorecards of blueprints the viewer cannot read (per-blueprint read rules) are left out.
+  const visibleCards = async (p: Principal, cards: Scorecard[]) => {
+    if (isAdmin(p)) return cards;
+    const seen = new Map<string, boolean>();
+    const out: Scorecard[] = [];
+    for (const c of cards) {
+      if (!seen.has(c.blueprint)) seen.set(c.blueprint, (await visibleBlueprints(p, [await getBlueprintCached(c.blueprint)])).length > 0);
+      if (seen.get(c.blueprint)) out.push(c);
+    }
+    return out;
+  };
+  const cardOf = async (p: Principal, id: string) => {
+    const sc = await getScorecard(id);
+    if (!(await visibleCards(p, [sc])).length) throw notFound(`Scorecard ${id}`);
+    return sc;
+  };
+  app.get('/scorecards', async (req) =>
+    visibleCards(req.principal, await listScorecards(z.object({ blueprint: z.string().optional() }).parse(req.query).blueprint)),
+  );
+  app.get('/scorecards/:id', async (req) => cardOf(req.principal, idParam.parse(req.params).id));
   app.get('/scorecards/:id/summary', async (req) => {
     const { id } = idParam.parse(req.params);
     const { days } = z.object({ days: z.coerce.number().int().min(1).max(365).default(30) }).parse(req.query);
+    await cardOf(req.principal, id);
     return scorecardSummary(id, days);
   });
   app.put('/scorecards/:id', { preHandler: requireAdmin }, async (req) => {
@@ -184,10 +203,12 @@ export async function catalogRoutes(app: FastifyInstance) {
   app.get('/blueprints/:bp/scorecard-levels', async (req) => {
     const { bp } = bpParam.parse(req.params);
     const { ids } = z.object({ ids: z.string().max(20_000).default('') }).parse(req.query);
+    if (!isAdmin(req.principal) && !(await visibleBlueprints(req.principal, [await getBlueprintCached(bp)])).length) throw notFound(`Blueprint ${bp}`);
     return levelsFor(bp, ids.split(',').filter(Boolean).slice(0, 500));
   });
   app.get('/blueprints/:bp/entities/:id/scorecards', async (req) => {
     const { bp, id } = entityParam.parse(req.params);
+    if (!(await canRead(req.principal, await getEntity(bp, id)))) throw notFound(`Entity ${bp}/${id}`);
     return resultsForEntity(bp, id);
   });
 

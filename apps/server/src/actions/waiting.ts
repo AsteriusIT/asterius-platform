@@ -103,11 +103,12 @@ export async function claimWaits(slots: number, spawn: (fn: () => Promise<void>)
   if (slots <= 0) return 0;
   // One statement claims the due steps (SKIP LOCKED on Postgres) by moving next_at forward, like status polls.
   const { rows } = await driver.query<{ run_id: string; step_id: string }>(
-    `UPDATE run_steps SET next_at = ?
-     WHERE status = 'WAITING' AND next_at IS NOT NULL AND (run_id, step_id) IN (
+    `WITH picked AS MATERIALIZED (
        SELECT run_id, step_id FROM run_steps WHERE status = 'WAITING' AND next_at IS NOT NULL AND next_at <= ?
-       ORDER BY next_at LIMIT ?${dialect === 'postgres' ? ' FOR UPDATE SKIP LOCKED' : ''}) RETURNING run_id, step_id`,
-    [later(30_000), now(), slots],
+       ORDER BY next_at LIMIT ?${dialect === 'postgres' ? ' FOR UPDATE SKIP LOCKED' : ''})
+     UPDATE run_steps SET next_at = ?
+     WHERE status = 'WAITING' AND next_at IS NOT NULL AND (run_id, step_id) IN (SELECT run_id, step_id FROM picked) RETURNING run_id, step_id`,
+    [now(), slots, later(30_000)],
   );
   for (const s of rows) spawn(() => visit(s.run_id, s.step_id));
   return rows.length;

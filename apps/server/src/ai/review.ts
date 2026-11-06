@@ -1,3 +1,4 @@
+import { beat, registerLoop } from '../health.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { z } from 'zod';
 import { config } from '../config.js';
@@ -186,11 +187,18 @@ export function startAiScheduler(log: FastifyBaseLogger) {
       log.info({ review: r.id, counts: r.counts }, 'catalog quality review done');
     }
   };
-  const run1 = () => tick().catch((err) => log.error({ err }, 'ai scheduler'));
+  const run1 = () =>
+    tick()
+      .catch((err) => log.error({ err }, 'ai scheduler'))
+      .finally(() => beat('ai-scheduler'));
   setTimeout(run1, 60_000).unref();
   const timer = setInterval(run1, 10 * 60_000);
   timer.unref();
-  return () => clearInterval(timer);
+  const unregister = registerLoop('ai-scheduler', 30 * 60_000);
+  return () => {
+    clearInterval(timer);
+    unregister();
+  };
 }
 
 export const reviewIdParam = z.object({ id: z.string().min(1).max(100) });
