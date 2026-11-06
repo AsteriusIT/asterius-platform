@@ -327,12 +327,30 @@ export interface Action {
   description: string;
   icon: string | null;
   trigger: WorkflowTrigger | null;
+  /** Increments on every change of the definition (see the history). */
+  version: number;
   /** Non-admins only see each step's id, name and type (no configuration). */
   steps: WorkflowStep[];
   /** Legacy single-invoker form (configuration files), when the action was declared with `invoker`. */
   invoker?: InvokerConfig;
   enabled: boolean;
   managed: boolean;
+}
+
+export interface ActionVersion {
+  version: number;
+  actor: string | null;
+  note: string | null;
+  at: string;
+}
+
+export interface ActionVersionDiff {
+  /** Dotted paths outside the steps that differ. */
+  fields: { path: string; before: unknown; after: unknown }[];
+  stepsAdded: string[];
+  stepsRemoved: string[];
+  stepsChanged: { id: string; changes: { path: string; before: unknown; after: unknown }[] }[];
+  stepsReordered: boolean;
 }
 
 export type RunStatus = 'PENDING_APPROVAL' | 'QUEUED' | 'IN_PROGRESS' | 'SUCCESS' | 'FAILURE' | 'REJECTED' | 'CANCELLED';
@@ -368,6 +386,8 @@ export interface Run {
   result: unknown;
   /** Set on child runs of a sub-workflow step. */
   parent?: { runId: string; stepId: string } | null;
+  /** The version of the action's definition this run started from. */
+  actionVersion?: number | null;
   /** What started the run: form, api, schedule, event, webhook, workflow (parent run) or rerun. */
   trigger?: { type: string; [k: string]: unknown };
   createdAt: string;

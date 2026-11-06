@@ -49,6 +49,7 @@ export interface RunRow {
   trigger_info: string | null;
   parent_run_id: string | null;
   parent_step_id: string | null;
+  action_version: number | null;
   user_name?: string;
   user_email?: string;
 }
@@ -85,6 +86,7 @@ const toRun = (r: RunRow, approvals: RunApproval[]): Run => ({
   approvals,
   result: json(r.result, null),
   trigger: { type: r.trigger_type ?? 'form', ...json<Record<string, unknown>>(r.trigger_info, {}) },
+  actionVersion: r.action_version,
   parent: r.parent_run_id ? { runId: r.parent_run_id, stepId: r.parent_step_id ?? '' } : null,
   createdAt: r.created_at,
   startedAt: r.started_at,
@@ -222,8 +224,8 @@ async function insertRun(n: NewRun): Promise<string> {
   const t = now();
   const status: RunStatus = n.approval.required ? 'PENDING_APPROVAL' : 'QUEUED';
   await run(
-    `INSERT INTO runs (id, action, action_title, blueprint, entity, inputs, status, invoker, steps, approval, triggered_by, team, trigger_type, trigger_info, parent_run_id, parent_step_id, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO runs (id, action, action_title, blueprint, entity, inputs, status, invoker, steps, approval, triggered_by, team, trigger_type, trigger_info, parent_run_id, parent_step_id, action_version, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     id,
     action.identifier,
     action.title,
@@ -240,6 +242,7 @@ async function insertRun(n: NewRun): Promise<string> {
     JSON.stringify(n.source.info ?? {}),
     n.parent?.runId ?? null,
     n.parent?.stepId ?? null,
+    action.version,
     t,
     t,
   );

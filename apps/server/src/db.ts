@@ -386,6 +386,25 @@ export const MIGRATIONS: Migration[] = [
         ALTER TABLE step_approvals ADD COLUMN form_values TEXT;
       `),
   },
+  {
+    id: 102,
+    name: 'action versions',
+    up: (d) =>
+      d.exec(`
+        ALTER TABLE actions ADD COLUMN version INTEGER NOT NULL DEFAULT 1;
+        ALTER TABLE runs ADD COLUMN action_version INTEGER;
+        CREATE TABLE action_versions (
+          action TEXT NOT NULL,       -- no foreign key: the history outlives a deleted action
+          version INTEGER NOT NULL,
+          definition TEXT NOT NULL,
+          actor_id TEXT,
+          actor_email TEXT,
+          note TEXT,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (action, version)
+        );
+      `),
+  },
 ];
 
 /** Apply pending numbered migrations (idempotent; serialized across replicas by an advisory lock on Postgres). */

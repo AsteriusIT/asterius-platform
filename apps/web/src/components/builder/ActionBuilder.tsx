@@ -1,13 +1,15 @@
 import { useState } from 'react';
 import { Alert, Badge, Group, Modal, Select, SimpleGrid, Stack, Switch, Tabs, Text, Textarea, TextInput } from '@mantine/core';
 import { useQuery } from '@tanstack/react-query';
-import { IconInfoCircle, IconSettings, IconSitemap } from '@tabler/icons-react';
-import type { ActionTrigger, FormTrigger, InvokerConfig, ObjectSchema, PluginInfo, WorkflowStep } from '@asterius/shared';
+import { IconHistory, IconInfoCircle, IconSettings, IconSitemap } from '@tabler/icons-react';
+import type { ActionTrigger, FormTrigger, InvokerConfig, ObjectSchema, PluginInfo, WorkflowStep, WorkflowTrigger } from '@asterius/shared';
 import { api } from '../../lib/api';
 import { EntityIcon, ICON_NAMES } from '../icons';
 import { fieldProblems, fieldsToSchema, schemaToFields, type FieldDraft } from './fields';
 import { MONO_INPUT } from './blocks';
 import { stepProblems, WorkflowEditor } from './WorkflowEditor';
+import { isFormLike } from './TriggerEditor';
+import { ActionHistory } from './ActionHistory';
 import { BuilderFooter, BuilderModal, CodePanels, CodeTabs, ManagedNotice, slugify, useCodeView, useSave } from './shell';
 
 export { slugify };
@@ -24,11 +26,13 @@ export interface ActionDoc {
   title: string;
   description?: string;
   icon?: string | null;
-  trigger: FormTrigger | null;
+  trigger: WorkflowTrigger | null;
   steps: WorkflowStep[];
   enabled: boolean;
   [k: string]: unknown;
 }
+
+const formInputs = (t: WorkflowTrigger | null): ObjectSchema => (isFormLike(t) ? t.inputs : { properties: {} });
 
 const SLUG = /^[a-z][a-z0-9_-]{0,63}$/;
 const LEGACY_KEYS = ['blueprint', 'inputs', 'allowed', 'approval'];
@@ -39,8 +43,11 @@ export function toActionDoc(input: Record<string, unknown>): ActionDoc {
   const steps =
     (v.steps as WorkflowStep[] | undefined) ??
     (invoker ? [{ id: 'run', name: String(v.title ?? 'Run'), type: 'invoke' as const, invoker: invoker as InvokerConfig }] : []);
-  let trigger: FormTrigger | null = null;
-  if (v.trigger && typeof v.trigger === 'object') {
+  let trigger: WorkflowTrigger | null = null;
+  const other = (v.trigger as { type?: string } | undefined)?.type;
+  if (other && other !== 'form') {
+    trigger = v.trigger as WorkflowTrigger; // api (form-like fields), schedule, event, webhook: edited as they are
+  } else if (v.trigger && typeof v.trigger === 'object') {
     const t = v.trigger as Partial<FormTrigger>;
     trigger = {
       type: 'form',
@@ -78,10 +85,11 @@ export function docProblems(doc: ActionDoc, fields: FieldDraft[], invokers: Plug
   const out: string[] = [];
   if (!SLUG.test(doc.identifier)) out.push('Identifier: lowercase letters, digits, - and _, starting with a letter');
   if (!doc.title.trim()) out.push('Title is required');
-  if (doc.trigger) {
+  if (isFormLike(doc.trigger)) {
     if (doc.trigger.on !== 'create' && !doc.trigger.blueprint) out.push('Trigger: forms on an entity need a blueprint');
     out.push(...fieldProblems(fields, 'Trigger: form field'));
   }
+  if (doc.trigger?.type === 'schedule' && doc.trigger.cron.trim().split(/\s+/).length !== 5) out.push('Trigger: a cron expression has five fields');
   out.push(...stepProblems(doc.steps, invokers));
   return out;
 }
@@ -252,12 +260,12 @@ function Builder({
 }) {
   const meta = useQuery({ queryKey: ['meta'], queryFn: api.meta, staleTime: Infinity });
   const [doc, setDoc] = useState<ActionDoc>(() => toActionDoc(value));
-  const [fields, setFields] = useState<FieldDraft[]>(() => schemaToFields(toActionDoc(value).trigger?.inputs ?? { properties: {} }));
+  const [fields, setFields] = useState<FieldDraft[]>(() => schemaToFields(formInputs(toActionDoc(value).trigger)));
   const [tab, setTab] = useState<string | null>(initialTab ?? 'workflow');
   const [generation, setGeneration] = useState(0); // remount editors after a JSON/YAML replacement
 
   const set = (patch: Partial<ActionDoc>) => setDoc((d) => ({ ...d, ...patch }));
-  const body = (): Record<string, unknown> => ({ ...doc, trigger: doc.trigger ? { ...doc.trigger, inputs: fieldsToSchema(fields) } : null });
+  const body = (): Record<string, unknown> => ({ ...doc, trigger: isFormLike(doc.trigger) ? { ...doc.trigger, inputs: fieldsToSchema(fields) } : doc.trigger });
 
   const code = useCodeView({
     body,
@@ -265,7 +273,7 @@ function Builder({
       const next = toActionDoc(parsed);
       next.identifier = doc.identifier;
       setDoc(next);
-      setFields(schemaToFields(next.trigger?.inputs ?? { properties: {} }));
+      setFields(schemaToFields(formInputs(next.trigger)));
       setGeneration((g) => g + 1);
     },
   });
@@ -296,6 +304,11 @@ function Builder({
           <Tabs.Tab value="general" leftSection={<IconSettings size={16} />}>
             General
           </Tabs.Tab>
+          {typeof value.version === 'number' && !readOnly && (
+            <Tabs.Tab value="history" leftSection={<IconHistory size={16} />}>
+              History
+            </Tabs.Tab>
+          )}
           <CodeTabs />
         </Tabs.List>
 
@@ -328,6 +341,12 @@ function Builder({
             </Stack>
           </Tabs.Panel>
         </fieldset>
+
+        {typeof value.version === 'number' && (
+          <Tabs.Panel value="history">
+            <ActionHistory identifier={doc.identifier} current={value.version} onRestored={onClose} />
+          </Tabs.Panel>
+        )}
 
         <CodePanels view={code} readOnly={readOnly} />
       </Tabs>

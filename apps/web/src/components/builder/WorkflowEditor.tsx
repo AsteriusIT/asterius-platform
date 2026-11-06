@@ -44,7 +44,7 @@ import {
 } from '@tabler/icons-react';
 import type {
   AgentStep,
-  FormTrigger,
+  WorkflowTrigger,
   InputStep,
   WaitStep,
   WorkflowCallStep,
@@ -59,7 +59,7 @@ import type {
 } from '@asterius/shared';
 import { api } from '../../lib/api';
 import { needsOf, STEP_TYPES } from '../../lib/workflow';
-import { newFormTrigger, TriggerEditor, TRIGGER_TYPES, triggerSummary } from './TriggerEditor';
+import { isFormLike, newFormTrigger, TriggerEditor, TRIGGER_TYPES, triggerSummary } from './TriggerEditor';
 import { Empty } from '../ui';
 import { fieldProblems, fieldsToSchema, nameFromLabel, schemaToFields, type FieldDraft } from './fields';
 import { FieldsEditor, type FieldsMode } from './FieldsEditor';
@@ -154,8 +154,8 @@ export function stepProblems(steps: WorkflowStep[], invokers: PluginInfo[]): str
 type Selection = { kind: 'trigger' } | { kind: 'step'; id: string } | null;
 
 export function WorkflowEditor(props: {
-  trigger: FormTrigger | null;
-  onTriggerChange: (t: FormTrigger | null) => void;
+  trigger: WorkflowTrigger | null;
+  onTriggerChange: (t: WorkflowTrigger | null) => void;
   /** The form fields of the trigger (edited as drafts; the builder turns them into `trigger.inputs`). */
   fields: FieldDraft[];
   onFieldsChange: (f: FieldDraft[]) => void;
@@ -168,7 +168,9 @@ export function WorkflowEditor(props: {
   const [selected, setSelected] = useState<Selection>(() => (trigger ? { kind: 'trigger' } : steps[0] ? { kind: 'step', id: steps[0].id } : null));
   const index = selected?.kind === 'step' ? steps.findIndex((s) => s.id === selected.id) : -1;
   const step = index >= 0 ? steps[index] : null;
-  const onEntity = !!trigger && trigger.on !== 'create' && !!trigger.blueprint;
+  const form = isFormLike(trigger) ? trigger : null;
+  const triggerBlueprint = trigger && 'blueprint' in trigger ? (trigger.blueprint ?? null) : null;
+  const onEntity = !!form && form.on !== 'create' && !!form.blueprint;
   const selectStep = (id: string) => setSelected({ kind: 'step', id });
 
   const update = (patch: Partial<WorkflowStep>) => {
@@ -225,14 +227,14 @@ export function WorkflowEditor(props: {
         <Stack gap={0} align="stretch" className="workflow-canvas" p="md" style={{ background: 'var(--surface)', borderRadius: 16 }}>
           {trigger ? (
             <CanvasNode
-              icon={TRIGGER_TYPES.form.icon}
+              icon={TRIGGER_TYPES[trigger.type].icon}
               color="brand"
               kicker="Trigger"
-              title={TRIGGER_TYPES.form.label}
+              title={TRIGGER_TYPES[trigger.type].label}
               subtitle={triggerSummary(trigger)}
               badges={[
-                ...(props.fields.length ? [`${props.fields.length} field${props.fields.length > 1 ? 's' : ''}`] : []),
-                ...(trigger.approval.required ? ['approval'] : []),
+                ...(form && props.fields.length ? [`${props.fields.length} field${props.fields.length > 1 ? 's' : ''}`] : []),
+                ...(form?.approval.required ? ['approval'] : []),
               ]}
               active={selected?.kind === 'trigger'}
               onClick={() => setSelected({ kind: 'trigger' })}
@@ -295,7 +297,7 @@ export function WorkflowEditor(props: {
             <Group gap="xs" mb="md">
               <Badge color="brand">Trigger</Badge>
               <Text fz="sm" fw={500}>
-                {TRIGGER_TYPES.form.label}
+                {TRIGGER_TYPES[trigger.type].label}
               </Text>
             </Group>
             <TriggerEditor
@@ -343,7 +345,7 @@ export function WorkflowEditor(props: {
                   styles={MONO_INPUT}
                 />
               </SimpleGrid>
-              <Variables steps={steps} index={index} inputFields={trigger ? props.fields : []} blueprint={trigger?.blueprint ?? null} onEntity={onEntity} />
+              <Variables steps={steps} index={index} inputFields={form ? props.fields : []} blueprint={triggerBlueprint} onEntity={onEntity} />
               {step.type === 'invoke' && <InvokeEditor step={step} invokers={invokers} onChange={update} />}
               {step.type === 'approval' && <ApprovalEditor step={step} onEntity={onEntity} onChange={update} />}
               {step.type === 'agent' && <AgentEditor step={step} onChange={update} />}

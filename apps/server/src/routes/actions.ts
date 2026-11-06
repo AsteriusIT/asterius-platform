@@ -7,6 +7,7 @@ import { getEntity } from '../catalog/entities.js';
 import { blueprintOf, canTrigger, isRunnable, deleteAction, forViewer, getAction, listActions, upsertAction } from '../actions/actions.js';
 import { addLog, cancelRun, decide, getRun, getRunRow, listRuns, pendingApprovals, triggerRun } from '../actions/runs.js';
 import { cancelSteps, decideStep, runningInvokeStep, updateStep } from '../actions/engine.js';
+import { diffVersions, getVersion, listVersions } from '../actions/versions.js';
 import { rerun, resume, retryStep } from '../actions/recovery.js';
 import { deliverEvent, submitInput } from '../actions/waiting.js';
 import { receiveWebhook } from '../actions/triggers.js';
@@ -126,8 +127,33 @@ export async function actionRoutes(app: FastifyInstance) {
     scoped.get('/actions/:id', async (req) => forViewer(await getAction(idParam.parse(req.params).id), req.principal));
     scoped.put('/actions/:id', { preHandler: requireAdmin }, async (req) => {
       const { id } = idParam.parse(req.params);
-      const { action, created } = await upsertAction({ ...(req.body as object), identifier: id });
+      const { action, created } = await upsertAction({ ...(req.body as object), identifier: id }, { actor: actorOf(req.principal) });
       await audit(actorOf(req.principal), created ? 'action.created' : 'action.updated', id);
+      return action;
+    });
+    scoped.get('/actions/:id/versions', { preHandler: requireAdmin }, async (req) => {
+      const { id } = idParam.parse(req.params);
+      await getAction(id);
+      return listVersions(id);
+    });
+    scoped.get('/actions/:id/versions/:version', { preHandler: requireAdmin }, async (req) => {
+      const { id, version } = z.object({ id: z.string().min(1).max(200), version: z.coerce.number().int().min(1) }).parse(req.params);
+      return getVersion(id, version);
+    });
+    scoped.get('/actions/:id/diff', { preHandler: requireAdmin }, async (req) => {
+      const { id } = idParam.parse(req.params);
+      const q = z.object({ from: z.coerce.number().int().min(1), to: z.coerce.number().int().min(1) }).parse(req.query);
+      return diffVersions(id, q.from, q.to);
+    });
+    scoped.post('/actions/:id/rollback', { preHandler: requireAdmin }, async (req) => {
+      const { id } = idParam.parse(req.params);
+      const { version } = z.object({ version: z.coerce.number().int().min(1) }).parse(req.body ?? {});
+      const target = await getVersion(id, version);
+      const { action } = await upsertAction(
+        { ...target.definition, identifier: id },
+        { actor: actorOf(req.principal), note: `Rollback to version ${version}` },
+      );
+      await audit(actorOf(req.principal), 'action.rolled_back', id, { to: version, version: action.version });
       return action;
     });
     scoped.delete('/actions/:id', { preHandler: requireAdmin }, async (req) => {

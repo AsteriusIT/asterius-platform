@@ -1,5 +1,7 @@
 import type { Action, ActionTrigger, InvokerConfig, WorkflowStep, WorkflowTrigger } from '@asterius/shared';
 import { invalidateTriggerCache } from './triggers.js';
+import { definitionDoc, nextVersion, recordVersion } from './versions.js';
+import { SYSTEM, type Actor } from '../audit.js';
 import { isFormLike, nextTick, validateTrigger } from './trigger-defs.js';
 import { all, bool, json, now, one, run } from '../db.js';
 import { badRequest, managedError, notFound } from '../lib/errors.js';
@@ -24,6 +26,7 @@ interface Row {
   managed: number;
   trigger_config: string | null;
   next_fire_at: string | null;
+  version: number;
 }
 
 /** Stored in the trigger column when a workflow has no trigger yet (draft). */
@@ -53,6 +56,7 @@ function toAction(r: Row): Action {
     description: r.description,
     icon: r.icon,
     trigger,
+    version: Number(r.version),
     steps,
     ...(declared || !invoker ? {} : { invoker }),
     enabled: bool(r.enabled),
@@ -94,7 +98,10 @@ export async function getAction(id: string): Promise<Action> {
   return toAction(r);
 }
 
-export async function upsertAction(input: unknown, opts: { managed?: boolean } = {}): Promise<{ action: Action; created: boolean }> {
+export async function upsertAction(
+  input: unknown,
+  opts: { managed?: boolean; actor?: Actor; note?: string } = {},
+): Promise<{ action: Action; created: boolean }> {
   const def: ActionDef = actionDef.parse(input);
   const t0 = def.trigger;
   if (t0) validateTrigger(t0);
@@ -110,6 +117,10 @@ export async function upsertAction(input: unknown, opts: { managed?: boolean } =
   const existing = await one<Row>('SELECT * FROM actions WHERE identifier = ?', def.identifier);
   if (existing && bool(existing.managed) && !opts.managed) throw managedError('Action', def.identifier);
   const t = now();
+  const doc = definitionDoc(def);
+  const next = await nextVersion(def.identifier, existing ? Number(existing.version) : undefined, doc);
+  // The (action, version) key makes concurrent edits of the same version fail instead of overwriting each other.
+  if (next.isNew) await recordVersion(def.identifier, next.version, doc, opts.actor ?? SYSTEM, opts.note);
   const vals = [
     def.title,
     def.description,
@@ -126,17 +137,18 @@ export async function upsertAction(input: unknown, opts: { managed?: boolean } =
     opts.managed ? 1 : 0,
     t0 && t0.type !== 'form' ? JSON.stringify(t0) : null,
     t0?.type === 'schedule' && def.enabled ? nextTick(t0) : null,
+    next.version,
   ];
   if (existing)
     await run(
-      'UPDATE actions SET title = ?, description = ?, icon = ?, blueprint = ?, trigger = ?, inputs = ?, invoker = ?, steps = ?, approval = ?, allowed = ?, enabled = ?, managed = ?, trigger_config = ?, next_fire_at = ?, updated_at = ? WHERE identifier = ?',
+      'UPDATE actions SET title = ?, description = ?, icon = ?, blueprint = ?, trigger = ?, inputs = ?, invoker = ?, steps = ?, approval = ?, allowed = ?, enabled = ?, managed = ?, trigger_config = ?, next_fire_at = ?, version = ?, updated_at = ? WHERE identifier = ?',
       ...vals,
       t,
       def.identifier,
     );
   else
     await run(
-      'INSERT INTO actions (title, description, icon, blueprint, trigger, inputs, invoker, steps, approval, allowed, enabled, managed, trigger_config, next_fire_at, created_at, updated_at, identifier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO actions (title, description, icon, blueprint, trigger, inputs, invoker, steps, approval, allowed, enabled, managed, trigger_config, next_fire_at, version, created_at, updated_at, identifier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       ...vals,
       t,
       t,
