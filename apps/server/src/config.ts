@@ -31,6 +31,17 @@ const schema = z.object({
   CONFIG_DIR: z.string().default(path.resolve(process.cwd(), '../../config')),
   /** 32-byte key (base64 or hex) encrypting secrets stored in the database. Required with Postgres. */
   SECRETS_KEY: z.string().optional(),
+  /**
+   * Key ring for rotation: `id:key,id:key` (32 bytes, base64 or hex). The first key encrypts, all keys decrypt.
+   * Takes precedence over SECRETS_KEY, which stays a decryption key (id `legacy`) for values written before rotation.
+   */
+  SECRETS_KEYS: z.string().optional(),
+  /**
+   * Independent key ring signing run callback tokens, same `id:key,…` syntax (the first key signs, all verify).
+   * The id `derived` stands for the historical key derived from SECRETS_KEY (keeps in-flight callbacks valid).
+   * Unset: only the derived key.
+   */
+  CALLBACK_KEYS: z.string().optional(),
   METRICS_TOKEN: z.string().optional(),
   /** Serve the built web UI from the API process (production image). */
   WEB_DIST_DIR: z.string().optional(),

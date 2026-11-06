@@ -15,7 +15,7 @@ import {
   updateUser,
 } from '../auth/users.js';
 import { deleteTeam, listTeams, upsertTeam } from '../auth/teams.js';
-import { deleteSecret, listSecrets, setSecret } from '../secrets.js';
+import { deleteSecret, listSecrets, reencryptSecrets, setSecret } from '../secrets.js';
 import { deleteWebhook, getWebhook, listDeliveries, listWebhooks, redeliver, upsertWebhook } from '../webhooks/webhooks.js';
 import { exportConfig, managedCounts } from '../config-loader.js';
 import { config } from '../config.js';
@@ -100,6 +100,11 @@ export async function adminRoutes(app: FastifyInstance, opts: { reloadConfig: ()
     });
 
     admin.get('/secrets', async () => listSecrets());
+    admin.post('/secrets/reencrypt', async (req) => {
+      const r = await reencryptSecrets();
+      await audit(actorOf(req.principal), 'secrets.reencrypted', null, { reencrypted: r.reencrypted, failed: r.failed.length });
+      return r;
+    });
     admin.put('/secrets/:id', async (req) => {
       const { id } = idParam.parse(req.params);
       const body = z.object({ value: z.string().min(1).max(64_000), description: z.string().max(500).default('') }).parse(req.body);

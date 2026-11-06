@@ -94,7 +94,7 @@ Guarantees:
 
 - **Authentication.** Entra ID uses OIDC code + PKCE; the ID token's signature, issuer, audience, nonce and tenant are verified. Local accounts use scrypt hashes, per-IP rate limits and per-account lockout. Sessions and API tokens are stored as SHA-256 hashes only.
 - **Authorization.** Roles are admin and member. Entity writes are limited to the owning team (admins: everything). Each workflow's trigger carries its own `allowed` and `approval` subjects; approval steps carry their approvers.
-- **Secrets.** Stored with AES-256-GCM using `SECRETS_KEY`, and referenced by name in configuration. `${env:…}` cannot read platform settings such as `DATABASE_URL` or `SECRETS_KEY`.
+- **Secrets.** Stored with AES-256-GCM (values are `v2:<keyId>:…`; rotate with the `SECRETS_KEYS` ring `id:key,…` where the first key encrypts and all decrypt, then run `node dist/index.js reencrypt-secrets` or `POST /api/v1/secrets/reencrypt`; run callback tokens use the independent `CALLBACK_KEYS` ring, `derived` = the historical key), and referenced by name in configuration. `${env:…}` cannot read platform settings such as `DATABASE_URL` or `SECRETS_KEY`.
 - **Run callbacks.** The token is an HMAC of the run id, so it is valid for that run only and verifiable by any replica without storage.
 - **Templates.** Admin-written text is tokenized once; user inputs and secret values are never evaluated as expressions or references.
 - **Outbound requests.** Webhooks and invokers are signed (`X-Asterius-Signature: sha256=…`), with timeouts. Inbound webhooks are verified the same way.

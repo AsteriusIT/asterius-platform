@@ -1,6 +1,16 @@
 import { initTracing } from './tracing.js';
 import { config, isApi, isWorker } from './config.js';
 
+// Maintenance command: `node dist/index.js reencrypt-secrets` (after adding a key at the head of SECRETS_KEYS).
+if (process.argv[2] === 'reencrypt-secrets') {
+  const { reencryptSecrets } = await import('./secrets.js');
+  const { closeDb } = await import('./db.js');
+  const r = await reencryptSecrets();
+  console.log(`re-encrypted ${r.reencrypted}/${r.total} secrets${r.failed.length ? `; FAILED: ${r.failed.join(', ')}` : ''}`);
+  await closeDb();
+  process.exit(r.failed.length ? 1 : 0);
+}
+
 initTracing(config.PLATFORM_ROLE);
 
 const { buildApp } = await import('./app.js');
