@@ -2,6 +2,7 @@ import type { Integration, SyncRun } from '@asterius/shared';
 import { config as platform } from '../config.js';
 import { all, bool, json, now, one, run } from '../db.js';
 import { badRequest, managedError, notFound } from '../lib/errors.js';
+import { parseCron } from '../lib/cron.js';
 import { checkTemplate } from '../lib/expr.js';
 import { integrationDef, type IntegrationDef } from '../schemas.js';
 import { getSource } from './sources/index.js';
@@ -19,6 +20,8 @@ export interface IntegrationRow {
   delete_max_percent: number | null;
   delete_dry_run: number;
   sync_state: string | null;
+  schedule: string | null;
+  requested_kind: string | null;
   managed: number;
   next_sync_at: string | null;
   locked_until: string | null;
@@ -31,6 +34,7 @@ interface SyncRow {
   status: SyncRun['status'];
   stats: string;
   logs: string;
+  errors?: string | null;
   started_at: string;
   ended_at: string | null;
 }
@@ -42,6 +46,7 @@ export const toSyncRun = (r: SyncRow): SyncRun => ({
   status: r.status,
   stats: json(r.stats, { upserted: 0, deleted: 0, skipped: 0, failed: 0 }),
   logs: json(r.logs, []),
+  errors: json(r.errors ?? '[]', []),
   startedAt: r.started_at,
   endedAt: r.ended_at,
 });
@@ -49,7 +54,7 @@ export const toSyncRun = (r: SyncRow): SyncRun => ({
 export const entitySource = (identifier: string) => `integration:${identifier}`;
 export const webhookUrl = (identifier: string) => `${platform.PUBLIC_URL}/api/v1/ingest/${identifier}`;
 
-export function toIntegration(r: IntegrationRow, lastSync: SyncRun | null): Integration {
+export function toIntegration(r: IntegrationRow, lastSync: SyncRun | null, lastSuccessAt: string | null = null): Integration {
   return {
     identifier: r.identifier,
     title: r.title,
@@ -62,7 +67,9 @@ export function toIntegration(r: IntegrationRow, lastSync: SyncRun | null): Inte
     deleteMaxPercent: Number(r.delete_max_percent ?? 20),
     deleteDryRun: bool(r.delete_dry_run),
     managed: bool(r.managed),
+    schedule: r.schedule ?? undefined,
     lastSync,
+    lastSuccessAt,
     ...(r.type === 'webhook' ? { webhookUrl: webhookUrl(r.identifier) } : {}),
   };
 }
@@ -75,9 +82,18 @@ async function lastSyncs(): Promise<Map<string, SyncRun>> {
   return new Map(rows.map((r) => [r.integration, toSyncRun(r)]));
 }
 
+async function lastSuccesses(): Promise<Map<string, string>> {
+  const rows = await all<{ integration: string; t: string }>(
+    "SELECT integration, max(ended_at) AS t FROM sync_runs WHERE status = 'success' GROUP BY integration",
+  );
+  return new Map(rows.map((r) => [r.integration, r.t]));
+}
+
 export async function listIntegrations(): Promise<Integration[]> {
-  const last = await lastSyncs();
-  return (await all<IntegrationRow>('SELECT * FROM integrations ORDER BY title')).map((r) => toIntegration(r, last.get(r.identifier) ?? null));
+  const [last, ok] = await Promise.all([lastSyncs(), lastSuccesses()]);
+  return (await all<IntegrationRow>('SELECT * FROM integrations ORDER BY title')).map((r) =>
+    toIntegration(r, last.get(r.identifier) ?? null, ok.get(r.identifier) ?? null),
+  );
 }
 
 export async function getIntegrationRow(id: string): Promise<IntegrationRow> {
@@ -89,7 +105,8 @@ export async function getIntegrationRow(id: string): Promise<IntegrationRow> {
 export async function getIntegration(id: string): Promise<Integration> {
   const r = await getIntegrationRow(id);
   const last = await one<SyncRow>('SELECT * FROM sync_runs WHERE integration = ? ORDER BY started_at DESC LIMIT 1', id);
-  return toIntegration(r, last ? toSyncRun(last) : null);
+  const ok = await one<{ t: string | null }>("SELECT max(ended_at) AS t FROM sync_runs WHERE integration = ? AND status = 'success'", id);
+  return toIntegration(r, last ? toSyncRun(last) : null, ok?.t ?? null);
 }
 
 export async function syncHistory(id: string, limit = 30): Promise<SyncRun[]> {
@@ -105,6 +122,13 @@ export async function upsertIntegration(input: unknown, opts: { managed?: boolea
     throw badRequest((err as Error).message);
   }
   checkTemplate(def.config);
+  if (def.schedule) {
+    try {
+      parseCron(def.schedule);
+    } catch (err) {
+      throw badRequest(`schedule: ${(err as Error).message}`);
+    }
+  }
   const kinds = source.info.kinds ?? [];
   for (const m of def.mappings) {
     checkMapping(m);
@@ -126,18 +150,19 @@ export async function upsertIntegration(input: unknown, opts: { managed?: boolea
     def.deleteMissing ? 1 : 0,
     def.deleteMaxPercent,
     def.deleteDryRun ? 1 : 0,
+    def.schedule ?? null,
     opts.managed ? 1 : 0,
   ];
   if (existing)
     await run(
-      'UPDATE integrations SET title = ?, type = ?, enabled = ?, config = ?, mappings = ?, interval_minutes = ?, delete_missing = ?, delete_max_percent = ?, delete_dry_run = ?, managed = ?, sync_state = NULL, updated_at = ? WHERE identifier = ?',
+      'UPDATE integrations SET title = ?, type = ?, enabled = ?, config = ?, mappings = ?, interval_minutes = ?, delete_missing = ?, delete_max_percent = ?, delete_dry_run = ?, schedule = ?, managed = ?, sync_state = NULL, updated_at = ? WHERE identifier = ?',
       ...vals,
       t,
       def.identifier,
     );
   else
     await run(
-      'INSERT INTO integrations (title, type, enabled, config, mappings, interval_minutes, delete_missing, delete_max_percent, delete_dry_run, managed, created_at, updated_at, next_sync_at, identifier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO integrations (title, type, enabled, config, mappings, interval_minutes, delete_missing, delete_max_percent, delete_dry_run, schedule, managed, created_at, updated_at, next_sync_at, identifier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       ...vals,
       t,
       t,
@@ -156,8 +181,9 @@ export async function deleteIntegration(id: string, opts: { managed?: boolean; d
 }
 
 /** Ask workers to sync now (works from API-only pods: the next worker tick picks it up). */
-export async function requestSync(id: string) {
+export async function requestSync(id: string, kind?: string) {
   const r = await getIntegrationRow(id);
   if (getSource(r.type).push) throw badRequest('Webhook integrations receive data; there is nothing to pull');
-  await run('UPDATE integrations SET next_sync_at = ? WHERE identifier = ?', '1970-01-01T00:00:00.000Z', id); // MANUAL in sync.ts
+  if (kind && !json<Array<{ kind: string }>>(r.mappings, []).some((m) => m.kind === kind)) throw badRequest(`No mapping for kind "${kind}"`);
+  await run('UPDATE integrations SET next_sync_at = ?, requested_kind = ? WHERE identifier = ?', '1970-01-01T00:00:00.000Z', kind ?? null, id); // MANUAL in sync.ts
 }

@@ -12,7 +12,7 @@ import {
   syncHistory,
   upsertIntegration,
 } from '../integrations/integrations.js';
-import { ingest, renderConfig, verifyWebhook } from '../integrations/sync.js';
+import { ingest, renderConfig, testIntegration, verifyWebhook } from '../integrations/sync.js';
 import { getSource } from '../integrations/sources/index.js';
 import { mapItem } from '../integrations/mapping.js';
 import { mappingDef } from '../schemas.js';
@@ -67,9 +67,16 @@ export async function integrationRoutes(app: FastifyInstance) {
     });
     admin.post('/integrations/:id/sync', async (req, reply) => {
       const { id } = idParam.parse(req.params);
-      await requestSync(id);
-      await audit(actorOf(req.principal), 'integration.sync_requested', id);
+      const { kind } = z.object({ kind: z.string().min(1).max(100).optional() }).parse(req.query);
+      await requestSync(id, kind);
+      await audit(actorOf(req.principal), 'integration.sync_requested', id, kind ? { kind } : undefined);
       return reply.code(202).send({ queued: true });
+    });
+
+    /** Test the connection: fetch one page per kind (nothing is written). */
+    admin.post('/integrations/:id/test', async (req) => {
+      const { id } = idParam.parse(req.params);
+      return testIntegration(id);
     });
 
     /** Try a mapping on a sample item without writing anything (mapping editor). */

@@ -1,13 +1,14 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { FastifyBaseLogger } from 'fastify';
-import type { SyncRun, SyncStats } from '@asterius/shared';
+import type { SyncItemError, SyncRun, SyncStats } from '@asterius/shared';
 import { all, bool, json, later, newId, now, run } from '../db.js';
-import { errorMessage } from '../lib/errors.js';
+import { badRequest, errorMessage } from '../lib/errors.js';
 import { render } from '../lib/expr.js';
 import { resolveRef } from '../secrets.js';
 import { deleteEntity, upsertEntity } from '../catalog/entities.js';
 import { metrics } from '../metrics.js';
 import { withSpan } from '../tracing.js';
+import { nextCron } from '../lib/cron.js';
 import { withCircuit } from '../lib/resilience.js';
 import type { MappingDef } from '../schemas.js';
 import { getSource } from './sources/index.js';
@@ -17,6 +18,7 @@ import { entitySource, getIntegrationRow, toSyncRun, type IntegrationRow } from 
 
 const LEASE_MS = 30 * 60_000;
 const MAX_LOG_LINES = 300;
+const MAX_ITEM_ERRORS = 200;
 const DEFAULT_RECONCILE_HOURS = 24;
 export const DEFAULT_MAX_DELETE_PERCENT = 20;
 
@@ -36,13 +38,26 @@ interface KindListing {
 }
 const SYSTEM_ACTOR = { id: null, email: 'integration' };
 
+/** Short identification of a raw item for error records. */
+function itemKey(item: unknown): string {
+  if (item && typeof item === 'object') {
+    for (const k of ['id', 'identifier', 'name', 'key', 'code', 'full_name'])
+      if (typeof (item as Record<string, unknown>)[k] === 'string' || typeof (item as Record<string, unknown>)[k] === 'number')
+        return String((item as Record<string, unknown>)[k]).slice(0, 100);
+  }
+  return JSON.stringify(item)?.slice(0, 100) ?? '';
+}
+
 class SyncLog {
   lines: string[] = [];
   errors = 0;
+  /** Structured per-item errors (mapping kind, item key, message), capped. */
+  items: SyncItemError[] = [];
   add = (line: string) => {
     if (this.lines.length < MAX_LOG_LINES) this.lines.push(`${new Date().toISOString().slice(11, 19)} ${line}`);
   };
-  error = (line: string) => {
+  error = (line: string, rec?: Omit<SyncItemError, 'message'> & { message: string }) => {
+    if (rec && this.items.length < MAX_ITEM_ERRORS) this.items.push(rec);
     this.errors++;
     if (this.errors <= 50) this.add(`ERROR ${line}`);
     else if (this.errors === 51) this.add('ERROR … further item errors omitted');
@@ -54,7 +69,7 @@ export async function renderConfig(r: IntegrationRow) {
   return value as Record<string, unknown>;
 }
 
-async function applyMapped(integration: string, m: Mapped, merge: boolean, stats: SyncStats, log: SyncLog, seen?: Set<string>) {
+async function applyMapped(integration: string, kind: string, m: Mapped, merge: boolean, stats: SyncStats, log: SyncLog, seen?: Set<string>) {
   try {
     if (m.delete) {
       await deleteEntity(m.blueprint, m.identifier, SYSTEM_ACTOR).then(
@@ -74,7 +89,7 @@ async function applyMapped(integration: string, m: Mapped, merge: boolean, stats
   } catch (err) {
     stats.failed++;
     seen?.add(`${m.blueprint}/${m.identifier}`); // invalid now, but not gone: never delete on validation errors
-    log.error(`${m.blueprint}/${m.identifier}: ${errorMessage(err)}`);
+    log.error(`${m.blueprint}/${m.identifier}: ${errorMessage(err)}`, { mapping: kind, key: `${m.blueprint}/${m.identifier}`, message: errorMessage(err) });
   }
 }
 
@@ -82,15 +97,19 @@ async function processItem(r: IntegrationRow, mapping: MappingDef, item: unknown
   try {
     const { mapped, skipped } = await mapItem(mapping, item, bindings);
     stats.skipped += skipped;
-    for (const m of mapped) await applyMapped(r.identifier, m, mapping.merge, stats, log, seen);
+    for (const m of mapped) await applyMapped(r.identifier, mapping.kind, m, mapping.merge, stats, log, seen);
   } catch (err) {
     stats.failed++;
-    log.error(`mapping ${mapping.kind} → ${mapping.entity.blueprint}: ${errorMessage(err)}`);
+    log.error(`mapping ${mapping.kind} → ${mapping.entity.blueprint}: ${errorMessage(err)}`, {
+      mapping: mapping.kind,
+      key: itemKey(item),
+      message: errorMessage(err),
+    });
   }
 }
 
 /** Full pull of one integration. Returns undefined when another worker holds it. */
-export async function runSync(identifier: string, trigger: SyncRun['trigger']): Promise<SyncRun | undefined> {
+export async function runSync(identifier: string, trigger: SyncRun['trigger'], opts: { kind?: string } = {}): Promise<SyncRun | undefined> {
   const t = now();
   const { changes } = await run(
     'UPDATE integrations SET locked_until = ? WHERE identifier = ? AND (locked_until IS NULL OR locked_until < ?)',
@@ -121,12 +140,14 @@ export async function runSync(identifier: string, trigger: SyncRun['trigger']): 
         // (the only run allowed to delete: a partial listing cannot tell what disappeared).
         const prev = json<SyncState>(r.sync_state, { kinds: {} });
         const reconcileMs = Math.max(0, Number(config.fullReconcileHours ?? DEFAULT_RECONCILE_HOURS)) * 3_600_000;
-        const full = !source.incremental || !prev.lastFullAt || Date.now() - Date.parse(prev.lastFullAt) >= reconcileMs;
+        if (opts.kind && !mappings.some((m) => m.kind === opts.kind)) throw new Error(`no mapping for kind "${opts.kind}"`);
+        if (opts.kind) log.add(`syncing only kind "${opts.kind}": no deletions, full reconcile clock untouched`);
+        const full = !!opts.kind || !source.incremental || !prev.lastFullAt || Date.now() - Date.parse(prev.lastFullAt) >= reconcileMs;
         if (source.incremental) log.add(full ? 'full sync' : `incremental sync (full reconcile after ${prev.lastFullAt})`);
         const nextKinds: Record<string, unknown> = { ...prev.kinds };
         const listings: KindListing[] = [];
         // One listing per kind, shared by the mappings of that kind.
-        for (const kind of [...new Set(mappings.map((m) => m.kind))]) {
+        for (const kind of [...new Set(mappings.map((m) => m.kind))].filter((k) => !opts.kind || k === opts.kind)) {
           const forKind = mappings.filter((m) => m.kind === kind);
           const listing: KindListing = { kind, blueprints: forKind.map((m) => m.entity.blueprint), items: 0 };
           listing.partial = !full && prev.kinds[kind] !== undefined;
@@ -157,14 +178,14 @@ export async function runSync(identifier: string, trigger: SyncRun['trigger']): 
         }
         log.add(`${n} items read`);
         if (listings.some((l) => l.partial)) log.add('deletions of incrementally listed kinds are deferred to the next full reconcile');
-        if (bool(r.delete_missing))
+        if (bool(r.delete_missing) && !opts.kind)
           await deleteMissing(r, listings, seen, stats, log, {
             maxPercent: Number(r.delete_max_percent ?? DEFAULT_MAX_DELETE_PERCENT),
             dryRun: bool(r.delete_dry_run),
           });
         if (source.incremental) {
           const complete = listings.every((l) => !l.incomplete);
-          state = { kinds: nextKinds, ...(full && complete ? { lastFullAt: t } : prev.lastFullAt ? { lastFullAt: prev.lastFullAt } : {}) };
+          state = { kinds: nextKinds, ...(full && !opts.kind && complete ? { lastFullAt: t } : prev.lastFullAt ? { lastFullAt: prev.lastFullAt } : {}) };
         }
       } catch (err) {
         ok = false;
@@ -174,17 +195,17 @@ export async function runSync(identifier: string, trigger: SyncRun['trigger']): 
   );
   if (ok && state) await run('UPDATE integrations SET sync_state = ? WHERE identifier = ?', JSON.stringify(state), identifier);
 
-  const status = ok ? 'success' : 'failure';
-  const interval = Number(r.interval_minutes);
+  const status = !ok ? 'failure' : stats.failed ? 'partial' : 'success';
   await run(
-    'UPDATE sync_runs SET status = ?, stats = ?, logs = ?, ended_at = ? WHERE id = ?',
+    'UPDATE sync_runs SET status = ?, stats = ?, logs = ?, errors = ?, ended_at = ? WHERE id = ?',
     status,
     JSON.stringify(stats),
     JSON.stringify(log.lines),
+    JSON.stringify(log.items),
     now(),
     id,
   );
-  await run('UPDATE integrations SET locked_until = NULL, next_sync_at = ? WHERE identifier = ?', interval > 0 ? later(interval * 60_000) : null, identifier);
+  await run('UPDATE integrations SET locked_until = NULL, requested_kind = NULL, next_sync_at = ? WHERE identifier = ?', nextSyncAt(r), identifier);
   metrics.sync(identifier, status, stats.upserted, stats.deleted);
   return toSyncRun({
     id,
@@ -193,6 +214,7 @@ export async function runSync(identifier: string, trigger: SyncRun['trigger']): 
     status,
     stats: JSON.stringify(stats),
     logs: JSON.stringify(log.lines),
+    errors: JSON.stringify(log.items),
     started_at: t,
     ended_at: now(),
   });
@@ -304,6 +326,46 @@ export async function ingest(r: IntegrationRow, payload: unknown, headers: Recor
   return { ...stats, errors: log.lines };
 }
 
+/** Connection test: lists the first page of every mapped kind without writing anything. */
+export async function testIntegration(identifier: string) {
+  const r = await getIntegrationRow(identifier);
+  const source = getSource(r.type);
+  if (!source.list) throw badRequest(`${r.type} integrations are push-only: nothing to test`);
+  const kinds = [...new Set(json<MappingDef[]>(r.mappings, []).map((m) => m.kind))];
+  const config = await renderConfig(r);
+  const log = new SyncLog();
+  const results: Array<{ kind: string; ok: boolean; items?: number; sample?: unknown; error?: string; warnings: string[] }> = [];
+  await withCircuit(`test:${identifier}`, async () => {
+    for (const kind of kinds) {
+      const warnings: string[] = [];
+      try {
+        const env: SourceEnv = { config, log: log.add, startedAt: now(), setState: () => undefined, incomplete: (w) => warnings.push(w) };
+        const iter = source.list!(kind, env)[Symbol.asyncIterator]();
+        const first = await iter.next();
+        await iter.return?.();
+        const page = first.done ? [] : first.value;
+        results.push({ kind, ok: true, items: page.length, sample: page[0], warnings });
+      } catch (err) {
+        results.push({ kind, ok: false, error: errorMessage(err), warnings });
+      }
+    }
+  });
+  return { ok: results.every((x) => x.ok), kinds: results };
+}
+
+/** When the next scheduled sync is due: a cron `schedule` wins over the interval; null means manual only. */
+export function nextSyncAt(r: Pick<IntegrationRow, 'schedule' | 'interval_minutes'>): string | null {
+  if (r.schedule) {
+    try {
+      return nextCron(r.schedule).toISOString();
+    } catch {
+      return null;
+    }
+  }
+  const interval = Number(r.interval_minutes);
+  return interval > 0 ? later(interval * 60_000) : null;
+}
+
 // ---------- scheduler ----------
 /** `next_sync_at` value meaning "requested by someone" (sorts first, labelled manual in the history). */
 export const MANUAL = '1970-01-01T00:00:00.000Z';
@@ -313,8 +375,8 @@ let running = 0;
 export function startSyncScheduler(log: FastifyBaseLogger) {
   const tick = async () => {
     if (running >= MAX_PARALLEL_SYNCS) return;
-    const due = await all<{ identifier: string; type: string; next_sync_at: string }>(
-      `SELECT identifier, type, next_sync_at FROM integrations
+    const due = await all<{ identifier: string; type: string; next_sync_at: string; requested_kind: string | null }>(
+      `SELECT identifier, type, next_sync_at, requested_kind FROM integrations
        WHERE enabled = 1 AND next_sync_at IS NOT NULL AND next_sync_at <= ? AND (locked_until IS NULL OR locked_until < ?)
        ORDER BY next_sync_at LIMIT ?`,
       now(),
@@ -327,7 +389,7 @@ export function startSyncScheduler(log: FastifyBaseLogger) {
         continue;
       }
       running++;
-      runSync(d.identifier, d.next_sync_at === MANUAL ? 'manual' : 'schedule')
+      runSync(d.identifier, d.next_sync_at === MANUAL ? 'manual' : 'schedule', { kind: d.requested_kind ?? undefined })
         .then((res) => res && log.info({ integration: d.identifier, status: res.status, stats: res.stats }, 'integration synced'))
         .catch((err) => log.error({ err, integration: d.identifier }, 'integration sync crashed'))
         .finally(() => running--);

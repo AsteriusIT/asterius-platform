@@ -371,6 +371,16 @@ export const MIGRATIONS: Migration[] = [
         ALTER TABLE integrations ADD COLUMN delete_dry_run INTEGER NOT NULL DEFAULT 0;
       `),
   },
+  {
+    id: 5,
+    name: 'integrations: cron schedule, single-kind sync requests, per-item sync errors',
+    up: (d) =>
+      d.exec(`
+        ALTER TABLE integrations ADD COLUMN schedule TEXT;
+        ALTER TABLE integrations ADD COLUMN requested_kind TEXT;
+        ALTER TABLE sync_runs ADD COLUMN errors TEXT NOT NULL DEFAULT '[]';
+      `),
+  },
 ];
 
 /** Apply pending numbered migrations (idempotent; serialized across replicas by an advisory lock on Postgres). */

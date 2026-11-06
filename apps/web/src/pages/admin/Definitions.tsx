@@ -130,7 +130,13 @@ export function IntegrationsAdmin() {
           render: (i) =>
             i.lastSync ? (
               <Group gap={6} wrap="nowrap">
-                <Badge color={i.lastSync.status === 'success' ? 'green' : i.lastSync.status === 'running' ? 'blue' : 'red'}>{i.lastSync.status}</Badge>
+                <Badge
+                  color={
+                    i.lastSync.status === 'success' ? 'green' : i.lastSync.status === 'running' ? 'blue' : i.lastSync.status === 'partial' ? 'yellow' : 'red'
+                  }
+                >
+                  {i.lastSync.status}
+                </Badge>
                 <Text fz="xs" c="dimmed">
                   <TimeAgo at={i.lastSync.startedAt} />
                 </Text>
@@ -161,7 +167,7 @@ export function IntegrationsAdmin() {
           ...s.example,
         },
       }))}
-      toEditable={(i) => strip(i, ['managed', 'lastSync', 'webhookUrl'])}
+      toEditable={(i) => strip(i, ['managed', 'lastSync', 'lastSuccessAt', 'webhookUrl'])}
       save={api.saveIntegration}
       remove={(i) => api.deleteIntegration(i.identifier)}
       removeWarning={() => 'Entities it ingested stay in the catalog.'}

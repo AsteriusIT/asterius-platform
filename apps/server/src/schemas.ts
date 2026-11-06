@@ -226,6 +226,8 @@ export const integrationDef = z.object({
   intervalMinutes: z.number().int().min(0).max(10080).default(60),
   /** After a successful full sync, delete the entities this integration created that it did not see anymore. */
   deleteMissing: z.boolean().default(false),
+  /** Cron expression (5 fields, UTC) replacing `intervalMinutes` as the pull schedule. */
+  schedule: z.string().max(100).optional(),
   /** deleteMissing safety: cancel the deletion when more than this share of the existing entities would be removed. */
   deleteMaxPercent: z.number().int().min(0).max(100).default(20),
   /** deleteMissing: only report in the sync log what would be deleted. */
