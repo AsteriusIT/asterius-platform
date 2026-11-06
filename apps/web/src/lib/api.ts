@@ -19,6 +19,7 @@ import type {
   Webhook,
   ActionVersion,
   ActionVersionDiff,
+  DryRunResult,
 } from '@asterius/shared';
 
 /** Typed client for the platform API (/api/v1). The session token lives in localStorage. */
@@ -113,6 +114,10 @@ export const api = {
   actionDiff: (id: string, from: number, to: number) =>
     request<ActionVersionDiff>('GET', v1(`/actions/${enc(id)}/diff${qs({ from: String(from), to: String(to) })}`)),
   rollbackAction: (id: string, version: number) => request<ActionView>('POST', v1(`/actions/${enc(id)}/rollback`), { version }),
+  dryRun: (
+    id: string,
+    body: { definition?: Record<string, unknown>; inputs: Record<string, unknown>; entity?: string | null; mock?: Record<string, unknown> },
+  ) => request<DryRunResult>('POST', v1(`/actions/${enc(id)}/dry-run`), body),
   actions: (q: { blueprint?: string; trigger?: string } = {}) => request<ActionView[]>('GET', v1(`/actions${qs(q)}`)),
   action: (id: string) => request<Action>('GET', v1(`/actions/${enc(id)}`)),
   saveAction: (id: string, body: unknown) => request<Action>('PUT', v1(`/actions/${enc(id)}`), body),

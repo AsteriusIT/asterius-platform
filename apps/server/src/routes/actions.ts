@@ -7,6 +7,7 @@ import { getEntity } from '../catalog/entities.js';
 import { blueprintOf, canTrigger, isRunnable, deleteAction, forViewer, getAction, listActions, upsertAction } from '../actions/actions.js';
 import { addLog, cancelRun, decide, getRun, getRunRow, listRuns, pendingApprovals, triggerRun } from '../actions/runs.js';
 import { cancelSteps, decideStep, runningInvokeStep, updateStep } from '../actions/engine.js';
+import { dryRun } from '../actions/dryrun.js';
 import { diffVersions, getVersion, listVersions } from '../actions/versions.js';
 import { rerun, resume, retryStep } from '../actions/recovery.js';
 import { deliverEvent, submitInput } from '../actions/waiting.js';
@@ -130,6 +131,19 @@ export async function actionRoutes(app: FastifyInstance) {
       const { action, created } = await upsertAction({ ...(req.body as object), identifier: id }, { actor: actorOf(req.principal) });
       await audit(actorOf(req.principal), created ? 'action.created' : 'action.updated', id);
       return action;
+    });
+    /** Test a workflow without side effects: renders templates, evaluates expressions, validates invokers and secrets. */
+    scoped.post('/actions/:id/dry-run', { preHandler: requireAdmin, config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async (req) => {
+      const { id } = idParam.parse(req.params);
+      const body = z
+        .object({
+          definition: z.record(z.string(), z.unknown()).optional(),
+          inputs: z.record(z.string(), z.unknown()).default({}),
+          entity: z.string().nullish(),
+          mock: z.record(z.string(), z.unknown()).optional(),
+        })
+        .parse(req.body ?? {});
+      return dryRun(id, req.principal, body);
     });
     scoped.get('/actions/:id/versions', { preHandler: requireAdmin }, async (req) => {
       const { id } = idParam.parse(req.params);

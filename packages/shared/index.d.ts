@@ -353,6 +353,27 @@ export interface ActionVersionDiff {
   stepsReordered: boolean;
 }
 
+export interface DryRunStep {
+  id: string;
+  type: WorkflowStepType;
+  /** planned: would run · skipped: its condition is false · error: could not be rendered or validated */
+  status: 'planned' | 'skipped' | 'error';
+  condition?: boolean;
+  /** The step as it would be executed (templates rendered, secrets masked). */
+  rendered?: unknown;
+  /** Simulated output, as seen by later steps. */
+  output?: unknown;
+  errors: string[];
+}
+
+export interface DryRunResult {
+  valid: boolean;
+  inputErrors: string[];
+  /** Secret and environment references that do not resolve. */
+  missingSecrets: string[];
+  steps: DryRunStep[];
+}
+
 export type RunStatus = 'PENDING_APPROVAL' | 'QUEUED' | 'IN_PROGRESS' | 'SUCCESS' | 'FAILURE' | 'REJECTED' | 'CANCELLED';
 
 export interface RunLog {

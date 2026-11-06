@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { Alert, Badge, Group, Modal, Select, SimpleGrid, Stack, Switch, Tabs, Text, Textarea, TextInput } from '@mantine/core';
+import { Alert, Badge, Button, Group, Modal, Select, SimpleGrid, Stack, Switch, Tabs, Text, Textarea, TextInput } from '@mantine/core';
 import { useQuery } from '@tanstack/react-query';
-import { IconHistory, IconInfoCircle, IconSettings, IconSitemap } from '@tabler/icons-react';
+import { IconFlask, IconHistory, IconInfoCircle, IconSettings, IconSitemap } from '@tabler/icons-react';
 import type { ActionTrigger, FormTrigger, InvokerConfig, ObjectSchema, PluginInfo, WorkflowStep, WorkflowTrigger } from '@asterius/shared';
 import { api } from '../../lib/api';
 import { EntityIcon, ICON_NAMES } from '../icons';
@@ -10,6 +10,7 @@ import { MONO_INPUT } from './blocks';
 import { stepProblems, WorkflowEditor } from './WorkflowEditor';
 import { isFormLike } from './TriggerEditor';
 import { ActionHistory } from './ActionHistory';
+import { DryRunModal } from './DryRunModal';
 import { BuilderFooter, BuilderModal, CodePanels, CodeTabs, ManagedNotice, slugify, useCodeView, useSave } from './shell';
 
 export { slugify };
@@ -262,6 +263,7 @@ function Builder({
   const [doc, setDoc] = useState<ActionDoc>(() => toActionDoc(value));
   const [fields, setFields] = useState<FieldDraft[]>(() => schemaToFields(formInputs(toActionDoc(value).trigger)));
   const [tab, setTab] = useState<string | null>(initialTab ?? 'workflow');
+  const [testing, setTesting] = useState(false);
   const [generation, setGeneration] = useState(0); // remount editors after a JSON/YAML replacement
 
   const set = (patch: Partial<ActionDoc>) => setDoc((d) => ({ ...d, ...patch }));
@@ -310,6 +312,11 @@ function Builder({
             </Tabs.Tab>
           )}
           <CodeTabs />
+          {
+            <Button ml="auto" size="xs" variant="light" leftSection={<IconFlask size={14} />} onClick={() => setTesting(true)}>
+              Test
+            </Button>
+          }
         </Tabs.List>
 
         <fieldset disabled={readOnly} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }} key={generation}>
@@ -351,6 +358,7 @@ function Builder({
         <CodePanels view={code} readOnly={readOnly} />
       </Tabs>
 
+      {testing && <DryRunModal identifier={doc.identifier} body={body} onClose={() => setTesting(false)} />}
       <BuilderFooter problems={saver.problems} readOnly={readOnly} saving={saver.saving} saveLabel="Save" onSave={save} onClose={onClose} />
     </Stack>
   );
