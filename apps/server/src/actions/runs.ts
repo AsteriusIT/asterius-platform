@@ -4,7 +4,8 @@ import { all, json, newId, now, one, run, type SqlValue } from '../db.js';
 import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
 import { emit } from '../events.js';
 import { audit } from '../audit.js';
-import { actorOf, isAdmin, matchesSubjects, type Principal } from '../auth/users.js';
+import { actorOf, isAdmin, matchesSubjects, principalOf, type Principal, type UserRow } from '../auth/users.js';
+import { notify } from '../notifications.js';
 import { getEntity } from '../catalog/entities.js';
 import { compact, validate } from '../catalog/validation.js';
 import { canTrigger, getAction } from './actions.js';
@@ -187,6 +188,47 @@ export async function emitRun(id: string, type: 'run.created' | 'run.updated') {
   const r = await getRunRow(id);
   const steps = (await loadSteps(id)).map((s) => ({ id: s.step_id, name: s.name, type: s.type, status: s.status }));
   await emit({ type, blueprint: r.blueprint, data: { run: { ...toRun(r, (await approvalsOf([id])).get(id) ?? []), steps } } });
+  await notifyRun(r).catch((err) => console.error('[notifications] could not notify', id, err));
+}
+
+const FINAL_TEXT: Partial<Record<RunStatus, string>> = { SUCCESS: 'succeeded', FAILURE: 'failed', REJECTED: 'was rejected', CANCELLED: 'was cancelled' };
+
+/** In-app notifications for a run lifecycle change: approvers when a decision is needed, the requester when it ends. */
+async function notifyRun(r: RunRow) {
+  const link = `/runs/${r.id}`;
+  const finalText = FINAL_TEXT[r.status];
+  if (finalText) {
+    await notify(r.triggered_by, { kind: `run.${r.status.toLowerCase()}`, title: `${r.action_title} ${finalText}`, link, dedupe: `run:${r.id}:${r.status}` });
+    return;
+  }
+  const wantsApproval = r.status === 'PENDING_APPROVAL';
+  const waitingSteps = r.status === 'IN_PROGRESS' ? (await loadSteps(r.id)).filter((s) => s.status === 'WAITING_APPROVAL') : [];
+  if (!wantsApproval && !waitingSteps.length) return;
+  const approvals = (await approvalsOf([r.id])).get(r.id) ?? [];
+  const stepApprovals = await stepApprovalsOf([r.id]);
+  const defs = stepDefs(r);
+  for (const u of await all<UserRow>('SELECT * FROM users WHERE active = 1')) {
+    const p = await principalOf(u);
+    if (wantsApproval && canApprove(p, r, approvals))
+      await notify(u.id, {
+        kind: 'approval.requested',
+        title: `Approval requested: ${r.action_title}`,
+        body: `By ${r.user_name ?? 'someone'}`,
+        link,
+        dedupe: `approval:${r.id}`,
+      });
+    for (const row of waitingSteps) {
+      const def = defs.find((d) => d.id === row.step_id);
+      if (def && canApproveStep(p, r, def, row, stepApprovals.get(`${r.id}/${row.step_id}`) ?? []))
+        await notify(u.id, {
+          kind: 'approval.requested',
+          title: `Approval requested: ${row.name}`,
+          body: `${r.action_title}, by ${r.user_name ?? 'someone'}`,
+          link: `${link}?step=${row.step_id}`,
+          dedupe: `approval:${r.id}:${row.step_id}`,
+        });
+    }
+  }
 }
 
 // ---------- trigger ----------

@@ -50,6 +50,7 @@ import { useAuth } from '../lib/auth';
 import { Tour } from './Tour';
 import { tourSteps } from './tourSteps';
 import { CommandPalette } from './CommandPalette';
+import { NotificationCenter } from './NotificationCenter';
 import { EntityIcon } from './icons';
 
 const initials = (name = '') =>
@@ -159,6 +160,7 @@ export function Layout() {
                 </ActionIcon>
               </Indicator>
             </Tooltip>
+            <NotificationCenter />
             <Tooltip label="Runs">
               <ActionIcon component={Link} to="/runs" data-tour="runs" variant={active('/runs') ? 'light' : 'subtle'} color="gray" size="lg" aria-label="Runs">
                 <IconActivity size={19} stroke={1.6} />

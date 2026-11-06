@@ -34,6 +34,20 @@ export interface ConfigDiff {
   kinds: Record<string, { added: string[]; removed: string[]; kept: string[] }>;
 }
 
+export interface NotificationItem {
+  id: string;
+  kind: string;
+  title: string;
+  body: string;
+  link: string | null;
+  createdAt: string;
+  read: boolean;
+}
+export interface NotificationPrefs {
+  email: boolean;
+  slack: boolean;
+}
+
 /** Typed client for the platform API (/api/v1). The session token lives in localStorage. */
 
 const TOKEN_KEY = 'asterius.token';
@@ -159,6 +173,11 @@ export const api = {
   testIntegration: (body: { type: string; config: Record<string, unknown>; kind?: string }) =>
     request<{ ok: boolean; sample: unknown[]; error?: string; note?: string }>('POST', v1('/integrations/test'), body),
   testWebhook: (id: string) => request<{ queued: boolean }>('POST', v1(`/webhooks/${enc(id)}/test`), {}),
+  notifications: (q: { unread?: boolean; limit?: number; offset?: number } = {}) =>
+    request<{ items: NotificationItem[]; unread: number }>('GET', v1(`/notifications${qs(q)}`)),
+  markNotificationsRead: (body: { ids?: string[]; all?: boolean }) => request<{ changed: number }>('POST', v1('/notifications/read'), body),
+  notificationPrefs: () => request<NotificationPrefs>('GET', v1('/notifications/preferences')),
+  saveNotificationPrefs: (p: NotificationPrefs) => request<NotificationPrefs>('PUT', v1('/notifications/preferences'), p),
   previewMapping: (body: { mapping: unknown; item: unknown }) => request<{ mapped: unknown[]; skipped: number }>('POST', v1('/mappings/preview'), body),
 
   webhooks: () => request<Webhook[]>('GET', v1('/webhooks')),

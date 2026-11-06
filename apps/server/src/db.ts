@@ -361,6 +361,31 @@ export const MIGRATIONS: Migration[] = [
         );
       `),
   },
+  {
+    id: 4,
+    name: 'notifications',
+    up: (d) =>
+      d.exec(`
+        CREATE TABLE notifications (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          kind TEXT NOT NULL,
+          title TEXT NOT NULL,
+          body TEXT NOT NULL DEFAULT '',
+          link TEXT,
+          dedupe TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          read_at TEXT
+        );
+        CREATE UNIQUE INDEX notifications_dedupe ON notifications(user_id, dedupe);
+        CREATE INDEX notifications_user ON notifications(user_id, created_at);
+        CREATE TABLE notification_prefs (
+          user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+          email INTEGER NOT NULL DEFAULT 0,
+          slack INTEGER NOT NULL DEFAULT 0
+        );
+      `),
+  },
 ];
 
 /** Apply pending numbered migrations (idempotent; serialized across replicas by an advisory lock on Postgres). */

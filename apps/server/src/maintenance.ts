@@ -2,11 +2,13 @@ import type { FastifyBaseLogger } from 'fastify';
 import { config } from './config.js';
 import { all, run, withAdvisoryLock } from './db.js';
 import { purgeExpiredAuth } from './auth/users.js';
+import { purgeNotifications } from './notifications.js';
 
 /** Hourly housekeeping (one replica at a time): expired sessions, data past RETENTION_DAYS. */
 export async function housekeeping(log: FastifyBaseLogger) {
   await withAdvisoryLock(726203, async () => {
     await purgeExpiredAuth();
+    await purgeNotifications();
     const cutoff = new Date(Date.now() - config.RETENTION_DAYS * 86400_000).toISOString();
     const finished = "('SUCCESS', 'FAILURE', 'REJECTED', 'CANCELLED')";
     const runs = await run(`DELETE FROM runs WHERE status IN ${finished} AND ended_at < ?`, cutoff);
