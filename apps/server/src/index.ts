@@ -10,6 +10,7 @@ const { startRunWorker, WORKER_ID } = await import('./actions/worker.js');
 const { startSyncScheduler } = await import('./integrations/sync.js');
 const { startDeliveryWorker } = await import('./webhooks/webhooks.js');
 const { startMaintenance } = await import('./maintenance.js');
+const { startAiScheduler } = await import('./ai/review.js');
 
 /**
  * Roles (PLATFORM_ROLE):
@@ -24,7 +25,7 @@ const loader = await startConfigLoader(app.log);
 
 const stops: (() => unknown)[] = [loader.stop];
 if (isWorker) {
-  stops.push(startRunWorker(app.log), startSyncScheduler(app.log), startDeliveryWorker(app.log), startMaintenance(app.log));
+  stops.push(startRunWorker(app.log), startSyncScheduler(app.log), startDeliveryWorker(app.log), startMaintenance(app.log), startAiScheduler(app.log));
   app.log.info(`worker ${WORKER_ID} started (concurrency ${config.WORKER_CONCURRENCY})`);
 }
 

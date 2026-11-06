@@ -498,6 +498,18 @@ export interface AiBudget {
   hardUsd: number | null;
 }
 
+export interface AiReview {
+  id: string;
+  at: string;
+  trigger: 'schedule' | 'manual';
+  status: 'success' | 'failure';
+  findings: { kind: string; blueprint: string; identifier: string; detail: string }[];
+  counts: Record<string, number>;
+  summary: string;
+  costUsd: number | null;
+  error: string | null;
+}
+
 export interface AiPrice {
   model: string;
   input: number;

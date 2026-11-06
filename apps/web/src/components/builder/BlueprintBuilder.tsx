@@ -6,6 +6,7 @@ import type { BlueprintRelation, ObjectSchema } from '@asterius/shared';
 import { api } from '../../lib/api';
 import { EntityIcon, ICON_NAMES } from '../icons';
 import { Empty } from '../ui';
+import { AiDraft, JsonPreview, parseSample } from '../AiAssistant';
 import { FIELD_NAME, fieldProblems, fieldsToSchema, nameFromLabel, newId, schemaToFields, type FieldDraft } from './fields';
 import { BLUEPRINT_PROPERTIES, FieldsEditor } from './FieldsEditor';
 import { MONO_INPUT } from './blocks';
@@ -118,17 +119,15 @@ function Builder({
     const { entityCount: _count, ...rest } = doc as BlueprintDoc & { entityCount?: unknown };
     return { ...rest, schema: fieldsToSchema(fields), relations: draftsToRelations(relations) };
   };
-  const code = useCodeView({
-    body,
-    replace: (parsed) => {
-      const next = toBlueprintDoc(parsed);
-      if (!isNew) next.identifier = doc.identifier;
-      setDoc(next);
-      setFields(schemaToFields(next.schema));
-      setRelations(relationsToDrafts(next.relations));
-      setGeneration((g) => g + 1);
-    },
-  });
+  const applyDoc = (parsed: Record<string, unknown>) => {
+    const next = toBlueprintDoc(parsed);
+    if (!isNew) next.identifier = doc.identifier;
+    setDoc(next);
+    setFields(schemaToFields(next.schema));
+    setRelations(relationsToDrafts(next.relations));
+    setGeneration((g) => g + 1);
+  };
+  const code = useCodeView({ body, replace: applyDoc });
   const saver = useSave(() => onSave(doc.identifier, body()), onClose);
   const save = () => {
     const found = blueprintProblems(doc, fields, relations);
@@ -139,6 +138,19 @@ function Builder({
   return (
     <Stack>
       {readOnly && <ManagedNotice />}
+      {isNew && !readOnly && (
+        <Group justify="flex-end">
+          <AiDraft
+            label="Draft with AI"
+            title="Draft a blueprint"
+            help="Paste a sample JSON document of the thing you want to catalog, or describe it. The draft fills the form; review it before saving."
+            placeholder={'{ "name": "orders-db", "engine": "postgres", "sizeGb": 50 }\n\nor: a database owned by a team, with an engine and a size'}
+            run={(text) => api.aiDraftBlueprint(parseSample(text))}
+            preview={(d) => <JsonPreview value={d.blueprint} />}
+            onDraft={(d) => applyDoc(d.blueprint)}
+          />
+        </Group>
+      )}
       {!isNew && !readOnly && entityCount > 0 && (
         <Alert color="blue" variant="light" icon={<IconInfoCircle size={18} />}>
           {entityCount} entities use this blueprint. Changes apply to new writes: existing entities are not re-validated, and values of removed properties stay

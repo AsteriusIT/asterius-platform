@@ -48,6 +48,7 @@ import { api } from '../../lib/api';
 import { needsOf, STEP_TYPES, stepWarnings } from '../../lib/workflow';
 import { newFormTrigger, TriggerEditor, TRIGGER_TYPES, triggerSummary } from './TriggerEditor';
 import { Empty } from '../ui';
+import { AiDraft, JsonPreview } from '../AiAssistant';
 import { fieldProblems, fieldsToSchema, nameFromLabel, schemaToFields, type FieldDraft } from './fields';
 import { FieldsEditor, type FieldsMode } from './FieldsEditor';
 import { JsonEditor, KeyValueEditor, MONO_INPUT, PluginFieldInput, SubjectsEditor, VariableChips } from './blocks';
@@ -189,6 +190,22 @@ export function WorkflowEditor(props: {
   return (
     <Grid gap="lg" align="flex-start">
       <Grid.Col span={{ base: 12, md: 4 }}>
+        {steps.length === 0 && (
+          <Group mb="xs">
+            <AiDraft
+              label="Draft steps with AI"
+              title="Draft a workflow"
+              help="Describe what the workflow should do. The draft replaces the (empty) step list; review and adjust it before saving. Drafts never include write tools or credentials."
+              placeholder="When someone requests a database, have an AI review the request, ask the platform team to approve, then call our provisioning webhook."
+              run={(text) => api.aiDraftWorkflow(text)}
+              preview={(d) => <JsonPreview value={d.steps} />}
+              onDraft={(d) => {
+                onChange(d.steps);
+                setSelected(d.steps[0] ? { kind: 'step', id: d.steps[0].id } : null);
+              }}
+            />
+          </Group>
+        )}
         <Stack gap={0} align="stretch" className="workflow-canvas" p="md" style={{ background: 'var(--surface)', borderRadius: 16 }}>
           {trigger ? (
             <CanvasNode

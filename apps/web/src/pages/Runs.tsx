@@ -27,6 +27,7 @@ import { api, errorText } from '../lib/api';
 import { DataTable } from '../components/DataTable';
 import { duration, Empty, Markdown, PageHeader, QueryView, StatusBadge, STATUS_COLORS, TimeAgo } from '../components/ui';
 import { WorkflowGraph } from '../components/WorkflowGraph';
+import { ExplainRun } from '../components/AiAssistant';
 import { STEP_STATUS_COLORS, STEP_STATUS_LABELS, STEP_TYPES } from '../lib/workflow';
 import { PropertyValue } from '../components/PropertyValue';
 
@@ -263,6 +264,8 @@ function RunView({ r }: { r: Run }) {
           </Stack>
         </Alert>
       )}
+
+      {['SUCCESS', 'FAILURE', 'CANCELLED', 'REJECTED'].includes(r.status) && <ExplainRun runId={r.id} failed={r.status === 'FAILURE'} />}
 
       {steps.length > 0 && (
         <Card padding="md">

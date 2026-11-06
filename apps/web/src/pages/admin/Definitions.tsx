@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { ActionIcon, Anchor, Badge, Code, CopyButton, Drawer, Group, Stack, Text, Tooltip } from '@mantine/core';
+import { ActionIcon, Anchor, Badge, Code, CopyButton, Drawer, Group, Select, Stack, Text, Tooltip } from '@mantine/core';
+import { AiDraft, JsonPreview } from '../../components/AiAssistant';
 import { notifications } from '@mantine/notifications';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router';
@@ -202,6 +203,7 @@ function IntegrationDrawer({ integration, onClose }: { integration: Integration 
               </Text>
             </Stack>
           )}
+          <MappingSuggest />
           <Text fz="sm" fw={500}>
             History
           </Text>
@@ -232,6 +234,35 @@ function IntegrationDrawer({ integration, onClose }: { integration: Integration 
         </Stack>
       )}
     </Drawer>
+  );
+}
+
+/** Paste one item from a source, pick the target blueprint: the assistant proposes the JSONata mapping and shows the entity it gives. */
+function MappingSuggest() {
+  const blueprints = useQuery({ queryKey: ['blueprints'], queryFn: api.blueprints });
+  const [blueprint, setBlueprint] = useState<string | null>(null);
+  return (
+    <Group>
+      <AiDraft
+        label="Suggest a mapping with AI"
+        title="Suggest a mapping"
+        help="Paste one JSON item as the source returns it and choose the blueprint it becomes. Copy the proposed mapping into the integration after checking the preview."
+        placeholder='{ "name": "orders-api", "owner": { "login": "payments" }, "language": "Go" }'
+        extra={
+          <Select
+            label="Blueprint"
+            data={(blueprints.data ?? []).map((b) => ({ value: b.identifier, label: b.title }))}
+            value={blueprint}
+            onChange={setBlueprint}
+            searchable
+          />
+        }
+        disabled={!blueprint && !blueprints.data?.length}
+        run={(text) => api.aiSuggestMapping({ blueprint: blueprint ?? '', sample: JSON.parse(text) as unknown })}
+        preview={(d) => <JsonPreview value={{ mapping: d.mapping, preview: d.preview }} />}
+        onDraft={(d) => void navigator.clipboard?.writeText(JSON.stringify(d.mapping, null, 2)).then(() => notifications.show({ message: 'Mapping copied' }))}
+      />
+    </Group>
   );
 }
 

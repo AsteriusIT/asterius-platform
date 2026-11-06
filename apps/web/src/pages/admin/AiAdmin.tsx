@@ -1,12 +1,12 @@
 import { useState } from 'react';
-import { ActionIcon, Button, Card, Group, NumberInput, Select, SimpleGrid, Stack, Text, TextInput } from '@mantine/core';
+import { ActionIcon, Badge, Button, Card, Group, NumberInput, Select, SimpleGrid, Stack, Text, TextInput } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { IconTrash } from '@tabler/icons-react';
 import type { AiBudget } from '@asterius/shared';
 import { api, errorText } from '../../lib/api';
 import { DataTable } from '../../components/DataTable';
-import { Mono, PageHeader, QueryView } from '../../components/ui';
+import { Markdown, Mono, PageHeader, QueryView, TimeAgo } from '../../components/ui';
 
 const usd = (n: number | null | undefined) => (n == null ? 'no limit' : `$${n.toFixed(n < 1 ? 4 : 2)}`);
 
@@ -50,6 +50,8 @@ export function AiAdmin() {
     },
     onError,
   });
+  const reviews = useQuery({ queryKey: ['ai-reviews'], queryFn: api.aiReviews });
+  const runReview = useMutation({ mutationFn: api.aiRunReview, onSuccess: () => void qc.invalidateQueries({ queryKey: ['ai-reviews'] }), onError });
   const remove = useMutation({ mutationFn: (id: string) => api.deleteAiBudget(id), onSuccess: refresh, onError });
   const needsKey = scope === 'action' || scope === 'team';
 
@@ -147,6 +149,47 @@ export function AiAdmin() {
             },
           ]}
         />
+      </Card>
+
+      <Card>
+        <Group justify="space-between" mb="xs">
+          <Text fw={600}>Catalog quality reviews</Text>
+          <Button size="xs" loading={runReview.isPending} onClick={() => runReview.mutate()}>
+            Run a review now
+          </Button>
+        </Group>
+        <Text fz="sm" c="dimmed" mb="sm">
+          Stale data, missing owners and broken relations. Scheduled with AI_REVIEW_INTERVAL_HOURS; an AI summary prioritises the findings.
+        </Text>
+        <QueryView q={reviews}>
+          {(list) =>
+            list[0] ? (
+              <Stack gap="sm">
+                <Group gap="xs">
+                  <TimeAgo at={list[0].at} />
+                  {Object.entries(list[0].counts).map(([k, n]) => (
+                    <Badge key={k} variant="light" color={n ? 'orange' : 'green'}>
+                      {k.replaceAll('_', ' ')}: {n}
+                    </Badge>
+                  ))}
+                </Group>
+                {list[0].summary && <Markdown>{list[0].summary}</Markdown>}
+                {list[0].error && <Text c="dimmed">{list[0].error}</Text>}
+                <DataTable
+                  rows={list[0].findings.slice(0, 50)}
+                  rowKey={(f) => `${f.kind}/${f.blueprint}/${f.identifier}/${f.detail}`}
+                  columns={[
+                    { key: 'k', label: 'Finding', render: (f) => f.kind.replaceAll('_', ' ') },
+                    { key: 'e', label: 'Entity', render: (f) => <Mono>{`${f.blueprint}/${f.identifier}`}</Mono> },
+                    { key: 'd', label: 'Detail', render: (f) => f.detail },
+                  ]}
+                />
+              </Stack>
+            ) : (
+              <Text c="dimmed">No review yet.</Text>
+            )
+          }
+        </QueryView>
       </Card>
 
       <Card>
