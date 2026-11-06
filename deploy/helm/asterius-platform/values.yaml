@@ -69,7 +69,7 @@ database:
         secretAccessKeyKey: ACCESS_SECRET_KEY
       credentials: {} # optional raw barmanObjectStore credentials (azureCredentials / googleCredentials), merged as-is
     # Disaster recovery: create the cluster from a backup of another cluster instead of an empty database.
-    # Set only when restoring (see docs/DISASTER_RECOVERY.md); remove afterwards.
+    # Set only when restoring (see docs/OPERATIONS.md); remove afterwards.
     recovery:
       enabled: false
       sourceClusterName: "" # name of the cluster whose backups are read

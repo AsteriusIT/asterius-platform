@@ -208,19 +208,24 @@ export async function startConfigLoader(log: FastifyBaseLogger) {
   };
 }
 
-/** Everything configurable, as a config file: move resources created in the UI into Git. */
-export async function exportConfig(): Promise<string> {
+/** Every resource definition (no entities, no secret values). */
+export async function exportDefinitions() {
   const strip = <T extends Record<string, unknown>>(o: T, keys: string[]) => Object.fromEntries(Object.entries(o).filter(([k]) => !keys.includes(k)));
   const webhooks = await Promise.all(
     (await listWebhooks()).map(async (w) => ({ ...strip(w as never, ['managed', 'hasSecret']), secret: (await getWebhook(w.identifier)).secret ?? undefined })),
   );
-  const doc = {
+  return {
     teams: (await listTeams()).map((t) => strip(t as never, ['managed', 'members'])),
     blueprints: (await listBlueprints()).map((b) => strip(b as never, ['managed', 'entityCount', 'createdAt', 'updatedAt'])),
     actions: (await listActions()).map((a) => strip(a as never, ['managed'])),
     integrations: (await listIntegrations()).map((i) => strip(i as never, ['managed', 'lastSync', 'webhookUrl'])),
     webhooks,
   };
+}
+
+/** Everything configurable, as a config file: move resources created in the UI into Git. */
+export async function exportConfig(): Promise<string> {
+  const doc = await exportDefinitions();
   return `# Exported ${new Date().toISOString()} — secrets are references (\${secret:NAME}), never values.\n${stringify(doc, { lineWidth: 140 })}`;
 }
 

@@ -1,7 +1,7 @@
 import { createCipheriv, createDecipheriv, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
 import { config, paths } from './config.js';
-import { all, dialect, now, one, run } from './db.js';
+import { all, dialect, now, one, run, tx } from './db.js';
 import { badRequest, notFound } from './lib/errors.js';
 import type { RefResolver } from './lib/expr.js';
 import type { SecretInfo } from '@asterius/shared';
@@ -14,13 +14,15 @@ import type { SecretInfo } from '@asterius/shared';
  * Platform settings (DATABASE_URL, SECRETS_KEY, …) can never be referenced.
  */
 
+export function parseKey(raw: string): Buffer {
+  const key = /^[0-9a-f]{64}$/i.test(raw) ? Buffer.from(raw, 'hex') : Buffer.from(raw, 'base64');
+  if (key.length !== 32) throw new Error('SECRETS_KEY must be 32 bytes (64 hex chars or base64)');
+  return key;
+}
+
 function loadKey(): Buffer {
   const raw = config.SECRETS_KEY;
-  if (raw) {
-    const key = /^[0-9a-f]{64}$/i.test(raw) ? Buffer.from(raw, 'hex') : Buffer.from(raw, 'base64');
-    if (key.length !== 32) throw new Error('SECRETS_KEY must be 32 bytes (64 hex chars or base64)');
-    return key;
-  }
+  if (raw) return parseKey(raw);
   if (dialect === 'postgres') throw new Error('SECRETS_KEY is required with Postgres (several replicas must share the key)');
   if (fs.existsSync(paths.secretsKey)) return Buffer.from(fs.readFileSync(paths.secretsKey, 'utf8').trim(), 'base64');
   const key = randomBytes(32);
@@ -31,17 +33,17 @@ function loadKey(): Buffer {
 
 const key = loadKey();
 
-export function encrypt(plain: string) {
+export function encrypt(plain: string, withKey: Buffer = key) {
   const iv = randomBytes(12);
-  const c = createCipheriv('aes-256-gcm', key, iv);
+  const c = createCipheriv('aes-256-gcm', withKey, iv);
   const enc = Buffer.concat([c.update(plain, 'utf8'), c.final()]);
   return `v1:${iv.toString('base64')}:${c.getAuthTag().toString('base64')}:${enc.toString('base64')}`;
 }
 
-export function decrypt(stored: string) {
+export function decrypt(stored: string, withKey: Buffer = key) {
   const [v, iv, tag, data] = stored.split(':');
   if (v !== 'v1' || !iv || !tag || !data) throw new Error('unsupported secret format');
-  const d = createDecipheriv('aes-256-gcm', key, Buffer.from(iv, 'base64'));
+  const d = createDecipheriv('aes-256-gcm', withKey, Buffer.from(iv, 'base64'));
   d.setAuthTag(Buffer.from(tag, 'base64'));
   return Buffer.concat([d.update(Buffer.from(data, 'base64')), d.final()]).toString('utf8');
 }
@@ -60,6 +62,23 @@ export async function setSecret(name: string, value: string, description: string
   if (existing)
     await run('UPDATE secrets SET value_enc = ?, description = ?, updated_by = ?, updated_at = ? WHERE name = ?', enc, description, userId, now(), name);
   else await run('INSERT INTO secrets (name, value_enc, description, updated_by, updated_at) VALUES (?, ?, ?, ?, ?)', name, enc, description, userId, now());
+}
+
+/**
+ * Re-encrypt every stored secret with a new key (offline operation: stop all pods first, then deploy with the new
+ * SECRETS_KEY). All-or-nothing; fails without changes when any secret cannot be decrypted with the current key.
+ * Run-callback tokens are derived from the key, so runs in flight when the key changes lose their callbacks.
+ */
+export async function rotateSecretsKey(newKey: string): Promise<number> {
+  const next = parseKey(newKey);
+  return tx(async (d) => {
+    const { rows } = await d.query<{ name: string; value_enc: string }>('SELECT name, value_enc FROM secrets');
+    for (const r of rows) {
+      const enc = encrypt(decrypt(r.value_enc), next);
+      await d.query('UPDATE secrets SET value_enc = ?, updated_at = ? WHERE name = ?', [enc, now(), r.name]);
+    }
+    return rows.length;
+  });
 }
 
 export async function deleteSecret(name: string) {
