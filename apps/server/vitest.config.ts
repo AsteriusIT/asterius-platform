@@ -10,6 +10,8 @@ export default defineConfig({
       ENTRA_CLIENT_ID: 'client-1',
       ENTRA_CLIENT_SECRET: 'secret',
       PUBLIC_URL: 'http://platform.test',
+      ALLOW_REGISTRATION: 'true',
+      ADMIN_EMAILS: 'admin@example.com',
       RUN_POLL_SECONDS: '2',
       LOG_LEVEL: 'silent',
     },

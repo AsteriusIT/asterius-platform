@@ -281,7 +281,7 @@ export function WebhooksAdmin() {
           },
         },
       ]}
-      toEditable={async (w) => strip(await api.webhook(w.identifier), ['managed', 'hasSecret'])}
+      toEditable={async (w) => strip(await api.webhook(w.identifier), ['managed', 'hasSecret', 'hasSecondarySecret'])}
       save={api.saveWebhook}
       remove={(w) => api.deleteWebhook(w.identifier)}
     >

@@ -9,7 +9,7 @@ import { getEntity } from '../catalog/entities.js';
 import { compact, validate } from '../catalog/validation.js';
 import { canTrigger, getAction } from './actions.js';
 import { metrics } from '../metrics.js';
-import { canApproveStep, loadSteps, runStepsView, stepApprovalsOf, stepDefs, stepMessage } from './steps.js';
+import { approverSubjects, canApproveStep, loadSteps, runStepsView, stepApprovalsOf, stepDefs, stepMessage } from './steps.js';
 
 /**
  * Run lifecycle:
@@ -107,9 +107,32 @@ export async function getRunRow(id: string) {
   return r;
 }
 
+/**
+ * Who may see a run (inputs, logs and results can hold names, environments and sometimes credentials): the requester,
+ * admins, members of the team owning the target entity, anyone who decided on it, and the people entitled to approve
+ * it (run-level policy or an approval step of the workflow).
+ */
+export async function canViewRun(p: Principal, r: RunRow, approvals: RunApproval[]): Promise<boolean> {
+  if (isAdmin(p) || r.triggered_by === p.id) return true;
+  if (r.team && p.teams.includes(r.team)) return true;
+  if (approvals.some((a) => a.userId === p.id)) return true;
+  if (approverOf(p, r)) return true;
+  const stepDecisions = (await stepApprovalsOf([r.id])).entries();
+  for (const [, list] of stepDecisions) if (list.some((a) => a.userId === p.id)) return true;
+  return false;
+}
+
+/** Entitled to approve (now or at some point): the run-level policy, or an approval step of the workflow. */
+function approverOf(p: Principal, r: RunRow) {
+  const policy = json<ApprovalPolicy>(r.approval, { required: false });
+  if (policy.required && matchesSubjects(p, approversOf(policy), r.team)) return true;
+  return stepDefs(r).some((d) => d.type === 'approval' && matchesSubjects(p, approverSubjects(d.approvers), r.team));
+}
+
 export async function getRun(id: string, p: Principal): Promise<Run> {
   const r = await getRunRow(id);
   const approvals = (await approvalsOf([id])).get(id) ?? [];
+  if (!(await canViewRun(p, r, approvals))) throw notFound('Run'); // same answer as a missing run: do not reveal existence
   const logs = await all<RunLog>('SELECT at, level, message, step_id AS "stepId" FROM run_logs WHERE run_id = ? ORDER BY seq LIMIT 10000', id);
   return { ...toRun(r, approvals), logs, steps: await runStepsView(r, p), canApprove: canApprove(p, r, approvals), canCancel: canCancel(p, r) };
 }
@@ -124,9 +147,37 @@ export interface RunQuery {
   offset: number;
 }
 
-export async function listRuns(q: RunQuery): Promise<RunPage> {
+/** Ids of non-final-or-not runs the principal is entitled to approve (policy checked in code, SQL only pre-selects). */
+async function approverRunIds(p: Principal): Promise<string[]> {
+  const rows = await all<RunRow>(
+    `${SELECT} WHERE r.approval LIKE '%"required":true%' OR r.steps LIKE '%"type":"approval"%' ORDER BY r.created_at DESC LIMIT 2000`,
+  );
+  return rows.filter((r) => approverOf(p, r)).map((r) => r.id);
+}
+
+export async function listRuns(q: RunQuery, p: Principal): Promise<RunPage> {
   const where: string[] = [];
   const params: SqlValue[] = [];
+  if (!isAdmin(p)) {
+    // Viewer policy (see canViewRun): requester, owning team, deciders, approvers.
+    const ors = [
+      'r.triggered_by = ?',
+      'r.id IN (SELECT run_id FROM run_approvals WHERE user_id = ?)',
+      'r.id IN (SELECT run_id FROM step_approvals WHERE user_id = ?)',
+    ];
+    const vals: SqlValue[] = [p.id, p.id, p.id];
+    if (p.teams.length) {
+      ors.push(`r.team IN (${p.teams.map(() => '?').join(',')})`);
+      vals.push(...p.teams);
+    }
+    const ids = await approverRunIds(p);
+    if (ids.length) {
+      ors.push(`r.id IN (${ids.map(() => '?').join(',')})`);
+      vals.push(...ids);
+    }
+    where.push(`(${ors.join(' OR ')})`);
+    params.push(...vals);
+  }
   const add = (clause: string, v: SqlValue) => {
     where.push(clause);
     params.push(v);

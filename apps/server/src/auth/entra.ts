@@ -2,8 +2,9 @@ import { createHash, randomBytes } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from 'jose';
 import { config } from '../config.js';
-import { one, run } from '../db.js';
-import { createSession, upsertEntraUser } from './users.js';
+import { all, one, run, withAdvisoryLock } from '../db.js';
+import type { FastifyBaseLogger } from 'fastify';
+import { createSession, entraRole, syncEntraTeams, upsertEntraUser, type UserRow } from './users.js';
 import { audit } from '../audit.js';
 
 /**
@@ -37,8 +38,88 @@ export async function checkIdToken(idToken: string, nonce: string, keySet: JWTVe
   const email = String(payload.email ?? payload.preferred_username ?? '').toLowerCase();
   // `groups` is present when the app registration emits group claims (scripts/entra-app.sh sets SecurityGroup):
   // they map to teams (teams.entraGroupId) and to the admin role (ENTRA_ADMIN_GROUPS).
+  // With more than 200 groups Entra omits the claim and sends `_claim_names.groups` (overage): resolve through Graph.
+  const names = payload._claim_names as Record<string, string> | undefined;
+  const overage = !Array.isArray(payload.groups) && (!!names?.groups || payload.hasgroups === true);
   const groups = Array.isArray(payload.groups) ? payload.groups.map(String) : [];
-  return { externalId: `${payload.tid}:${oid}`, email, name: String(payload.name || email || 'User'), groups };
+  return { externalId: `${payload.tid}:${oid}`, oid, email, name: String(payload.name || email || 'User'), groups, overage };
+}
+
+const GRAPH = 'https://graph.microsoft.com';
+
+/** App-only Graph token (client credentials). Needs GroupMember.Read.All with admin consent. */
+async function graphToken() {
+  const res = await fetch(`${authority()}/oauth2/v2.0/token`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: config.ENTRA_CLIENT_ID!,
+      client_secret: config.ENTRA_CLIENT_SECRET!,
+      grant_type: 'client_credentials',
+      scope: `${GRAPH}/.default`,
+    }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  const body = (await res.json()) as { access_token?: string; error_description?: string };
+  if (!res.ok || !body.access_token) throw new Error(body.error_description?.split('\n')[0] ?? `Graph token endpoint ${res.status}`);
+  return body.access_token;
+}
+
+/** All group object ids a user belongs to (transitively), through Microsoft Graph. */
+export async function graphGroupsOf(oid: string): Promise<string[]> {
+  const token = await graphToken();
+  const out: string[] = [];
+  let url: string | undefined = `${GRAPH}/v1.0/users/${encodeURIComponent(oid)}/getMemberObjects`;
+  let body: string | undefined = JSON.stringify({ securityEnabledOnly: true });
+  for (let page = 0; url && page < 20; page++) {
+    const res: Response = await fetch(url, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body,
+      signal: AbortSignal.timeout(15_000),
+    });
+    const data = (await res.json()) as { value?: string[]; '@odata.nextLink'?: string; error?: { message?: string } };
+    if (!res.ok) throw new Error(`Microsoft Graph: ${data.error?.message ?? res.status}`);
+    out.push(...(data.value ?? []).map(String));
+    const next: string | undefined = data['@odata.nextLink'];
+    url = next && next.startsWith(`${GRAPH}/`) ? next : undefined; // never follow a link to another host
+    body = undefined;
+  }
+  return out;
+}
+
+/**
+ * Re-apply roles and team memberships of Entra users that hold an active session, from their current groups in Entra,
+ * so removing someone from a group takes effect without waiting for their next sign-in. One replica at a time.
+ */
+export async function resyncEntraMemberships(log: FastifyBaseLogger) {
+  await withAdvisoryLock(726204, async () => {
+    const users = await all<UserRow>(
+      "SELECT DISTINCT u.* FROM users u JOIN sessions s ON s.user_id = u.id WHERE u.provider = 'entra' AND u.active = 1 AND s.expires_at > ?",
+      new Date().toISOString(),
+    );
+    for (const u of users) {
+      try {
+        const oid = (u.external_id ?? '').split(':')[1];
+        if (!oid) continue;
+        const groups = await graphGroupsOf(oid);
+        await run('UPDATE users SET groups = ?, role = ? WHERE id = ?', JSON.stringify(groups), entraRole(u, u.email, groups), u.id);
+        await syncEntraTeams(u.id, groups);
+      } catch (err) {
+        log.warn({ err, user: u.email }, 'entra membership re-sync failed');
+      }
+    }
+  });
+}
+
+export function startEntraResync(log: FastifyBaseLogger) {
+  if (!config.AUTH_PROVIDERS.includes('entra') || !config.ENTRA_RESYNC_MINUTES) return () => undefined;
+  const timer = setInterval(
+    () => void resyncEntraMemberships(log).catch((err) => log.error({ err }, 'entra re-sync failed')),
+    config.ENTRA_RESYNC_MINUTES * 60_000,
+  );
+  timer.unref();
+  return () => clearInterval(timer);
 }
 
 export async function entraRoutes(app: FastifyInstance) {
@@ -100,7 +181,17 @@ export async function entraRoutes(app: FastifyInstance) {
       const tokens = (await res.json()) as { id_token?: string; error?: string; error_description?: string };
       if (!res.ok || !tokens.id_token) throw new Error(tokens.error_description?.split('\n')[0] ?? tokens.error ?? `token endpoint ${res.status}`);
 
-      const { externalId, email, name, groups } = await checkIdToken(tokens.id_token, st.nonce, keys());
+      const id = await checkIdToken(tokens.id_token, st.nonce, keys());
+      const { externalId, email, name } = id;
+      let groups = id.groups;
+      if (id.overage) {
+        // Fail closed: silently treating "too many groups" as "no groups" would drop teams and (wrongly) admin rights.
+        try {
+          groups = await graphGroupsOf(id.oid);
+        } catch (err) {
+          throw new Error(`you belong to too many groups for the token and the Graph lookup failed (${(err as Error).message})`, { cause: err });
+        }
+      }
 
       const user = await upsertEntraUser({ externalId, email, name, groups });
       if (user.active !== 1) return reply.redirect(fail('Your account is disabled'));
