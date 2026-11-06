@@ -21,7 +21,7 @@ import {
 import { notifications } from '@mantine/notifications';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
-import { IconCheck, IconExternalLink, IconPlayerStop, IconX } from '@tabler/icons-react';
+import { IconCheck, IconExternalLink, IconPlayerPlay, IconPlayerStop, IconRepeat, IconX } from '@tabler/icons-react';
 import type { Run, RunStatus, RunStep } from '@asterius/shared';
 import { api, errorText } from '../lib/api';
 import { DataTable } from '../components/DataTable';
@@ -172,6 +172,7 @@ function defaultStep(r: Run, requested: string | null) {
 
 function RunView({ r }: { r: Run }) {
   const qc = useQueryClient();
+  const navigate = useNavigate();
   const [params] = useSearchParams();
   const [comment, setComment] = useState('');
   const [selected, setSelected] = useState<string | null>(() => defaultStep(r, params.get('step')));
@@ -191,6 +192,15 @@ function RunView({ r }: { r: Run }) {
     onError,
   });
   const cancel = useMutation({ mutationFn: () => api.cancel(r.id), onSuccess: refresh, onError });
+  const resume = useMutation({ mutationFn: () => api.resume(r.id), onSuccess: refresh, onError });
+  const rerun = useMutation({
+    mutationFn: () => api.rerun(r.id),
+    onSuccess: (run) => {
+      void qc.invalidateQueries({ queryKey: ['runs'] });
+      void navigate(`/runs/${run.id}`);
+    },
+    onError,
+  });
   const steps = r.steps ?? [];
   const step = steps.find((s) => s.id === selected) ?? null;
   const logs = (r.logs ?? []).filter((l) => allLogs || !step || l.stepId === step.id);
@@ -221,6 +231,16 @@ function RunView({ r }: { r: Run }) {
                 rightSection={<IconExternalLink size={16} />}
               >
                 Open
+              </Button>
+            )}
+            {r.canResume && (
+              <Button variant="light" leftSection={<IconPlayerPlay size={16} />} loading={resume.isPending} onClick={() => resume.mutate()}>
+                Resume
+              </Button>
+            )}
+            {r.canRerun && (
+              <Button variant="default" leftSection={<IconRepeat size={16} />} loading={rerun.isPending} onClick={() => rerun.mutate()}>
+                Run again
               </Button>
             )}
             {r.canCancel && (
@@ -414,6 +434,11 @@ function StepPanel({ run, step, onDone }: { run: Run; step: RunStep; onDone: (r:
     },
     onError: (e) => notifications.show({ color: 'red', message: errorText(e) }),
   });
+  const retry = useMutation({
+    mutationFn: () => api.retryStep(run.id, step.id),
+    onSuccess: onDone,
+    onError: (e) => notifications.show({ color: 'red', message: errorText(e) }),
+  });
   const output = step.output as Record<string, unknown> | null;
   const textOnly = output && Object.keys(output).length === 1 && typeof output.text === 'string';
   return (
@@ -434,11 +459,18 @@ function StepPanel({ run, step, onDone }: { run: Run; step: RunStep; onDone: (r:
             {step.continueOnError ? ' · may fail without failing the workflow' : ''}
           </Text>
         </div>
-        {step.link && (
-          <Button size="xs" component="a" href={step.link} target="_blank" variant="default" rightSection={<IconExternalLink size={14} />}>
-            Open
-          </Button>
-        )}
+        <Group gap="xs">
+          {step.canRetry && (
+            <Button size="xs" variant="light" leftSection={<IconRepeat size={14} />} loading={retry.isPending} onClick={() => retry.mutate()}>
+              Retry step
+            </Button>
+          )}
+          {step.link && (
+            <Button size="xs" component="a" href={step.link} target="_blank" variant="default" rightSection={<IconExternalLink size={14} />}>
+              Open
+            </Button>
+          )}
+        </Group>
       </Group>
 
       {step.message && (

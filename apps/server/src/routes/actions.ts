@@ -7,6 +7,7 @@ import { getEntity } from '../catalog/entities.js';
 import { blueprintOf, canTrigger, isRunnable, deleteAction, forViewer, getAction, listActions, upsertAction } from '../actions/actions.js';
 import { addLog, cancelRun, decide, getRun, getRunRow, listRuns, pendingApprovals, triggerRun } from '../actions/runs.js';
 import { cancelSteps, decideStep, runningInvokeStep, updateStep } from '../actions/engine.js';
+import { rerun, resume, retryStep } from '../actions/recovery.js';
 import { receiveWebhook } from '../actions/triggers.js';
 import { checkRunToken, checkStepToken } from '../secrets.js';
 import { conflict, forbidden } from '../lib/errors.js';
@@ -161,6 +162,12 @@ export async function actionRoutes(app: FastifyInstance) {
     scoped.post('/runs/:id/approve', async (req) => decide(req.principal, idParam.parse(req.params).id, 'approved', comment.parse(req.body ?? {}).comment));
     scoped.post('/runs/:id/reject', async (req) => decide(req.principal, idParam.parse(req.params).id, 'rejected', comment.parse(req.body ?? {}).comment));
     scoped.post('/runs/:id/cancel', async (req) => cancelRun(req.principal, idParam.parse(req.params).id, cancelSteps));
+    scoped.post('/runs/:id/rerun', async (req, reply) => reply.code(201).send(await rerun(req.principal, idParam.parse(req.params).id)));
+    scoped.post('/runs/:id/resume', async (req) => resume(req.principal, idParam.parse(req.params).id));
+    scoped.post('/runs/:id/steps/:step/retry', async (req) => {
+      const { id, step } = stepParams.parse(req.params);
+      return retryStep(req.principal, id, step);
+    });
     scoped.post('/runs/:id/steps/:step/approve', async (req) => {
       const { id, step } = stepParams.parse(req.params);
       await decideStep(req.principal, id, step, 'approved', comment.parse(req.body ?? {}).comment);

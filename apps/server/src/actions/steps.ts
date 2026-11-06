@@ -1,6 +1,6 @@
 import type { RunApproval, RunStep, StepStatus, Subjects } from '@asterius/shared';
 import { all, json } from '../db.js';
-import { matchesSubjects, type Principal } from '../auth/users.js';
+import { isAdmin, matchesSubjects, type Principal } from '../auth/users.js';
 import type { RunRow } from './runs.js';
 import { needsOf, type Step } from './workflow.js';
 
@@ -58,6 +58,24 @@ export function canApproveStep(p: Principal, run: RunRow, def: Step, row: StepRo
   return matchesSubjects(p, approverSubjects(def.approvers), run.team);
 }
 
+export const canManageRun = (p: Principal, r: Pick<RunRow, 'triggered_by'>) => isAdmin(p) || r.triggered_by === p.id;
+/** `state` of a step skipped because a dependency did not succeed (engine.ts). */
+export const BLOCKED_STATE = '{"blocked":true}';
+const REOPENABLE: RunRow['status'][] = ['IN_PROGRESS', 'FAILURE', 'CANCELLED'];
+
+/** Steps to start over when a run resumes: failed or cancelled ones (not those allowed to fail) and the steps skipped because of them. */
+export function resumableSteps(defs: Step[], rows: Pick<StepRow, 'step_id' | 'status' | 'state'>[]): string[] {
+  return rows
+    .filter((s) => {
+      const def = defs.find((d) => d.id === s.step_id);
+      return (s.status === 'FAILURE' && !def?.continueOnError) || s.status === 'CANCELLED' || (s.status === 'SKIPPED' && s.state === BLOCKED_STATE);
+    })
+    .map((s) => s.step_id);
+}
+
+export const canRetryStep = (p: Principal, r: RunRow, row: Pick<StepRow, 'status'>) =>
+  canManageRun(p, r) && row.status === 'FAILURE' && REOPENABLE.includes(r.status);
+
 export const stepMessage = (row: StepRow) => json<{ message?: string }>(row.state, {}).message ?? null;
 
 export async function runStepsView(run: RunRow, p: Principal | null): Promise<RunStep[]> {
@@ -82,7 +100,7 @@ export async function runStepsView(run: RunRow, p: Principal | null): Promise<Ru
       link: row.link,
       message: stepMessage(row),
       approvals: list,
-      ...(p && def ? { canApprove: canApproveStep(p, run, def, row, list) } : {}),
+      ...(p && def ? { canApprove: canApproveStep(p, run, def, row, list), canRetry: canRetryStep(p, run, row) } : {}),
       startedAt: row.started_at,
       endedAt: row.ended_at,
     };

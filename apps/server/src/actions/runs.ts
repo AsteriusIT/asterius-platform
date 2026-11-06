@@ -9,7 +9,7 @@ import { getEntity } from '../catalog/entities.js';
 import { compact, validate } from '../catalog/validation.js';
 import { canTrigger, getAction } from './actions.js';
 import { metrics } from '../metrics.js';
-import { canApproveStep, loadSteps, runStepsView, stepApprovalsOf, stepDefs, stepMessage } from './steps.js';
+import { canApproveStep, canManageRun, loadSteps, resumableSteps, runStepsView, stepApprovalsOf, stepDefs, stepMessage } from './steps.js';
 
 /**
  * Run lifecycle:
@@ -114,7 +114,17 @@ export async function getRun(id: string, p: Principal): Promise<Run> {
   const r = await getRunRow(id);
   const approvals = (await approvalsOf([id])).get(id) ?? [];
   const logs = await all<RunLog>('SELECT at, level, message, step_id AS "stepId" FROM run_logs WHERE run_id = ? ORDER BY seq LIMIT 10000', id);
-  return { ...toRun(r, approvals), logs, steps: await runStepsView(r, p), canApprove: canApprove(p, r, approvals), canCancel: canCancel(p, r) };
+  const manage = canManageRun(p, r);
+  const canResume = manage && ['FAILURE', 'CANCELLED'].includes(r.status) && !!r.steps && resumableSteps(stepDefs(r), await loadSteps(id)).length > 0;
+  return {
+    ...toRun(r, approvals),
+    logs,
+    steps: await runStepsView(r, p),
+    canApprove: canApprove(p, r, approvals),
+    canCancel: canCancel(p, r),
+    canRerun: manage && FINAL.includes(r.status),
+    canResume,
+  };
 }
 
 export interface RunQuery {
@@ -239,7 +249,12 @@ function checkRunnable(action: Action) {
   if (!action.steps.length) throw badRequest(`"${action.title}" has no steps yet: add a step to its workflow`);
 }
 
-export async function triggerRun(p: Principal, actionId: string, body: { entity?: string | null; inputs?: Record<string, unknown> }): Promise<Run> {
+export async function triggerRun(
+  p: Principal,
+  actionId: string,
+  body: { entity?: string | null; inputs?: Record<string, unknown> },
+  source?: RunSource,
+): Promise<Run> {
   const action = await getAction(actionId);
   checkRunnable(action);
   const trigger = action.trigger;
@@ -264,7 +279,7 @@ export async function triggerRun(p: Principal, actionId: string, body: { entity?
     entityTeam,
     inputs,
     approval: trigger.approval,
-    source: { type: trigger.type },
+    source: source ?? { type: trigger.type },
   });
   return getRun(id, p);
 }

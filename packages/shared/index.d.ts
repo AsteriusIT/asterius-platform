@@ -223,6 +223,8 @@ export interface RunStep {
   message: string | null;
   approvals: RunApproval[];
   canApprove?: boolean;
+  /** A failed step the caller may retry. */
+  canRetry?: boolean;
   startedAt: string | null;
   endedAt: string | null;
 }
@@ -341,6 +343,10 @@ export interface Run {
   pendingStep?: { id: string; name: string; message: string | null } | null;
   canApprove?: boolean;
   canCancel?: boolean;
+  /** Requester or admin, finished run. */
+  canRerun?: boolean;
+  /** Requester or admin, failed or cancelled run with steps to start over. */
+  canResume?: boolean;
 }
 
 export interface RunPage {
