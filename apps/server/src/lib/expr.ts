@@ -1,5 +1,6 @@
 import jsonata from 'jsonata';
 import { badRequest } from './errors.js';
+import { LRU } from './lru.js';
 
 /**
  * One expression language everywhere: JSONata (https://jsonata.org).
@@ -8,8 +9,7 @@ import { badRequest } from './errors.js';
  *    and `${secret:NAME}` / `${env:NAME}` references resolved at execution time.
  */
 
-const cache = new Map<string, jsonata.Expression>();
-const MAX_CACHE = 2000;
+const cache = new LRU<string, jsonata.Expression>(2000);
 
 export function compile(expr: string): jsonata.Expression {
   let c = cache.get(expr);
@@ -19,7 +19,6 @@ export function compile(expr: string): jsonata.Expression {
     } catch (err) {
       throw badRequest(`Invalid expression "${expr}": ${(err as { message?: string }).message}`);
     }
-    if (cache.size > MAX_CACHE) cache.clear();
     cache.set(expr, c);
   }
   return c;

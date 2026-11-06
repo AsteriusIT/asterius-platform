@@ -92,6 +92,8 @@ settings:
   runTimeoutHours: 24
   httpTimeoutSeconds: 30
   retentionDays: 90
+  # memory: per-pod counters (fine for one replica). database: shared across API replicas, one upsert per request.
+  rateLimitStore: database
 # Extra non-secret environment variables.
 extraEnv: {}
 

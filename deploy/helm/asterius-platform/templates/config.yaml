@@ -15,6 +15,7 @@ data:
   RUN_TIMEOUT_HOURS: {{ $v.settings.runTimeoutHours | quote }}
   HTTP_TIMEOUT_SECONDS: {{ $v.settings.httpTimeoutSeconds | quote }}
   RETENTION_DAYS: {{ $v.settings.retentionDays | quote }}
+  RATE_LIMIT_STORE: {{ $v.settings.rateLimitStore | default "memory" | quote }}
   AUTH_PROVIDERS: {{ $v.auth.providers | quote }}
   ALLOW_REGISTRATION: {{ $v.auth.allowRegistration | quote }}
   SESSION_DAYS: {{ $v.auth.sessionDays | quote }}

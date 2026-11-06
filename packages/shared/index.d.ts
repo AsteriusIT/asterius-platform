@@ -154,6 +154,30 @@ export interface EntityQueryBody {
   count?: boolean;
 }
 
+export interface GraphNode {
+  blueprint: string;
+  identifier: string;
+  title: string;
+  team: string | null;
+  /** Hops from the root entity. */
+  depth: number;
+  /** Referenced but not ingested (yet). */
+  missing: boolean;
+}
+export interface GraphEdge {
+  from: { blueprint: string; identifier: string };
+  relation: string;
+  to: { blueprint: string; identifier: string };
+}
+/** Multi-hop neighbourhood of an entity. Edges always point from the owner of the relation to its target. */
+export interface EntityGraph {
+  root: { blueprint: string; identifier: string };
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  /** The node or edge cap was hit: the graph is partial (nearest nodes first). */
+  truncated: boolean;
+}
+
 export interface RelatedEntities {
   /** Entities this entity points to, by relation name. */
   outgoing: Record<string, Entity[]>;

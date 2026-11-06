@@ -2,6 +2,7 @@ import { Ajv, type ErrorObject, type ValidateFunction } from 'ajv';
 import addFormatsModule from 'ajv-formats';
 import type { ObjectSchema } from '@asterius/shared';
 import { badRequest } from '../lib/errors.js';
+import { LRU } from '../lib/lru.js';
 
 /** JSON Schema validation of entity properties and action inputs (Ajv). */
 
@@ -20,7 +21,7 @@ ajv.addFormat('url', (v: string) => {
 // UI hints: no extra validation.
 for (const f of ['markdown', 'yaml', 'team', 'user', 'entity', 'text']) ajv.addFormat(f, true);
 
-const cache = new Map<string, ValidateFunction>();
+const cache = new LRU<string, ValidateFunction>(500);
 
 export const toJsonSchema = (s: ObjectSchema) => ({
   type: 'object',
@@ -38,7 +39,6 @@ export function validator(s: ObjectSchema): ValidateFunction {
     } catch (err) {
       throw badRequest(`Invalid schema: ${(err as Error).message}`);
     }
-    if (cache.size > 500) cache.clear();
     cache.set(key, v);
   }
   return v;

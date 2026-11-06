@@ -65,6 +65,8 @@ const schema = z.object({
   /** Keep run logs, sync runs, deliveries and audit entries for N days. */
   /** Max log lines stored per run (the rest is dropped after one truncation notice). */
   RUN_LOG_MAX_LINES: z.coerce.number().int().min(100).default(5000),
+  /** `database` shares API rate-limit counters between replicas (one upsert per request); `memory` is per pod. */
+  RATE_LIMIT_STORE: z.enum(['memory', 'database']).default('memory'),
   RETENTION_DAYS: z.coerce.number().int().min(1).default(90),
   KUBECONFIG_PATH: z.string().optional(),
 

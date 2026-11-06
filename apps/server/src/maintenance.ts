@@ -3,6 +3,8 @@ import { config } from './config.js';
 import { all, run, withAdvisoryLock } from './db.js';
 import { purgeExpiredAuth } from './auth/users.js';
 import { refreshBlueprintStats } from './catalog/blueprints.js';
+import { purgeLockouts } from './auth/lockout.js';
+import { purgeRateLimits } from './lib/rate-limit-store.js';
 import { metrics } from './metrics.js';
 
 /** Rows deleted per statement: small enough to keep locks short on a busy Postgres (runs cascade to logs and steps). */
@@ -41,6 +43,8 @@ export async function deleteInChunks(
 export async function housekeeping(log: FastifyBaseLogger) {
   await withAdvisoryLock(726203, async () => {
     await purgeExpiredAuth();
+    await purgeLockouts();
+    metrics.purged('rate_limits', await purgeRateLimits());
     const cutoff = new Date(Date.now() - config.RETENTION_DAYS * 86400_000).toISOString();
     const horizon = new Date(Date.now() - DELIVERY_HORIZON_DAYS * 86400_000).toISOString();
     const finished = "('SUCCESS', 'FAILURE', 'REJECTED', 'CANCELLED')";

@@ -182,3 +182,30 @@ describe('writes', () => {
     expect(Object.keys(final.data.properties).sort()).toEqual(['description', 'language', 'owner']);
   });
 });
+
+describe('graph', () => {
+  it('walks dependencies and dependents across several hops, surviving cycles and missing targets', async () => {
+    await admin.post(`${B}/entities/bulk`, {
+      entities: [
+        { identifier: 'g-a', relations: { dependsOn: ['g-b'] } },
+        { identifier: 'g-b', relations: { dependsOn: ['g-c'] } },
+        { identifier: 'g-c', relations: { dependsOn: ['g-d', 'g-ghost'] } },
+        { identifier: 'g-d', relations: { dependsOn: ['g-a'] } },
+      ],
+    });
+    const out = await admin.get(`${B}/entities/g-a/graph?direction=out&depth=2`);
+    expect(out.status).toBe(200);
+    expect(out.data.nodes.map((n: { identifier: string; depth: number }) => `${n.identifier}:${n.depth}`).sort()).toEqual(['g-a:0', 'g-b:1', 'g-c:2']);
+    const deep = await admin.get(`/api/v1/entities/svc/g-a/graph?direction=out&depth=6`);
+    const ids = deep.data.nodes.map((n: { identifier: string }) => n.identifier).sort();
+    expect(ids).toEqual(['g-a', 'g-b', 'g-c', 'g-d', 'g-ghost']);
+    expect(deep.data.nodes.find((n: { identifier: string }) => n.identifier === 'g-ghost').missing).toBe(true);
+    const impact = await admin.get(`${B}/entities/g-c/graph?direction=in&depth=1`);
+    expect(impact.data.nodes.map((n: { identifier: string }) => n.identifier).sort()).toEqual(['g-b', 'g-c']);
+    expect(impact.data.edges).toEqual([{ from: { blueprint: 'svc', identifier: 'g-b' }, relation: 'dependsOn', to: { blueprint: 'svc', identifier: 'g-c' } }]);
+    const capped = await admin.get(`${B}/entities/g-a/graph?direction=out&depth=6&limit=2`);
+    expect(capped.data.nodes).toHaveLength(2);
+    expect(capped.data.truncated).toBe(true);
+    expect((await admin.get(`${B}/entities/g-a/graph?depth=9`)).status).toBe(400);
+  });
+});

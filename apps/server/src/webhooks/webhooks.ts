@@ -72,7 +72,7 @@ export async function upsertWebhook(input: unknown, opts: { managed?: boolean } 
       t,
       def.identifier,
     );
-  invalidateWebhookCache();
+  await invalidateWebhookCache();
   return { webhook: toWebhook((await one<Row>('SELECT * FROM webhooks WHERE identifier = ?', def.identifier))!), created: !existing };
 }
 
@@ -80,7 +80,7 @@ export async function deleteWebhook(id: string, opts: { managed?: boolean } = {}
   const w = await getWebhook(id);
   if (w.managed && !opts.managed) throw managedError('Webhook', id);
   await run('DELETE FROM webhooks WHERE identifier = ?', id);
-  invalidateWebhookCache();
+  await invalidateWebhookCache();
 }
 
 interface DeliveryRow {

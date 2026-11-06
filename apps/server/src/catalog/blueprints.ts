@@ -3,6 +3,8 @@ import { all, bool, json, now, one, run } from '../db.js';
 import { badRequest, conflict, managedError, notFound } from '../lib/errors.js';
 import { blueprintDef, type BlueprintDef } from '../schemas.js';
 import { validator } from './validation.js';
+import { LRU } from '../lib/lru.js';
+import { bumpConfigVersion, onConfigChange, syncCaches } from '../lib/config-version.js';
 
 interface Row {
   identifier: string;
@@ -74,12 +76,14 @@ export async function getBlueprint(id: string): Promise<Blueprint> {
 }
 
 // Entity writes look the blueprint up on every call (integration syncs write thousands): cache briefly.
-const cache = new Map<string, { at: number; bp: Blueprint }>();
+const cache = new LRU<string, Blueprint>(500, 5_000);
+onConfigChange(() => cache.clear());
 export async function getBlueprintCached(id: string): Promise<Blueprint> {
+  await syncCaches(); // another replica may have changed the definition
   const c = cache.get(id);
-  if (c && Date.now() - c.at < 5_000) return c.bp;
+  if (c) return c;
   const bp = await getBlueprint(id);
-  cache.set(id, { at: Date.now(), bp });
+  cache.set(id, bp);
   return bp;
 }
 
@@ -118,7 +122,7 @@ export async function upsertBlueprint(input: unknown, opts: WriteOpts = {}): Pro
       t,
       def.identifier,
     );
-  cache.delete(def.identifier);
+  await bumpConfigVersion();
   return { blueprint: await getBlueprint(def.identifier), created: !existing };
 }
 
@@ -133,5 +137,5 @@ export async function deleteBlueprint(id: string, opts: { managed?: boolean } = 
     if (other.identifier !== id && Object.values(other.relations).some((r) => r.target === id))
       throw conflict(`Blueprint "${other.identifier}" has a relation to "${id}"`);
   await run('DELETE FROM blueprints WHERE identifier = ?', id);
-  cache.delete(id);
+  await bumpConfigVersion();
 }

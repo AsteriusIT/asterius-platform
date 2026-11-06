@@ -1,5 +1,6 @@
 import { all, json, newId, now, run, type SqlValue } from './db.js';
 import { metrics } from './metrics.js';
+import { bumpConfigVersion, onConfigChange, syncCaches } from './lib/config-version.js';
 
 /**
  * Domain events. Each event is written to the outbox (`deliveries`) once per matching outbound webhook;
@@ -25,11 +26,17 @@ interface Sub {
 let cache: { at: number; subs: Sub[] } | undefined;
 const CACHE_MS = 15_000;
 
-export function invalidateWebhookCache() {
+onConfigChange(() => {
   cache = undefined;
+});
+
+/** A webhook definition changed: drop the local cache and tell the other replicas. */
+export async function invalidateWebhookCache() {
+  await bumpConfigVersion();
 }
 
 async function subscriptions(): Promise<Sub[]> {
+  await syncCaches();
   if (cache && Date.now() - cache.at < CACHE_MS) return cache.subs;
   const rows = await all<{ identifier: string; events: string; blueprints: string }>('SELECT identifier, events, blueprints FROM webhooks WHERE enabled = 1');
   const subs = rows.map((r) => ({ identifier: r.identifier, events: json<string[]>(r.events, []), blueprints: json<string[]>(r.blueprints, []) }));

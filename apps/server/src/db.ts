@@ -420,6 +420,10 @@ export const MIGRATIONS: Migration[] = [
       d.exec(`
         CREATE INDEX runs_status_created ON runs(status, created_at);
         ALTER TABLE runs ADD COLUMN log_count INTEGER NOT NULL DEFAULT 0;
+        CREATE TABLE rate_limits (key TEXT PRIMARY KEY, count INTEGER NOT NULL, window_start BIGINT NOT NULL);
+        CREATE TABLE login_failures (email TEXT PRIMARY KEY, count INTEGER NOT NULL DEFAULT 0, locked_until BIGINT NOT NULL DEFAULT 0);
+        CREATE TABLE config_version (id INTEGER PRIMARY KEY, version INTEGER NOT NULL);
+        INSERT INTO config_version (id, version) VALUES (1, 0);
         CREATE TABLE blueprint_stats (
           blueprint TEXT PRIMARY KEY,
           entity_count INTEGER NOT NULL DEFAULT 0,

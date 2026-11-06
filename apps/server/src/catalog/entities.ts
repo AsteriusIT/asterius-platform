@@ -1,6 +1,8 @@
 import type { Blueprint, Entity, EntityPage, EntityQueryBody, RelatedEntities, RelationValue } from '@asterius/shared';
 import { all, json, now, one, run, tx, type Driver, type SqlValue } from '../db.js';
 import { badRequest, conflict, notFound, preconditionFailed } from '../lib/errors.js';
+import { LRU } from '../lib/lru.js';
+import { onConfigChange, syncCaches } from '../lib/config-version.js';
 import { decodeCursor, encodeCursor } from '../lib/cursor.js';
 import { emitMany, type DomainEvent } from '../events.js';
 import { entityInput, type EntityInput } from '../schemas.js';
@@ -145,13 +147,14 @@ function checkRelations(bp: Blueprint, relations: Record<string, RelationValue>)
   return out;
 }
 
-const teamCache = new Map<string, number>();
+const teamCache = new LRU<string, true>(1000, 30_000);
+onConfigChange(() => teamCache.clear());
 async function assertTeam(team: string | null) {
   if (!team) return;
-  if ((teamCache.get(team) ?? 0) > Date.now() - 30_000) return;
+  await syncCaches(); // a team deleted on another replica must stop validating
+  if (teamCache.get(team)) return;
   if (!(await one('SELECT identifier FROM teams WHERE identifier = ?', team))) throw badRequest(`Team "${team}" does not exist`);
-  if (teamCache.size > 1000) teamCache.clear();
-  teamCache.set(team, Date.now());
+  teamCache.set(team, true);
 }
 
 export interface UpsertOpts {

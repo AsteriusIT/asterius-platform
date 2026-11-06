@@ -18,24 +18,12 @@ import {
   verifyPassword,
   type UserRow,
 } from '../auth/users.js';
+import { clearFailures, isLocked, recordFailure } from '../auth/lockout.js';
 import { entraRoutes } from '../auth/entra.js';
 import { invokerInfos } from '../actions/invokers/index.js';
 import { sourceInfos } from '../integrations/sources/index.js';
 
 const VERSION = process.env.APP_VERSION ?? '0.1.0';
-
-// Per-account lockout after repeated failures (complements the per-IP rate limit).
-const failures = new Map<string, { count: number; until: number }>();
-const locked = (email: string) => (failures.get(email)?.until ?? 0) > Date.now();
-function failed(email: string) {
-  const f = failures.get(email) ?? { count: 0, until: 0 };
-  f.count++;
-  if (f.count >= 5) {
-    f.until = Date.now() + 15 * 60_000;
-    f.count = 0;
-  }
-  failures.set(email, f);
-}
 
 export async function authRoutes(app: FastifyInstance) {
   app.get('/api/meta', async (): Promise<Meta> => ({
@@ -53,13 +41,13 @@ export async function authRoutes(app: FastifyInstance) {
     if (!config.AUTH_PROVIDERS.includes('local')) throw forbidden('Password sign-in is disabled');
     const body = z.object({ email: z.string().email(), password: z.string().min(1) }).parse(req.body);
     const email = body.email.toLowerCase();
-    if (locked(email)) return reply.code(429).send({ error: 'Too many failed attempts, try again in 15 minutes' });
+    if (await isLocked(email)) return reply.code(429).send({ error: 'Too many failed attempts, try again in 15 minutes' });
     const user = await one<UserRow>("SELECT * FROM users WHERE provider = 'local' AND email = ?", email);
     if (!user || !verifyPassword(body.password, user.password_hash) || user.active !== 1) {
-      failed(email);
+      await recordFailure(email);
       return reply.code(401).send({ error: 'Invalid email or password' });
     }
-    failures.delete(email);
+    await clearFailures(email);
     await audit({ id: user.id, email: user.email }, 'auth.login', null, { provider: 'local' });
     return { token: await createSession(user.id), user: await publicUser(user) };
   });

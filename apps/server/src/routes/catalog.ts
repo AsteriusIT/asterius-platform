@@ -5,6 +5,7 @@ import { audit } from '../audit.js';
 import { actorOf, canEditEntity, isAdmin, requireAdmin, requireUser, type Principal } from '../auth/users.js';
 import { deleteBlueprint, getBlueprint, homeBlueprints, listBlueprints, upsertBlueprint } from '../catalog/blueprints.js';
 import { deleteEntity, getEntity, related, searchEntities, upsertEntities, upsertEntity } from '../catalog/entities.js';
+import { entityGraph, MAX_DEPTH, MAX_NODES } from '../catalog/graph.js';
 import { parseFilterParams } from '../catalog/query.js';
 import { nextPageHeaders } from '../lib/cursor.js';
 import { badRequest, forbidden } from '../lib/errors.js';
@@ -103,6 +104,21 @@ export async function catalogRoutes(app: FastifyInstance) {
     const e = await getEntity(bp, id);
     return reply.header('etag', etag(e)).send(e);
   });
+  /**
+   * Multi-hop graph: `direction=out` (dependencies), `in` (what depends on it: impact analysis) or `both`; `depth` up to 6.
+   * Also served as /entities/:bp/:id/graph.
+   */
+  const graphQuery = z.object({
+    depth: z.coerce.number().int().min(1).max(MAX_DEPTH).default(2),
+    direction: z.enum(['out', 'in', 'both']).default('both'),
+    limit: z.coerce.number().int().min(1).max(MAX_NODES).default(MAX_NODES),
+  });
+  for (const url of ['/blueprints/:bp/entities/:id/graph', '/entities/:bp/:id/graph'])
+    app.get(url, async (req) => {
+      const { bp, id } = entityParam.parse(req.params);
+      const q = graphQuery.parse(req.query);
+      return entityGraph(bp, id, { depth: q.depth, direction: q.direction, maxNodes: q.limit });
+    });
   app.get('/blueprints/:bp/entities/:id/related', async (req) => {
     const { bp, id } = entityParam.parse(req.params);
     return related(bp, id);
