@@ -14,6 +14,7 @@ import { catalogRoutes } from './routes/catalog.js';
 import { actionRoutes } from './routes/actions.js';
 import { integrationRoutes } from './routes/integrations.js';
 import { adminRoutes } from './routes/admin.js';
+import { registerTriggerListeners } from './actions/triggers.js';
 
 export interface AppOptions {
   reloadConfig?: () => Promise<void>;
@@ -22,6 +23,7 @@ export interface AppOptions {
 
 /** HTTP application (no listen, no background workers): used by index.ts and by tests through `inject`. */
 export async function buildApp(opts: AppOptions = {}): Promise<FastifyInstance> {
+  registerTriggerListeners();
   const app = Fastify({
     logger: opts.logger === false ? false : { level: config.LOG_LEVEL, redact: ['req.headers.authorization', 'req.headers["x-asterius-token"]'] },
     bodyLimit: 5 * 1024 * 1024,

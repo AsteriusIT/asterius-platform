@@ -282,6 +282,7 @@ function RunView({ r }: { r: Run }) {
               <Table withRowBorders={false} verticalSpacing={4} highlightOnHover={false} fz="sm">
                 <Table.Tbody>
                   <Row k="Requested by" v={`${r.triggeredBy.name} <${r.triggeredBy.email}>`} />
+                  {r.trigger && r.trigger.type !== 'form' && <Row k="Started by" v={r.trigger.type} />}
                   {r.entity && (
                     <Row
                       k="Entity"

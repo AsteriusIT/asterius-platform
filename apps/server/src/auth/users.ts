@@ -153,6 +153,28 @@ export async function createServiceAccount(name: string, role: Role) {
   return (await getUser(id))!;
 }
 
+const AUTOMATION_EMAIL = 'workflow-automation@service.local';
+
+/** The service account owning runs started by schedules, events, webhooks and parent workflows. */
+export async function automationPrincipal(): Promise<Principal> {
+  const find = () => one<UserRow>("SELECT * FROM users WHERE provider = 'service' AND email = ?", AUTOMATION_EMAIL);
+  let u = await find();
+  if (!u) {
+    try {
+      await run(
+        "INSERT INTO users (id, provider, email, name, role, created_at) VALUES (?, 'service', ?, 'Workflow automation', 'member', ?)",
+        newId(),
+        AUTOMATION_EMAIL,
+        now(),
+      );
+    } catch {
+      // created concurrently by another replica (unique index on provider+email)
+    }
+    u = await find();
+  }
+  return principalOf(u!);
+}
+
 export async function listUsers(): Promise<PublicUser[]> {
   const users = await all<UserRow>('SELECT * FROM users ORDER BY provider, name');
   return Promise.all(users.map(publicUser));

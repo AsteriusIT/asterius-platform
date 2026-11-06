@@ -8,6 +8,7 @@ import { IconChevronDown, IconDots, IconPencil, IconTrash } from '@tabler/icons-
 import type { Action, Blueprint, Entity } from '@asterius/shared';
 import { api, errorText } from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { formOf } from '../lib/permissions';
 import { PropertyValue } from '../components/PropertyValue';
 import { orderedFields } from '../components/SchemaForm';
 import { ActionRunModal } from '../components/ActionRunModal';
@@ -40,8 +41,8 @@ function EntityView({ bp, e }: { bp: Blueprint; e: Entity }) {
   });
   const canEdit = (isAdmin || (!!e.team && user?.teams.some((t) => t.identifier === e.team))) && !e.source.startsWith('integration:');
 
-  const day2 = (actions.data ?? []).filter((a) => a.trigger?.on === 'day-2');
-  const deletes = (actions.data ?? []).filter((a) => a.trigger?.on === 'delete');
+  const day2 = (actions.data ?? []).filter((a) => formOf(a)?.on === 'day-2');
+  const deletes = (actions.data ?? []).filter((a) => formOf(a)?.on === 'delete');
 
   const remove = () =>
     modals.openConfirmModal({

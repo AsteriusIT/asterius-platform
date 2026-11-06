@@ -4,9 +4,10 @@ import type { Action } from '@asterius/shared';
 import { audit } from '../audit.js';
 import { actorOf, authenticate, bearer, isAdmin, requireAdmin, requireUser } from '../auth/users.js';
 import { getEntity } from '../catalog/entities.js';
-import { canTrigger, isRunnable, deleteAction, forViewer, getAction, listActions, upsertAction } from '../actions/actions.js';
+import { blueprintOf, canTrigger, isRunnable, deleteAction, forViewer, getAction, listActions, upsertAction } from '../actions/actions.js';
 import { addLog, cancelRun, decide, getRun, getRunRow, listRuns, pendingApprovals, triggerRun } from '../actions/runs.js';
 import { cancelSteps, decideStep, runningInvokeStep, updateStep } from '../actions/engine.js';
+import { receiveWebhook } from '../actions/triggers.js';
 import { checkRunToken, checkStepToken } from '../secrets.js';
 import { conflict, forbidden } from '../lib/errors.js';
 import { entityParam, idParam, page } from './util.js';
@@ -90,6 +91,13 @@ export async function actionRoutes(app: FastifyInstance) {
     return { ok: true };
   });
 
+  /** Inbound webhook trigger: starts the workflow named in the URL. Authenticated by the trigger's secret (token or HMAC). */
+  app.post('/hooks/:id', { config: { rateLimit: { max: 600, timeWindow: '1 minute' } } }, async (req, reply) => {
+    const { id } = idParam.parse(req.params);
+    const out = await receiveWebhook(id, { headers: req.headers, rawBody: req.rawBody ?? JSON.stringify(req.body ?? null), body: req.body, query: req.query });
+    return reply.code(202).send(out);
+  });
+
   // ---- everything below: signed-in users ----
   await app.register(async (scoped) => {
     scoped.addHook('preHandler', requireUser);
@@ -97,9 +105,12 @@ export async function actionRoutes(app: FastifyInstance) {
     scoped.get('/actions', async (req) => {
       const q = z.object({ blueprint: z.string().optional(), trigger: z.enum(['create', 'day-2', 'delete']).optional() }).parse(req.query);
       return (await listActions())
-        .filter((a) => (!q.blueprint || a.trigger?.blueprint === q.blueprint) && (!q.trigger || a.trigger?.on === q.trigger))
+        .filter((a) => (!q.blueprint || blueprintOf(a) === q.blueprint) && (!q.trigger || (a.trigger?.type === 'form' && a.trigger.on === q.trigger)))
         .filter((a) => isAdmin(req.principal) || a.enabled)
-        .map((a) => ({ ...forViewer(a, req.principal), allowedForMe: a.trigger?.on === 'create' ? canTrigger(a, req.principal, null) : undefined }));
+        .map((a) => ({
+          ...forViewer(a, req.principal),
+          allowedForMe: a.trigger?.type === 'form' && a.trigger.on === 'create' ? canTrigger(a, req.principal, null) : undefined,
+        }));
     });
     scoped.get('/actions/:id', async (req) => forViewer(await getAction(idParam.parse(req.params).id), req.principal));
     scoped.put('/actions/:id', { preHandler: requireAdmin }, async (req) => {
@@ -120,7 +131,7 @@ export async function actionRoutes(app: FastifyInstance) {
       const { bp, id } = entityParam.parse(req.params);
       const e = await getEntity(bp, id);
       return (await listActions())
-        .filter((a: Action) => a.enabled && isRunnable(a) && a.trigger?.blueprint === bp && a.trigger.on !== 'create')
+        .filter((a: Action) => a.enabled && isRunnable(a) && a.trigger?.type === 'form' && a.trigger.blueprint === bp && a.trigger.on !== 'create')
         .map((a) => ({ ...forViewer(a, req.principal), allowedForMe: canTrigger(a, req.principal, e.team) }));
     });
 

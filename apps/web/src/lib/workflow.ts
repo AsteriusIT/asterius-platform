@@ -52,3 +52,19 @@ export function workflowSummary(a: Pick<Action, 'steps' | 'invoker'>) {
   if (steps.length === 1 && steps[0].type === 'invoke') return steps[0].invoker?.type ?? a.invoker?.type ?? 'invoke';
   return `workflow · ${steps.length} steps`;
 }
+
+/** Label and colour of a trigger in tables. */
+export function triggerBadge(t: NonNullable<Action['trigger']>): { label: string; color: string } {
+  switch (t.type) {
+    case 'form':
+      return { label: `form · ${t.on}`, color: t.on === 'delete' ? 'red' : t.on === 'create' ? 'green' : 'blue' };
+    case 'api':
+      return { label: 'api', color: 'cyan' };
+    case 'schedule':
+      return { label: `schedule · ${t.cron}`, color: 'grape' };
+    case 'event':
+      return { label: `event · ${t.event}`, color: 'orange' };
+    case 'webhook':
+      return { label: 'webhook', color: 'teal' };
+  }
+}

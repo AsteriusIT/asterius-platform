@@ -1,10 +1,10 @@
-import type { ApprovalPolicy, Run, RunApproval, RunLog, RunPage, RunStatus } from '@asterius/shared';
+import type { Action, ApprovalPolicy, Run, RunApproval, RunLog, RunPage, RunStatus } from '@asterius/shared';
 import { config } from '../config.js';
 import { all, json, newId, now, one, run, type SqlValue } from '../db.js';
 import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
 import { emit } from '../events.js';
 import { audit } from '../audit.js';
-import { actorOf, isAdmin, matchesSubjects, type Principal } from '../auth/users.js';
+import { actorOf, automationPrincipal, isAdmin, matchesSubjects, type Principal } from '../auth/users.js';
 import { getEntity } from '../catalog/entities.js';
 import { compact, validate } from '../catalog/validation.js';
 import { canTrigger, getAction } from './actions.js';
@@ -45,6 +45,8 @@ export interface RunRow {
   created_at: string;
   started_at: string | null;
   ended_at: string | null;
+  trigger_type: string | null;
+  trigger_info: string | null;
   user_name?: string;
   user_email?: string;
 }
@@ -80,6 +82,7 @@ const toRun = (r: RunRow, approvals: RunApproval[]): Run => ({
   triggeredBy: { id: r.triggered_by, name: r.user_name ?? '', email: r.user_email ?? '' },
   approvals,
   result: json(r.result, null),
+  trigger: { type: r.trigger_type ?? 'form', ...json<Record<string, unknown>>(r.trigger_info, {}) },
   createdAt: r.created_at,
   startedAt: r.started_at,
   endedAt: r.ended_at,
@@ -174,16 +177,74 @@ export async function addLog(runId: string, message: string, level: RunLog['leve
 export async function emitRun(id: string, type: 'run.created' | 'run.updated') {
   const r = await getRunRow(id);
   const steps = (await loadSteps(id)).map((s) => ({ id: s.step_id, name: s.name, type: s.type, status: s.status }));
-  await emit({ type, blueprint: r.blueprint, data: { run: { ...toRun(r, (await approvalsOf([id])).get(id) ?? []), steps } } });
+  const data = { run: { ...toRun(r, (await approvalsOf([id])).get(id) ?? []), steps } };
+  await emit({ type, blueprint: r.blueprint, data });
+  if (type === 'run.updated' && FINAL.includes(r.status)) await emit({ type: 'run.finished', blueprint: r.blueprint, data });
 }
 
 // ---------- trigger ----------
+export interface RunSource {
+  type: 'form' | 'api' | 'schedule' | 'event' | 'webhook' | 'workflow' | 'rerun';
+  info?: Record<string, unknown>;
+}
+
+interface NewRun {
+  p: Principal;
+  action: Action;
+  blueprint: string | null;
+  entity: string | null;
+  entityTeam: string | null;
+  inputs: Record<string, unknown>;
+  approval: ApprovalPolicy;
+  source: RunSource;
+}
+
+async function insertRun(n: NewRun): Promise<string> {
+  const { p, action } = n;
+  const id = newId();
+  const t = now();
+  const status: RunStatus = n.approval.required ? 'PENDING_APPROVAL' : 'QUEUED';
+  await run(
+    `INSERT INTO runs (id, action, action_title, blueprint, entity, inputs, status, invoker, steps, approval, triggered_by, team, trigger_type, trigger_info, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    id,
+    action.identifier,
+    action.title,
+    n.blueprint,
+    n.entity,
+    JSON.stringify(n.inputs),
+    status,
+    JSON.stringify(action.invoker ?? null),
+    JSON.stringify(action.steps), // snapshot: editing the action never changes runs in flight
+    JSON.stringify(n.approval),
+    p.id,
+    n.entityTeam,
+    n.source.type,
+    JSON.stringify(n.source.info ?? {}),
+    t,
+    t,
+  );
+  const via = n.source.type === 'form' || n.source.type === 'api' ? '' : ` (${n.source.type})`;
+  const where = n.entity ? ` on ${n.blueprint}/${n.entity}` : '';
+  await addLog(id, `Triggered by ${p.name} <${p.email}>${where}${via}`);
+  if (status === 'PENDING_APPROVAL') await addLog(id, `Waiting for ${n.approval.minApprovals ?? 1} approval(s)`);
+  await audit(actorOf(p), 'run.triggered', `${action.identifier}${n.entity ? ` → ${n.blueprint}/${n.entity}` : ''}`, { runId: id, source: n.source.type });
+  await emitRun(id, 'run.created');
+  return id;
+}
+
+function checkRunnable(action: Action) {
+  if (!action.enabled) throw badRequest(`Action "${action.title}" is disabled`);
+  if (!action.trigger) throw badRequest(`"${action.title}" has no trigger yet: set up its form submission trigger`);
+  if (!action.steps.length) throw badRequest(`"${action.title}" has no steps yet: add a step to its workflow`);
+}
+
 export async function triggerRun(p: Principal, actionId: string, body: { entity?: string | null; inputs?: Record<string, unknown> }): Promise<Run> {
   const action = await getAction(actionId);
-  if (!action.enabled) throw badRequest(`Action "${action.title}" is disabled`);
+  checkRunnable(action);
   const trigger = action.trigger;
-  if (!trigger) throw badRequest(`"${action.title}" has no trigger yet: set up its form submission trigger`);
-  if (!action.steps.length) throw badRequest(`"${action.title}" has no steps yet: add a step to its workflow`);
+  if (trigger?.type !== 'form' && trigger?.type !== 'api')
+    throw badRequest(`"${action.title}" is started by its ${trigger?.type} trigger, not by a form or an API call`);
   let entityTeam: string | null = null;
   let entityId: string | null = null;
   if (trigger.on !== 'create') {
@@ -195,33 +256,40 @@ export async function triggerRun(p: Principal, actionId: string, body: { entity?
   if (!canTrigger(action, p, entityTeam)) throw forbidden(`You are not allowed to run "${action.title}"`);
   const inputs = compact(body.inputs ?? {});
   validate(trigger.inputs, inputs, 'inputs');
-
-  const id = newId();
-  const t = now();
-  const status: RunStatus = trigger.approval.required ? 'PENDING_APPROVAL' : 'QUEUED';
-  await run(
-    `INSERT INTO runs (id, action, action_title, blueprint, entity, inputs, status, invoker, steps, approval, triggered_by, team, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    id,
-    action.identifier,
-    action.title,
-    trigger.blueprint,
-    entityId,
-    JSON.stringify(inputs),
-    status,
-    JSON.stringify(action.invoker ?? null),
-    JSON.stringify(action.steps), // snapshot: editing the action never changes runs in flight
-    JSON.stringify(trigger.approval),
-    p.id,
+  const id = await insertRun({
+    p,
+    action,
+    blueprint: trigger.blueprint ?? null,
+    entity: entityId,
     entityTeam,
-    t,
-    t,
-  );
-  await addLog(id, `Triggered by ${p.name} <${p.email}>${entityId ? ` on ${trigger.blueprint}/${entityId}` : ''}`);
-  if (status === 'PENDING_APPROVAL') await addLog(id, `Waiting for ${trigger.approval.minApprovals ?? 1} approval(s)`);
-  await audit(actorOf(p), 'run.triggered', `${action.identifier}${entityId ? ` → ${trigger.blueprint}/${entityId}` : ''}`, { runId: id });
-  await emitRun(id, 'run.created');
+    inputs,
+    approval: trigger.approval,
+    source: { type: trigger.type },
+  });
   return getRun(id, p);
+}
+
+/**
+ * Start a run on behalf of the platform (schedule, event, webhook, parent workflow): the run belongs to the
+ * automation service account, there is no form validation and no approval gate before the workflow.
+ */
+export async function startAutomatedRun(
+  actionId: string,
+  o: { blueprint?: string | null; entity?: string | null; inputs: Record<string, unknown>; source: RunSource; as?: Principal },
+): Promise<string> {
+  const action = await getAction(actionId);
+  checkRunnable(action);
+  const entity = o.entity && o.blueprint ? await getEntity(o.blueprint, o.entity) : null;
+  return insertRun({
+    p: o.as ?? (await automationPrincipal()),
+    action,
+    blueprint: o.blueprint ?? null,
+    entity: entity?.identifier ?? null,
+    entityTeam: entity?.team ?? null,
+    inputs: o.inputs,
+    approval: { required: false, minApprovals: 1, allowSelfApproval: false },
+    source: o.source,
+  });
 }
 
 // ---------- approvals ----------

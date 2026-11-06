@@ -1,4 +1,6 @@
 import type { Action, ActionTrigger, InvokerConfig, WorkflowStep, WorkflowTrigger } from '@asterius/shared';
+import { invalidateTriggerCache } from './triggers.js';
+import { isFormLike, nextTick, validateTrigger } from './trigger-defs.js';
 import { all, bool, json, now, one, run } from '../db.js';
 import { badRequest, managedError, notFound } from '../lib/errors.js';
 import { actionDef, type ActionDef } from '../schemas.js';
@@ -20,6 +22,8 @@ interface Row {
   allowed: string;
   enabled: number;
   managed: number;
+  trigger_config: string | null;
+  next_fire_at: string | null;
 }
 
 /** Stored in the trigger column when a workflow has no trigger yet (draft). */
@@ -30,8 +34,10 @@ function toAction(r: Row): Action {
   const declared = json<WorkflowStep[] | null>(r.steps, null);
   const steps = (declared ?? stepsOf({ invoker: invoker ?? undefined, steps: [], title: r.title })) as WorkflowStep[];
   // The form trigger keeps its settings in the action's columns (on = trigger column).
-  const trigger: WorkflowTrigger | null =
-    r.trigger === NO_TRIGGER
+  const other = json<WorkflowTrigger | null>(r.trigger_config, null);
+  const trigger: WorkflowTrigger | null = other
+    ? { ...other, ...(other.type === 'schedule' ? { nextRunAt: r.next_fire_at } : {}) }
+    : r.trigger === NO_TRIGGER
       ? null
       : {
           type: 'form',
@@ -72,12 +78,15 @@ export async function listActions(): Promise<Action[]> {
   return (await all<Row>('SELECT * FROM actions ORDER BY title')).map(toAction);
 }
 
+/** The blueprint a trigger targets (null: none). */
+export const blueprintOf = (a: Action): string | null => (a.trigger && 'blueprint' in a.trigger ? (a.trigger.blueprint ?? null) : null);
+
 /** A workflow runs once it has a trigger and at least one step. */
 export const isRunnable = (a: Action) => !!a.trigger && a.steps.length > 0;
 
 /** Workflows this principal may start by submitting their form (on an entity of `ownerTeam` for day-2 ones). */
 export const canTrigger = (a: Action, p: Principal, ownerTeam: string | null) =>
-  a.enabled && isRunnable(a) && matchesSubjects(p, a.trigger?.allowed, ownerTeam);
+  a.enabled && isRunnable(a) && (a.trigger?.type === 'form' || a.trigger?.type === 'api') && matchesSubjects(p, a.trigger.allowed, ownerTeam);
 
 export async function getAction(id: string): Promise<Action> {
   const r = await one<Row>('SELECT * FROM actions WHERE identifier = ?', id);
@@ -88,10 +97,14 @@ export async function getAction(id: string): Promise<Action> {
 export async function upsertAction(input: unknown, opts: { managed?: boolean } = {}): Promise<{ action: Action; created: boolean }> {
   const def: ActionDef = actionDef.parse(input);
   const t0 = def.trigger;
-  if (t0?.blueprint && !(await one('SELECT identifier FROM blueprints WHERE identifier = ?', t0.blueprint)))
-    throw badRequest(`Blueprint "${t0.blueprint}" does not exist`);
-  if (t0 && t0.on !== 'create' && !t0.blueprint) throw badRequest(`Forms submitted on an entity ("${t0.on}") need a blueprint`);
-  if (t0) validator(t0.inputs as never);
+  if (t0) validateTrigger(t0);
+  if (t0?.type === 'event' && t0.action === def.identifier) throw badRequest('Trigger: a workflow cannot be triggered by its own runs');
+  const triggerBlueprint = t0 && 'blueprint' in t0 ? (t0.blueprint ?? null) : null;
+  if (triggerBlueprint && !(await one('SELECT identifier FROM blueprints WHERE identifier = ?', triggerBlueprint)))
+    throw badRequest(`Blueprint "${triggerBlueprint}" does not exist`);
+  const form = isFormLike(t0) ? t0 : null;
+  if (form && form.on !== 'create' && !form.blueprint) throw badRequest(`Forms submitted on an entity ("${form.on}") need a blueprint`);
+  if (form) validator(form.inputs as never);
   validateWorkflow(stepsOf(def));
   const existing = await one<Row>('SELECT * FROM actions WHERE identifier = ?', def.identifier);
   if (existing && bool(existing.managed) && !opts.managed) throw managedError('Action', def.identifier);
@@ -100,32 +113,35 @@ export async function upsertAction(input: unknown, opts: { managed?: boolean } =
     def.title,
     def.description,
     def.icon ?? null,
-    t0?.blueprint ?? null,
-    t0?.on ?? NO_TRIGGER,
-    JSON.stringify(t0?.inputs ?? { properties: {} }),
+    triggerBlueprint,
+    t0 ? (form ? form.on : t0.type) : NO_TRIGGER,
+    JSON.stringify(form?.inputs ?? { properties: {} }),
     JSON.stringify(def.invoker ?? null),
     // Legacy single-invoker definitions keep `steps` empty (the invoker is the workflow).
     def.steps.length || !def.invoker ? JSON.stringify(def.steps) : null,
-    JSON.stringify(t0?.approval ?? { required: false }),
-    JSON.stringify(t0?.allowed ?? {}),
+    JSON.stringify(form?.approval ?? { required: false }),
+    JSON.stringify(form?.allowed ?? {}),
     def.enabled ? 1 : 0,
     opts.managed ? 1 : 0,
+    t0 && t0.type !== 'form' ? JSON.stringify(t0) : null,
+    t0?.type === 'schedule' && def.enabled ? nextTick(t0) : null,
   ];
   if (existing)
     await run(
-      'UPDATE actions SET title = ?, description = ?, icon = ?, blueprint = ?, trigger = ?, inputs = ?, invoker = ?, steps = ?, approval = ?, allowed = ?, enabled = ?, managed = ?, updated_at = ? WHERE identifier = ?',
+      'UPDATE actions SET title = ?, description = ?, icon = ?, blueprint = ?, trigger = ?, inputs = ?, invoker = ?, steps = ?, approval = ?, allowed = ?, enabled = ?, managed = ?, trigger_config = ?, next_fire_at = ?, updated_at = ? WHERE identifier = ?',
       ...vals,
       t,
       def.identifier,
     );
   else
     await run(
-      'INSERT INTO actions (title, description, icon, blueprint, trigger, inputs, invoker, steps, approval, allowed, enabled, managed, created_at, updated_at, identifier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO actions (title, description, icon, blueprint, trigger, inputs, invoker, steps, approval, allowed, enabled, managed, trigger_config, next_fire_at, created_at, updated_at, identifier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       ...vals,
       t,
       t,
       def.identifier,
     );
+  invalidateTriggerCache();
   return { action: await getAction(def.identifier), created: !existing };
 }
 
@@ -133,4 +149,5 @@ export async function deleteAction(id: string, opts: { managed?: boolean } = {})
   const a = await getAction(id);
   if (a.managed && !opts.managed) throw managedError('Action', id);
   await run('DELETE FROM actions WHERE identifier = ?', id); // past runs keep their snapshot
+  invalidateTriggerCache();
 }

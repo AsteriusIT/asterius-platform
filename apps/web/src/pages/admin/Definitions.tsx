@@ -11,7 +11,8 @@ import { EntityIcon } from '../../components/icons';
 import { Mono, TimeAgo } from '../../components/ui';
 import { ResourceAdmin, strip } from './ResourceAdmin';
 import { ActionBuilder } from '../../components/builder/ActionBuilder';
-import { workflowSummary } from '../../lib/workflow';
+import { formOf } from '../../lib/permissions';
+import { triggerBadge, workflowSummary } from '../../lib/workflow';
 import { BlueprintBuilder } from '../../components/builder/BlueprintBuilder';
 
 const meta = () => ({ queryKey: ['meta'], queryFn: api.meta, staleTime: Infinity });
@@ -72,8 +73,8 @@ export function ActionsAdmin() {
           label: 'Trigger',
           render: (a) =>
             a.trigger ? (
-              <Badge color={a.trigger.on === 'delete' ? 'red' : a.trigger.on === 'create' ? 'green' : 'blue'} variant="light">
-                form · {a.trigger.on}
+              <Badge color={triggerBadge(a.trigger).color} variant="light">
+                {triggerBadge(a.trigger).label}
               </Badge>
             ) : (
               <Badge color="gray" variant="outline">
@@ -81,9 +82,9 @@ export function ActionsAdmin() {
               </Badge>
             ),
         },
-        { key: 'b', label: 'Blueprint', render: (a) => a.trigger?.blueprint ?? '—' },
+        { key: 'b', label: 'Blueprint', render: (a) => (a.trigger && 'blueprint' in a.trigger ? a.trigger.blueprint : null) ?? '—' },
         { key: 'i', label: 'Steps', render: (a) => <Mono>{workflowSummary(a)}</Mono> },
-        { key: 'a', label: 'Approval', render: (a) => (a.trigger?.approval.required ? <Badge color="yellow">required</Badge> : '—') },
+        { key: 'a', label: 'Approval', render: (a) => (formOf(a)?.approval.required ? <Badge color="yellow">required</Badge> : '—') },
         { key: 'e', label: 'Enabled', render: (a) => (a.enabled ? 'yes' : <Badge color="gray">disabled</Badge>) },
       ]}
       templates={[{ label: 'Workflow', value: blankAction }]}

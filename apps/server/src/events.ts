@@ -9,8 +9,9 @@ import { metrics } from './metrics.js';
 
 export type EventType = 'entity.created' | 'entity.updated' | 'entity.deleted' | 'run.created' | 'run.updated';
 
+/** `run.finished` is internal: it fires event triggers of workflows but is not offered to outbound webhooks. */
 export interface DomainEvent {
-  type: EventType;
+  type: EventType | 'run.finished';
   blueprint: string | null;
   data: unknown;
   actor?: { id: string | null; email: string | null };
@@ -41,8 +42,18 @@ export const eventMatches = (sub: Pick<Sub, 'events' | 'blueprints'>, type: stri
   sub.events.some((e) => e === '*' || e === type || (e.endsWith('.*') && type.startsWith(e.slice(0, -1)))) &&
   (!sub.blueprints.length || (blueprint !== null && sub.blueprints.includes(blueprint)));
 
+type Listener = (e: DomainEvent) => Promise<void>;
+const listeners: Listener[] = [];
+
+/** In-process subscribers (workflow event triggers). They run in the process that emits the event. */
+export function onEvent(l: Listener) {
+  listeners.push(l);
+}
+
 export async function emit(e: DomainEvent) {
   metrics.event(e.type);
+  for (const l of listeners) await l(e).catch((err) => console.error('[events] listener failed', e.type, err));
+  if (e.type === 'run.finished') return;
   try {
     const subs = (await subscriptions()).filter((s) => eventMatches(s, e.type, e.blueprint));
     if (!subs.length) return;

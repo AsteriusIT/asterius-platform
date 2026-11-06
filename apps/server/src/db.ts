@@ -361,6 +361,19 @@ export const MIGRATIONS: Migration[] = [
         );
       `),
   },
+  // Workflow features (epic ap-35y): ids from 100 so they never collide with other branches' migrations.
+  {
+    id: 100,
+    name: 'workflow triggers: schedule, event, webhook, api',
+    up: (d) =>
+      d.exec(`
+        ALTER TABLE actions ADD COLUMN trigger_config TEXT;  -- full trigger document for non-form triggers
+        ALTER TABLE actions ADD COLUMN next_fire_at TEXT;    -- schedule triggers: next tick (claimed with a conditional UPDATE)
+        ALTER TABLE runs ADD COLUMN trigger_type TEXT;
+        ALTER TABLE runs ADD COLUMN trigger_info TEXT;
+        CREATE INDEX actions_next_fire ON actions(next_fire_at);
+      `),
+  },
 ];
 
 /** Apply pending numbered migrations (idempotent; serialized across replicas by an advisory lock on Postgres). */

@@ -139,11 +139,15 @@ const approvalPolicy = z
   .default({ required: false, minApprovals: 1, allowSelfApproval: false });
 
 /**
- * Workflow triggers. For now one type: `form`, a form submitted by a user (self-service page, or an entity page).
- * Other types (schedule, catalog event, webhook) will join this union.
+ * Workflow triggers:
+ *  - `form`: a form submitted by a user (self-service page, or an entity page);
+ *  - `api`: like a form, without a page: inputs only come from the API (`POST /actions/:id/runs`);
+ *  - `schedule`: a cron expression in a time zone, one run per tick;
+ *  - `event`: a catalog or run event (optionally filtered with a JSONata expression);
+ *  - `webhook`: `POST /api/v1/hooks/<action>`, authenticated by a shared secret or HMAC signature.
+ * `inputs` of the last three map the context (`event`, `body`, `headers`, `schedule`) to the run inputs with `{{ }}` templates.
  */
-export const formTrigger = z.object({
-  type: z.literal('form'),
+const formFields = {
   /** create: the self-service page · day-2 / delete: on an existing entity of `blueprint`. */
   on: z.enum(['create', 'day-2', 'delete']).default('create'),
   /** The kind of entity it creates or acts on (null: a general workflow). */
@@ -154,8 +158,41 @@ export const formTrigger = z.object({
   allowed: subjects,
   /** Approval before the workflow starts (approval steps cover approvals in the middle). */
   approval: approvalPolicy,
+};
+export const formTrigger = z.object({ type: z.literal('form'), ...formFields });
+export const apiTrigger = z.object({ type: z.literal('api'), ...formFields });
+const templateInputs = z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,63}$/), z.unknown()).default({});
+export const scheduleTrigger = z.object({
+  type: z.literal('schedule'),
+  /** Five fields: minute hour day-of-month month day-of-week. */
+  cron: z.string().min(1).max(100),
+  timezone: z.string().min(1).max(64).default('UTC'),
+  inputs: templateInputs,
 });
-export const workflowTrigger = z.discriminatedUnion('type', [formTrigger]);
+export const EVENT_TRIGGERS = ['entity.created', 'entity.updated', 'entity.deleted', 'run.finished'] as const;
+export const eventTrigger = z.object({
+  type: z.literal('event'),
+  event: z.enum(EVENT_TRIGGERS),
+  /** entity.*: only entities of this blueprint. */
+  blueprint: slug.nullish(),
+  /** run.finished: only runs of this action. */
+  action: slug.nullish(),
+  /** JSONata over the event (`event.entity.properties.tier = "gold"`); the event fires the workflow when truthy. */
+  filter: z.string().max(2000).optional(),
+  /** Template of the target entity identifier (needs `blueprint`); entity events default to the entity that changed. */
+  entity: z.string().max(500).optional(),
+  inputs: templateInputs,
+});
+export const webhookTrigger = z.object({
+  type: z.literal('webhook'),
+  /** `${secret:NAME}`: sent as `X-Asterius-Token` / bearer token, or used to verify the HMAC `signatureHeader`. */
+  secret: z.string().min(1).max(500),
+  signatureHeader: z.string().max(100).optional(),
+  blueprint: slug.nullish(),
+  entity: z.string().max(500).optional(),
+  inputs: templateInputs,
+});
+export const workflowTrigger = z.discriminatedUnion('type', [formTrigger, apiTrigger, scheduleTrigger, eventTrigger, webhookTrigger]);
 export type WorkflowTriggerDef = z.infer<typeof workflowTrigger>;
 
 /**

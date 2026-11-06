@@ -241,8 +241,47 @@ export interface FormTrigger {
   approval: ApprovalPolicy;
 }
 
-/** What starts a workflow (more types will come: schedule, catalog event, webhook). */
-export type WorkflowTrigger = FormTrigger;
+/** Like a form, without a page: inputs only come from the API. */
+export interface ApiTrigger extends Omit<FormTrigger, 'type'> {
+  type: 'api';
+}
+
+/** Cron schedule: one run per tick. `inputs` are `{{ }}` templates over `schedule.at`. */
+export interface ScheduleTrigger {
+  type: 'schedule';
+  cron: string;
+  timezone: string;
+  inputs: Record<string, unknown>;
+  /** Next planned tick (read-only). */
+  nextRunAt?: string | null;
+}
+
+export interface EventTrigger {
+  type: 'event';
+  event: 'entity.created' | 'entity.updated' | 'entity.deleted' | 'run.finished';
+  blueprint?: string | null;
+  /** run.finished: only runs of this action. */
+  action?: string | null;
+  /** JSONata over `{ event }`; truthy fires the workflow. */
+  filter?: string;
+  entity?: string;
+  inputs: Record<string, unknown>;
+}
+
+/** `POST /api/v1/hooks/<action>` with the secret (token or HMAC signature). `inputs` are templates over `body` and `headers`. */
+export interface WebhookTrigger {
+  type: 'webhook';
+  secret: string;
+  signatureHeader?: string;
+  blueprint?: string | null;
+  entity?: string;
+  inputs: Record<string, unknown>;
+}
+
+/** What starts a workflow. */
+export type WorkflowTrigger = FormTrigger | ApiTrigger | ScheduleTrigger | EventTrigger | WebhookTrigger;
+/** Triggers started by a person through a form payload (the form page, or the API). */
+export type FormLikeTrigger = FormTrigger | ApiTrigger;
 
 /** A workflow: a trigger and steps. Without a trigger, or without steps, it is a draft and cannot run. */
 export interface Action {
@@ -290,6 +329,8 @@ export interface Run {
   triggeredBy: { id: string; name: string; email: string };
   approvals: RunApproval[];
   result: unknown;
+  /** What started the run: form, api, schedule, event, webhook, workflow (parent run) or rerun. */
+  trigger?: { type: string; [k: string]: unknown };
   createdAt: string;
   startedAt: string | null;
   endedAt: string | null;
