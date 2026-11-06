@@ -6,7 +6,7 @@
 // ---------- identity ----------
 export type Role = 'admin' | 'member';
 /** Delegated roles (integration-admin, blueprint-owner, approver), granted on top of `member` (any other slug is a custom role usable in permission subjects). */
-export type UserProvider = 'local' | 'entra' | 'service';
+export type UserProvider = 'local' | 'entra' | 'oidc' | 'github' | 'service';
 
 export interface TeamRef {
   identifier: string;
@@ -32,7 +32,7 @@ export interface Team {
   identifier: string;
   title: string;
   description: string;
-  /** Members of this Entra ID group are members of the team (synchronised at sign-in). */
+  /** Members of this identity-provider group (Entra group id, OIDC group claim value, GitHub `org/team`) are members of the team (synchronised at sign-in). */
   entraGroupId: string | null;
   managed: boolean;
   members: { id: string; name: string; email: string }[];
@@ -463,7 +463,9 @@ export interface PluginInfo {
 export interface Meta {
   name: string;
   version: string;
-  authProviders: ('local' | 'entra')[];
+  authProviders: ('local' | 'entra' | 'oidc' | 'github')[];
+  /** Label of the generic OIDC sign-in button. */
+  oidcTitle?: string;
   allowRegistration: boolean;
   invokers: PluginInfo[];
   sources: PluginInfo[];

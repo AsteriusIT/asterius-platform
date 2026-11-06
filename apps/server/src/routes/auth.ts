@@ -22,6 +22,8 @@ import {
   type UserRow,
 } from '../auth/users.js';
 import { entraRoutes } from '../auth/entra.js';
+import { oidcRoutes } from '../auth/oidc.js';
+import { githubRoutes } from '../auth/github.js';
 import { effectivePermissions } from '../auth/access.js';
 import { invokerInfos } from '../actions/invokers/index.js';
 import { sourceInfos } from '../integrations/sources/index.js';
@@ -46,6 +48,7 @@ export async function authRoutes(app: FastifyInstance) {
     name: 'Asterius Platform',
     version: VERSION,
     authProviders: config.AUTH_PROVIDERS,
+    ...(config.AUTH_PROVIDERS.includes('oidc') ? { oidcTitle: config.OIDC_TITLE } : {}),
     allowRegistration: config.AUTH_PROVIDERS.includes('local') && config.ALLOW_REGISTRATION,
     invokers: invokerInfos(),
     sources: sourceInfos(),
@@ -108,4 +111,6 @@ export async function authRoutes(app: FastifyInstance) {
   });
 
   if (config.AUTH_PROVIDERS.includes('entra')) await app.register(entraRoutes);
+  if (config.AUTH_PROVIDERS.includes('oidc')) await app.register(oidcRoutes);
+  if (config.AUTH_PROVIDERS.includes('github')) await app.register(githubRoutes);
 }

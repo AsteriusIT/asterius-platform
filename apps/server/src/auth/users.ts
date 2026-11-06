@@ -115,12 +115,27 @@ export async function createLocalUser(email: string, name: string, password: str
   return (await getUser(id))!;
 }
 
-/** Entra ID sign-in: upsert the user, then synchronise team memberships and admin role from group claims. */
-export async function upsertEntraUser(p: { externalId: string; email: string; name: string; groups: string[] }) {
-  let user = await one<UserRow>("SELECT * FROM users WHERE provider = 'entra' AND external_id = ?", p.externalId);
-  const groupAdmin = p.groups.some((g) => config.ENTRA_ADMIN_GROUPS.includes(g));
+export type ExternalProvider = 'entra' | 'oidc' | 'github';
+
+export interface ExternalIdentity {
+  /** Stable subject, namespaced by the issuer (never the email). */
+  externalId: string;
+  email: string;
+  /** Only verified emails may bootstrap the admin role through ADMIN_EMAILS. */
+  emailVerified?: boolean;
+  name: string;
+  groups: string[];
+  /** Groups whose members are admins. */
+  adminGroups?: string[];
+}
+
+/** Sign-in through an identity provider: upsert the user, then synchronise team memberships and the admin role from groups. */
+export async function upsertExternalUser(provider: ExternalProvider, p: ExternalIdentity) {
+  let user = await one<UserRow>('SELECT * FROM users WHERE provider = ? AND external_id = ?', provider, p.externalId);
+  const groupAdmin = p.groups.some((g) => p.adminGroups?.includes(g));
+  const emailAdmin = p.emailVerified !== false && config.ADMIN_EMAILS.includes(p.email.toLowerCase());
   if (user) {
-    const role: Role = groupAdmin || config.ADMIN_EMAILS.includes(p.email) ? 'admin' : user.role;
+    const role: Role = groupAdmin || emailAdmin ? 'admin' : user.role;
     await run(
       'UPDATE users SET email = ?, name = ?, groups = ?, role = ?, last_login_at = ? WHERE id = ?',
       p.email,
@@ -132,10 +147,11 @@ export async function upsertEntraUser(p: { externalId: string; email: string; na
     );
   } else {
     const id = newId();
-    const role: Role = groupAdmin ? 'admin' : await initialRole(p.email);
+    const role: Role = groupAdmin ? 'admin' : p.emailVerified === false ? 'member' : await initialRole(p.email);
     await run(
-      "INSERT INTO users (id, provider, external_id, email, name, groups, role, last_login_at, created_at) VALUES (?, 'entra', ?, ?, ?, ?, ?, ?, ?)",
+      'INSERT INTO users (id, provider, external_id, email, name, groups, role, last_login_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
       id,
+      provider,
       p.externalId,
       p.email,
       p.name,
@@ -146,18 +162,22 @@ export async function upsertEntraUser(p: { externalId: string; email: string; na
     );
     user = await getUser(id);
   }
-  await syncEntraTeams(user!.id, p.groups);
+  await syncEntraTeams(user!.id, p.groups, provider);
   return (await getUser(user!.id))!;
 }
 
-export async function syncEntraTeams(userId: string, groups: string[]) {
+export const upsertEntraUser = (p: { externalId: string; email: string; name: string; groups: string[] }) =>
+  upsertExternalUser('entra', { ...p, adminGroups: config.ENTRA_ADMIN_GROUPS });
+
+/** Teams bound to an IdP group (`entraGroupId`, the group id/name whatever the provider) follow the user's groups. */
+export async function syncEntraTeams(userId: string, groups: string[], via: ExternalProvider = 'entra') {
   const teams = await all<{ identifier: string; entra_group_id: string }>('SELECT identifier, entra_group_id FROM teams WHERE entra_group_id IS NOT NULL');
   const wanted = new Set(teams.filter((t) => groups.includes(t.entra_group_id)).map((t) => t.identifier));
   await tx(async (d) => {
-    await d.query("DELETE FROM team_members WHERE user_id = ? AND via = 'entra'", [userId]);
+    await d.query('DELETE FROM team_members WHERE user_id = ? AND via = ?', [userId, via]);
     for (const team of wanted) {
       const existing = await d.query('SELECT team FROM team_members WHERE team = ? AND user_id = ?', [team, userId]);
-      if (!existing.rows.length) await d.query("INSERT INTO team_members (team, user_id, via) VALUES (?, ?, 'entra')", [team, userId]);
+      if (!existing.rows.length) await d.query('INSERT INTO team_members (team, user_id, via) VALUES (?, ?, ?)', [team, userId, via]);
     }
   });
 }

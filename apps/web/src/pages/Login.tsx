@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Alert, Anchor, Button, Center, Divider, Paper, PasswordInput, Stack, Text, TextInput, Title } from '@mantine/core';
 import { useQuery } from '@tanstack/react-query';
 import { Navigate, useLocation, useNavigate, useSearchParams } from 'react-router';
-import { IconBrandWindows } from '@tabler/icons-react';
+import { IconBrandGithub, IconBrandWindows, IconKey } from '@tabler/icons-react';
 import { api, errorText } from '../lib/api';
 import { useAuth } from '../lib/auth';
 
@@ -62,7 +62,22 @@ export function Login() {
               Continue with Microsoft
             </Button>
           )}
-          {providers.includes('entra') && providers.includes('local') && <Divider label="or" />}
+          {providers.includes('oidc') && (
+            <Button component="a" href={`/api/auth/oidc/login?returnTo=${encodeURIComponent(from)}`} variant="default" leftSection={<IconKey size={18} />}>
+              Continue with {meta.data?.oidcTitle ?? 'SSO'}
+            </Button>
+          )}
+          {providers.includes('github') && (
+            <Button
+              component="a"
+              href={`/api/auth/github/login?returnTo=${encodeURIComponent(from)}`}
+              variant="default"
+              leftSection={<IconBrandGithub size={18} />}
+            >
+              Continue with GitHub
+            </Button>
+          )}
+          {providers.includes('local') && providers.some((p) => p !== 'local') && <Divider label="or" />}
           {providers.includes('local') && (
             <form onSubmit={submit}>
               <Stack gap="sm">

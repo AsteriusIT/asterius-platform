@@ -52,7 +52,7 @@ const schema = z.object({
     .string()
     .optional()
     .transform((v) => (v || 'local').split(',').map((x) => x.trim()))
-    .pipe(z.array(z.enum(['local', 'entra'])).min(1)),
+    .pipe(z.array(z.enum(['local', 'entra', 'oidc', 'github'])).min(1)),
   ALLOW_REGISTRATION: bool(true),
   /** Users with these emails are admins (bootstrap). The first local user is admin too when no admin exists. */
   ADMIN_EMAILS: list.transform((v) => v.map((x) => x.toLowerCase())),
@@ -67,6 +67,34 @@ const schema = z.object({
   ENTRA_REDIRECT_URI: z.string().optional(),
   /** Entra group object ids whose members are admins. */
   ENTRA_ADMIN_GROUPS: list,
+
+  // ---- generic OpenID Connect (Okta, Keycloak, Google, Auth0, …): AUTH_PROVIDERS includes oidc ----
+  OIDC_ISSUER: z.string().optional(),
+  OIDC_CLIENT_ID: z.string().optional(),
+  OIDC_CLIENT_SECRET: z.string().optional(),
+  OIDC_REDIRECT_URI: z.string().optional(),
+  OIDC_SCOPES: z.string().default('openid profile email'),
+  /** Label of the sign-in button. */
+  OIDC_TITLE: z.string().default('SSO'),
+  /** Claim holding the group list (an array of strings); some providers use `roles` or a namespaced claim. */
+  OIDC_GROUPS_CLAIM: z.string().default('groups'),
+  OIDC_EMAIL_CLAIM: z.string().default('email'),
+  OIDC_NAME_CLAIM: z.string().default('name'),
+  /** Members of these groups are admins. */
+  OIDC_ADMIN_GROUPS: list,
+  /** Restrict sign-in to these email domains (empty: any). */
+  OIDC_ALLOWED_DOMAINS: list.transform((v) => v.map((x) => x.toLowerCase())),
+
+  // ---- GitHub OAuth: AUTH_PROVIDERS includes github ----
+  GITHUB_CLIENT_ID: z.string().optional(),
+  GITHUB_CLIENT_SECRET: z.string().optional(),
+  GITHUB_REDIRECT_URI: z.string().optional(),
+  /** Only members of these organizations may sign in (required: GitHub accounts are open to everyone). */
+  GITHUB_ALLOWED_ORGS: list,
+  /** `org` or `org/team-slug` entries, matched by team `entraGroupId`; members of GITHUB_ADMIN_TEAMS are admins. */
+  GITHUB_ADMIN_TEAMS: list,
+  GITHUB_API_URL: z.string().default('https://api.github.com'),
+  GITHUB_URL: z.string().default('https://github.com'),
 
   // ---- workers ----
   /** Concurrent action runs per worker process. */
