@@ -52,7 +52,7 @@ const schema = z.object({
     .string()
     .optional()
     .transform((v) => (v || 'local').split(',').map((x) => x.trim()))
-    .pipe(z.array(z.enum(['local', 'entra', 'oidc', 'github'])).min(1)),
+    .pipe(z.array(z.enum(['local', 'entra', 'oidc', 'github', 'saml'])).min(1)),
   ALLOW_REGISTRATION: bool(true),
   /** Users with these emails are admins (bootstrap). The first local user is admin too when no admin exists. */
   ADMIN_EMAILS: list.transform((v) => v.map((x) => x.toLowerCase())),
@@ -84,6 +84,24 @@ const schema = z.object({
   OIDC_ADMIN_GROUPS: list,
   /** Restrict sign-in to these email domains (empty: any). */
   OIDC_ALLOWED_DOMAINS: list.transform((v) => v.map((x) => x.toLowerCase())),
+
+  // ---- SAML 2.0: AUTH_PROVIDERS includes saml ----
+  SAML_ENTRY_POINT: z.string().optional(),
+  /** IdP signing certificate (PEM; `\n` sequences allowed). */
+  SAML_IDP_CERT: z.string().optional(),
+  SAML_IDP_ISSUER: z.string().optional(),
+  /** SP entity id (default: the metadata URL). */
+  SAML_ISSUER: z.string().optional(),
+  SAML_AUDIENCE: z.string().optional(),
+  SAML_CALLBACK_URL: z.string().optional(),
+  SAML_TITLE: z.string().default('SAML SSO'),
+  SAML_EMAIL_ATTR: z.string().default('email'),
+  SAML_NAME_ATTR: z.string().default('displayName'),
+  SAML_GROUPS_ATTR: z.string().default('groups'),
+  SAML_ADMIN_GROUPS: list,
+  SAML_ALLOWED_DOMAINS: list.transform((v) => v.map((x) => x.toLowerCase())),
+  SAML_WANT_ASSERTIONS_SIGNED: bool(true),
+  SAML_WANT_RESPONSE_SIGNED: bool(false),
 
   // ---- GitHub OAuth: AUTH_PROVIDERS includes github ----
   GITHUB_CLIENT_ID: z.string().optional(),

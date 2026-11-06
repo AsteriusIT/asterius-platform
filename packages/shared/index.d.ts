@@ -471,9 +471,10 @@ export interface PluginInfo {
 export interface Meta {
   name: string;
   version: string;
-  authProviders: ('local' | 'entra' | 'oidc' | 'github')[];
-  /** Label of the generic OIDC sign-in button. */
+  authProviders: ('local' | 'entra' | 'oidc' | 'github' | 'saml')[];
+  /** Labels of the generic OIDC / SAML sign-in buttons. */
   oidcTitle?: string;
+  samlTitle?: string;
   allowRegistration: boolean;
   invokers: PluginInfo[];
   sources: PluginInfo[];

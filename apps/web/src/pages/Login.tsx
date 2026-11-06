@@ -67,6 +67,11 @@ export function Login() {
               Continue with {meta.data?.oidcTitle ?? 'SSO'}
             </Button>
           )}
+          {providers.includes('saml') && (
+            <Button component="a" href={`/api/auth/saml/login?returnTo=${encodeURIComponent(from)}`} variant="default" leftSection={<IconKey size={18} />}>
+              Continue with {meta.data?.samlTitle ?? 'SAML SSO'}
+            </Button>
+          )}
           {providers.includes('github') && (
             <Button
               component="a"
