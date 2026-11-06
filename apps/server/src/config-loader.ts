@@ -169,21 +169,91 @@ export async function applyConfig(loaded: LoadedConfig, log: FastifyBaseLogger) 
 
 let lastHash: string | undefined;
 
+/** What the last check did, shown on the admin page (per replica). */
+export const configStatus: { lastCheckedAt: string | null; lastAppliedAt: string | null; hash: string | null; files: number; error: string | null } = {
+  lastCheckedAt: null,
+  lastAppliedAt: null,
+  hash: null,
+  files: 0,
+  error: null,
+};
+
+const KINDS = ['teams', 'blueprints', 'actions', 'integrations', 'webhooks'] as const;
+
+/** What a reload would change: declared vs currently managed identifiers. Nothing is applied. */
+export async function configDiff() {
+  let loaded: LoadedConfig;
+  try {
+    loaded = readConfigDir();
+  } catch (err) {
+    return { error: errorMessage(err), kinds: {} as Record<string, { added: string[]; removed: string[]; kept: string[] }> };
+  }
+  const current: Record<(typeof KINDS)[number], { identifier: string; managed: boolean }[]> = {
+    teams: await listTeams(),
+    blueprints: await listBlueprints(),
+    actions: await listActions(),
+    integrations: await listIntegrations(),
+    webhooks: await listWebhooks(),
+  };
+  const kinds: Record<string, { added: string[]; removed: string[]; kept: string[] }> = {};
+  for (const k of KINDS) {
+    const declared = new Set(loaded.data[k].map((d) => d.identifier));
+    const managed = new Set(current[k].filter((c) => c.managed).map((c) => c.identifier));
+    kinds[k] = {
+      added: [...declared].filter((d) => !managed.has(d)),
+      removed: [...managed].filter((m) => !declared.has(m)),
+      kept: [...declared].filter((d) => managed.has(d)),
+    };
+  }
+  return { error: null, pending: loaded.hash !== lastHash, kinds };
+}
+
+/**
+ * Import resources from an exported YAML: validates every document, then (unless `dryRun`) creates or updates them as
+ * regular, editable resources (not managed). Returns counts per kind.
+ */
+export async function importConfig(text: string, dryRun: boolean): Promise<Record<string, number>> {
+  const merged: ConfigFile = configFile.parse({});
+  for (const doc of parseAllDocuments(text, { merge: true })) {
+    if (doc.errors.length) throw new Error(doc.errors[0].message);
+    const raw = doc.toJS();
+    if (raw == null) continue;
+    const parsed = configFile.safeParse(raw);
+    if (!parsed.success) throw new Error(parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; '));
+    for (const k of KINDS) (merged[k] as unknown[]).push(...parsed.data[k]);
+  }
+  const counts = Object.fromEntries(KINDS.map((k) => [k, merged[k].length]));
+  if (dryRun) return counts;
+  for (const t of merged.teams) await upsertTeam(t);
+  const knownTargets = new Set([...merged.blueprints.map((b) => b.identifier), ...(await listBlueprints()).map((b) => b.identifier)]);
+  for (const b of merged.blueprints) await upsertBlueprint(b, { knownTargets });
+  for (const a of merged.actions) await upsertAction(a);
+  for (const i of merged.integrations) await upsertIntegration(i);
+  for (const w of merged.webhooks) await upsertWebhook(w);
+  return counts;
+}
+
 /** Load once at startup, then watch for changes (ConfigMap updates, git-sync). */
 export async function startConfigLoader(log: FastifyBaseLogger) {
   const check = async () => {
     let loaded: LoadedConfig;
+    configStatus.lastCheckedAt = new Date().toISOString();
     try {
       loaded = readConfigDir();
     } catch (err) {
+      configStatus.error = errorMessage(err);
       log.error(`config: ${errorMessage(err)} (keeping the current configuration)`);
       return;
     }
+    configStatus.error = null;
+    configStatus.files = loaded.files.length;
     if (loaded.hash === lastHash) return;
     await withAdvisoryLock(LOCK_KEY, async () => {
       await applyConfig(loaded, log);
       lastHash = loaded.hash;
     });
+    configStatus.lastAppliedAt = new Date().toISOString();
+    configStatus.hash = loaded.hash.slice(0, 12);
     if (loaded.files.length) {
       log.info(`config: applied ${loaded.files.length} file(s) from ${config.CONFIG_DIR}`);
       await audit(SYSTEM, 'config.applied', config.CONFIG_DIR, {

@@ -110,6 +110,39 @@ export async function listDeliveries(webhook: string, limit = 50): Promise<Deliv
   }));
 }
 
+const toDelivery = (r: DeliveryRow): Delivery => ({
+  id: r.id,
+  webhook: r.webhook,
+  event: r.event,
+  status: r.status,
+  attempts: Number(r.attempts),
+  responseStatus: r.response_status,
+  lastError: r.last_error,
+  createdAt: r.created_at,
+  deliveredAt: r.delivered_at,
+});
+
+/** Deliveries across every webhook, newest first (e.g. all the failed ones). */
+export async function listAllDeliveries(q: { status?: Delivery['status']; limit: number; offset: number }): Promise<Delivery[]> {
+  const rows = await all<DeliveryRow>(
+    `SELECT * FROM deliveries ${q.status ? 'WHERE status = ?' : ''} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+    ...(q.status ? [q.status] : []),
+    q.limit,
+    q.offset,
+  );
+  return rows.map(toDelivery);
+}
+
+/** Redeliver several at once; returns how many were queued. */
+export async function redeliverMany(ids: string[]): Promise<number> {
+  let n = 0;
+  for (const id of ids) {
+    const { changes } = await run("UPDATE deliveries SET status = 'pending', attempts = 0, next_attempt_at = ?, locked_until = NULL WHERE id = ?", now(), id);
+    n += Number(changes) > 0 ? 1 : 0;
+  }
+  return n;
+}
+
 export async function redeliver(id: string) {
   const { changes } = await run("UPDATE deliveries SET status = 'pending', attempts = 0, next_attempt_at = ?, locked_until = NULL WHERE id = ?", now(), id);
   if (!changes) throw notFound('Delivery');

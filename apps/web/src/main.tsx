@@ -95,6 +95,7 @@ const router = createBrowserRouter([
                   { path: 'secrets', element: page(access, 'SecretsAdmin') },
                   { path: 'audit', element: page(system, 'AuditAdmin') },
                   { path: 'config', element: page(system, 'ConfigAdmin') },
+                  { path: 'deliveries', element: page(system, 'DeliveriesAdmin') },
                 ],
               },
               { path: '*', element: <Navigate to="/" replace /> },

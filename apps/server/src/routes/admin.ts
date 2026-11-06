@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { audit, listAudit } from '../audit.js';
+import { audit, auditFacets, listAudit } from '../audit.js';
 import {
   actorOf,
   createApiToken,
@@ -16,8 +16,8 @@ import {
 } from '../auth/users.js';
 import { deleteTeam, listTeams, upsertTeam } from '../auth/teams.js';
 import { deleteSecret, listSecrets, setSecret } from '../secrets.js';
-import { deleteWebhook, getWebhook, listDeliveries, listWebhooks, redeliver, upsertWebhook } from '../webhooks/webhooks.js';
-import { exportConfig, managedCounts } from '../config-loader.js';
+import { deleteWebhook, getWebhook, listAllDeliveries, listDeliveries, listWebhooks, redeliver, redeliverMany, upsertWebhook } from '../webhooks/webhooks.js';
+import { configDiff, configStatus, exportConfig, importConfig, managedCounts } from '../config-loader.js';
 import { config } from '../config.js';
 import { idParam, page } from './util.js';
 import { badRequest } from '../lib/errors.js';
@@ -131,9 +131,36 @@ export async function adminRoutes(app: FastifyInstance, opts: { reloadConfig: ()
       return { ok: true };
     });
 
-    admin.get('/audit', async (req) => listAudit(page.extend({ search: z.string().max(200).optional() }).parse(req.query)));
+    admin.get('/deliveries', async (req) => listAllDeliveries(page.extend({ status: z.enum(['pending', 'success', 'failed']).optional() }).parse(req.query)));
+    admin.post('/deliveries/redeliver', async (req) => {
+      const { ids } = z.object({ ids: z.array(z.string()).min(1).max(200) }).parse(req.body);
+      const queued = await redeliverMany(ids);
+      await audit(actorOf(req.principal), 'delivery.bulk_redelivered', null, { count: queued });
+      return { queued };
+    });
 
-    admin.get('/config', async () => ({ dir: config.CONFIG_DIR, managed: await managedCounts() }));
+    const text = z.string().max(200).optional();
+    admin.get('/audit', async (req) =>
+      listAudit(
+        page
+          .extend({ search: text, actor: text, action: text, target: text, from: z.string().max(40).optional(), to: z.string().max(40).optional() })
+          .parse(req.query),
+      ),
+    );
+    admin.get('/audit/facets', async () => auditFacets());
+
+    admin.get('/config', async () => ({ dir: config.CONFIG_DIR, managed: await managedCounts(), status: configStatus }));
+    admin.get('/config/diff', async () => configDiff());
+    admin.post('/config/import', async (req) => {
+      const body = z.object({ yaml: z.string().max(2_000_000), dryRun: z.boolean().default(false) }).parse(req.body);
+      try {
+        const counts = await importConfig(body.yaml, body.dryRun);
+        if (!body.dryRun) await audit(actorOf(req.principal), 'config.imported', null, counts);
+        return { ok: true, counts };
+      } catch (err) {
+        throw badRequest((err as Error).message);
+      }
+    });
     admin.get('/config/export', async (_req, reply) => reply.type('text/yaml; charset=utf-8').send(await exportConfig()));
     admin.post('/config/reload', async (req) => {
       await opts.reloadConfig();

@@ -23,6 +23,17 @@ export interface DryRunResult {
   steps: { id: string; type: string; skipped: boolean; error?: string; preview?: unknown }[];
 }
 
+export interface ConfigInfo {
+  dir: string;
+  managed: Record<string, number>;
+  status: { lastCheckedAt: string | null; lastAppliedAt: string | null; hash: string | null; files: number; error: string | null };
+}
+export interface ConfigDiff {
+  error: string | null;
+  pending?: boolean;
+  kinds: Record<string, { added: string[]; removed: string[]; kept: string[] }>;
+}
+
 /** Typed client for the platform API (/api/v1). The session token lives in localStorage. */
 
 const TOKEN_KEY = 'asterius.token';
@@ -171,8 +182,14 @@ export const api = {
   setSecret: (name: string, value: string, description: string) => request('PUT', v1(`/secrets/${enc(name)}`), { value, description }),
   deleteSecret: (name: string) => request('DELETE', v1(`/secrets/${enc(name)}`)),
 
-  audit: (q: { search?: string; limit?: number; offset?: number }) => request<AuditEntry[]>('GET', v1(`/audit${qs(q)}`)),
-  configInfo: () => request<{ dir: string; managed: Record<string, number> }>('GET', v1('/config')),
+  audit: (q: { search?: string; actor?: string; action?: string; target?: string; from?: string; to?: string; limit?: number; offset?: number }) =>
+    request<AuditEntry[]>('GET', v1(`/audit${qs(q)}`)),
+  auditFacets: () => request<{ actions: string[]; actors: string[] }>('GET', v1('/audit/facets')),
+  allDeliveries: (q: { status?: string; limit?: number; offset?: number }) => request<Delivery[]>('GET', v1(`/deliveries${qs(q)}`)),
+  redeliverMany: (ids: string[]) => request<{ queued: number }>('POST', v1('/deliveries/redeliver'), { ids }),
+  configDiff: () => request<ConfigDiff>('GET', v1('/config/diff')),
+  configImport: (yaml: string, dryRun: boolean) => request<{ ok: boolean; counts: Record<string, number> }>('POST', v1('/config/import'), { yaml, dryRun }),
+  configInfo: () => request<ConfigInfo>('GET', v1('/config')),
   configExport: () => request<string>('GET', v1('/config/export')),
   configReload: () => request('POST', v1('/config/reload'), {}),
 };

@@ -22,7 +22,7 @@ export function navCommands(isAdmin: boolean): Command[] {
     { id: 'approvals', label: 'Approvals', to: '/approvals' },
     { id: 'profile', label: 'Profile and API tokens', to: '/profile' },
   ];
-  const admin: Command[] = ['blueprints', 'actions', 'integrations', 'webhooks', 'teams', 'users', 'secrets', 'audit', 'config'].map((k) => ({
+  const admin: Command[] = ['blueprints', 'actions', 'integrations', 'webhooks', 'deliveries', 'teams', 'users', 'secrets', 'audit', 'config'].map((k) => ({
     id: `admin-${k}`,
     label: `Admin: ${k}`,
     to: `/admin/${k}`,

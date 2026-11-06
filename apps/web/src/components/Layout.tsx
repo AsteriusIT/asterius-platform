@@ -35,6 +35,7 @@ import {
   IconMoon,
   IconPlugConnected,
   IconRocket,
+  IconSend,
   IconSchema,
   IconSearch,
   IconSettingsAutomation,
@@ -215,6 +216,7 @@ export function Layout() {
               {link('/admin/actions', 'Actions', <IconBolt size={18} stroke={1.6} />)}
               {link('/admin/integrations', 'Integrations', <IconPlugConnected size={18} stroke={1.6} />)}
               {link('/admin/webhooks', 'Webhooks', <IconWebhook size={18} stroke={1.6} />)}
+              {link('/admin/deliveries', 'Deliveries', <IconSend size={18} stroke={1.6} />)}
               {link('/admin/teams', 'Teams', <IconUsersGroup size={18} stroke={1.6} />)}
               {link('/admin/users', 'Users & service accounts', <IconKey size={18} stroke={1.6} />)}
               {link('/admin/secrets', 'Secrets', <IconLock size={18} stroke={1.6} />)}
