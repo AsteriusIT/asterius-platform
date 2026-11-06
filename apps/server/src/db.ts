@@ -6,6 +6,7 @@ import pg from 'pg';
 import { config, paths } from './config.js';
 import { entitySearchText } from './catalog/search.js';
 import { CATALOG_MIGRATIONS } from './catalog/migrations.js';
+import { AI_MIGRATIONS } from './ai/migrations.js';
 
 /**
  * Storage: Postgres in production (DATABASE_URL, any number of replicas) or SQLite for local development.
@@ -667,6 +668,7 @@ export const MIGRATIONS: Migration[] = [
     name: 'integrations: scoped sync requests (push fast path)',
     up: (d) => d.exec('ALTER TABLE integrations ADD COLUMN requested_scope TEXT'),
   },
+  ...AI_MIGRATIONS,
 ];
 
 /**

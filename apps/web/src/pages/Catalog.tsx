@@ -13,6 +13,7 @@ import { PropertyValue } from '../components/PropertyValue';
 import { orderedFields } from '../components/SchemaForm';
 import { DashboardView } from '../components/DashboardView';
 import { EntityEditor } from '../components/EntityEditor';
+import { AskCatalog } from '../components/AiAssistant';
 import { ActionRunModal } from '../components/ActionRunModal';
 import { EntityActionsMenu } from '../components/EntityActionsMenu';
 import { LevelBadge, Markdown, PageHeader, QueryView, TimeAgo } from '../components/ui';
@@ -168,6 +169,7 @@ function CatalogTable({ bp }: { bp: Blueprint }) {
         }
       />
       {dashboard.data && <DashboardView dashboard={dashboard.data} />}
+      <AskCatalog />
       <Group>
         <TextInput
           placeholder={`Search ${bp.title.toLowerCase()}`}

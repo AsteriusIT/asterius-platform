@@ -261,6 +261,19 @@ const schema = z.object({
   ANTHROPIC_API_KEY: z.string().optional(),
   /** Agent steps without `model`. */
   AGENT_DEFAULT_MODEL: z.string().default('claude-opus-5-5'),
+  /** Model for assistant features (catalog questions, run explanations, authoring help, reviews); cheaper by default. */
+  AI_ASSISTANT_MODEL: z.string().default('claude-sonnet-5-5'),
+  /** JSON `{ "<model>": { "input": $/MTok, "output": $/MTok, "cacheWrite"?: $/MTok, "cacheRead"?: $/MTok } }` overriding the built-in price table. */
+  AI_PRICES: z.string().optional(),
+  /** Where agent steps call Claude: anthropic (default), bedrock (AWS) or vertex (Google Cloud). A step may override it. */
+  AI_PROVIDER: z.enum(['anthropic', 'bedrock', 'vertex']).default('anthropic'),
+  /** Bedrock / Vertex region and Vertex project (credentials come from the standard AWS / Google environment). */
+  AI_REGION: z.string().optional(),
+  AI_VERTEX_PROJECT: z.string().optional(),
+  /** Scheduled catalog quality review every N hours (0: disabled). */
+  AI_REVIEW_INTERVAL_HOURS: z.coerce.number().min(0).default(0),
+  /** Entities untouched for this many days are reported as stale by the quality review. */
+  AI_REVIEW_STALE_DAYS: z.coerce.number().int().min(1).default(180),
 });
 
 const parsed = schema.parse(process.env);

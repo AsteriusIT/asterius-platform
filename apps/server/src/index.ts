@@ -25,6 +25,7 @@ const { startMaintenance } = await import('./maintenance.js');
 const { startEntraResync } = await import('./auth/entra.js');
 const { startTriggerScheduler } = await import('./actions/triggers.js');
 const { startAuditStream } = await import('./audit-stream.js');
+const { startAiScheduler } = await import('./ai/review.js');
 
 /**
  * Roles (PLATFORM_ROLE):
@@ -49,6 +50,7 @@ if (isWorker) {
     startTriggerScheduler(app.log),
     startAuditStream(app.log),
     startInboundWorker(app.log),
+    startAiScheduler(app.log),
   );
   app.log.info(`worker ${WORKER_ID} started (concurrency ${config.WORKER_CONCURRENCY})`);
 }

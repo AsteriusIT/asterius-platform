@@ -37,6 +37,7 @@ import {
   IconLogout,
   IconMoon,
   IconPlugConnected,
+  IconRobot,
   IconRocket,
   IconSchema,
   IconSearch,
@@ -221,6 +222,7 @@ export function Layout() {
               {link('/admin/deleted', 'Deleted entities', <IconTrashX size={18} stroke={1.6} />)}
               {link('/admin/notifications', 'Notifications', <IconBell size={18} stroke={1.6} />)}
               {link('/admin/audit', 'Audit log', <IconHistory size={18} stroke={1.6} />)}
+              {link('/admin/ai', 'AI usage', <IconRobot size={18} stroke={1.6} />)}
               {link('/admin/config', 'Configuration', <IconSettingsAutomation size={18} stroke={1.6} />)}
             </div>
           )}

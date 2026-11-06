@@ -29,6 +29,7 @@ import { api, errorText } from '../lib/api';
 import { DataTable } from '../components/DataTable';
 import { duration, Empty, Markdown, PageHeader, QueryView, StatusBadge, STATUS_COLORS, TimeAgo } from '../components/ui';
 import { WorkflowGraph } from '../components/WorkflowGraph';
+import { ExplainRun } from '../components/AiAssistant';
 import { splitJobLog, STEP_STATUS_COLORS, STEP_STATUS_LABELS, STEP_TYPES } from '../lib/workflow';
 import { PropertyValue } from '../components/PropertyValue';
 import { initialValues, SchemaForm, validateValues, type FormValues } from '../components/SchemaForm';
@@ -231,6 +232,11 @@ function RunView({ r }: { r: Run }) {
                 {r.statusLabel}
               </Text>
             )}
+            {!!r.costUsd && (
+              <Text span fz="sm" c="dimmed">
+                AI cost ${r.costUsd.toFixed(4)}
+              </Text>
+            )}
           </Group>
         }
         actions={
@@ -291,6 +297,8 @@ function RunView({ r }: { r: Run }) {
           </Stack>
         </Alert>
       )}
+
+      {['SUCCESS', 'FAILURE', 'CANCELLED', 'REJECTED'].includes(r.status) && <ExplainRun runId={r.id} failed={r.status === 'FAILURE'} />}
 
       {steps.length > 0 && (
         <Card padding="md">
@@ -502,6 +510,7 @@ function StepPanel({ run, step, onDone }: { run: Run; step: RunStep; onDone: (r:
             {step.statusLabel ? `${step.statusLabel} · ` : ''}
             {step.startedAt ? duration(step.startedAt, step.endedAt) : 'not started'}
             {step.maxAttempts > 1 ? ` · attempt ${Math.max(step.attempt, 1)}/${step.maxAttempts}` : ''}
+            {step.costUsd ? ` · AI cost $${step.costUsd.toFixed(4)}` : ''}
             {step.continueOnError ? ' · may fail without failing the workflow' : ''}
           </Text>
         </div>

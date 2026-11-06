@@ -4,10 +4,10 @@ import { config } from '../config.js';
 import { all, dialect, driver, forUpdate, json, later, now, one, run as exec, tx, tryAdvisoryLock, type SqlValue } from '../db.js';
 import { conflict, badRequest, errorMessage, forbidden } from '../lib/errors.js';
 import { evaluate, redact, redactDeep, render } from '../lib/expr.js';
-import { stepToken } from '../secrets.js';
+import { resolveRef, stepToken } from '../secrets.js';
 import { outputProblem, resolverFor } from './limits.js';
 import { audit, SYSTEM } from '../audit.js';
-import { actorOf, type Principal } from '../auth/users.js';
+import { actorOf, getUser, principalOf, type Principal } from '../auth/users.js';
 import { findEntity } from '../catalog/entities.js';
 import { scorecardLevels } from '../catalog/scorecards.js';
 import { compact, validate } from '../catalog/validation.js';
@@ -20,7 +20,7 @@ import type { InvokeEnv, InvokeResult, RunContext } from './types.js';
 import { addLog, emitRun, getRunRow, runUrl, updateRun, type RunRow } from './runs.js';
 import { canApproveStep, isTerminal, loadSteps, stepApprovalsOf, stepDefs, type StepRow } from './steps.js';
 import { needsOf, type Step } from './workflow.js';
-import { runAgent, StepError } from './agent.js';
+import { runAgent, StepError, wrapUntrusted } from './agent.js';
 import { wake } from './wake.js';
 import { notifyPendingDecision } from '../notifications/dispatch.js';
 import { cancelChildrenOf, startSubWorkflow, startWaitingStep } from './waiting.js';
@@ -401,6 +401,45 @@ function startHeartbeat(runId: string, stepId: string, owner: Owner, leaseMs: nu
   return stop;
 }
 
+/** Per-team Claude credential: a secret named `anthropic-api-key-<team>` (used when the step sets no apiKey). */
+async function teamApiKey(team: string | null): Promise<string | undefined> {
+  if (!team) return undefined;
+  const name = `anthropic-api-key-${team}`;
+  if (!(await one('SELECT name FROM secrets WHERE name = ?', name))) return undefined;
+  return resolveRef('secret', name);
+}
+
+async function executeAgent(r: RunRow, rows: StepRow[], def: Extract<Step, { type: 'agent' }>, setSecrets: (s: string[]) => void, signal?: AbortSignal) {
+  const ctx = await buildContext(r, rows, def.id);
+  // Text sent to the model: interpolated values are fenced as untrusted data and secrets cannot be referenced.
+  const text = await render({ prompt: def.prompt, system: def.system }, ctx, resolverFor(r), { wrap: (t, expr) => wrapUntrusted(t, expr), noRefs: true });
+  const creds = await render({ apiKey: def.apiKey ?? '', mcpTokens: def.mcpServers.map((s) => s.token ?? '') }, ctx, resolverFor(r));
+  const secrets = [...creds.secrets];
+  setSecrets(secrets);
+  const v = text.value as { prompt: unknown; system?: unknown };
+  const c = creds.value as { apiKey?: unknown; mcpTokens?: unknown[] };
+  const user = await getUser(r.triggered_by);
+  if (!user) throw new StepError('The user who started this run no longer exists', false);
+  const principal = await principalOf(user);
+  const team = r.team ?? principal.teams[0] ?? null;
+  let apiKey = typeof c.apiKey === 'string' && c.apiKey ? c.apiKey : undefined;
+  if (!apiKey && (def.provider ?? config.AI_PROVIDER) === 'anthropic') {
+    apiKey = await teamApiKey(team);
+    if (apiKey) secrets.push(apiKey);
+  }
+  return runAgent(
+    {
+      ...def,
+      prompt: typeof v.prompt === 'string' ? v.prompt : JSON.stringify(v.prompt),
+      system: typeof v.system === 'string' ? v.system : undefined,
+      apiKey,
+      mcpTokens: (c.mcpTokens ?? []).map((t) => (typeof t === 'string' ? t : '')),
+    },
+    stepLog(r.id, def.id, secrets),
+    { runId: r.id, stepId: def.id, action: r.action, team: r.team, principal, signal },
+  );
+}
+
 /** Execute a step the worker just claimed (QUEUED → RUNNING). `owner` is the claim's fencing token. */
 export async function executeStep(runId: string, stepId: string, owner: Owner) {
   const r = await getRunRow(runId);
@@ -440,16 +479,7 @@ export async function executeStep(runId: string, stepId: string, owner: Owner) {
           }
           await applyInvokeResult(runId, stepId, res, !!inv.poll, secrets, owner);
         } else if (def.type === 'agent') {
-          const ctx = await buildContext(r, rows, stepId);
-          const rendered = await render({ prompt: def.prompt, system: def.system, apiKey: def.apiKey }, ctx, resolverFor(r));
-          secrets = rendered.secrets;
-          const v = rendered.value as { prompt: unknown; system?: unknown; apiKey?: unknown };
-          const prompt = typeof v.prompt === 'string' ? v.prompt : JSON.stringify(v.prompt);
-          const result = await runAgent(
-            { ...def, prompt, system: typeof v.system === 'string' ? v.system : undefined, apiKey: typeof v.apiKey === 'string' ? v.apiKey : undefined },
-            stepLog(runId, stepId, secrets),
-            abort.signal,
-          );
+          const result = await executeAgent(r, rows, def, (s) => (secrets = s), abort.signal);
           stopBeat();
           if (lost) return;
           await setStep(runId, stepId, 'RUNNING', { state: JSON.stringify({ usage: result.usage }) }, owner);
@@ -457,7 +487,11 @@ export async function executeStep(runId: string, stepId: string, owner: Owner) {
             runId,
             stepId,
             ['RUNNING'],
-            { status: 'SUCCESS', output: result.output, statusLabel: `${result.usage.model} · ${result.usage.turns} turn(s)` },
+            {
+              status: 'SUCCESS',
+              output: result.output,
+              statusLabel: `${result.usage.model} · ${result.usage.turns} turn(s)${result.usage.costUsd !== null ? ` · $${result.usage.costUsd.toFixed(4)}` : ''}`,
+            },
             owner,
           );
         } else if (def.type === 'workflow') {

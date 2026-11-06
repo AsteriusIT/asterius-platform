@@ -1,5 +1,11 @@
 import type {
   Action,
+  AiBudget,
+  AiPrice,
+  AiReview,
+  WorkflowStep,
+  AiStatus,
+  AiUsageReport,
   ApiToken,
   AuditEntry,
   Blueprint,
@@ -248,6 +254,24 @@ export const api = {
   audit: (q: { search?: string; action?: string; actor?: string; limit?: number; offset?: number }) => request<AuditEntry[]>('GET', v1(`/audit${qs(q)}`)),
   auditExport: (q: { search?: string; action?: string; actor?: string }, format: 'csv' | 'json') =>
     request<string>('GET', v1(`/audit/export${qs({ ...q, format })}`)),
+  aiStatus: () => request<AiStatus>('GET', v1('/ai/status')),
+  aiUsage: () => request<AiUsageReport>('GET', v1('/ai/usage')),
+  aiBudgets: () => request<AiBudget[]>('GET', v1('/ai/budgets')),
+  setAiBudget: (b: { scope: AiBudget['scope']; key: string; softUsd: number | null; hardUsd: number | null }) => request<AiBudget>('PUT', v1('/ai/budgets'), b),
+  deleteAiBudget: (id: string) => request('DELETE', v1(`/ai/budgets/${enc(id)}`)),
+  aiPrices: () => request<AiPrice[]>('GET', v1('/ai/prices')),
+  aiAsk: (question: string) => request<{ answer: string; costUsd: number | null }>('POST', v1('/ai/ask'), { question }),
+  aiExplainRun: (id: string, mode: 'explain' | 'summarise') =>
+    request<{ answer: string; costUsd: number | null }>('POST', v1(`/ai/runs/${enc(id)}/explain`), { mode }),
+  aiSuggestMapping: (body: { blueprint: string; sample: unknown; hint?: string }) =>
+    request<{ mapping: Record<string, unknown>; preview: unknown; costUsd: number | null }>('POST', v1('/ai/suggest-mapping'), body),
+  aiDraftBlueprint: (body: { sample?: unknown; description?: string }) =>
+    request<{ blueprint: Record<string, unknown>; costUsd: number | null }>('POST', v1('/ai/draft-blueprint'), body),
+  aiDraftWorkflow: (description: string) =>
+    request<{ title: string; description: string; steps: WorkflowStep[]; costUsd: number | null }>('POST', v1('/ai/draft-workflow'), { description }),
+  aiReviews: () => request<AiReview[]>('GET', v1('/ai/reviews')),
+  aiRunReview: () => request<AiReview>('POST', v1('/ai/reviews/run'), {}),
+
   configInfo: () => request<{ dir: string; managed: Record<string, number> }>('GET', v1('/config')),
   configExport: () => request<string>('GET', v1('/config/export')),
   configStatus: () =>

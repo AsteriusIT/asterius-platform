@@ -7,7 +7,6 @@ import {
   Button,
   Box,
   Card,
-  Checkbox,
   Grid,
   Group,
   Input,
@@ -19,6 +18,7 @@ import {
   SimpleGrid,
   Stack,
   Switch,
+  TagsInput,
   Text,
   Textarea,
   TextInput,
@@ -43,11 +43,13 @@ import {
   IconTrash,
 } from '@tabler/icons-react';
 import type {
+  AgentMcpServer,
   AgentStep,
   WorkflowTrigger,
   InputStep,
   WaitStep,
   WorkflowCallStep,
+  AgentTool,
   ApprovalStep,
   InvokeStep,
   InvokerConfig,
@@ -58,9 +60,10 @@ import type {
   WorkflowStepType,
 } from '@asterius/shared';
 import { api } from '../../lib/api';
-import { needsOf, STEP_TYPES } from '../../lib/workflow';
+import { needsOf, STEP_TYPES, stepWarnings } from '../../lib/workflow';
 import { isFormLike, newFormTrigger, TriggerEditor, TRIGGER_TYPES, triggerSummary } from './TriggerEditor';
 import { Empty } from '../ui';
+import { AiDraft, JsonPreview } from '../AiAssistant';
 import { fieldProblems, fieldsToSchema, nameFromLabel, schemaToFields, type FieldDraft } from './fields';
 import { FieldsEditor, type FieldsMode } from './FieldsEditor';
 import { JsonEditor, KeyValueEditor, MONO_INPUT, PluginFieldInput, SubjectsEditor, VariableChips } from './blocks';
@@ -140,6 +143,10 @@ export function stepProblems(steps: WorkflowStep[], invokers: PluginInfo[]): str
     if (s.type === 'agent') {
       if (!s.prompt?.trim()) out.push(`${where}: write the prompt`);
       if (s.output) out.push(...fieldProblems(schemaToFields(s.output), `${where}: output field`));
+      if (s.tools?.includes('upsert_entity') && !s.guardrails?.entityBlueprints?.length) out.push(`${where}: list the blueprints the agent may write`);
+      if (s.tools?.includes('trigger_action') && !s.guardrails?.actions?.length) out.push(`${where}: list the actions the agent may start`);
+      if (s.tools?.includes('http') && !s.guardrails?.httpHosts?.length) out.push(`${where}: list the hosts the agent may call`);
+      for (const m of s.mcpServers ?? []) if (!m.name || !m.url.startsWith('https://')) out.push(`${where}: MCP servers need a name and an https:// URL`);
     }
     if (s.type === 'wait' && [s.duration, s.until, s.event].filter(Boolean).length !== 1) out.push(`${where}: set exactly one of duration, until or event`);
     if (s.type === 'workflow' && !s.action) out.push(`${where}: choose the workflow to run`);
@@ -165,6 +172,7 @@ export function WorkflowEditor(props: {
   const { steps, onChange, trigger } = props;
   const meta = useQuery({ queryKey: ['meta'], queryFn: api.meta, staleTime: Infinity });
   const invokers = meta.data?.invokers ?? [];
+  const warnings = useMemo(() => stepWarnings(steps), [steps]);
   const [selected, setSelected] = useState<Selection>(() => (trigger ? { kind: 'trigger' } : steps[0] ? { kind: 'step', id: steps[0].id } : null));
   const index = selected?.kind === 'step' ? steps.findIndex((s) => s.id === selected.id) : -1;
   const step = index >= 0 ? steps[index] : null;
@@ -224,6 +232,22 @@ export function WorkflowEditor(props: {
   return (
     <Grid gap="lg" align="flex-start">
       <Grid.Col span={{ base: 12, md: 4 }}>
+        {steps.length === 0 && (
+          <Group mb="xs">
+            <AiDraft
+              label="Draft steps with AI"
+              title="Draft a workflow"
+              help="Describe what the workflow should do. The draft replaces the (empty) step list; review and adjust it before saving. Drafts never include write tools or credentials."
+              placeholder="When someone requests a database, have an AI review the request, ask the platform team to approve, then call our provisioning webhook."
+              run={(text) => api.aiDraftWorkflow(text)}
+              preview={(d) => <JsonPreview value={d.steps} />}
+              onDraft={(d) => {
+                onChange(d.steps);
+                setSelected(d.steps[0] ? { kind: 'step', id: d.steps[0].id } : null);
+              }}
+            />
+          </Group>
+        )}
         <Stack gap={0} align="stretch" className="workflow-canvas" p="md" style={{ background: 'var(--surface)', borderRadius: 16 }}>
           {trigger ? (
             <CanvasNode
@@ -353,6 +377,13 @@ export function WorkflowEditor(props: {
               {step.type === 'wait' && <WaitEditor step={step} onChange={update} />}
               {step.type === 'input' && <InputEditor step={step} onChange={update} />}
               {step.type === 'workflow' && <WorkflowCallEditor step={step} onChange={update} />}
+              {warnings
+                .filter((w) => w.startsWith(`Step "${step.name || step.id}"`))
+                .map((w) => (
+                  <Alert key={w} color="yellow" variant="light" title="Review the AI output before acting on it">
+                    {w}
+                  </Alert>
+                ))}
               <FlowEditor steps={steps} index={index} onChange={update} />
             </Stack>
           </Card>
@@ -812,11 +843,47 @@ function AgentEditor({ step, onChange }: { step: AgentStep; onChange: (p: Partia
         onChange={(e) => onChange({ prompt: e.currentTarget.value })}
         styles={MONO_INPUT}
       />
-      <Checkbox
-        label="Can look things up in the catalog (read-only: list blueprints, search entities, get an entity)"
-        checked={step.tools?.includes('catalog') ?? false}
-        onChange={(e) => onChange({ tools: e.currentTarget.checked ? ['catalog'] : [] })}
+      <MultiSelect
+        label="Tools"
+        description="Look-ups are read-only. Write tools act as the user who started the run, inside the allow-lists below, and every write is audited."
+        data={AGENT_TOOL_OPTIONS}
+        value={step.tools ?? []}
+        onChange={(t) => onChange({ tools: t as AgentTool[] })}
       />
+      {(step.tools ?? []).includes('upsert_entity') && (
+        <TagsInput
+          label="Blueprints the agent may write"
+          withAsterisk
+          value={step.guardrails?.entityBlueprints ?? []}
+          onChange={(v) => onChange({ guardrails: { ...step.guardrails, entityBlueprints: v } })}
+        />
+      )}
+      {(step.tools ?? []).includes('trigger_action') && (
+        <TagsInput
+          label="Actions the agent may start"
+          withAsterisk
+          value={step.guardrails?.actions ?? []}
+          onChange={(v) => onChange({ guardrails: { ...step.guardrails, actions: v } })}
+        />
+      )}
+      {(step.tools ?? []).includes('http') && (
+        <SimpleGrid cols={{ base: 1, sm: 2 }}>
+          <TagsInput
+            label="Hosts the agent may call"
+            withAsterisk
+            description="host or host:port; redirects are not followed"
+            value={step.guardrails?.httpHosts ?? []}
+            onChange={(v) => onChange({ guardrails: { ...step.guardrails, httpHosts: v } })}
+          />
+          <MultiSelect
+            label="HTTP methods"
+            data={['GET', 'POST', 'PUT', 'PATCH', 'DELETE']}
+            value={step.guardrails?.httpMethods ?? ['GET']}
+            onChange={(v) => onChange({ guardrails: { ...step.guardrails, httpMethods: v as NonNullable<AgentStep['guardrails']>['httpMethods'] } })}
+          />
+        </SimpleGrid>
+      )}
+      <McpServersEditor value={step.mcpServers ?? []} onChange={(mcpServers) => onChange({ mcpServers })} />
       <Switch
         label="Structured output"
         description="Claude returns JSON with the fields below (validated), usable in conditions and later steps"
@@ -856,16 +923,99 @@ function AgentEditor({ step, onChange }: { step: AgentStep; onChange: (p: Partia
               <TextInput
                 label="API key"
                 placeholder="${secret:ANTHROPIC_TEAM_KEY}"
-                description="Default: the platform key"
+                description="Default: the team key (secret anthropic-api-key-<team>), then the platform key"
                 value={step.apiKey ?? ''}
                 onChange={(e) => onChange({ apiKey: e.currentTarget.value || undefined })}
                 styles={MONO_INPUT}
+              />
+              <NumberInput
+                label="Run AI budget ($)"
+                description="Stop AI calls once the run has spent this much"
+                min={0}
+                decimalScale={2}
+                value={step.maxCostUsd ?? ''}
+                onChange={(n) => onChange({ maxCostUsd: n === '' ? undefined : Number(n) })}
+              />
+              <Select
+                label="Provider"
+                description="Where Claude runs"
+                clearable
+                placeholder="Platform default"
+                data={[
+                  { value: 'anthropic', label: 'Anthropic API' },
+                  { value: 'bedrock', label: 'Amazon Bedrock' },
+                  { value: 'vertex', label: 'Google Vertex AI' },
+                ]}
+                value={step.provider ?? null}
+                onChange={(p) => onChange({ provider: (p as AgentStep['provider']) ?? undefined })}
               />
             </SimpleGrid>
           </Accordion.Panel>
         </Accordion.Item>
       </Accordion>
     </Stack>
+  );
+}
+
+const AGENT_TOOL_OPTIONS = [
+  { value: 'catalog', label: 'Catalog look-ups (read-only)' },
+  { value: 'upsert_entity', label: 'Create or update catalog entities' },
+  { value: 'trigger_action', label: 'Start self-service actions' },
+  { value: 'http', label: 'Call HTTP APIs (allow-listed hosts)' },
+];
+
+/** Remote MCP servers the model may use (the Claude API connects to them, so they must be public HTTPS endpoints). */
+function McpServersEditor({ value, onChange }: { value: AgentMcpServer[]; onChange: (v: AgentMcpServer[]) => void }) {
+  const set = (i: number, patch: Partial<AgentMcpServer>) => onChange(value.map((s, j) => (j === i ? { ...s, ...patch } : s)));
+  return (
+    <Input.Wrapper
+      label="MCP servers"
+      description="Give the model the tools of remote Model Context Protocol servers (HTTPS). The token is a secret reference."
+    >
+      <Stack gap="xs" mt={4}>
+        {value.map((s, i) => (
+          <SimpleGrid key={i} cols={{ base: 1, sm: 4 }} style={{ alignItems: 'flex-end' }}>
+            <TextInput
+              placeholder="name"
+              aria-label="MCP server name"
+              value={s.name}
+              onChange={(e) => set(i, { name: e.currentTarget.value })}
+              styles={MONO_INPUT}
+            />
+            <TextInput
+              placeholder="https://mcp.example.com/mcp"
+              aria-label="MCP server URL"
+              value={s.url}
+              onChange={(e) => set(i, { url: e.currentTarget.value })}
+            />
+            <TextInput
+              placeholder="${secret:MCP_TOKEN}"
+              aria-label="MCP server token"
+              value={s.token ?? ''}
+              onChange={(e) => set(i, { token: e.currentTarget.value || undefined })}
+              styles={MONO_INPUT}
+            />
+            <Group gap="xs" wrap="nowrap">
+              <TagsInput
+                placeholder="allowed tools (all)"
+                aria-label="Allowed MCP tools"
+                value={s.allowedTools ?? []}
+                onChange={(v) => set(i, { allowedTools: v.length ? v : undefined })}
+                style={{ flex: 1 }}
+              />
+              <ActionIcon variant="subtle" color="red" aria-label="Remove MCP server" onClick={() => onChange(value.filter((_, j) => j !== i))}>
+                <IconTrash size={16} />
+              </ActionIcon>
+            </Group>
+          </SimpleGrid>
+        ))}
+        <div>
+          <Button size="xs" variant="default" leftSection={<IconPlus size={14} />} onClick={() => onChange([...value, { name: '', url: 'https://' }])}>
+            Add MCP server
+          </Button>
+        </div>
+      </Stack>
+    </Input.Wrapper>
   );
 }
 

@@ -11,6 +11,7 @@ import { canTrigger, getAction } from './actions.js';
 import { assertCan } from '../auth/access.js';
 import { getBlueprintCached } from '../catalog/blueprints.js';
 import { metrics } from '../metrics.js';
+import { runCosts } from '../ai/usage.js';
 import { wake } from './wake.js';
 import { notifyPendingDecision } from '../notifications/dispatch.js';
 import {
@@ -186,6 +187,7 @@ export async function getRun(id: string, p: Principal, opts: { after?: number } 
     ...toRun(r, approvals),
     logs,
     logsTruncated,
+    costUsd: (await runCosts(id)).total || null,
     steps: await runStepsView(r, p),
     canApprove: canApprove(p, r, approvals),
     canCancel: canCancel(p, r),

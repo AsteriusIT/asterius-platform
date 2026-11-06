@@ -307,6 +307,25 @@ export interface ApprovalStep extends WorkflowStepBase {
 
 export type AgentEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
+export type AgentTool = 'catalog' | 'upsert_entity' | 'trigger_action' | 'http';
+export type AiProvider = 'anthropic' | 'bedrock' | 'vertex';
+
+export interface AgentGuardrails {
+  entityBlueprints?: string[];
+  actions?: string[];
+  httpHosts?: string[];
+  httpMethods?: ('GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE')[];
+  maxWrites?: number;
+}
+
+export interface AgentMcpServer {
+  name: string;
+  url: string;
+  /** `${secret:NAME}` */
+  token?: string;
+  allowedTools?: string[];
+}
+
 export interface AgentStep extends WorkflowStepBase {
   type: 'agent';
   model?: string;
@@ -315,10 +334,16 @@ export interface AgentStep extends WorkflowStepBase {
   prompt: string;
   /** Structured output: the step output follows this schema. Without it the output is `{ text }`. */
   output?: ObjectSchema;
-  /** Read-only tools the model may call. */
-  tools?: 'catalog'[];
+  /** catalog: read-only lookups · the others are governed write tools and need `guardrails`. */
+  tools?: AgentTool[];
+  guardrails?: AgentGuardrails;
+  /** Remote MCP servers the model may use. */
+  mcpServers?: AgentMcpServer[];
   maxTurns?: number;
   maxTokens?: number;
+  /** Stop the run's AI calls at this total spend (dollars). */
+  maxCostUsd?: number;
+  provider?: AiProvider;
   /** `${secret:NAME}` reference; default: the platform's ANTHROPIC_API_KEY. */
   apiKey?: string;
 }
@@ -378,6 +403,8 @@ export interface RunStep {
   canSubmit?: boolean;
   /** Sub-workflow steps: the child runs. */
   children?: { runId: string; status: string; item?: unknown }[];
+  /** AI spend of the step in dollars (null: none recorded). */
+  costUsd?: number | null;
   approvals: RunApproval[];
   canApprove?: boolean;
   /** A failed step the caller may retry. */
@@ -544,6 +571,8 @@ export interface Run {
   logs?: RunLog[];
   /** GET /runs/:id returns the newest lines only (see GET /runs/:id/logs to page through the rest). */
   logsTruncated?: boolean;
+  /** Total AI spend of the run in dollars (null: none). */
+  costUsd?: number | null;
   steps?: RunStep[];
   /** Approvals page: the step waiting for the caller's decision (null: the run-level approval). */
   pendingStep?: { id: string; name: string; message: string | null; kind?: 'approval' | 'input' } | null;
@@ -749,6 +778,51 @@ export interface Meta {
   allowRegistration: boolean;
   invokers: PluginInfo[];
   sources: PluginInfo[];
+}
+
+// ---------- AI ----------
+export interface AiStatus {
+  enabled: boolean;
+  provider: AiProvider;
+  assistantModel: string;
+}
+
+export interface AiUsageReport {
+  since: string;
+  totals: { calls: number; costUsd: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; failed: number };
+  byModel: { model: string; calls: number; costUsd: number }[];
+  byAction: { key: string | null; calls: number; costUsd: number }[];
+  byTeam: { key: string | null; calls: number; costUsd: number }[];
+  byDay: { day: string; costUsd: number }[];
+}
+
+export interface AiBudget {
+  id: string;
+  scope: 'global' | 'action' | 'team' | 'run';
+  key: string;
+  softUsd: number | null;
+  hardUsd: number | null;
+}
+
+export interface AiReview {
+  id: string;
+  at: string;
+  trigger: 'schedule' | 'manual';
+  status: 'success' | 'failure';
+  findings: { kind: string; blueprint: string; identifier: string; detail: string }[];
+  counts: Record<string, number>;
+  summary: string;
+  costUsd: number | null;
+  error: string | null;
+}
+
+export interface AiPrice {
+  model: string;
+  input: number;
+  output: number;
+  cacheWrite: number;
+  cacheRead: number;
+  source: 'database' | 'config' | 'builtin';
 }
 
 export interface HomeSummary {

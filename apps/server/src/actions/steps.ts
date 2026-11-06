@@ -1,5 +1,6 @@
 import type { ObjectSchema, RunApproval, RunStep, StepStatus, Subjects } from '@asterius/shared';
 import { all, json } from '../db.js';
+import { runCosts } from '../ai/usage.js';
 import { isAdmin, matchesSubjects, type Principal } from '../auth/users.js';
 import type { RunRow } from './runs.js';
 import { needsOf, type Step } from './workflow.js';
@@ -102,6 +103,7 @@ export async function runStepsView(run: RunRow, p: Principal | null): Promise<Ru
   const defs = stepDefs(run);
   const rows = await loadSteps(run.id);
   const approvals = await stepApprovalsOf([run.id]);
+  const costs = (await runCosts(run.id)).steps;
   return rows.map((row) => {
     const i = defs.findIndex((d) => d.id === row.step_id);
     const def = defs[i];
@@ -122,6 +124,7 @@ export async function runStepsView(run: RunRow, p: Principal | null): Promise<Ru
       form: def?.type === 'input' ? (def.inputs as ObjectSchema) : def?.type === 'approval' ? ((def.fields as ObjectSchema | undefined) ?? null) : null,
       choices: def?.type === 'approval' ? (def.choices ?? null) : null,
       children: childrenOf(row),
+      costUsd: costs.get(row.step_id) ?? null,
       approvals: list,
       ...(p && def
         ? { canApprove: canApproveStep(p, run, def, row, list), canRetry: canRetryStep(p, run, row), canSubmit: canSubmitInput(p, run, def, row) }

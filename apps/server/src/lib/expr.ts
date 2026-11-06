@@ -58,6 +58,21 @@ function normalize(v: unknown): unknown {
   return v;
 }
 
+export interface RenderOptions {
+  /** Applied to every `{{ expression }}` value (untrusted data) before it joins the text. */
+  wrap?: (text: string, expression: string) => string;
+  /** Reject `${secret:…}` / `${env:…}` references (text that is sent to a model). */
+  noRefs?: boolean;
+}
+
+/** Does a template contain `${secret:…}` / `${env:…}` references? */
+export function hasRefs(template: unknown): boolean {
+  if (typeof template === 'string') return [...template.matchAll(TOKEN)].some((m) => m[2] !== undefined);
+  if (Array.isArray(template)) return template.some(hasRefs);
+  if (template && typeof template === 'object') return Object.values(template).some(hasRefs);
+  return false;
+}
+
 /** `secret` / `env` plus the external secret manager kinds (vault, awssm, azkv, gcpsm, k8s). */
 export type RefResolver = (kind: string, name: string) => Promise<string>;
 
@@ -80,12 +95,20 @@ const stringify = (v: unknown) => {
  * (inputs, entity properties) or from secrets are never re-interpreted as templates or references.
  * Returns the rendered value and the secret values it used (to redact them from logs).
  */
-export async function render(template: unknown, ctx: unknown, resolveRef: RefResolver): Promise<{ value: unknown; secrets: string[] }> {
+export async function render(
+  template: unknown,
+  ctx: unknown,
+  resolveRef: RefResolver,
+  opts: RenderOptions = {},
+): Promise<{ value: unknown; secrets: string[] }> {
   const secrets: string[] = [];
   const walk = async (t: unknown): Promise<unknown> => {
     if (typeof t === 'string') {
       const whole = wholeExpression(t);
-      if (whole !== undefined) return evaluate(whole, ctx);
+      if (whole !== undefined) {
+        const v = await evaluate(whole, ctx);
+        return opts.wrap && v !== undefined ? opts.wrap(stringify(v), whole.trim()) : v;
+      }
       if (!t.includes('{{') && !t.includes('${')) return t;
       let out = '';
       let last = 0;
@@ -93,8 +116,10 @@ export async function render(template: unknown, ctx: unknown, resolveRef: RefRes
         out += t.slice(last, m.index);
         last = m.index + m[0].length;
         if (m[1] !== undefined) {
-          out += stringify(await evaluate(m[1], ctx));
+          const text = stringify(await evaluate(m[1], ctx));
+          out += opts.wrap ? opts.wrap(text, m[1].trim()) : text;
         } else {
+          if (opts.noRefs) throw badRequest('Secret and environment references are not allowed here');
           const secret = await resolveRef(m[2], m[3]);
           if (secret) secrets.push(secret);
           out += secret;

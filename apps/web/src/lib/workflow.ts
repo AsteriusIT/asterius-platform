@@ -79,3 +79,43 @@ export function splitJobLog(message: string): { job: string | null; text: string
   const m = /^\[([^\]\s][^\]]{0,60})\] (.*)$/s.exec(message);
   return m ? { job: m[1]!, text: m[2]! } : { job: null, text: message };
 }
+
+/** Transitive dependencies of every step. */
+function ancestorsOf(steps: WorkflowStep[]): Map<string, Set<string>> {
+  const out = new Map<string, Set<string>>();
+  steps.forEach((s, i) => {
+    const set = new Set<string>();
+    for (const d of needsOf(steps, i)) {
+      set.add(d);
+      for (const a of out.get(d) ?? []) set.add(a);
+    }
+    out.set(s.id, set);
+  });
+  return out;
+}
+
+/**
+ * Non-blocking advice. An AI answer is model output (influenced by whatever data the model read): when it feeds an
+ * integration call, a human approval should sit between the agent and the call.
+ */
+export function stepWarnings(steps: WorkflowStep[]): string[] {
+  const anc = ancestorsOf(steps);
+  const tainted = new Map<string, string>(); // step id -> the agent whose output it carries
+  const uses = (text: string, id: string) => new RegExp(`steps\\.${id}\\b`).test(text);
+  const out: string[] = [];
+  for (const s of steps) {
+    if (s.type === 'agent') tainted.set(s.id, s.id);
+    const text = s.type === 'invoke' ? JSON.stringify(s.invoker) : s.type === 'transform' ? JSON.stringify(s.output) : '';
+    if (!text) continue;
+    for (const [id, agent] of [...tainted]) {
+      if (id === s.id || !uses(text, id)) continue;
+      if (s.type === 'transform') tainted.set(s.id, agent);
+      else {
+        const approved = steps.some((p) => p.type === 'approval' && anc.get(s.id)?.has(p.id) && anc.get(p.id)?.has(agent));
+        if (!approved)
+          out.push(`Step "${s.name || s.id}" uses the output of the AI step "${agent}" with no approval in between: add an approval step before it.`);
+      }
+    }
+  }
+  return [...new Set(out)];
+}

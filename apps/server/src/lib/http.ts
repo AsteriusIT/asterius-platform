@@ -38,6 +38,8 @@ export interface HttpRequest {
   retry?: Partial<RetryPolicy> | false;
   /** Authentication block (see lib/auth.ts): OAuth2, GitHub App, cloud identities, SigV4, mTLS… */
   auth?: unknown;
+  /** `error`: fail on redirects instead of following them (allow-listed calls must not leave their host). */
+  redirect?: 'follow' | 'error';
 }
 
 export interface HttpResponse<T = unknown> {
@@ -57,7 +59,14 @@ const PORTABLE = new Set(['accept', 'user-agent', 'content-type']);
  */
 async function followRedirects(
   start: string,
-  init: { method: string; headers: Record<string, string>; body: string | undefined; signal: AbortSignal; dispatcher?: Dispatcher },
+  init: {
+    method: string;
+    headers: Record<string, string>;
+    body: string | undefined;
+    signal: AbortSignal;
+    dispatcher?: Dispatcher;
+    redirect?: 'follow' | 'error';
+  },
 ) {
   let url = start;
   let { method, headers, body } = init;
@@ -70,6 +79,10 @@ async function followRedirects(
     );
     const location = res.headers.get('location');
     if (res.status < 300 || res.status >= 400 || res.status === 304 || !location) return res;
+    if (init.redirect === 'error') {
+      await res.body?.cancel().catch(() => undefined);
+      throw new Error(`Redirect to ${new URL(location, url).host} refused (redirects are not followed here)`);
+    }
     await res.body?.cancel().catch(() => undefined);
     if (hop >= MAX_REDIRECTS) throw new Error(`Too many redirects from ${new URL(start).host}`);
     const next = new URL(location, url).toString();
@@ -99,6 +112,7 @@ async function httpOnce<T = unknown>(url: string, req: HttpRequest = {}, dispatc
     body,
     signal: AbortSignal.timeout(req.timeoutMs ?? config.HTTP_TIMEOUT_SECONDS * 1000),
     dispatcher,
+    redirect: req.redirect ?? 'follow',
   });
   const text = await res.text();
   let data: unknown = text;
