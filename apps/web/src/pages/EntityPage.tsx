@@ -4,17 +4,18 @@ import { modals } from '@mantine/modals';
 import { notifications } from '@mantine/notifications';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from 'react-router';
-import { IconChevronDown, IconDots, IconPencil, IconTrash } from '@tabler/icons-react';
-import type { Action, Blueprint, Entity } from '@asterius/shared';
+import { IconCheck, IconChevronDown, IconDots, IconPencil, IconTrash, IconX } from '@tabler/icons-react';
+import type { Action, Blueprint, Entity, ScorecardResult } from '@asterius/shared';
 import { api, errorText } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { PropertyValue } from '../components/PropertyValue';
 import { orderedFields } from '../components/SchemaForm';
 import { ActionRunModal } from '../components/ActionRunModal';
+import { EntityHistory } from '../components/EntityHistory';
 import { DataTable } from '../components/DataTable';
-import { ResourceEditor } from '../components/ResourceEditor';
+import { EntityEditor } from '../components/EntityEditor';
 import { EntityIcon } from '../components/icons';
-import { Empty, Mono, PageHeader, QueryView, StatusBadge, TimeAgo } from '../components/ui';
+import { Empty, LevelBadge, Mono, PageHeader, QueryView, StatusBadge, TimeAgo } from '../components/ui';
 
 export function EntityPage() {
   const { bp = '', id = '' } = useParams();
@@ -38,6 +39,10 @@ function EntityView({ bp, e }: { bp: Blueprint; e: Entity }) {
     queryFn: () => api.runs({ blueprint: bp.identifier, entity: e.identifier, limit: 20 }),
     refetchInterval: 15_000,
   });
+  const scorecards = useQuery({
+    queryKey: ['entity-scorecards', bp.identifier, e.identifier],
+    queryFn: () => api.entityScorecards(bp.identifier, e.identifier),
+  });
   const canEdit = (isAdmin || (!!e.team && user?.teams.some((t) => t.identifier === e.team))) && !e.source.startsWith('integration:');
 
   const day2 = (actions.data ?? []).filter((a) => a.trigger?.on === 'day-2');
@@ -46,7 +51,12 @@ function EntityView({ bp, e }: { bp: Blueprint; e: Entity }) {
   const remove = () =>
     modals.openConfirmModal({
       title: `Delete ${e.title}?`,
-      children: <Text fz="sm">This removes the entity from the catalog only. Use a decommission action to also remove the real resources.</Text>,
+      children: (
+        <Text fz="sm">
+          This removes the entity from the catalog only (an admin can restore it for a limited time). Use a decommission action to also remove the real
+          resources.
+        </Text>
+      ),
       labels: { confirm: 'Delete', cancel: 'Cancel' },
       confirmProps: { color: 'red' },
       onConfirm: async () => {
@@ -106,7 +116,7 @@ function EntityView({ bp, e }: { bp: Blueprint; e: Entity }) {
                 <Menu.Dropdown>
                   {canEdit && (
                     <Menu.Item leftSection={<IconPencil size={16} />} onClick={() => setEditing(true)}>
-                      Edit as YAML
+                      Edit
                     </Menu.Item>
                   )}
                   {deletes.map((a) => (
@@ -138,6 +148,7 @@ function EntityView({ bp, e }: { bp: Blueprint; e: Entity }) {
           <Tabs.Tab value="runs" rightSection={runs.data?.total ? <Badge size="xs">{runs.data.total}</Badge> : undefined}>
             Runs
           </Tabs.Tab>
+          <Tabs.Tab value="history">History</Tabs.Tab>
           <Tabs.Tab value="json">Raw</Tabs.Tab>
         </Tabs.List>
 
@@ -160,6 +171,18 @@ function EntityView({ bp, e }: { bp: Blueprint; e: Entity }) {
                         </Table.Td>
                       </Table.Tr>
                     ))}
+                    {Object.entries(bp.computed ?? {}).map(([k, c]) => (
+                      <Table.Tr key={`computed-${k}`}>
+                        <Table.Td w="35%" c="dimmed" fz="sm" style={{ verticalAlign: 'top' }}>
+                          <Tooltip label={`Computed (${c.kind})`}>
+                            <span>{c.title ?? k}</span>
+                          </Tooltip>
+                        </Table.Td>
+                        <Table.Td>
+                          <PropertyValue value={e.computed?.[k]} />
+                        </Table.Td>
+                      </Table.Tr>
+                    ))}
                     {Object.keys(e.properties)
                       .filter((k) => !bp.schema.properties[k])
                       .map((k) => (
@@ -178,11 +201,17 @@ function EntityView({ bp, e }: { bp: Blueprint; e: Entity }) {
             </Grid.Col>
             <Grid.Col span={{ base: 12, md: 5 }}>
               <Stack>
+                {(scorecards.data ?? []).map((sc) => (
+                  <ScorecardCard key={sc.scorecard} result={sc} />
+                ))}
                 <QueryView q={related}>
                   {(rel) => (
                     <>
                       <RelationCard title="Relations" groups={Object.entries(bp.relations).map(([name, r]) => [r.title ?? name, rel.outgoing[name] ?? []])} />
-                      <RelationCard title="Referenced by" groups={Object.entries(rel.incoming).map(([k, list]) => [k.replace('.', ' · '), list])} />
+                      <RelationCard
+                        title="Referenced by"
+                        groups={Object.entries(rel.incoming).map(([k, list]) => [rel.incomingTitles?.[k] ?? k.replace('.', ' · '), list])}
+                      />
                     </>
                   )}
                 </QueryView>
@@ -216,6 +245,10 @@ function EntityView({ bp, e }: { bp: Blueprint; e: Entity }) {
           />
         </Tabs.Panel>
 
+        <Tabs.Panel value="history">
+          <EntityHistory blueprint={bp.identifier} identifier={e.identifier} canEdit={!!canEdit} />
+        </Tabs.Panel>
+
         <Tabs.Panel value="json">
           <Card>
             <pre style={{ margin: 0, fontSize: 12, overflowX: 'auto' }}>{JSON.stringify(e, null, 2)}</pre>
@@ -224,19 +257,54 @@ function EntityView({ bp, e }: { bp: Blueprint; e: Entity }) {
       </Tabs>
 
       <ActionRunModal action={runAction} entity={e} onClose={() => setRunAction(null)} />
-      <ResourceEditor
-        title={`Edit ${e.title}`}
-        isNew={false}
-        value={editing ? { identifier: e.identifier, title: e.title, team: e.team, properties: e.properties, relations: e.relations } : null}
+      <EntityEditor
+        blueprint={bp}
+        entity={e}
+        opened={editing}
         onClose={() => setEditing(false)}
-        onSave={async (_id, body) => {
-          const saved = await api.saveEntity(bp.identifier, e.identifier, body);
+        onSaved={(saved) => {
           qc.setQueryData(['entity', bp.identifier, e.identifier], saved);
           void qc.invalidateQueries({ queryKey: ['related'] });
-          return saved;
+          void qc.invalidateQueries({ queryKey: ['history'] });
+          void qc.invalidateQueries({ queryKey: ['entity-scorecards'] });
         }}
       />
     </Stack>
+  );
+}
+
+function ScorecardCard({ result }: { result: ScorecardResult }) {
+  return (
+    <Card>
+      <Group justify="space-between" mb="sm">
+        <Text fw={600}>{result.scorecardTitle}</Text>
+        <Group gap="xs">
+          <Text fz="xs" c="dimmed">
+            {result.passed}/{result.total} rules
+          </Text>
+          <LevelBadge level={result.level} color={result.levelColor} />
+        </Group>
+      </Group>
+      <Stack gap={4}>
+        {result.rules.map((r) => (
+          <Group key={r.rule} gap="xs" wrap="nowrap" align="flex-start">
+            {r.passed ? <IconCheck size={16} color="var(--mantine-color-green-6)" /> : <IconX size={16} color="var(--mantine-color-red-6)" />}
+            <Text fz="sm" style={{ flex: 1 }}>
+              {r.title}
+              {r.error && (
+                <Text span fz="xs" c="red">
+                  {' '}
+                  ({r.error})
+                </Text>
+              )}
+            </Text>
+            <Badge size="xs" color="gray" variant="outline">
+              {r.level}
+            </Badge>
+          </Group>
+        ))}
+      </Stack>
+    </Card>
   );
 }
 

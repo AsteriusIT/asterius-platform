@@ -82,9 +82,10 @@ async function applyBatch(integration: string, batch: Batch, stats: SyncStats, l
   }
   if (batch.deletes.length) {
     try {
-      const deleted = await deleteEntities(batch.deletes, SYSTEM_ACTOR);
-      stats.deleted += deleted;
-      stats.skipped += batch.deletes.length - deleted; // already absent
+      const r = await deleteEntities(batch.deletes, SYSTEM_ACTOR);
+      stats.deleted += r.deleted;
+      stats.skipped += r.absent + r.refused.length; // already absent, or refused by a restricting relation
+      for (const x of r.refused) log.error(`NOT deleted ${x.blueprint}/${x.identifier}: ${x.error}`);
     } catch (err) {
       stats.failed += batch.deletes.length;
       log.error(`delete: ${errorMessage(err)}`);
@@ -204,8 +205,12 @@ async function deleteMissing(r: IntegrationRow, mappings: MappingDef[], seen: Se
     log.add(`SKIPPED deleting ${stale.length} entities: the source returned nothing`);
     return;
   }
-  stats.deleted += await deleteEntities(stale, SYSTEM_ACTOR);
-  log.add(`${stale.length} entities no longer in the source were deleted`);
+  const res = await deleteEntities(stale, SYSTEM_ACTOR);
+  stats.deleted += res.deleted;
+  stats.skipped += res.refused.length;
+  // A relation may restrict the deletion (onDelete: restrict): the entity is kept and reported.
+  for (const x of res.refused) log.add(`NOT deleted ${x.blueprint}/${x.identifier}: ${x.error}`);
+  log.add(`${res.deleted} entities no longer in the source were deleted`);
 }
 
 // ---------- inbound webhooks ----------

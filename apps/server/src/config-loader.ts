@@ -13,6 +13,8 @@ import { deleteBlueprint, listBlueprints, upsertBlueprint } from './catalog/blue
 import { deleteEntity, upsertEntity } from './catalog/entities.js';
 import { deleteAction, listActions, upsertAction } from './actions/actions.js';
 import { deleteIntegration, listIntegrations, upsertIntegration } from './integrations/integrations.js';
+import { deleteScorecard, evaluateAllEntities, listScorecards, upsertScorecard } from './catalog/scorecards.js';
+import { deleteDashboard, listDashboards, upsertDashboard } from './catalog/dashboards.js';
 import { deleteWebhook, getWebhook, listWebhooks, upsertWebhook } from './webhooks/webhooks.js';
 
 /**
@@ -137,6 +139,26 @@ export async function applyConfig(loaded: LoadedConfig, log: FastifyBaseLogger) 
     (w) => upsertWebhook(w, m),
     (id) => deleteWebhook(id, m),
   );
+  await applyKind(
+    log,
+    'scorecard',
+    data.scorecards,
+    await listScorecards(),
+    async (sc) => {
+      const r = await upsertScorecard(sc, { ...m, knownBlueprints: knownTargets });
+      if (r.changed) void evaluateAllEntities(r.scorecard).catch((err) => log.error(`config: scorecard ${sc.identifier}: ${errorMessage(err)}`));
+      return r;
+    },
+    (id) => deleteScorecard(id, m),
+  );
+  await applyKind(
+    log,
+    'dashboard',
+    data.dashboards,
+    await listDashboards(),
+    (d) => upsertDashboard(d, m),
+    (id) => deleteDashboard(id, m),
+  );
   // Blueprints last: actions and integrations that used a removed blueprint are gone by now.
   // The entities the configuration seeded go with them; entities created by people or integrations keep their
   // blueprint (it stays, with a warning). Removed blueprints may relate to each other: retry until no progress.
@@ -223,6 +245,8 @@ export async function exportConfig(): Promise<string> {
     actions: (await listActions()).map((a) => strip(a as never, ['managed'])),
     integrations: (await listIntegrations()).map((i) => strip(i as never, ['managed', 'lastSync', 'webhookUrl'])),
     webhooks,
+    scorecards: (await listScorecards()).map((s) => strip(s as never, ['managed'])),
+    dashboards: (await listDashboards()).map((d) => strip(d as never, ['managed'])),
   };
   return `# Exported ${new Date().toISOString()} — secrets are references (\${secret:NAME}), never values.\n${stringify(doc, { lineWidth: 140 })}`;
 }
@@ -234,6 +258,8 @@ export async function managedCounts() {
      UNION ALL SELECT 'actions', count(*) FROM actions WHERE managed = 1
      UNION ALL SELECT 'integrations', count(*) FROM integrations WHERE managed = 1
      UNION ALL SELECT 'webhooks', count(*) FROM webhooks WHERE managed = 1
+     UNION ALL SELECT 'scorecards', count(*) FROM scorecards WHERE managed = 1
+     UNION ALL SELECT 'dashboards', count(*) FROM dashboards WHERE managed = 1
      UNION ALL SELECT 'teams', count(*) FROM teams WHERE managed = 1`,
   );
   return Object.fromEntries(rows.map((r) => [r.k, Number(r.n)]));

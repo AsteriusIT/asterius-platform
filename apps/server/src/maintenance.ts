@@ -5,6 +5,9 @@ import { purgeExpiredAuth } from './auth/users.js';
 import { refreshBlueprintStats } from './catalog/blueprints.js';
 import { purgeRateLimits } from './lib/rate-limit-store.js';
 import { metrics } from './metrics.js';
+import { purgeExpiredTombstones } from './catalog/entities.js';
+import { purgeVersions } from './catalog/history.js';
+import { evaluateEverything, purgeScorecardHistory } from './catalog/scorecards.js';
 
 /** Rows deleted per statement: small enough to keep locks short on a busy Postgres (runs cascade to logs and steps). */
 const CHUNK = 2000;
@@ -65,6 +68,16 @@ export async function housekeeping(log: FastifyBaseLogger) {
       if (keep[0])
         syncs += await deleteInChunks('sync_runs', 'id', 'integration = ? AND started_at < ? AND started_at < ?', [integration, keep[0].started_at, cutoff]);
     }
+    // Scorecards depend on relations too: re-evaluate everything once an hour; trends are kept for a year.
+    const scored = await evaluateEverything();
+    await purgeScorecardHistory(new Date(Date.now() - 365 * 86400_000).toISOString());
+    if (scored) log.debug({ scored }, 'scorecards re-evaluated');
+    const versions = await purgeVersions(new Date(Date.now() - config.HISTORY_RETENTION_DAYS * 86400_000).toISOString());
+    metrics.purged('entity_versions', versions.changes);
+    const tombstones = await purgeExpiredTombstones();
+    metrics.purged('entity_tombstones', tombstones.changes);
+    if (tombstones.changes) log.info({ tombstones: tombstones.changes }, 'retention: expired tombstones purged');
+    if (versions.changes) log.info({ versions: versions.changes }, 'retention: old entity versions deleted');
     if (runs + deliveries + audit + syncs + stale.changes)
       log.info({ runs, deliveries, audit, syncs, expiredDeliveries: stale.changes }, 'retention: old records deleted');
   });

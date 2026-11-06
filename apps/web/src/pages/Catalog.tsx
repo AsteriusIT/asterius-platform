@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Badge, Button, Group, Select, Stack, Text, TextInput } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams, useSearchParams } from 'react-router';
 import { IconPlus, IconSearch } from '@tabler/icons-react';
 import type { Action, Blueprint, Entity } from '@asterius/shared';
@@ -11,9 +11,11 @@ import { useAuth } from '../lib/auth';
 import { DataTable, type Column } from '../components/DataTable';
 import { PropertyValue } from '../components/PropertyValue';
 import { orderedFields } from '../components/SchemaForm';
+import { DashboardView } from '../components/DashboardView';
+import { EntityEditor } from '../components/EntityEditor';
 import { ActionRunModal } from '../components/ActionRunModal';
 import { EntityActionsMenu } from '../components/EntityActionsMenu';
-import { Markdown, PageHeader, QueryView, TimeAgo } from '../components/ui';
+import { LevelBadge, Markdown, PageHeader, QueryView, TimeAgo } from '../components/ui';
 
 const PAGE = 25;
 
@@ -45,6 +47,9 @@ function columnsFor(bp: Blueprint): Column<Entity>[] {
       label: bp.schema.properties[k].title ?? k,
       render: (e: Entity) => <PropertyValue schema={bp.schema.properties[k]} value={e.properties[k]} compact />,
     })),
+    ...Object.entries(bp.computed ?? {})
+      .slice(0, 3)
+      .map(([k, c]) => ({ key: `computed-${k}`, label: c.title ?? k, render: (e: Entity) => <PropertyValue value={e.computed?.[k]} compact /> })),
     { key: 'updated', label: 'Updated', render: (e) => <TimeAgo at={e.updatedAt} /> },
   ];
 }
@@ -64,7 +69,10 @@ function CatalogTable({ bp }: { bp: Blueprint }) {
   const team = params.get('team');
   const [runAction, setRunAction] = useState<Action | null>(null);
   const [runOn, setRunOn] = useState<Entity | null>(null);
-  const { user } = useAuth();
+  const { user, isAdmin } = useAuth();
+  const [creating, setCreating] = useState(false);
+  const qc = useQueryClient();
+  const canCreate = isAdmin || (user?.teams.length ?? 0) > 0;
   const teams = useQuery({ queryKey: ['teams'], queryFn: api.teams, staleTime: 60_000 });
   const createActions = useQuery({
     queryKey: ['actions', bp.identifier, 'create'],
@@ -79,7 +87,7 @@ function CatalogTable({ bp }: { bp: Blueprint }) {
     setRunOn(e);
     setRunAction(a);
   };
-  const columns: Column<Entity>[] = [
+  const baseColumns: Column<Entity>[] = [
     ...columnsFor(bp),
     ...(entityActions.data?.length
       ? [
@@ -92,11 +100,33 @@ function CatalogTable({ bp }: { bp: Blueprint }) {
         ]
       : []),
   ];
+  const dashboard = useQuery({ queryKey: ['dashboard-resolve', bp.identifier], queryFn: () => api.resolveDashboard(bp.identifier) });
+  const cards = useQuery({ queryKey: ['scorecards', bp.identifier], queryFn: () => api.scorecards(bp.identifier), staleTime: 60_000 });
   const entities = useQuery({
     queryKey: ['entities', bp.identifier, debounced, team, page],
     queryFn: () => api.entities({ blueprint: bp.identifier, search: debounced, team: team ?? undefined, limit: PAGE, offset: (page - 1) * PAGE }),
     placeholderData: keepPreviousData,
   });
+
+  const ids = (entities.data?.items ?? []).map((e) => e.identifier);
+  const levels = useQuery({
+    queryKey: ['scorecard-levels', bp.identifier, ids],
+    queryFn: () => api.scorecardLevels(bp.identifier, ids),
+    enabled: !!cards.data?.length && ids.length > 0,
+  });
+  const columns = [
+    ...baseColumns,
+    ...(cards.data ?? []).map((sc) => ({
+      key: `sc-${sc.identifier}`,
+      label: sc.title,
+      render: (e: Entity) => (
+        <LevelBadge
+          level={levels.data?.[sc.identifier]?.[e.identifier]}
+          color={sc.levels.find((l) => l.name === levels.data?.[sc.identifier]?.[e.identifier])?.color}
+        />
+      ),
+    })),
+  ];
 
   const set = (k: string, v: string | null) => {
     const next = new URLSearchParams(params);
@@ -112,21 +142,31 @@ function CatalogTable({ bp }: { bp: Blueprint }) {
         title={bp.title}
         icon={bp.icon}
         description={bp.description ? <Markdown>{bp.description}</Markdown> : undefined}
-        actions={createActions.data
-          ?.filter((a) => a.allowedForMe)
-          .map((a) => (
-            <Button
-              key={a.identifier}
-              leftSection={<IconPlus size={16} />}
-              onClick={() => {
-                setRunOn(null);
-                setRunAction(a);
-              }}
-            >
-              {a.title}
-            </Button>
-          ))}
+        actions={
+          <>
+            {canCreate && (
+              <Button variant="default" leftSection={<IconPlus size={16} />} onClick={() => setCreating(true)}>
+                New entity
+              </Button>
+            )}
+            {createActions.data
+              ?.filter((a) => a.allowedForMe)
+              .map((a) => (
+                <Button
+                  key={a.identifier}
+                  leftSection={<IconPlus size={16} />}
+                  onClick={() => {
+                    setRunOn(null);
+                    setRunAction(a);
+                  }}
+                >
+                  {a.title}
+                </Button>
+              ))}
+          </>
+        }
       />
+      {dashboard.data && <DashboardView dashboard={dashboard.data} />}
       <Group>
         <TextInput
           placeholder={`Search ${bp.title.toLowerCase()}`}
@@ -158,6 +198,15 @@ function CatalogTable({ bp }: { bp: Blueprint }) {
         page={{ page, pageSize: PAGE, total: entities.data?.total ?? 0, onChange: (p) => set('page', String(p)) }}
       />
       <ActionRunModal action={runAction} entity={runOn} onClose={() => setRunAction(null)} />
+      <EntityEditor
+        blueprint={bp}
+        opened={creating}
+        onClose={() => setCreating(false)}
+        onSaved={(e) => {
+          void qc.invalidateQueries({ queryKey: ['entities'] });
+          navigate(`/catalog/${bp.identifier}/${encodeURIComponent(e.identifier)}`);
+        }}
+      />
     </Stack>
   );
 }

@@ -27,6 +27,9 @@ import {
   IconChecklist,
   IconDots,
   IconHistory,
+  IconLayoutDashboard,
+  IconMedal,
+  IconTrashX,
   IconHome,
   IconKey,
   IconLock,
@@ -208,10 +211,13 @@ export function Layout() {
               {link('/admin/blueprints', 'Blueprints', <IconSchema size={18} stroke={1.6} />)}
               {link('/admin/actions', 'Actions', <IconBolt size={18} stroke={1.6} />)}
               {link('/admin/integrations', 'Integrations', <IconPlugConnected size={18} stroke={1.6} />)}
+              {link('/admin/dashboards', 'Dashboards', <IconLayoutDashboard size={18} stroke={1.6} />)}
+              {link('/admin/scorecards', 'Scorecards', <IconMedal size={18} stroke={1.6} />)}
               {link('/admin/webhooks', 'Webhooks', <IconWebhook size={18} stroke={1.6} />)}
               {link('/admin/teams', 'Teams', <IconUsersGroup size={18} stroke={1.6} />)}
               {link('/admin/users', 'Users & service accounts', <IconKey size={18} stroke={1.6} />)}
               {link('/admin/secrets', 'Secrets', <IconLock size={18} stroke={1.6} />)}
+              {link('/admin/deleted', 'Deleted entities', <IconTrashX size={18} stroke={1.6} />)}
               {link('/admin/audit', 'Audit log', <IconHistory size={18} stroke={1.6} />)}
               {link('/admin/config', 'Configuration', <IconSettingsAutomation size={18} stroke={1.6} />)}
             </div>

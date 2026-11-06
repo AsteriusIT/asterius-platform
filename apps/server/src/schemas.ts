@@ -45,6 +45,40 @@ export const subjects = z
   })
   .default({});
 
+/**
+ * Derived properties. `calculated` is evaluated when an entity is read; `mirror` and `aggregation` are
+ * materialised when the entity or the entities it relates to are written, so they stay filterable.
+ */
+export const computedDef = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('calculated'),
+    title: z.string().max(100).optional(),
+    /** JSONata over the entity (`properties`, `relations`, `computed`, `title`, `team`…). */
+    expression: z.string().min(1).max(2000),
+  }),
+  z.object({
+    kind: z.literal('mirror'),
+    title: z.string().max(100).optional(),
+    /** A relation of this blueprint… */
+    relation: fieldName,
+    /** …and what to copy from the related entity: a property name, `title`, `team` or `identifier`. */
+    property: z.string().min(1).max(64).default('title'),
+  }),
+  z.object({
+    kind: z.literal('aggregation'),
+    title: z.string().max(100).optional(),
+    /** Entities of this blueprint pointing to the entity through `relation`. */
+    blueprint: slug,
+    relation: fieldName,
+    function: z.enum(['count', 'sum', 'min', 'max']),
+    /** sum, min and max: the numeric property to aggregate. */
+    property: z.string().min(1).max(64).optional(),
+    /** JSONata over the pointing entity (`properties`, `team`…): only those where it is truthy are aggregated. */
+    filter: z.string().max(2000).optional(),
+  }),
+]);
+export type ComputedDef = z.infer<typeof computedDef>;
+
 export const blueprintDef = z.object({
   identifier: slug,
   title: z.string().min(1).max(100),
@@ -59,11 +93,126 @@ export const blueprintDef = z.object({
         target: slug,
         many: z.boolean().default(false),
         required: z.boolean().default(false),
+        /**
+         * What deleting the target does to entities pointing to it: restrict (refuse), cascade (delete them too),
+         * detach (remove the reference) or ignore (keep it; it shows as missing).
+         */
+        onDelete: z.enum(['restrict', 'cascade', 'detach', 'ignore']).default('ignore'),
+        /** How the target's page names the entities pointing to it (e.g. "Used by"). */
+        inverseTitle: z.string().max(100).optional(),
+        /** Entities written by hand (UI, API) must point to entities that exist; ingestion may point ahead. */
+        requireExisting: z.boolean().default(false),
       }),
     )
     .default({}),
+  computed: z.record(fieldName, computedDef).default({}),
 });
 export type BlueprintDef = z.infer<typeof blueprintDef>;
+
+export const scorecardDef = z
+  .object({
+    identifier: slug,
+    title: z.string().min(1).max(100),
+    description: z.string().max(2000).default(''),
+    blueprint: slug,
+    /** Ordered from the lowest to the highest (e.g. Bronze, Silver, Gold). An entity reaches a level when it passes every rule of that level and of the levels below. */
+    levels: z
+      .array(z.object({ name: z.string().min(1).max(40), color: z.string().max(30).optional() }))
+      .min(1)
+      .max(8),
+    rules: z
+      .array(
+        z.object({
+          identifier: fieldName,
+          title: z.string().min(1).max(200),
+          description: z.string().max(1000).optional(),
+          /** Name of the level this rule belongs to. */
+          level: z.string().min(1),
+          /** JSONata over the entity (`properties`, `relations`, `related`, `team`…): passes when truthy. */
+          expression: z.string().min(1).max(2000),
+        }),
+      )
+      .min(1)
+      .max(100),
+  })
+  .superRefine((s, ctx) => {
+    const levels = new Set<string>();
+    for (const l of s.levels) {
+      if (levels.has(l.name)) ctx.addIssue({ code: 'custom', message: `Level "${l.name}" is declared twice`, path: ['levels'] });
+      levels.add(l.name);
+    }
+    const ids = new Set<string>();
+    s.rules.forEach((r, i) => {
+      if (!levels.has(r.level))
+        ctx.addIssue({ code: 'custom', message: `Rule "${r.identifier}" uses unknown level "${r.level}"`, path: ['rules', i, 'level'] });
+      if (ids.has(r.identifier)) ctx.addIssue({ code: 'custom', message: `Rule "${r.identifier}" is declared twice`, path: ['rules', i, 'identifier'] });
+      ids.add(r.identifier);
+    });
+  });
+export type ScorecardDef = z.infer<typeof scorecardDef>;
+
+/** Data migrations offered when a blueprint changes: applied to the properties of its existing entities. */
+export const entityMigration = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('rename'), from: fieldName, to: fieldName }),
+  z.object({ type: z.literal('default'), property: fieldName, value: z.unknown() }),
+  z.object({ type: z.literal('remove'), property: fieldName }),
+]);
+export type EntityMigration = z.infer<typeof entityMigration>;
+
+const widgetBase = { title: z.string().max(100).optional(), width: z.number().int().min(1).max(12).default(6) };
+const filterMap = z.record(fieldName, z.string()).default({});
+
+/** Widgets of a dashboard; the server computes their data for the viewer. */
+export const dashboardWidget = z.discriminatedUnion('type', [
+  /** Number of entities, or their distribution by a property (`team`, `source` or any top-level property). */
+  z.object({
+    ...widgetBase,
+    type: z.literal('count'),
+    blueprint: slug,
+    filters: filterMap,
+    groupBy: z
+      .string()
+      .regex(/^[A-Za-z_][A-Za-z0-9_]{0,63}$/)
+      .optional(),
+  }),
+  z.object({ ...widgetBase, type: z.literal('scorecard'), scorecard: slug }),
+  z.object({
+    ...widgetBase,
+    type: z.literal('runs'),
+    limit: z.number().int().min(1).max(20).default(8),
+    mine: z.boolean().default(false),
+    status: z.array(z.enum(['PENDING_APPROVAL', 'QUEUED', 'IN_PROGRESS', 'SUCCESS', 'FAILURE', 'REJECTED', 'CANCELLED'])).optional(),
+    action: slug.optional(),
+  }),
+  z.object({ ...widgetBase, type: z.literal('approvals'), limit: z.number().int().min(1).max(20).default(8) }),
+  /** A saved table view: entities of a blueprint with filters, sort and chosen columns. */
+  z.object({
+    ...widgetBase,
+    type: z.literal('table'),
+    blueprint: slug,
+    filters: filterMap,
+    search: z.string().max(200).optional(),
+    sort: z.enum(['title', 'updated', 'identifier']).default('title'),
+    columns: z.array(z.string()).max(8).default([]),
+    limit: z.number().int().min(1).max(50).default(10),
+  }),
+  z.object({ ...widgetBase, type: z.literal('markdown'), content: z.string().max(10_000) }),
+]);
+export type DashboardWidgetDef = z.infer<typeof dashboardWidget>;
+
+export const dashboardDef = z.object({
+  identifier: slug,
+  title: z.string().min(1).max(100),
+  description: z.string().max(2000).default(''),
+  /** Default dashboard of the home page for members of this team. */
+  team: slug.nullish(),
+  /** Shown on the catalog page of this blueprint. */
+  blueprint: slug.nullish(),
+  /** Home page for everyone (when no team dashboard applies). */
+  default: z.boolean().default(false),
+  widgets: z.array(dashboardWidget).max(30).default([]),
+});
+export type DashboardDef = z.infer<typeof dashboardDef>;
 
 export const invokerConfig = z.object({ type: z.string().min(1) }).passthrough();
 
@@ -229,7 +378,7 @@ export const integrationDef = z.object({
 });
 export type IntegrationDef = z.infer<typeof integrationDef>;
 
-export const WEBHOOK_EVENTS = ['entity.created', 'entity.updated', 'entity.deleted', 'run.created', 'run.updated'] as const;
+export const WEBHOOK_EVENTS = ['entity.created', 'entity.updated', 'entity.deleted', 'run.created', 'run.updated', 'scorecard.changed'] as const;
 
 /** A `${secret:NAME}` / `${env:NAME}` reference (the only form accepted where a credential is configured). */
 export const SECRET_REF = /^\$\{(secret|env):[A-Za-z0-9_.-]+\}$/;
@@ -238,7 +387,9 @@ export const webhookDef = z.object({
   identifier: slug,
   title: z.string().min(1).max(100),
   url: z.string().url(),
-  events: z.array(z.string().regex(/^(\*|entity\.\*|run\.\*|entity\.(created|updated|deleted)|run\.(created|updated))$/)).min(1),
+  events: z
+    .array(z.string().regex(/^(\*|entity\.\*|run\.\*|scorecard\.\*|entity\.(created|updated|deleted)|run\.(created|updated)|scorecard\.changed)$/))
+    .min(1),
   blueprints: z.array(slug).default([]),
   /** Signing secret reference (`${secret:NAME}`): deliveries carry `X-Asterius-Signature: sha256=<hmac>`. */
   secret: z
@@ -280,6 +431,8 @@ export const configFile = z.object({
   actions: z.array(actionDef).default([]),
   integrations: z.array(integrationDef).default([]),
   webhooks: z.array(webhookDef).default([]),
+  scorecards: z.array(scorecardDef).default([]),
+  dashboards: z.array(dashboardDef).default([]),
   entities: z.array(seedEntity).default([]),
 });
 export type ConfigFile = z.infer<typeof configFile>;

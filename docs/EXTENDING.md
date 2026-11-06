@@ -124,7 +124,12 @@ All endpoints take `Authorization: Bearer <token>`. Personal tokens come from th
 | `PUT /api/v1/blueprints/:bp/entities/:id` | create or replace (idempotent) |
 | `PATCH /api/v1/blueprints/:bp/entities/:id` | merge properties and relations |
 | `POST /api/v1/blueprints/:bp/entities/bulk` | `{ entities: [...≤1000], merge }`, returns per-entity errors |
-| `DELETE /api/v1/blueprints/:bp/entities/:id` | |
+| `DELETE /api/v1/blueprints/:bp/entities/:id` | honours the relations' `onDelete`; the entity stays restorable for `TOMBSTONE_DAYS` (default 30) |
+| `GET …/entities/:id/history` · `POST …/entities/:id/history/:version/revert` | versions with diff, actor and source; a revert writes a new version |
+| `GET /api/v1/deleted-entities` · `POST …/entities/:id/restore` · `DELETE /api/v1/deleted-entities/:bp/:id` | tombstones (admin) |
+| `GET …/entities/:id/scorecards` · `GET /api/v1/scorecards/:id/summary` | scorecard results of an entity, distribution and trend |
+| `POST /api/v1/blueprints/:bp/impact` · `…/migrate` · `GET …/validation` | check a proposed blueprint against its entities, migrate (rename / default / remove), last background report (admin) |
+| `GET /api/v1/dashboards/resolve?blueprint=` · `GET …/dashboards/:id/data` | the dashboard to show and its widget data |
 | `GET /api/v1/actions` · `POST /api/v1/actions/:id/runs` `{ entity?, inputs }` | trigger actions from scripts |
 | `GET /api/v1/runs?mine=true&status=…` · `GET /api/v1/runs/:id` | runs with logs and approvals |
 | `POST /api/v1/runs/:id/approve\|reject\|cancel` | `{ comment }` |
@@ -132,9 +137,32 @@ All endpoints take `Authorization: Bearer <token>`. Personal tokens come from th
 
 Entity identifiers may contain `/`, `:` and `@` (third-party ids); URL-encode them in paths.
 
+## Catalog governance
+
+All of these are declared in the configuration files like the other resources (`scorecards:`, `dashboards:`), or in the admin UI.
+
+**Scorecards.** Rules are JSONata over the entity (`properties`, `relations`, `computed`, `team`, `related.<relation>[]` for the entities it points to, `incoming.<blueprint.relation>[]` for those pointing to it). Levels are ordered; an entity reaches a level when it passes the rules of that level and the levels below. Results are recomputed on every entity write and hourly, level changes emit `scorecard.changed`, and workflows can read `entity.scorecards.<id>.level` / `.rank` in `if` conditions and templates.
+
+```yaml
+scorecards:
+  - identifier: production-readiness
+    title: Production readiness
+    blueprint: service
+    levels: [{ name: Bronze }, { name: Silver }, { name: Gold }]
+    rules:
+      - { identifier: has_owner, title: Has an owner, level: Bronze, expression: team != null }
+      - { identifier: has_docs, title: Has docs, level: Silver, expression: properties.docs != null }
+```
+
+**Computed properties** (`computed:` in a blueprint). `calculated` is a JSONata expression evaluated on read; `mirror` copies a property (or `title`, `team`) of the related entity; `aggregation` is `count`, `sum`, `min` or `max` over the entities pointing to this one through `blueprint.relation`, with an optional JSONata `filter`. Mirrors and aggregations are materialised when either side is written, so they work in `filter.<name>=` queries. Values appear under `entity.computed`.
+
+**Relations** accept `onDelete` (`ignore` default, `restrict`, `cascade`, `detach`), `inverseTitle` (name of the reverse relation on the target page) and `requireExisting` (entities written from the UI or API must point to existing entities). Changing a relation target re-indexes automatically; `POST /blueprints/:bp/repair-relations` rebuilds the index from the entities.
+
+**Dashboards.** Widgets: `count` (optionally `groupBy` a property, `team` or `source`), `scorecard`, `runs`, `approvals`, `table` (a saved view), `markdown`. A dashboard with `default: true` is the home page; with `team:` it is the home page of that team; with `blueprint:` it appears on that blueprint's catalog page.
+
 ## Outbound webhooks
 
-The payload has the form `{ id, type, at, blueprint, actor, data }`. Event types are `entity.created`, `entity.updated` (with `data.before`), `entity.deleted`, `run.created` and `run.updated`. Requests carry the headers `X-Asterius-Event`, `X-Asterius-Delivery` and `X-Asterius-Signature: t=<unix seconds>,v1=<hex>`, where `v1 = HMAC-SHA256(secret, "<t>.<body>")`. Receivers must recompute it over the raw body, compare in constant time, and reject timestamps more than **5 minutes** from their clock (replay protection); the timestamp is refreshed on every retry. `secret` and `secondarySecret` must be references (`${secret:NAME}` / `${env:NAME}`); literal values are rejected.
+The payload has the form `{ id, type, at, blueprint, actor, data }`. Event types are `entity.created`, `entity.updated` (with `data.before`), `entity.deleted`, `run.created`, `run.updated` and `scorecard.changed` (`data: { scorecard, entity, from, to, passed, total }`). Requests carry the headers `X-Asterius-Event`, `X-Asterius-Delivery` and `X-Asterius-Signature: t=<unix seconds>,v1=<hex>`, where `v1 = HMAC-SHA256(secret, "<t>.<body>")`. Receivers must recompute it over the raw body, compare in constant time, and reject timestamps more than **5 minutes** from their clock (replay protection); the timestamp is refreshed on every retry. `secret` and `secondarySecret` must be references (`${secret:NAME}` / `${env:NAME}`); literal values are rejected.
 
 **Rotating a signing secret without downtime:** (1) create the new secret and set it as `secondarySecret`: deliveries now carry two `v1=` entries, one per secret; (2) make receivers accept either (any matching `v1`) and switch them to the new secret; (3) move the new secret to `secret` and remove `secondarySecret`.
 

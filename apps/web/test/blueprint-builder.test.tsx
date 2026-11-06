@@ -15,10 +15,11 @@ describe('blueprint relations', () => {
   it('reports clashes and missing targets', () => {
     const doc = toBlueprintDoc({ identifier: 'service', title: 'Service' });
     const fields = schemaToFields({ properties: { tier: { type: 'integer' } } });
+    const extra = { onDelete: 'ignore' as const, inverseTitle: '', requireExisting: false };
     const rels = [
-      { id: 'a', name: 'tier', title: 'Tier', target: 'system', many: false, required: false },
-      { id: 'b', name: 'owner', title: '', target: '', many: false, required: false },
-      { id: 'c', name: 'owner', title: '', target: 'team', many: false, required: false },
+      { id: 'a', name: 'tier', title: 'Tier', target: 'system', many: false, required: false, ...extra },
+      { id: 'b', name: 'owner', title: '', target: '', many: false, required: false, ...extra },
+      { id: 'c', name: 'owner', title: '', target: 'team', many: false, required: false, ...extra },
     ];
     expect(blueprintProblems(doc, fields, rels)).toEqual([
       'Relation 1 (Tier): "tier" is already a property',

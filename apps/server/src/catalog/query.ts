@@ -45,8 +45,15 @@ export function parseFilterParams(query: Record<string, unknown>): { filters: Pr
 }
 
 // ---------- compilation ----------
-const jsonText = (k: string) => (dialect === 'postgres' ? `(properties::jsonb ->> '${k}')` : `CAST(json_extract(properties, '$.${k}') AS TEXT)`);
-const jsonRaw = (k: string) => (dialect === 'postgres' ? `(properties::jsonb -> '${k}')` : `json_extract(properties, '$.${k}')`);
+// Materialised computed values (mirrors, aggregations) are filterable and sortable like properties.
+const jsonText = (k: string) =>
+  dialect === 'postgres'
+    ? `COALESCE(properties::jsonb ->> '${k}', computed::jsonb ->> '${k}')`
+    : `CAST(COALESCE(json_extract(properties, '$.${k}'), json_extract(computed, '$.${k}')) AS TEXT)`;
+const jsonRaw = (k: string) =>
+  dialect === 'postgres'
+    ? `COALESCE(properties::jsonb -> '${k}', computed::jsonb -> '${k}')`
+    : `COALESCE(json_extract(properties, '$.${k}'), json_extract(computed, '$.${k}'))`;
 
 const isNumeric = (v: Scalar) => (typeof v === 'number' ? Number.isFinite(v) : typeof v === 'string' && v.trim() !== '' && Number.isFinite(Number(v)));
 
@@ -61,8 +68,8 @@ function eq(k: string, v: Scalar, params: SqlValue[]): string {
   if (isNumeric(s)) candidates.push(Number(s));
   if (s === 'true' || s === 'false') candidates.push(s === 'true');
   const parts = candidates.map((c) => {
-    params.push(JSON.stringify({ [k]: c }));
-    return '(properties::jsonb @> ?::jsonb)'; // served by the GIN index
+    params.push(JSON.stringify({ [k]: c }), JSON.stringify({ [k]: c }));
+    return '(properties::jsonb @> ?::jsonb OR computed::jsonb @> ?::jsonb)'; // properties: served by the GIN index
   });
   return `(${parts.join(' OR ')})`;
 }

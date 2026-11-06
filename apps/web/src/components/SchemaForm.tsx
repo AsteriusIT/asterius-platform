@@ -40,7 +40,7 @@ export function validateValues(schema: ObjectSchema, values: FormValues): Record
   return errors;
 }
 
-function EntitySelect(props: {
+export function EntitySelect(props: {
   blueprint: string;
   label: string;
   description?: string;
@@ -97,6 +97,41 @@ function UserSelect(props: {
 }) {
   const users = useQuery({ queryKey: ['user-lookup'], queryFn: api.userLookup, staleTime: 60_000 });
   return <Select {...props} searchable clearable data={(users.data ?? []).map((u) => ({ value: u.email, label: `${u.name} <${u.email}>` }))} />;
+}
+
+/** Several entities of one blueprint (a `many` relation). */
+export function EntityMultiSelect(props: {
+  blueprint: string;
+  label: string;
+  description?: string;
+  value: string[];
+  onChange: (v: string[]) => void;
+  error?: string;
+  required?: boolean;
+}) {
+  const [search, setSearch] = useState('');
+  const [debounced] = useDebouncedValue(search, 250);
+  const q = useQuery({
+    queryKey: ['entity-options', props.blueprint, debounced],
+    queryFn: () => api.entities({ blueprint: props.blueprint, search: debounced, limit: 30 }),
+  });
+  const data = (q.data?.items ?? []).map((e) => ({ value: e.identifier, label: e.title === e.identifier ? e.identifier : `${e.title} (${e.identifier})` }));
+  for (const v of props.value) if (!data.some((d) => d.value === v)) data.unshift({ value: v, label: v });
+  return (
+    <MultiSelect
+      label={props.label}
+      description={props.description}
+      required={props.required}
+      error={props.error}
+      searchable
+      data={data}
+      value={props.value}
+      onChange={props.onChange}
+      onSearchChange={setSearch}
+      nothingFoundMessage={q.isFetching ? 'Searching…' : 'No match'}
+      filter={({ options }) => options}
+    />
+  );
 }
 
 function Field({

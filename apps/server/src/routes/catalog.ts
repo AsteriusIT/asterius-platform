@@ -1,18 +1,42 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import type { HomeSummary } from '@asterius/shared';
+import type { HomeSummary, ObjectSchema } from '@asterius/shared';
 import { audit } from '../audit.js';
 import { actorOf, canEditEntity, isAdmin, requireAdmin, requireUser, type Principal } from '../auth/users.js';
-import { deleteBlueprint, getBlueprint, homeBlueprints, listBlueprints, upsertBlueprint } from '../catalog/blueprints.js';
-import { deleteEntity, getEntity, related, searchEntities, upsertEntities, upsertEntity } from '../catalog/entities.js';
+import { deleteBlueprint, getBlueprint, homeBlueprints, listBlueprints, repairRelationIndex, upsertBlueprint } from '../catalog/blueprints.js';
+import {
+  deleteEntity,
+  listTombstones,
+  purgeTombstone,
+  restoreEntity,
+  findEntity,
+  getEntity,
+  related,
+  searchEntities,
+  upsertEntities,
+  upsertEntity,
+} from '../catalog/entities.js';
 import { entityGraph, MAX_DEPTH, MAX_NODES } from '../catalog/graph.js';
 import { parseFilterParams } from '../catalog/query.js';
 import { nextPageHeaders } from '../lib/cursor.js';
 import { badRequest, forbidden } from '../lib/errors.js';
+import { dashboardData, deleteDashboard, getDashboard, listDashboards, resolveDashboard, upsertDashboard } from '../catalog/dashboards.js';
+import { getVersion, listVersions } from '../catalog/history.js';
+import { checkEntities, getReport, migrateEntities, migrationList } from '../catalog/impact.js';
+import {
+  deleteScorecard,
+  evaluateAllEntities,
+  getScorecard,
+  levelsFor,
+  listScorecards,
+  resultsForEntity,
+  scorecardSummary,
+  upsertScorecard,
+} from '../catalog/scorecards.js';
 import { countPendingApprovals, listRuns } from '../actions/runs.js';
-import { entityInput, entityQueryBody, SORT_RE, type EntityInput } from '../schemas.js';
+import { blueprintDef, entityInput, entityQueryBody, SORT_RE, type EntityInput } from '../schemas.js';
 import type { Entity } from '@asterius/shared';
-import { bpParam, entityParam, page } from './util.js';
+import { bpParam, entityParam, idParam, page } from './util.js';
 
 /** Humans write entities of their teams (admins: all); API tokens of service accounts follow the same rule. */
 function assertCanWrite(p: Principal, existing: Entity | undefined, team: string | null | undefined) {
@@ -55,11 +79,92 @@ export async function catalogRoutes(app: FastifyInstance) {
     await audit(actorOf(req.principal), created ? 'blueprint.created' : 'blueprint.updated', bp);
     return blueprint;
   });
+  /** Dry run: how many existing entities would be invalid under a proposed definition (after optional migrations). */
+  app.post('/blueprints/:bp/impact', { preHandler: requireAdmin }, async (req) => {
+    const { bp } = bpParam.parse(req.params);
+    const body = z.object({ blueprint: z.unknown(), migrations: migrationList.default([]) }).parse(req.body);
+    const def = blueprintDef.parse({ ...(body.blueprint as object), identifier: bp });
+    await getBlueprint(bp);
+    return checkEntities(bp, { schema: def.schema as ObjectSchema, relations: def.relations }, body.migrations, 5000);
+  });
+  /** Apply data migrations (rename, default, remove) to the properties of every entity of the blueprint. */
+  app.post('/blueprints/:bp/migrate', { preHandler: requireAdmin }, async (req) => {
+    const { bp } = bpParam.parse(req.params);
+    const { migrations } = z.object({ migrations: migrationList.min(1) }).parse(req.body);
+    const result = await migrateEntities(bp, migrations, actorOf(req.principal));
+    await audit(actorOf(req.principal), 'blueprint.migrated', bp, { migrations, ...result });
+    return result;
+  });
+  /** Report of the last background validation (after a blueprint save). */
+  app.get('/blueprints/:bp/validation', { preHandler: requireAdmin }, async (req) => getReport(bpParam.parse(req.params).bp));
+  app.post('/blueprints/:bp/repair-relations', { preHandler: requireAdmin }, async (req) => {
+    const { bp } = bpParam.parse(req.params);
+    const result = await repairRelationIndex(bp);
+    await audit(actorOf(req.principal), 'blueprint.relations_repaired', bp, result);
+    return result;
+  });
   app.delete('/blueprints/:bp', { preHandler: requireAdmin }, async (req) => {
     const { bp } = bpParam.parse(req.params);
     await deleteBlueprint(bp);
     await audit(actorOf(req.principal), 'blueprint.deleted', bp);
     return { ok: true };
+  });
+
+  // ---- dashboards ----
+  app.get('/dashboards', async () => listDashboards());
+  app.get('/dashboards/resolve', async (req) => {
+    const { blueprint } = z.object({ blueprint: z.string().optional() }).parse(req.query);
+    return resolveDashboard(req.principal, blueprint);
+  });
+  app.get('/dashboards/:id', async (req) => getDashboard(idParam.parse(req.params).id));
+  app.get('/dashboards/:id/data', async (req) => dashboardData(await getDashboard(idParam.parse(req.params).id), req.principal));
+  app.put('/dashboards/:id', { preHandler: requireAdmin }, async (req) => {
+    const { id } = idParam.parse(req.params);
+    const { dashboard, created } = await upsertDashboard({ ...(req.body as object), identifier: id });
+    await audit(actorOf(req.principal), created ? 'dashboard.created' : 'dashboard.updated', id);
+    return dashboard;
+  });
+  app.delete('/dashboards/:id', { preHandler: requireAdmin }, async (req) => {
+    const { id } = idParam.parse(req.params);
+    await deleteDashboard(id);
+    await audit(actorOf(req.principal), 'dashboard.deleted', id);
+    return { ok: true };
+  });
+
+  // ---- scorecards ----
+  app.get('/scorecards', async (req) => listScorecards(z.object({ blueprint: z.string().optional() }).parse(req.query).blueprint));
+  app.get('/scorecards/:id', async (req) => getScorecard(idParam.parse(req.params).id));
+  app.get('/scorecards/:id/summary', async (req) => {
+    const { id } = idParam.parse(req.params);
+    const { days } = z.object({ days: z.coerce.number().int().min(1).max(365).default(30) }).parse(req.query);
+    return scorecardSummary(id, days);
+  });
+  app.put('/scorecards/:id', { preHandler: requireAdmin }, async (req) => {
+    const { id } = idParam.parse(req.params);
+    const { scorecard, created, changed } = await upsertScorecard({ ...(req.body as object), identifier: id });
+    await audit(actorOf(req.principal), created ? 'scorecard.created' : 'scorecard.updated', id);
+    if (changed) void evaluateAllEntities(scorecard).catch((err) => req.log.error({ err }, 'scorecard evaluation failed'));
+    return scorecard;
+  });
+  app.delete('/scorecards/:id', { preHandler: requireAdmin }, async (req) => {
+    const { id } = idParam.parse(req.params);
+    await deleteScorecard(id);
+    await audit(actorOf(req.principal), 'scorecard.deleted', id);
+    return { ok: true };
+  });
+  app.post('/scorecards/:id/evaluate', { preHandler: requireAdmin }, async (req) => {
+    const evaluated = await evaluateAllEntities(await getScorecard(idParam.parse(req.params).id));
+    return { evaluated };
+  });
+  /** Levels of the entities of one page of a table: `?ids=a,b,c`. */
+  app.get('/blueprints/:bp/scorecard-levels', async (req) => {
+    const { bp } = bpParam.parse(req.params);
+    const { ids } = z.object({ ids: z.string().max(20_000).default('') }).parse(req.query);
+    return levelsFor(bp, ids.split(',').filter(Boolean).slice(0, 500));
+  });
+  app.get('/blueprints/:bp/entities/:id/scorecards', async (req) => {
+    const { bp, id } = entityParam.parse(req.params);
+    return resultsForEntity(bp, id);
   });
 
   // ---- entities ----
@@ -122,6 +227,48 @@ export async function catalogRoutes(app: FastifyInstance) {
   app.get('/blueprints/:bp/entities/:id/related', async (req) => {
     const { bp, id } = entityParam.parse(req.params);
     return related(bp, id);
+  });
+
+  // ---- history ----
+  const historyQuery = z.object({ limit: z.coerce.number().int().min(1).max(200).default(50), offset: z.coerce.number().int().min(0).default(0) });
+  for (const path of ['/blueprints/:bp/entities/:id/history', '/entities/:bp/:id/history'])
+    app.get(path, async (req) => {
+      const { bp, id } = entityParam.parse(req.params);
+      const q = historyQuery.parse(req.query);
+      return listVersions(bp, id, q.limit, q.offset);
+    });
+  /** Write an old snapshot back: a new version (`revert`) is recorded, nothing is rewritten. */
+  app.post('/blueprints/:bp/entities/:id/history/:version/revert', async (req) => {
+    const { bp, id } = entityParam.parse(req.params);
+    const { version } = z.object({ version: z.coerce.number().int().min(1) }).parse(req.params);
+    const v = await getVersion(bp, id, version);
+    assertCanWrite(req.principal, await findEntity(bp, id), v.snapshot.team);
+    const { entity } = await upsertEntity(
+      bp,
+      { identifier: id, ...v.snapshot },
+      {
+        source: req.principal.provider === 'service' ? 'api' : 'ui',
+        actor: actorOf(req.principal),
+        op: 'revert',
+      },
+    );
+    await audit(actorOf(req.principal), 'entity.reverted', `${bp}/${id}`, { toVersion: version });
+    return entity;
+  });
+
+  // ---- deleted entities (tombstones, admins) ----
+  app.get('/deleted-entities', { preHandler: requireAdmin }, async (req) => listTombstones(page.extend({ blueprint: z.string().optional() }).parse(req.query)));
+  app.post('/blueprints/:bp/entities/:id/restore', { preHandler: requireAdmin }, async (req) => {
+    const { bp, id } = entityParam.parse(req.params);
+    const entity = await restoreEntity(bp, id, actorOf(req.principal));
+    await audit(actorOf(req.principal), 'entity.restored', `${bp}/${id}`);
+    return entity;
+  });
+  app.delete('/deleted-entities/:bp/:id', { preHandler: requireAdmin }, async (req) => {
+    const { bp, id } = entityParam.parse(req.params);
+    await purgeTombstone(bp, id);
+    await audit(actorOf(req.principal), 'entity.purged', `${bp}/${id}`);
+    return { ok: true };
   });
 
   app.post('/blueprints/:bp/entities', async (req, reply) => {

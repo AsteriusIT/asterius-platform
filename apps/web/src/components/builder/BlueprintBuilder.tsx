@@ -2,8 +2,9 @@ import { useState } from 'react';
 import { ActionIcon, Alert, Badge, Button, Card, Checkbox, Group, Select, SimpleGrid, Stack, Switch, Tabs, Text, Textarea, TextInput } from '@mantine/core';
 import { useQuery } from '@tanstack/react-query';
 import { IconArrowDown, IconArrowUp, IconInfoCircle, IconLink, IconListDetails, IconPlus, IconSettings, IconTrash } from '@tabler/icons-react';
-import type { BlueprintRelation, ObjectSchema } from '@asterius/shared';
-import { api } from '../../lib/api';
+import type { BlueprintRelation, EntityMigration, ObjectSchema } from '@asterius/shared';
+import { api, errorText, type ImpactReport } from '../../lib/api';
+import { ImpactDialog } from './ImpactDialog';
 import { EntityIcon, ICON_NAMES } from '../icons';
 import { Empty } from '../ui';
 import { FIELD_NAME, fieldProblems, fieldsToSchema, nameFromLabel, newId, schemaToFields, type FieldDraft } from './fields';
@@ -34,6 +35,9 @@ export interface RelationDraft {
   target: string;
   many: boolean;
   required: boolean;
+  onDelete: NonNullable<BlueprintRelation['onDelete']>;
+  inverseTitle: string;
+  requireExisting: boolean;
 }
 
 const SLUG = /^[a-z][a-z0-9_-]{0,63}$/;
@@ -51,11 +55,34 @@ export function toBlueprintDoc(v: Record<string, unknown>): BlueprintDoc {
 }
 
 export const relationsToDrafts = (r: Record<string, BlueprintRelation>): RelationDraft[] =>
-  Object.entries(r).map(([name, rel]) => ({ id: newId(), name, title: rel.title ?? '', target: rel.target, many: !!rel.many, required: !!rel.required }));
+  Object.entries(r).map(([name, rel]) => ({
+    id: newId(),
+    name,
+    title: rel.title ?? '',
+    target: rel.target,
+    many: !!rel.many,
+    required: !!rel.required,
+    onDelete: rel.onDelete ?? 'ignore',
+    inverseTitle: rel.inverseTitle ?? '',
+    requireExisting: !!rel.requireExisting,
+  }));
 
 export const draftsToRelations = (drafts: RelationDraft[]): Record<string, BlueprintRelation> =>
   Object.fromEntries(
-    drafts.filter((d) => d.name).map((d) => [d.name, { ...(d.title ? { title: d.title } : {}), target: d.target, many: d.many, required: d.required }]),
+    drafts
+      .filter((d) => d.name)
+      .map((d) => [
+        d.name,
+        {
+          ...(d.title ? { title: d.title } : {}),
+          target: d.target,
+          many: d.many,
+          required: d.required,
+          ...(d.onDelete !== 'ignore' ? { onDelete: d.onDelete } : {}),
+          ...(d.inverseTitle ? { inverseTitle: d.inverseTitle } : {}),
+          ...(d.requireExisting ? { requireExisting: true } : {}),
+        },
+      ]),
   );
 
 export function blueprintProblems(doc: BlueprintDoc, fields: FieldDraft[], relations: RelationDraft[]): string[] {
@@ -130,10 +157,28 @@ function Builder({
     },
   });
   const saver = useSave(() => onSave(doc.identifier, body()), onClose);
-  const save = () => {
+  const [impact, setImpact] = useState<ImpactReport | null>(null);
+  const save = async () => {
     const found = blueprintProblems(doc, fields, relations);
     if (code.error && (tab === 'json' || tab === 'yaml')) found.unshift(`${tab.toUpperCase()}: ${code.error}`);
-    void saver.save(found);
+    if (found.length || isNew || entityCount === 0) return void saver.save(found);
+    // Existing entities: check them against the new definition first.
+    try {
+      const report = await api.blueprintImpact(doc.identifier, body());
+      if (report.invalid > 0) return setImpact(report);
+    } catch {
+      // the check is advisory: saving reports real problems
+    }
+    void saver.save([]);
+  };
+  const migrateAndSave = async (migrations: EntityMigration[]) => {
+    setImpact(null);
+    try {
+      await api.migrateBlueprint(doc.identifier, migrations);
+    } catch (e) {
+      return void saver.save([`Migration failed: ${errorText(e)}`]).then(() => undefined);
+    }
+    void saver.save([]);
   };
 
   return (
@@ -141,8 +186,8 @@ function Builder({
       {readOnly && <ManagedNotice />}
       {!isNew && !readOnly && entityCount > 0 && (
         <Alert color="blue" variant="light" icon={<IconInfoCircle size={18} />}>
-          {entityCount} entities use this blueprint. Changes apply to new writes: existing entities are not re-validated, and values of removed properties stay
-          visible on entity pages until rewritten.
+          {entityCount} entities use this blueprint. Before saving, they are checked against the new definition and you can migrate them (rename or remove a
+          property, set a default). Values of removed properties stay visible on entity pages until rewritten.
         </Alert>
       )}
       <Tabs
@@ -250,6 +295,20 @@ function Builder({
 
         <CodePanels view={code} readOnly={readOnly} />
       </Tabs>
+      {impact && (
+        <ImpactDialog
+          key={impact.total + impact.invalid}
+          blueprint={doc.identifier}
+          body={body()}
+          report={impact}
+          onCancel={() => setImpact(null)}
+          onSaveAnyway={() => {
+            setImpact(null);
+            void saver.save([]);
+          }}
+          onMigrate={(m) => void migrateAndSave(m)}
+        />
+      )}
       <BuilderFooter
         problems={saver.problems}
         readOnly={readOnly}
@@ -348,7 +407,34 @@ function RelationsEditor({
             <Group gap="xl">
               <Switch label="Many (a list of entities)" checked={r.many} onChange={(e) => update(r.id, { many: e.currentTarget.checked })} />
               <Checkbox label="Required" checked={r.required} onChange={(e) => update(r.id, { required: e.currentTarget.checked })} />
+              <Checkbox
+                label="Target must exist"
+                description="For entities written by hand (UI, API)"
+                checked={r.requireExisting}
+                onChange={(e) => update(r.id, { requireExisting: e.currentTarget.checked })}
+              />
             </Group>
+            <SimpleGrid cols={{ base: 1, sm: 2 }}>
+              <Select
+                label="When the target is deleted"
+                data={[
+                  { value: 'ignore', label: 'Keep the reference (shown as missing)' },
+                  { value: 'detach', label: 'Remove the reference' },
+                  { value: 'cascade', label: 'Delete this entity too' },
+                  { value: 'restrict', label: 'Refuse the deletion' },
+                ]}
+                value={r.onDelete}
+                onChange={(v) => update(r.id, { onDelete: (v as RelationDraft['onDelete']) ?? 'ignore' })}
+                allowDeselect={false}
+              />
+              <TextInput
+                label="Reverse label"
+                description="How the target's page names these entities"
+                placeholder="Used by"
+                value={r.inverseTitle}
+                onChange={(e) => update(r.id, { inverseTitle: e.currentTarget.value })}
+              />
+            </SimpleGrid>
           </Stack>
         </Card>
       ))}
@@ -358,7 +444,12 @@ function RelationsEditor({
           color="gray"
           c="var(--mantine-color-text)"
           leftSection={<IconPlus size={16} />}
-          onClick={() => onChange([...relations, { id: newId(), name: '', title: '', target: '', many: false, required: false }])}
+          onClick={() =>
+            onChange([
+              ...relations,
+              { id: newId(), name: '', title: '', target: '', many: false, required: false, onDelete: 'ignore', inverseTitle: '', requireExisting: false },
+            ])
+          }
         >
           Add a relation
         </Button>

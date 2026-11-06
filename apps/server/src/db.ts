@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { config, paths } from './config.js';
 import { entitySearchText } from './catalog/search.js';
+import { CATALOG_MIGRATIONS } from './catalog/migrations.js';
 
 /**
  * Storage: Postgres in production (DATABASE_URL, any number of replicas) or SQLite for local development.
@@ -481,6 +482,7 @@ export const MIGRATIONS: Migration[] = [
         );
       `),
   },
+  ...CATALOG_MIGRATIONS,
 ];
 
 /**

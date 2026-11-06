@@ -82,7 +82,19 @@ export interface BlueprintRelation {
   target: string;
   many?: boolean;
   required?: boolean;
+  /** Deleting the target: restrict (refuse), cascade (delete the referrers), detach (drop the reference), ignore (default). */
+  onDelete?: 'restrict' | 'cascade' | 'detach' | 'ignore';
+  /** Name of the reverse relation shown on the target's page. */
+  inverseTitle?: string;
+  /** UI/API writes must point to existing entities. */
+  requireExisting?: boolean;
 }
+
+/** Derived property: `calculated` on read, `mirror` / `aggregation` materialised on write (filterable). */
+export type ComputedProperty =
+  | { kind: 'calculated'; title?: string; expression: string }
+  | { kind: 'mirror'; title?: string; relation: string; property: string }
+  | { kind: 'aggregation'; title?: string; blueprint: string; relation: string; function: 'count' | 'sum' | 'min' | 'max'; property?: string; filter?: string };
 
 export interface Blueprint {
   identifier: string;
@@ -91,6 +103,7 @@ export interface Blueprint {
   icon: string | null;
   schema: ObjectSchema;
   relations: Record<string, BlueprintRelation>;
+  computed?: Record<string, ComputedProperty>;
   managed: boolean;
   entityCount?: number;
   createdAt: string;
@@ -106,12 +119,32 @@ export interface Entity {
   team: string | null;
   properties: Record<string, unknown>;
   relations: Record<string, RelationValue>;
+  /** Computed, mirror and aggregation values of the blueprint's `computed` properties. */
+  computed?: Record<string, unknown>;
   /** Who writes this entity: an integration identifier, `api`, `ui` or `config`. */
   source: string;
   /** Incremented on every write; served as the ETag and checked against If-Match. */
   version: number;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface EntityVersionDiff {
+  /** `title`, `team`, `properties.<name>` or `relations.<name>`. */
+  path: string;
+  before: unknown;
+  after: unknown;
+}
+
+export interface EntityVersion {
+  version: number;
+  op: 'create' | 'update' | 'delete' | 'revert' | 'restore';
+  actor: string | null;
+  source: string;
+  /** The complete entity state after the change (before it, for a delete). */
+  snapshot: { title: string; team: string | null; properties: Record<string, unknown>; relations: Record<string, RelationValue> };
+  diff: EntityVersionDiff[];
+  at: string;
 }
 
 export interface EntityPage {
@@ -183,6 +216,8 @@ export interface RelatedEntities {
   outgoing: Record<string, Entity[]>;
   /** Entities pointing to this one: `<blueprint>.<relation>` → entities. */
   incoming: Record<string, Entity[]>;
+  /** Display names of the `incoming` groups (the relation's `inverseTitle`). */
+  incomingTitles?: Record<string, string>;
 }
 
 // ---------- self-service ----------
@@ -519,3 +554,143 @@ export interface HomeSummary {
   myRuns: Run[];
   recentEntities: Entity[];
 }
+
+// ---------- scorecards ----------
+export interface ScorecardLevel {
+  name: string;
+  color?: string;
+}
+
+export interface ScorecardRule {
+  identifier: string;
+  title: string;
+  description?: string;
+  /** Name of the level the rule belongs to. */
+  level: string;
+  /** JSONata over the entity; passes when truthy. */
+  expression: string;
+}
+
+export interface Scorecard {
+  identifier: string;
+  title: string;
+  description: string;
+  blueprint: string;
+  /** Lowest to highest. */
+  levels: ScorecardLevel[];
+  rules: ScorecardRule[];
+  managed: boolean;
+}
+
+export interface RuleResult {
+  rule: string;
+  title: string;
+  level: string;
+  passed: boolean;
+  /** Evaluation error of the expression (counts as failed). */
+  error?: string;
+}
+
+export interface ScorecardResult {
+  scorecard: string;
+  scorecardTitle: string;
+  blueprint: string;
+  entity: string;
+  /** Highest level reached; null: not even the first one. */
+  level: string | null;
+  levelColor?: string | null;
+  passed: number;
+  total: number;
+  rules: RuleResult[];
+  evaluatedAt: string;
+  /** Present on GET .../scorecards: levels of the scorecard, lowest first. */
+  levels?: ScorecardLevel[];
+}
+
+export interface ScorecardSummary {
+  scorecard: string;
+  total: number;
+  /** Number of entities per level name (`none`: below the first level). */
+  distribution: Record<string, number>;
+  /** Daily snapshots of the distribution. */
+  trend: { day: string; distribution: Record<string, number> }[];
+}
+
+// ---------- blueprint change impact ----------
+export type EntityMigration =
+  { type: 'rename'; from: string; to: string } | { type: 'default'; property: string; value: unknown } | { type: 'remove'; property: string };
+
+export interface InvalidEntity {
+  identifier: string;
+  title: string;
+  errors: string[];
+}
+
+export interface ValidationReport {
+  blueprint: string;
+  status: 'running' | 'done';
+  /** Entities checked. */
+  total: number;
+  invalid: number;
+  /** A sample of the invalid entities. */
+  samples: InvalidEntity[];
+  startedAt: string;
+  finishedAt: string | null;
+}
+
+/** A deleted entity that can still be restored. */
+export interface Tombstone {
+  blueprint: string;
+  identifier: string;
+  title: string;
+  team: string | null;
+  source: string;
+  deletedBy: string | null;
+  deletedAt: string;
+  /** After this date the entity is purged for good. */
+  expiresAt: string;
+}
+
+// ---------- dashboards ----------
+interface WidgetBase {
+  title?: string;
+  /** Columns out of 12. */
+  width: number;
+}
+
+export type DashboardWidget =
+  | (WidgetBase & { type: 'count'; blueprint: string; filters: Record<string, string>; groupBy?: string })
+  | (WidgetBase & { type: 'scorecard'; scorecard: string })
+  | (WidgetBase & { type: 'runs'; limit: number; mine: boolean; status?: RunStatus[]; action?: string })
+  | (WidgetBase & { type: 'approvals'; limit: number })
+  | (WidgetBase & {
+      type: 'table';
+      blueprint: string;
+      filters: Record<string, string>;
+      search?: string;
+      sort: 'title' | 'updated' | 'identifier';
+      columns: string[];
+      limit: number;
+    })
+  | (WidgetBase & { type: 'markdown'; content: string });
+
+export interface Dashboard {
+  identifier: string;
+  title: string;
+  description: string;
+  team: string | null;
+  blueprint: string | null;
+  default: boolean;
+  widgets: DashboardWidget[];
+  managed: boolean;
+}
+
+/** Computed data of one widget, in the order of the dashboard's widgets. */
+export type WidgetData =
+  | { error: string }
+  | { type: 'count'; value: number; groups?: { key: string; count: number }[] }
+  | { type: 'scorecard'; scorecard: string; title: string; levels: ScorecardLevel[]; distribution: Record<string, number>; total: number }
+  | { type: 'runs'; items: Run[]; total: number }
+  | { type: 'approvals'; items: Run[]; total: number }
+  | { type: 'table'; blueprint: string; items: Entity[]; total: number }
+  | { type: 'markdown' };

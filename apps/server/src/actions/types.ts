@@ -13,7 +13,7 @@ export interface RunContext {
   run: { id: string; url: string; idempotencyKey: string; callback: { url: string; token: string } };
   action: { identifier: string; title: string; blueprint: string | null };
   inputs: Record<string, unknown>;
-  entity: Entity | null;
+  entity: (Entity & { scorecards?: Record<string, { level: string | null; rank: number; passed: number; total: number }> }) | null;
   trigger: { user: { id: string; email: string; name: string }; at: string };
   /** Earlier workflow steps: `{{ steps.review.output.risk }}`. */
   steps: Record<string, { status: string; output: unknown; link: string | null }>;
