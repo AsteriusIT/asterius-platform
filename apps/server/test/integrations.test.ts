@@ -287,7 +287,11 @@ entities:
   - { blueprint: db, identifier: main, properties: { engine: mysql } }
 `,
     );
-    await applyConfig(readConfigDir(dir), silentLog);
+    const plan = (await admin.get('/api/v1/config/plan')).data as Array<{ kind: string; identifier: string; action: string }>;
+    expect(plan).toContainEqual({ kind: 'blueprint', identifier: 'db', action: 'create' });
+    expect(await applyConfig(readConfigDir(dir), silentLog)).toEqual([]);
+    const after = (await admin.get('/api/v1/config/plan')).data as Array<{ action: string }>;
+    expect(after.filter((p) => p.action !== 'unchanged')).toEqual([]);
     const bp = await member.get('/api/v1/blueprints/db');
     expect(bp.data.managed).toBe(true);
     expect((await admin.put('/api/v1/blueprints/db', { title: 'Changed' })).status).toBe(409);
@@ -307,6 +311,13 @@ entities:
     await admin.del('/api/v1/blueprints/db/entities/mine');
     await applyConfig(readConfigDir(dir), silentLog);
     expect((await admin.get('/api/v1/blueprints/db')).status).toBe(404);
+
+    // A broken file is surfaced by the status endpoint (the previous configuration stays in force).
+    fs.writeFileSync(path.join(dir, 'broken.yaml'), 'blueprints: [ {identifier: 1} ]\n');
+    const status = (await admin.get('/api/v1/config/status')).data;
+    expect(status.readError).toMatch(/broken\.yaml/);
+    expect(status.inSync).toBe(false);
+    fs.rmSync(path.join(dir, 'broken.yaml'));
 
     const exported = await admin.get('/api/v1/config/export');
     expect(exported.data).toContain('identifier: app');

@@ -396,6 +396,21 @@ export const MIGRATIONS: Migration[] = [
         ALTER TABLE webhooks ADD COLUMN transform TEXT;
       `),
   },
+  {
+    id: 8,
+    name: 'configuration as code: applied status',
+    up: (d) =>
+      d.exec(`
+        CREATE TABLE config_status (
+          id INTEGER PRIMARY KEY,
+          hash TEXT NOT NULL,
+          files TEXT NOT NULL DEFAULT '[]',
+          errors TEXT NOT NULL DEFAULT '[]',
+          applied_at TEXT NOT NULL,
+          applied_by TEXT
+        );
+      `),
+  },
 ];
 
 /** Apply pending numbered migrations (idempotent; serialized across replicas by an advisory lock on Postgres). */
@@ -488,6 +503,23 @@ export async function withAdvisoryLock<T>(key: number, fn: () => Promise<T>): Pr
     return await fn();
   } finally {
     await client.query('SELECT pg_advisory_unlock($1)', [key]).catch(() => undefined);
+    client.release();
+  }
+}
+
+/** Run `fn` only if no other replica holds the lock (returns undefined otherwise). In-process only on SQLite. */
+export async function tryAdvisoryLock<T>(key: number, fn: () => Promise<T>): Promise<{ ran: boolean; value?: T }> {
+  if (!pool) return { ran: true, value: await fn() };
+  const client = await pool.connect();
+  try {
+    const got = (await client.query<{ ok: boolean }>('SELECT pg_try_advisory_lock($1) AS ok', [key])).rows[0]?.ok;
+    if (!got) return { ran: false };
+    try {
+      return { ran: true, value: await fn() };
+    } finally {
+      await client.query('SELECT pg_advisory_unlock($1)', [key]).catch(() => undefined);
+    }
+  } finally {
     client.release();
   }
 }

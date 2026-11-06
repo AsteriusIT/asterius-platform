@@ -17,7 +17,7 @@ import {
 import { deleteTeam, listTeams, upsertTeam } from '../auth/teams.js';
 import { deleteSecret, listSecrets, setSecret } from '../secrets.js';
 import { deleteWebhook, getWebhook, listDeliveries, listWebhooks, redeliver, redeliverFailed, upsertWebhook } from '../webhooks/webhooks.js';
-import { exportConfig, managedCounts } from '../config-loader.js';
+import { configStatus, exportConfig, managedCounts, planConfig } from '../config-loader.js';
 import { config } from '../config.js';
 import { idParam, page } from './util.js';
 import { badRequest } from '../lib/errors.js';
@@ -152,6 +152,8 @@ export async function adminRoutes(app: FastifyInstance, opts: { reloadConfig: ()
     admin.get('/audit', async (req) => listAudit(page.extend({ search: z.string().max(200).optional() }).parse(req.query)));
 
     admin.get('/config', async () => ({ dir: config.CONFIG_DIR, managed: await managedCounts() }));
+    admin.get('/config/status', async () => configStatus());
+    admin.get('/config/plan', async () => planConfig());
     admin.get('/config/export', async (_req, reply) => reply.type('text/yaml; charset=utf-8').send(await exportConfig()));
     admin.post('/config/reload', async (req) => {
       await opts.reloadConfig();
