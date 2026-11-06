@@ -18,6 +18,7 @@ import { addLog, emitRun, getRunRow, runUrl, updateRun, type RunRow } from './ru
 import { canApproveStep, isTerminal, loadSteps, stepApprovalsOf, stepDefs, type StepRow } from './steps.js';
 import { needsOf, type Step } from './workflow.js';
 import { runAgent, StepError } from './agent.js';
+import { notifyPendingDecision } from '../notifications/dispatch.js';
 import { cancelChildrenOf, startSubWorkflow, startWaitingStep } from './waiting.js';
 
 /**
@@ -150,7 +151,17 @@ async function startStep(r: RunRow, def: Step, rows: StepRow[]): Promise<boolean
       started_at: now(),
       deadline_at: deadline,
     });
-    if (ok) await addLog(r.id, `Waiting for ${def.minApprovals} approval(s)`, 'info', def.id);
+    if (ok) {
+      await addLog(r.id, `Waiting for ${def.minApprovals} approval(s)`, 'info', def.id);
+      void notifyPendingDecision({
+        run: r,
+        kind: 'approval',
+        subjects: def.approvers,
+        allowSelf: def.allowSelfApproval,
+        stepName: def.name || def.id,
+        message,
+      }).catch(() => undefined);
+    }
     return ok;
   }
   const ok = await setStep(r.id, def.id, 'PENDING', { status: 'QUEUED', status_label: null, next_at: now(), deadline_at: deadline });

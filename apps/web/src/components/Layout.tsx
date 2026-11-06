@@ -26,6 +26,7 @@ import {
   IconBolt,
   IconChecklist,
   IconDots,
+  IconBell,
   IconHistory,
   IconHome,
   IconKey,
@@ -212,6 +213,7 @@ export function Layout() {
               {link('/admin/teams', 'Teams', <IconUsersGroup size={18} stroke={1.6} />)}
               {link('/admin/users', 'Users & service accounts', <IconKey size={18} stroke={1.6} />)}
               {link('/admin/secrets', 'Secrets', <IconLock size={18} stroke={1.6} />)}
+              {link('/admin/notifications', 'Notifications', <IconBell size={18} stroke={1.6} />)}
               {link('/admin/audit', 'Audit log', <IconHistory size={18} stroke={1.6} />)}
               {link('/admin/config', 'Configuration', <IconSettingsAutomation size={18} stroke={1.6} />)}
             </div>

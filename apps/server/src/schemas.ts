@@ -280,6 +280,29 @@ export const actionDef = z.preprocess(
 );
 export type ActionDef = z.infer<typeof actionDef>;
 
+/** Platform-wide notification defaults (Admin → Notifications). Credentials are `${secret:NAME}` references. */
+export const notificationSettings = z
+  .object({
+    slack: z
+      .object({
+        botToken: z.string().max(500).optional(),
+        webhookUrl: z.string().max(500).optional(),
+        defaultChannel: z.string().max(100).optional(),
+      })
+      .default({}),
+    teams: z.object({ webhookUrl: z.string().max(500).optional() }).default({}),
+    email: z.object({ smtpUrl: z.string().max(500).optional(), from: z.string().max(200).optional() }).default({}),
+  })
+  .default({ slack: {}, teams: {}, email: {} });
+export type NotificationSettings = z.infer<typeof notificationSettings>;
+
+/** Where a person wants to hear about approvals (and inputs) waiting for them, and about the outcome of their runs. */
+export const notificationPrefs = z.object({
+  approvals: z.array(z.enum(['email', 'slack'])).default(['email']),
+  runs: z.array(z.enum(['email', 'slack'])).default([]),
+});
+export type NotificationPrefs = z.infer<typeof notificationPrefs>;
+
 export const mappingDef = z.object({
   kind: z.string().default('item'),
   filter: z.string().optional(),

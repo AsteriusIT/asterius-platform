@@ -405,6 +405,15 @@ export const MIGRATIONS: Migration[] = [
         );
       `),
   },
+  {
+    id: 103,
+    name: 'notification settings and user preferences',
+    up: (d) =>
+      d.exec(`
+        CREATE TABLE notification_settings (id INTEGER PRIMARY KEY, config TEXT NOT NULL, updated_at TEXT NOT NULL);
+        ALTER TABLE users ADD COLUMN notification_prefs TEXT;
+      `),
+  },
 ];
 
 /** Apply pending numbered migrations (idempotent; serialized across replicas by an advisory lock on Postgres). */

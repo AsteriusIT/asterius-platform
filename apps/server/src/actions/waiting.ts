@@ -9,6 +9,7 @@ import { actorOf, getUser, principalOf, type Principal } from '../auth/users.js'
 import { complete, buildContext, setStep } from './engine.js';
 import { addLog, emitRun, getRunRow, startAutomatedRun, type RunRow } from './runs.js';
 import { getAction } from './actions.js';
+import { notifyPendingDecision } from '../notifications/dispatch.js';
 import { canSubmitInput, loadSteps, stepDefs, type StepRow } from './steps.js';
 import type { Step } from './workflow.js';
 
@@ -87,7 +88,13 @@ export async function startWaitingStep(r: RunRow, def: WaitStep | InputStep, row
     deadline_at: dl,
     started_at: now(),
   });
-  if (ok) await addLog(r.id, label, 'info', def.id);
+  if (ok) {
+    await addLog(r.id, label, 'info', def.id);
+    if (def.type === 'input')
+      void notifyPendingDecision({ run: r, kind: 'input', subjects: def.assignees, stepName: def.name || def.id, message: (state as WaitState).message }).catch(
+        () => undefined,
+      );
+  }
   return ok;
 }
 

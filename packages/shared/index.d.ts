@@ -561,6 +561,19 @@ export interface PluginInfo {
   fields?: PluginField[];
 }
 
+export interface NotificationSettings {
+  slack: { botToken?: string; webhookUrl?: string; defaultChannel?: string };
+  teams: { webhookUrl?: string };
+  email: { smtpUrl?: string; from?: string };
+}
+
+export interface NotificationPrefs {
+  /** Approvals (and inputs) waiting for me. */
+  approvals: ('email' | 'slack')[];
+  /** The outcome of runs I requested. */
+  runs: ('email' | 'slack')[];
+}
+
 export interface Meta {
   name: string;
   version: string;

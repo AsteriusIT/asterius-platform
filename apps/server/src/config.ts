@@ -68,6 +68,11 @@ const schema = z.object({
   RETENTION_DAYS: z.coerce.number().int().min(1).default(90),
   KUBECONFIG_PATH: z.string().optional(),
 
+  // ---- notifications ----
+  /** smtp://user:pass@host:587 (or smtps://…): email notifications and the email invoker. Admin → Notifications can override it. */
+  SMTP_URL: z.string().optional(),
+  SMTP_FROM: z.string().optional(),
+
   // ---- AI agent steps (Claude) ----
   /** Default credential of agent steps (a step may reference another key with `apiKey: ${secret:…}`). */
   ANTHROPIC_API_KEY: z.string().optional(),

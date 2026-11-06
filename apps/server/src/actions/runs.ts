@@ -9,6 +9,7 @@ import { getEntity } from '../catalog/entities.js';
 import { compact, validate } from '../catalog/validation.js';
 import { canTrigger, getAction } from './actions.js';
 import { metrics } from '../metrics.js';
+import { notifyPendingDecision } from '../notifications/dispatch.js';
 import { canApproveStep, canManageRun, canSubmitInput, loadSteps, resumableSteps, runStepsView, stepApprovalsOf, stepDefs, stepMessage } from './steps.js';
 
 /**
@@ -249,7 +250,15 @@ async function insertRun(n: NewRun): Promise<string> {
   const via = n.source.type === 'form' || n.source.type === 'api' ? '' : ` (${n.source.type})`;
   const where = n.entity ? ` on ${n.blueprint}/${n.entity}` : '';
   await addLog(id, `Triggered by ${p.name} <${p.email}>${where}${via}`);
-  if (status === 'PENDING_APPROVAL') await addLog(id, `Waiting for ${n.approval.minApprovals ?? 1} approval(s)`);
+  if (status === 'PENDING_APPROVAL') {
+    await addLog(id, `Waiting for ${n.approval.minApprovals ?? 1} approval(s)`);
+    void notifyPendingDecision({
+      run: { id, action_title: action.title, team: n.entityTeam, triggered_by: p.id, user_name: p.name },
+      kind: 'approval',
+      subjects: n.approval.approvers,
+      allowSelf: n.approval.allowSelfApproval,
+    }).catch(() => undefined);
+  }
   await audit(actorOf(p), 'run.triggered', `${action.identifier}${n.entity ? ` → ${n.blueprint}/${n.entity}` : ''}`, { runId: id, source: n.source.type });
   await emitRun(id, 'run.created');
   return id;

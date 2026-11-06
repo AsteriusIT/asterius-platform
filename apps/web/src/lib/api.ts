@@ -19,6 +19,8 @@ import type {
   Webhook,
   ActionVersion,
   ActionVersionDiff,
+  NotificationPrefs,
+  NotificationSettings,
   DryRunResult,
 } from '@asterius/shared';
 
@@ -118,6 +120,12 @@ export const api = {
     id: string,
     body: { definition?: Record<string, unknown>; inputs: Record<string, unknown>; entity?: string | null; mock?: Record<string, unknown> },
   ) => request<DryRunResult>('POST', v1(`/actions/${enc(id)}/dry-run`), body),
+  notificationSettings: () => request<NotificationSettings>('GET', v1('/notification-settings')),
+  saveNotificationSettings: (s: NotificationSettings) => request<NotificationSettings>('PUT', v1('/notification-settings'), s),
+  testNotification: (channel: 'slack' | 'teams' | 'email') => request<{ ok: boolean }>('POST', v1('/notification-settings/test'), { channel }),
+  notificationChannels: () => request<{ email: boolean; slack: boolean }>('GET', v1('/notifications/channels')),
+  myNotifications: () => request<NotificationPrefs>('GET', v1('/me/notifications')),
+  saveMyNotifications: (p: NotificationPrefs) => request<NotificationPrefs>('PUT', v1('/me/notifications'), p),
   actions: (q: { blueprint?: string; trigger?: string } = {}) => request<ActionView[]>('GET', v1(`/actions${qs(q)}`)),
   action: (id: string) => request<Action>('GET', v1(`/actions/${enc(id)}`)),
   saveAction: (id: string, body: unknown) => request<Action>('PUT', v1(`/actions/${enc(id)}`), body),
