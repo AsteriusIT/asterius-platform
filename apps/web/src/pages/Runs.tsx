@@ -25,6 +25,7 @@ import { IconCheck, IconExternalLink, IconPlayerStop, IconRepeat, IconX } from '
 import type { Run, RunStatus, RunStep } from '@asterius/shared';
 import { api, errorText } from '../lib/api';
 import { DataTable } from '../components/DataTable';
+import { useRunStream } from '../lib/runStream';
 import { LogViewer } from '../components/LogViewer';
 import { duration, Empty, Markdown, PageHeader, QueryView, StatusBadge, STATUS_COLORS, STATUS_LABELS, TimeAgo } from '../components/ui';
 import { WorkflowGraph } from '../components/WorkflowGraph';
@@ -169,10 +170,12 @@ export function Approvals() {
 
 export function RunPage() {
   const { id = '' } = useParams();
+  // Live updates over SSE; polling is only the fallback while the stream is not connected.
+  const live = useRunStream(id, true);
   const q = useQuery({
     queryKey: ['run', id],
     queryFn: () => api.run(id),
-    refetchInterval: (query) => (query.state.data && !ACTIVE.includes(query.state.data.status) ? false : 2_500),
+    refetchInterval: (query) => (live || (query.state.data && !ACTIVE.includes(query.state.data.status)) ? false : 2_500),
   });
   return <QueryView q={q}>{(r) => <RunView r={r} />}</QueryView>;
 }

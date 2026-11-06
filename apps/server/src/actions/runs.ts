@@ -107,10 +107,22 @@ export async function getRunRow(id: string) {
   return r;
 }
 
-export async function getRun(id: string, p: Principal): Promise<Run> {
+/** Log lines after `seq` (exclusive), oldest first. `seq` is the cursor of the incremental log stream. */
+export async function runLogsAfter(id: string, seq: number, limit = 500): Promise<(RunLog & { seq: number })[]> {
+  const rows = await all<RunLog & { seq: number }>(
+    'SELECT seq, at, level, message, step_id AS "stepId" FROM run_logs WHERE run_id = ? AND seq > ? ORDER BY seq LIMIT ?',
+    id,
+    seq,
+    limit,
+  );
+  return rows.map((l) => ({ ...l, seq: Number(l.seq) }));
+}
+
+export async function getRun(id: string, p: Principal, opts: { logs?: boolean } = {}): Promise<Run> {
   const r = await getRunRow(id);
   const approvals = (await approvalsOf([id])).get(id) ?? [];
-  const logs = await all<RunLog>('SELECT at, level, message, step_id AS "stepId" FROM run_logs WHERE run_id = ? ORDER BY seq LIMIT 10000', id);
+  const logs =
+    opts.logs === false ? [] : await all<RunLog>('SELECT at, level, message, step_id AS "stepId" FROM run_logs WHERE run_id = ? ORDER BY seq LIMIT 10000', id);
   return { ...toRun(r, approvals), logs, steps: await runStepsView(r, p), canApprove: canApprove(p, r, approvals), canCancel: canCancel(p, r) };
 }
 

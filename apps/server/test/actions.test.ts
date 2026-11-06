@@ -168,6 +168,23 @@ describe('approvals', () => {
     });
   });
 
+  it('streams run events over SSE and resumes after Last-Event-ID', async () => {
+    const run = await alice.post('/api/v1/actions/prod-change/runs', { entity: 'api' });
+    await carol.post(`/api/v1/runs/${run.data.id}/reject`, { comment: 'no' });
+    const first = await alice.get(`/api/v1/runs/${run.data.id}/events`);
+    expect(first.status).toBe(200);
+    const body = first.data as string;
+    expect(body).toContain('event: log');
+    expect(body).toContain('event: run');
+    expect(body).toContain('event: done');
+    const lastId = [...body.matchAll(/^id: (\d+)$/gm)].pop()![1];
+    const resumed = (await alice.get(`/api/v1/runs/${run.data.id}/events`, { 'last-event-id': lastId })).data as string;
+    expect(resumed).not.toContain('event: log'); // nothing new after the cursor
+    expect(resumed).toContain('event: done');
+    expect((await bob.get(`/api/v1/runs/${run.data.id}/events`)).status).toBe(200); // runs are readable by signed-in users
+    expect((await client(app).get(`/api/v1/runs/${run.data.id}/events`)).status).toBe(401);
+  });
+
   it('rejects with a reason, and lets the requester cancel', async () => {
     const r1 = await alice.post('/api/v1/actions/prod-change/runs', { entity: 'api' });
     expect((await carol.post(`/api/v1/runs/${r1.data.id}/reject`, {})).status).toBe(400);
