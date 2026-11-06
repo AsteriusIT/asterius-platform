@@ -362,6 +362,14 @@ async function deleteMissing(
 }
 
 // ---------- inbound webhooks ----------
+/**
+ * Authenticate an inbound webhook against the raw request bytes. `config.preset` selects the provider's scheme:
+ *   github        HMAC-SHA256 in X-Hub-Signature-256
+ *   gitlab        X-Gitlab-Token equals the secret
+ *   azure-devops  HTTP basic auth, the password is the secret
+ *   slack         X-Slack-Signature = v0=HMAC("v0:<X-Slack-Request-Timestamp>:<body>"), timestamp within 5 minutes
+ * Without a preset: `signatureHeader` (HMAC), or X-Asterius-Token / Bearer token.
+ */
 export function verifyWebhook(cfg: Record<string, unknown>, headers: Record<string, string | string[] | undefined>, rawBody: string) {
   const secret = typeof cfg.secret === 'string' ? cfg.secret : '';
   if (!secret) return true; // explicitly unauthenticated (not recommended; documented)
@@ -370,10 +378,27 @@ export function verifyWebhook(cfg: Record<string, unknown>, headers: Record<stri
     const v = headers[name.toLowerCase()];
     return Array.isArray(v) ? v[0] : v;
   };
+  const hmac = (data: string) => createHmac('sha256', secret).update(data).digest('hex');
+  switch (cfg.preset) {
+    case 'github':
+      return eq(header('x-hub-signature-256') ?? '', `sha256=${hmac(rawBody)}`);
+    case 'gitlab':
+      return eq(header('x-gitlab-token') ?? '', secret);
+    case 'azure-devops': {
+      const m = /^Basic\s+(.+)$/i.exec(header('authorization') ?? '');
+      const password = m ? Buffer.from(m[1]!, 'base64').toString().split(':').slice(1).join(':') : '';
+      return eq(password, secret);
+    }
+    case 'slack': {
+      const ts = header('x-slack-request-timestamp') ?? '';
+      if (!/^\d+$/.test(ts) || Math.abs(Date.now() / 1000 - Number(ts)) > 300) return false;
+      return eq(header('x-slack-signature') ?? '', `v0=${hmac(`v0:${ts}:${rawBody}`)}`);
+    }
+  }
   const sigHeader = typeof cfg.signatureHeader === 'string' ? cfg.signatureHeader : '';
   if (sigHeader) {
     const got = header(sigHeader) ?? '';
-    const hex = createHmac('sha256', secret).update(rawBody).digest('hex');
+    const hex = hmac(rawBody);
     return eq(got, `sha256=${hex}`) || eq(got, hex);
   }
   const token = header('x-asterius-token') ?? header('authorization')?.replace(/^Bearer\s+/i, '') ?? '';

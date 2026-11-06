@@ -411,6 +411,28 @@ export const MIGRATIONS: Migration[] = [
         );
       `),
   },
+  {
+    id: 9,
+    name: 'inbound webhooks: persisted events processed by workers',
+    up: (d) =>
+      d.exec(`
+        CREATE TABLE inbound_events (
+          id TEXT PRIMARY KEY,
+          integration TEXT NOT NULL REFERENCES integrations(identifier) ON DELETE CASCADE,
+          headers TEXT NOT NULL,
+          content_type TEXT NOT NULL,
+          payload TEXT NOT NULL,
+          status TEXT NOT NULL,        -- pending done failed
+          attempts INTEGER NOT NULL DEFAULT 0,
+          error TEXT,
+          next_attempt_at TEXT NOT NULL,
+          locked_until TEXT,
+          received_at TEXT NOT NULL,
+          processed_at TEXT
+        );
+        CREATE INDEX inbound_events_due ON inbound_events(status, next_attempt_at);
+      `),
+  },
 ];
 
 /** Apply pending numbered migrations (idempotent; serialized across replicas by an advisory lock on Postgres). */

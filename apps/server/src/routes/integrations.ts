@@ -12,6 +12,7 @@ import {
   syncHistory,
   upsertIntegration,
 } from '../integrations/integrations.js';
+import { decodeBody, enqueueInbound, MAX_ITEMS_PER_EVENT } from '../integrations/inbound.js';
 import { ingest, renderConfig, testIntegration, verifyWebhook } from '../integrations/sync.js';
 import { getSource } from '../integrations/sources/index.js';
 import { mapItem } from '../integrations/mapping.js';
@@ -29,21 +30,49 @@ export async function integrationRoutes(app: FastifyInstance) {
    * Inbound webhook ingestion (third parties → catalog). Authenticated by the integration's secret:
    * `X-Asterius-Token` / `Authorization: Bearer`, or an HMAC signature header (e.g. GitHub's X-Hub-Signature-256).
    */
-  app.post('/ingest/:id', { config: { rateLimit: { max: 600, timeWindow: '1 minute' } } }, async (req, reply) => {
-    const { id } = idParam.parse(req.params);
-    const r = await getIntegrationRow(id).catch(() => undefined);
-    if (!r || !getSource(r.type).push) return reply.code(404).send({ error: 'not found' });
-    if (!bool(r.enabled)) return reply.code(409).send({ error: 'integration disabled' });
-    let cfg: Record<string, unknown>;
-    try {
-      cfg = await renderConfig(r);
-    } catch (err) {
-      req.log.warn({ err, integration: id }, 'webhook integration misconfigured');
-      return reply.code(503).send({ error: `Integration "${id}" is misconfigured: ${(err as Error).message}` });
-    }
-    if (!verifyWebhook(cfg, req.headers, req.rawBody ?? JSON.stringify(req.body ?? null))) return reply.code(401).send({ error: 'invalid signature or token' });
-    const headers = Object.fromEntries(Object.entries(req.headers).filter(([k]) => !['authorization', 'cookie', 'x-asterius-token'].includes(k)));
-    return ingest(r, req.body, headers);
+  await app.register(async (hooks) => {
+    // Any content type: keep the exact bytes (signatures are computed over them) and decode later.
+    // JSON keeps the parser of app.ts; this one covers forms, XML, text and the rest — for this route only.
+    hooks.addContentTypeParser('*', { parseAs: 'string' }, (req, body, done) => {
+      req.rawBody = body as string;
+      done(null, body);
+    });
+    hooks.addContentTypeParser('application/x-www-form-urlencoded', { parseAs: 'string' }, (req, body, done) => {
+      req.rawBody = body as string;
+      done(null, body);
+    });
+    hooks.post('/ingest/:id', { config: { rateLimit: { max: 600, timeWindow: '1 minute' } } }, async (req, reply) => {
+      const { id } = idParam.parse(req.params);
+      const r = await getIntegrationRow(id).catch(() => undefined);
+      if (!r || !getSource(r.type).push) return reply.code(404).send({ error: 'not found' });
+      if (!bool(r.enabled)) return reply.code(409).send({ error: 'integration disabled' });
+      let cfg: Record<string, unknown>;
+      try {
+        cfg = await renderConfig(r);
+      } catch (err) {
+        req.log.warn({ err, integration: id }, 'webhook integration misconfigured');
+        return reply.code(503).send({ error: `Integration "${id}" is misconfigured: ${(err as Error).message}` });
+      }
+      const contentType = String(req.headers['content-type'] ?? 'application/json');
+      const raw = req.rawBody ?? (typeof req.body === 'string' ? req.body : JSON.stringify(req.body ?? null));
+      if (!verifyWebhook(cfg, req.headers, raw)) return reply.code(401).send({ error: 'invalid signature or token' });
+      const headers = Object.fromEntries(
+        Object.entries(req.headers).filter(([k]) => !['authorization', 'cookie', 'x-asterius-token', 'x-gitlab-token'].includes(k)),
+      );
+      let body: unknown;
+      try {
+        body = decodeBody(contentType, raw);
+      } catch {
+        return reply.code(400).send({ error: 'payload cannot be decoded for its content type' });
+      }
+      // Slack's endpoint verification handshake.
+      if (cfg.preset === 'slack' && (body as { type?: string } | null)?.type === 'url_verification')
+        return { challenge: (body as { challenge?: string }).challenge };
+      if (Array.isArray(body) && body.length > MAX_ITEMS_PER_EVENT) return reply.code(413).send({ error: `at most ${MAX_ITEMS_PER_EVENT} items per request` });
+      if (cfg.sync === true) return ingest(r, body, headers);
+      const eventId = await enqueueInbound(id, headers, contentType, raw);
+      return reply.code(202).send({ queued: true, id: eventId });
+    });
   });
 
   await app.register(async (admin) => {

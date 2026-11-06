@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { client, fakeServer, register, silentLog, testApp, type Api } from './helpers.js';
 import { runSync } from '../src/integrations/sync.js';
+import { processInbound } from '../src/integrations/inbound.js';
 import { registerSource } from '../src/integrations/sources/index.js';
 import type { Source } from '../src/integrations/types.js';
 import { applyConfig, readConfigDir } from '../src/config-loader.js';
@@ -224,7 +225,7 @@ describe('inbound webhooks', () => {
     const saved = await admin.put('/api/v1/integrations/events', {
       title: 'Events',
       type: 'webhook',
-      config: { secret: '${secret:HOOK}', signatureHeader: 'x-hub-signature-256' },
+      config: { secret: '${secret:HOOK}', signatureHeader: 'x-hub-signature-256', sync: true },
       mappings: [
         {
           kind: 'event',
@@ -263,6 +264,65 @@ describe('inbound webhooks', () => {
     expect((await post({ action: 'created', app: { id: 'w2' } }, 'hook-secret-1', 'other')).json()).toMatchObject({ upserted: 0, skipped: 1 });
     expect((await post({ action: 'deleted', app: { id: 'w1' } })).json()).toMatchObject({ deleted: 1 });
     expect((await member.get('/api/v1/blueprints/app/entities/w1')).status).toBe(404);
+  });
+});
+
+describe('inbound webhooks: async processing, presets, content types', () => {
+  const hook = (id: string, config: Record<string, unknown>) =>
+    admin.put(`/api/v1/integrations/${id}`, {
+      title: id,
+      type: 'webhook',
+      config,
+      mappings: [{ kind: 'event', entity: { blueprint: 'app', identifier: '$string(id)', title: 'name' } }],
+    });
+  const send = (id: string, payload: string, headers: Record<string, string>) => app.inject({ method: 'POST', url: `/api/v1/ingest/${id}`, headers, payload });
+
+  it('acknowledges with 202, persists the event and lets a worker process it', async () => {
+    await hook('async1', { secret: 'tok' });
+    const res = await send('async1', JSON.stringify({ id: 'q1', name: 'Queued' }), { 'content-type': 'application/json', 'x-asterius-token': 'tok' });
+    expect(res.statusCode).toBe(202);
+    expect((await member.get('/api/v1/blueprints/app/entities/q1')).status).toBe(404);
+    expect(await processInbound()).toBeGreaterThan(0);
+    expect((await member.get('/api/v1/blueprints/app/entities/q1')).data.title).toBe('Queued');
+  });
+
+  it('verifies provider presets over the raw bytes, for any content type', async () => {
+    const body = JSON.stringify({ id: 'g1', name: 'Gh' });
+    await hook('gh', { secret: 'gh-secret', preset: 'github' });
+    const sig = `sha256=${createHmac('sha256', 'gh-secret').update(body).digest('hex')}`;
+    expect((await send('gh', body, { 'content-type': 'application/json', 'x-hub-signature-256': 'sha256=bad' })).statusCode).toBe(401);
+    expect((await send('gh', body, { 'content-type': 'application/json', 'x-hub-signature-256': sig })).statusCode).toBe(202);
+
+    await hook('gl', { secret: 'gl-secret', preset: 'gitlab' });
+    expect((await send('gl', body, { 'content-type': 'application/json', 'x-gitlab-token': 'nope' })).statusCode).toBe(401);
+    expect((await send('gl', body, { 'content-type': 'application/json', 'x-gitlab-token': 'gl-secret' })).statusCode).toBe(202);
+
+    await hook('ado', { secret: 'ado-secret', preset: 'azure-devops' });
+    const basic = `Basic ${Buffer.from('user:ado-secret').toString('base64')}`;
+    expect((await send('ado', body, { 'content-type': 'application/json', authorization: basic })).statusCode).toBe(202);
+    expect((await send('ado', body, { 'content-type': 'application/json' })).statusCode).toBe(401);
+
+    // Slack: timestamped signature over a form-encoded body, and the url_verification handshake.
+    await hook('slack', { secret: 'sl-secret', preset: 'slack' });
+    const form = 'payload=' + encodeURIComponent(JSON.stringify({ id: 's1', name: 'Slack' }));
+    const ts = String(Math.floor(Date.now() / 1000));
+    const slackSig = (t: string, b: string) => `v0=${createHmac('sha256', 'sl-secret').update(`v0:${t}:${b}`).digest('hex')}`;
+    const h = { 'content-type': 'application/x-www-form-urlencoded', 'x-slack-request-timestamp': ts, 'x-slack-signature': slackSig(ts, form) };
+    expect((await send('slack', form, h)).statusCode).toBe(202);
+    const old = String(Math.floor(Date.now() / 1000) - 3600);
+    expect((await send('slack', form, { ...h, 'x-slack-request-timestamp': old, 'x-slack-signature': slackSig(old, form) })).statusCode).toBe(401);
+    const challenge = JSON.stringify({ type: 'url_verification', challenge: 'abc' });
+    const jh = { 'content-type': 'application/json', 'x-slack-request-timestamp': ts, 'x-slack-signature': slackSig(ts, challenge) };
+    expect((await send('slack', challenge, jh)).json()).toEqual({ challenge: 'abc' });
+
+    await processInbound(50);
+    for (const id of ['g1', 's1']) expect((await member.get(`/api/v1/blueprints/app/entities/${id}`)).status).toBe(200);
+  });
+
+  it('rejects oversized arrays', async () => {
+    await hook('big', { secret: 'tok' });
+    const items = Array.from({ length: 1001 }, (_, i) => ({ id: i }));
+    expect((await send('big', JSON.stringify(items), { 'content-type': 'application/json', 'x-asterius-token': 'tok' })).statusCode).toBe(413);
   });
 });
 

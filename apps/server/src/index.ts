@@ -8,6 +8,7 @@ const { closeDb } = await import('./db.js');
 const { startConfigLoader } = await import('./config-loader.js');
 const { startRunWorker, WORKER_ID } = await import('./actions/worker.js');
 const { startSyncScheduler } = await import('./integrations/sync.js');
+const { startInboundWorker } = await import('./integrations/inbound.js');
 const { startDeliveryWorker } = await import('./webhooks/webhooks.js');
 const { startMaintenance } = await import('./maintenance.js');
 
@@ -24,7 +25,7 @@ const loader = await startConfigLoader(app.log);
 
 const stops: (() => unknown)[] = [loader.stop];
 if (isWorker) {
-  stops.push(startRunWorker(app.log), startSyncScheduler(app.log), startDeliveryWorker(app.log), startMaintenance(app.log));
+  stops.push(startRunWorker(app.log), startSyncScheduler(app.log), startInboundWorker(app.log), startDeliveryWorker(app.log), startMaintenance(app.log));
   app.log.info(`worker ${WORKER_ID} started (concurrency ${config.WORKER_CONCURRENCY})`);
 }
 

@@ -211,7 +211,7 @@ export const webhookSource: Source = {
     kinds: ['event'],
     example: {
       type: 'webhook',
-      config: { secret: '${secret:INGEST_TOKEN}', signatureHeader: 'x-hub-signature-256' },
+      config: { secret: '${secret:INGEST_TOKEN}', preset: 'github' }, // github | gitlab | azure-devops | slack; sync: true answers with the stats
       mappings: [
         {
           kind: 'event',

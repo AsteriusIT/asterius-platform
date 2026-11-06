@@ -11,6 +11,7 @@ export async function housekeeping(log: FastifyBaseLogger) {
     const finished = "('SUCCESS', 'FAILURE', 'REJECTED', 'CANCELLED')";
     const runs = await run(`DELETE FROM runs WHERE status IN ${finished} AND ended_at < ?`, cutoff);
     const deliveries = await run("DELETE FROM deliveries WHERE status != 'pending' AND created_at < ?", cutoff);
+    await run("DELETE FROM inbound_events WHERE status != 'pending' AND received_at < ?", cutoff);
     const audit = await run('DELETE FROM audit_log WHERE at < ?', cutoff);
     // Sync history: RETENTION_DAYS, but always keep the last 20 per integration.
     let syncs = 0;
