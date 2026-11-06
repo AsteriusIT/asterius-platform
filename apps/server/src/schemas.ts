@@ -101,6 +101,10 @@ export const workflowStep = z.discriminatedUnion('type', [
         ownerTeam: z.boolean().optional(),
       })
       .optional(),
+    /** Decisions beyond yes / no: the approver picks one (`output.choice`). */
+    choices: z.array(z.string().min(1).max(100)).max(20).optional(),
+    /** Fields the approver fills along with an approval (`output.values`). */
+    fields: objectSchema.optional(),
     minApprovals: z.number().int().min(1).max(10).default(1),
     allowSelfApproval: z.boolean().default(false),
     message: z.string().max(20_000).optional(),
@@ -124,6 +128,47 @@ export const workflowStep = z.discriminatedUnion('type', [
     maxTurns: z.number().int().min(1).max(20).default(6),
     maxTokens: z.number().int().min(256).max(64_000).default(16_000),
     apiKey: z.string().optional(),
+  }),
+  z.object({
+    ...stepBase,
+    type: z.literal('wait'),
+    /** `30s`, `15m`, `2h`, `7d`. */
+    duration: z
+      .string()
+      .regex(/^[1-9]\d{0,5}[smhd]$/, 'e.g. 30s, 15m, 2h, 7d')
+      .optional(),
+    /** Template giving an ISO date-time (`{{ inputs.window }}`). */
+    until: z.string().max(500).optional(),
+    /** Wait for an external signal: `POST /runs/:id/steps/:step/events` with this name (and a payload matching `filter`). */
+    event: z.object({ name: z.string().min(1).max(100), filter: z.string().max(2000).optional() }).optional(),
+  }),
+  z.object({
+    ...stepBase,
+    type: z.literal('input'),
+    message: z.string().max(20_000).optional(),
+    /** The form the assignee fills; its values are the step output. */
+    inputs: objectSchema,
+    /** Who may answer (default: the requester and admins). */
+    assignees: subjects.optional(),
+  }),
+  z.object({
+    ...stepBase,
+    type: z.literal('workflow'),
+    /** The action to run as a child workflow; the step waits for it and exposes its result. */
+    action: slug,
+    /** Templates for the child inputs (and `item` inside a fan-out). */
+    inputs: z.record(z.string(), z.unknown()).default({}),
+    /** Template of the entity identifier for child workflows started on an entity. */
+    entity: z.string().max(500).optional(),
+    /** Fan-out: one child run per item of the list. */
+    forEach: z
+      .object({
+        items: z.string().min(1).max(2000),
+        maxConcurrency: z.number().int().min(1).max(20).default(3),
+        /** Stop at the first failure (cancelling running children) instead of collecting every result. */
+        failFast: z.boolean().default(false),
+      })
+      .optional(),
   }),
   z.object({ ...stepBase, type: z.literal('transform'), output: z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,63}$/), z.string()) }),
 ]);

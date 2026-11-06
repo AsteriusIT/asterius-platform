@@ -123,7 +123,9 @@ export const api = {
   resume: (id: string) => request<Run>('POST', v1(`/runs/${enc(id)}/resume`), {}),
   retryStep: (id: string, step: string) => request<Run>('POST', v1(`/runs/${enc(id)}/steps/${enc(step)}/retry`), {}),
   cancel: (id: string) => request<Run>('POST', v1(`/runs/${enc(id)}/cancel`), {}),
-  approveStep: (id: string, step: string, comment: string) => request<Run>('POST', v1(`/runs/${enc(id)}/steps/${enc(step)}/approve`), { comment }),
+  approveStep: (id: string, step: string, comment: string, extra: { choice?: string; values?: Record<string, unknown> } = {}) =>
+    request<Run>('POST', v1(`/runs/${enc(id)}/steps/${enc(step)}/approve`), { comment, ...extra }),
+  submitInput: (id: string, step: string, values: Record<string, unknown>) => request<Run>('POST', v1(`/runs/${enc(id)}/steps/${enc(step)}/input`), { values }),
   rejectStep: (id: string, step: string, comment: string) => request<Run>('POST', v1(`/runs/${enc(id)}/steps/${enc(step)}/reject`), { comment }),
 
   integrations: () => request<Integration[]>('GET', v1('/integrations')),

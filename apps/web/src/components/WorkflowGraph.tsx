@@ -1,5 +1,18 @@
 import { Box, Group, Loader, Paper, ScrollArea, Stack, Text, ThemeIcon, Tooltip, UnstyledButton } from '@mantine/core';
-import { IconBolt, IconCheck, IconChevronRight, IconClock, IconCode, IconMinus, IconRobot, IconShieldCheck, IconX } from '@tabler/icons-react';
+import {
+  IconBolt,
+  IconCheck,
+  IconChevronRight,
+  IconClock,
+  IconCode,
+  IconForms,
+  IconHourglass,
+  IconMinus,
+  IconRobot,
+  IconShieldCheck,
+  IconSubtask,
+  IconX,
+} from '@tabler/icons-react';
 import type { StepStatus, WorkflowStepType } from '@asterius/shared';
 import { STEP_STATUS_COLORS, STEP_STATUS_LABELS, STEP_TYPES, stagesOf } from '../lib/workflow';
 
@@ -18,7 +31,15 @@ export interface GraphStep {
   conditional?: boolean;
 }
 
-const TYPE_ICON = { invoke: IconBolt, approval: IconShieldCheck, agent: IconRobot, transform: IconCode } as const;
+const TYPE_ICON = {
+  invoke: IconBolt,
+  approval: IconShieldCheck,
+  agent: IconRobot,
+  transform: IconCode,
+  wait: IconHourglass,
+  input: IconForms,
+  workflow: IconSubtask,
+} as const;
 
 function StatusIcon({ status }: { status?: StepStatus }) {
   if (!status) return null;

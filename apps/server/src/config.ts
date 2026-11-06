@@ -56,6 +56,8 @@ const schema = z.object({
   // ---- workers ----
   /** Concurrent action runs per worker process. */
   WORKER_CONCURRENCY: z.coerce.number().int().min(1).default(8),
+  /** Milliseconds between checks of steps waiting for child runs (sub-workflows, fan-out). */
+  WORKFLOW_VISIT_MS: z.coerce.number().int().min(100).default(2000),
   /** Seconds between status polls of running pipelines / jobs. */
   RUN_POLL_SECONDS: z.coerce.number().int().min(2).default(15),
   /** Runs still IN_PROGRESS after this many hours are failed. */

@@ -56,6 +56,21 @@ export function validateWorkflow(steps: Step[]) {
         case 'transform':
           for (const expr of Object.values(s.output)) checkExpression(expr);
           break;
+        case 'wait': {
+          const modes = [s.duration, s.until, s.event].filter(Boolean).length;
+          if (modes !== 1) throw new Error('set exactly one of duration, until or event');
+          if (s.until) checkTemplate(s.until);
+          if (s.event?.filter) checkExpression(s.event.filter);
+          break;
+        }
+        case 'input':
+          validator(s.inputs as never);
+          if (s.message) checkTemplate(s.message);
+          break;
+        case 'workflow':
+          checkTemplate([s.inputs, s.entity ?? '']);
+          if (s.forEach) checkExpression(s.forEach.items);
+          break;
       }
     } catch (err) {
       throw badRequest(`${where}: ${(err as Error).message}`);

@@ -148,7 +148,7 @@ export interface InvokerConfig {
 }
 
 // ---------- workflows ----------
-export type WorkflowStepType = 'invoke' | 'approval' | 'agent' | 'transform';
+export type WorkflowStepType = 'invoke' | 'approval' | 'agent' | 'transform' | 'wait' | 'input' | 'workflow';
 
 interface WorkflowStepBase {
   /** Letters, digits and _; later steps read `{{ steps.<id>.output }}`. */
@@ -175,6 +175,10 @@ export interface ApprovalStep extends WorkflowStepBase {
   approvers?: Subjects;
   minApprovals?: number;
   allowSelfApproval?: boolean;
+  /** Decisions beyond yes / no: the approver picks one (`output.choice`). */
+  choices?: string[];
+  /** Fields the approver fills along with an approval (`output.values`). */
+  fields?: ObjectSchema;
   /** Markdown template shown to approvers (e.g. an AI summary from an earlier step). */
   message?: string;
 }
@@ -203,9 +207,34 @@ export interface TransformStep extends WorkflowStepBase {
   output: Record<string, string>;
 }
 
-export type WorkflowStep = InvokeStep | ApprovalStep | AgentStep | TransformStep;
+/** Pause: a duration (`15m`), until a time (template), or until an external event is posted to the step. */
+export interface WaitStep extends WorkflowStepBase {
+  type: 'wait';
+  duration?: string;
+  until?: string;
+  event?: { name: string; filter?: string };
+}
 
-export type StepStatus = 'PENDING' | 'QUEUED' | 'RUNNING' | 'WAITING_APPROVAL' | 'SUCCESS' | 'FAILURE' | 'SKIPPED' | 'CANCELLED';
+/** Ask the requester or an operator for data mid-run. */
+export interface InputStep extends WorkflowStepBase {
+  type: 'input';
+  message?: string;
+  inputs: ObjectSchema;
+  assignees?: Subjects;
+}
+
+/** Run another action as a child workflow (optionally once per item of a list) and wait for the result. */
+export interface WorkflowCallStep extends WorkflowStepBase {
+  type: 'workflow';
+  action: string;
+  inputs?: Record<string, unknown>;
+  entity?: string;
+  forEach?: { items: string; maxConcurrency?: number; failFast?: boolean };
+}
+
+export type WorkflowStep = InvokeStep | ApprovalStep | AgentStep | TransformStep | WaitStep | InputStep | WorkflowCallStep;
+
+export type StepStatus = 'PENDING' | 'QUEUED' | 'RUNNING' | 'WAITING_APPROVAL' | 'WAITING' | 'SUCCESS' | 'FAILURE' | 'SKIPPED' | 'CANCELLED';
 
 export interface RunStep {
   id: string;
@@ -219,8 +248,14 @@ export interface RunStep {
   continueOnError: boolean;
   output: unknown;
   link: string | null;
-  /** Approval steps: the rendered message for approvers. */
+  /** Approval and input steps: the rendered message for the people asked. */
   message: string | null;
+  /** Input steps (and approvals with fields): the form to fill, and who may. */
+  form?: ObjectSchema | null;
+  choices?: string[] | null;
+  canSubmit?: boolean;
+  /** Sub-workflow steps: the child runs. */
+  children?: { runId: string; status: string; item?: unknown }[];
   approvals: RunApproval[];
   canApprove?: boolean;
   /** A failed step the caller may retry. */
@@ -331,6 +366,8 @@ export interface Run {
   triggeredBy: { id: string; name: string; email: string };
   approvals: RunApproval[];
   result: unknown;
+  /** Set on child runs of a sub-workflow step. */
+  parent?: { runId: string; stepId: string } | null;
   /** What started the run: form, api, schedule, event, webhook, workflow (parent run) or rerun. */
   trigger?: { type: string; [k: string]: unknown };
   createdAt: string;
@@ -340,7 +377,7 @@ export interface Run {
   logs?: RunLog[];
   steps?: RunStep[];
   /** Approvals page: the step waiting for the caller's decision (null: the run-level approval). */
-  pendingStep?: { id: string; name: string; message: string | null } | null;
+  pendingStep?: { id: string; name: string; message: string | null; kind?: 'approval' | 'input' } | null;
   canApprove?: boolean;
   canCancel?: boolean;
   /** Requester or admin, finished run. */

@@ -1,4 +1,4 @@
-import type { RunApproval, RunStep, StepStatus, Subjects } from '@asterius/shared';
+import type { ObjectSchema, RunApproval, RunStep, StepStatus, Subjects } from '@asterius/shared';
 import { all, json } from '../db.js';
 import { isAdmin, matchesSubjects, type Principal } from '../auth/users.js';
 import type { RunRow } from './runs.js';
@@ -58,6 +58,14 @@ export function canApproveStep(p: Principal, run: RunRow, def: Step, row: StepRo
   return matchesSubjects(p, approverSubjects(def.approvers), run.team);
 }
 
+/** Who may answer an input step: the assignees, or the requester and admins when none are named. */
+export function canSubmitInput(p: Principal, r: RunRow, def: Step, row: StepRow) {
+  if (def.type !== 'input' || row.status !== 'WAITING' || r.status !== 'IN_PROGRESS') return false;
+  const named = def.assignees && (def.assignees.roles?.length || def.assignees.teams?.length || def.assignees.users?.length || def.assignees.ownerTeam);
+  if (!named) return isAdmin(p) || r.triggered_by === p.id;
+  return matchesSubjects(p, def.assignees, r.team);
+}
+
 export const canManageRun = (p: Principal, r: Pick<RunRow, 'triggered_by'>) => isAdmin(p) || r.triggered_by === p.id;
 /** `state` of a step skipped because a dependency did not succeed (engine.ts). */
 export const BLOCKED_STATE = '{"blocked":true}';
@@ -75,6 +83,18 @@ export function resumableSteps(defs: Step[], rows: Pick<StepRow, 'step_id' | 'st
 
 export const canRetryStep = (p: Principal, r: RunRow, row: Pick<StepRow, 'status'>) =>
   canManageRun(p, r) && row.status === 'FAILURE' && REOPENABLE.includes(r.status);
+
+/** Child runs started by a `workflow` step (one, or one per item of a fan-out). */
+function childrenOf(row: StepRow): { runId: string; status: string; item?: unknown }[] | undefined {
+  const s = json<{ kind?: string; runId?: string; runs?: (string | null)[]; items?: unknown[]; results?: ({ status: string } | null)[] } | null>(
+    row.state,
+    null,
+  );
+  if (s?.kind === 'workflow' && s.runId) return [{ runId: s.runId, status: 'RUNNING' }];
+  if (s?.kind === 'foreach')
+    return (s.runs ?? []).flatMap((id, i) => (id ? [{ runId: id, status: s.results?.[i]?.status ?? 'RUNNING', item: s.items?.[i] }] : []));
+  return undefined;
+}
 
 export const stepMessage = (row: StepRow) => json<{ message?: string }>(row.state, {}).message ?? null;
 
@@ -99,8 +119,13 @@ export async function runStepsView(run: RunRow, p: Principal | null): Promise<Ru
       output: json(row.output, null),
       link: row.link,
       message: stepMessage(row),
+      form: def?.type === 'input' ? (def.inputs as ObjectSchema) : def?.type === 'approval' ? ((def.fields as ObjectSchema | undefined) ?? null) : null,
+      choices: def?.type === 'approval' ? (def.choices ?? null) : null,
+      children: childrenOf(row),
       approvals: list,
-      ...(p && def ? { canApprove: canApproveStep(p, run, def, row, list), canRetry: canRetryStep(p, run, row) } : {}),
+      ...(p && def
+        ? { canApprove: canApproveStep(p, run, def, row, list), canRetry: canRetryStep(p, run, row), canSubmit: canSubmitInput(p, run, def, row) }
+        : {}),
       startedAt: row.started_at,
       endedAt: row.ended_at,
     };

@@ -15,6 +15,7 @@ import {
   Stack,
   Table,
   Text,
+  Select,
   Textarea,
   Timeline,
 } from '@mantine/core';
@@ -29,6 +30,7 @@ import { duration, Empty, Markdown, PageHeader, QueryView, StatusBadge, STATUS_C
 import { WorkflowGraph } from '../components/WorkflowGraph';
 import { STEP_STATUS_COLORS, STEP_STATUS_LABELS, STEP_TYPES } from '../lib/workflow';
 import { PropertyValue } from '../components/PropertyValue';
+import { initialValues, SchemaForm, validateValues, type FormValues } from '../components/SchemaForm';
 
 const PAGE = 30;
 const ACTIVE: RunStatus[] = ['PENDING_APPROVAL', 'QUEUED', 'IN_PROGRESS'];
@@ -426,14 +428,28 @@ function ApprovalTimeline({ approvals }: { approvals: Run['approvals'] }) {
 /** One step: status, output, approval decision. */
 function StepPanel({ run, step, onDone }: { run: Run; step: RunStep; onDone: (r: Run) => void }) {
   const [comment, setComment] = useState('');
+  const form = step.form ?? { properties: {} };
+  const [values, setValues] = useState<FormValues>(() => initialValues(form));
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [choice, setChoice] = useState<string | null>(null);
+  const onError = (e: unknown) => notifications.show({ color: 'red', message: errorText(e) });
   const decide = useMutation({
-    mutationFn: (d: 'approve' | 'reject') => (d === 'approve' ? api.approveStep(run.id, step.id, comment) : api.rejectStep(run.id, step.id, comment)),
+    mutationFn: (d: 'approve' | 'reject') =>
+      d === 'approve'
+        ? api.approveStep(run.id, step.id, comment, { choice: choice ?? undefined, values: step.form ? values : undefined })
+        : api.rejectStep(run.id, step.id, comment),
     onSuccess: (r) => {
       setComment('');
       onDone(r);
     },
-    onError: (e) => notifications.show({ color: 'red', message: errorText(e) }),
+    onError,
   });
+  const submitInput = useMutation({ mutationFn: () => api.submitInput(run.id, step.id, values), onSuccess: onDone, onError });
+  const validated = (go: () => void) => {
+    const e = validateValues(form, values);
+    setErrors(e);
+    if (!Object.keys(e).length) go();
+  };
   const retry = useMutation({
     mutationFn: () => api.retryStep(run.id, step.id),
     onSuccess: onDone,
@@ -478,15 +494,45 @@ function StepPanel({ run, step, onDone }: { run: Run; step: RunStep; onDone: (r:
           <Markdown>{step.message}</Markdown>
         </Box>
       )}
+      {step.type === 'input' && step.canSubmit && (
+        <Stack gap="xs" mt="xs">
+          <SchemaForm schema={form} values={values} onChange={setValues} errors={errors} />
+          <Group>
+            <Button leftSection={<IconCheck size={16} />} loading={submitInput.isPending} onClick={() => validated(() => submitInput.mutate())}>
+              Submit
+            </Button>
+          </Group>
+        </Stack>
+      )}
+      {step.children && step.children.length > 0 && (
+        <Stack gap={4} mt="xs">
+          <Text fz="sm" fw={500}>
+            {step.children.length > 1 ? 'Child runs' : 'Child run'}
+          </Text>
+          {step.children.map((c) => (
+            <Group key={c.runId} gap="xs">
+              <Badge variant="light" color={STATUS_COLORS[c.status as RunStatus] ?? 'gray'}>
+                {c.status}
+              </Badge>
+              <Text component={Link} to={`/runs/${c.runId}`} fz="sm">
+                {c.item !== undefined ? `${typeof c.item === 'string' ? c.item : JSON.stringify(c.item)} · ` : ''}
+                {c.runId.slice(0, 8)}
+              </Text>
+            </Group>
+          ))}
+        </Stack>
+      )}
       {step.canApprove && (
         <Stack gap="xs" mt="xs">
+          {step.choices && step.choices.length > 0 && <Select label="Your decision" data={step.choices} value={choice} onChange={setChoice} />}
+          {step.type === 'approval' && step.form && <SchemaForm schema={form} values={values} onChange={setValues} errors={errors} />}
           <Textarea placeholder="Comment (required to reject)" value={comment} onChange={(e) => setComment(e.currentTarget.value)} autosize minRows={2} />
           <Group>
             <Button
               color="green"
               leftSection={<IconCheck size={16} />}
               loading={decide.isPending && decide.variables === 'approve'}
-              onClick={() => decide.mutate('approve')}
+              onClick={() => (step.form ? validated(() => decide.mutate('approve')) : decide.mutate('approve'))}
             >
               Approve
             </Button>

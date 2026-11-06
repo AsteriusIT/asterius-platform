@@ -374,6 +374,18 @@ export const MIGRATIONS: Migration[] = [
         CREATE INDEX actions_next_fire ON actions(next_fire_at);
       `),
   },
+  {
+    id: 101,
+    name: 'workflows: sub-workflows, approval choices and values',
+    up: (d) =>
+      d.exec(`
+        ALTER TABLE runs ADD COLUMN parent_run_id TEXT;
+        ALTER TABLE runs ADD COLUMN parent_step_id TEXT;
+        CREATE INDEX runs_parent ON runs(parent_run_id);
+        ALTER TABLE step_approvals ADD COLUMN choice TEXT;
+        ALTER TABLE step_approvals ADD COLUMN form_values TEXT;
+      `),
+  },
 ];
 
 /** Apply pending numbered migrations (idempotent; serialized across replicas by an advisory lock on Postgres). */

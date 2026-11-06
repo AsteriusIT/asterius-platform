@@ -3,6 +3,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import { config } from '../config.js';
 import { all, now, run } from '../db.js';
 import { claimPolls, claimSteps, initRun, stepHousekeeping } from './engine.js';
+import { claimWaits } from './waiting.js';
 
 /**
  * Workflow worker (PLATFORM_ROLE=all|worker). Any number of worker replicas can run: runs and steps are claimed with
@@ -43,6 +44,7 @@ async function tick(log: FastifyBaseLogger) {
   // 2. execute due steps, 3. poll running ones
   await claimSteps(WORKER_ID, config.WORKER_CONCURRENCY - active, spawn);
   await claimPolls(config.WORKER_CONCURRENCY - active, spawn);
+  await claimWaits(config.WORKER_CONCURRENCY - active, spawn); // time, input and child-run waits
 }
 
 export function startRunWorker(log: FastifyBaseLogger) {

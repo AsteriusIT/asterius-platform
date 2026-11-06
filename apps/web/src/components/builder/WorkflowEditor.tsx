@@ -29,10 +29,25 @@ import {
 } from '@mantine/core';
 import { modals } from '@mantine/modals';
 import { useQuery } from '@tanstack/react-query';
-import { IconArrowDown, IconArrowUp, IconBolt, IconCode, IconPlus, IconRobot, IconShieldCheck, IconTrash } from '@tabler/icons-react';
+import {
+  IconArrowDown,
+  IconArrowUp,
+  IconBolt,
+  IconCode,
+  IconForms,
+  IconHourglass,
+  IconPlus,
+  IconRobot,
+  IconShieldCheck,
+  IconSubtask,
+  IconTrash,
+} from '@tabler/icons-react';
 import type {
   AgentStep,
   FormTrigger,
+  InputStep,
+  WaitStep,
+  WorkflowCallStep,
   ApprovalStep,
   InvokeStep,
   InvokerConfig,
@@ -57,7 +72,15 @@ import { JsonEditor, KeyValueEditor, MONO_INPUT, PluginFieldInput, SubjectsEdito
  */
 
 const STEP_ID = /^[A-Za-z_][A-Za-z0-9_]{0,40}$/;
-const TYPE_ICON = { invoke: IconBolt, approval: IconShieldCheck, agent: IconRobot, transform: IconCode } as const;
+const TYPE_ICON = {
+  invoke: IconBolt,
+  approval: IconShieldCheck,
+  agent: IconRobot,
+  transform: IconCode,
+  wait: IconHourglass,
+  input: IconForms,
+  workflow: IconSubtask,
+} as const;
 
 export const AGENT_MODELS = [
   { value: 'claude-opus-5-5', label: 'Claude Opus 5.5', description: 'Default · best reasoning · $4 / $20 per M tokens' },
@@ -74,14 +97,28 @@ function uniqueId(base: string, steps: WorkflowStep[]) {
 }
 
 export function newStep(type: WorkflowStepType, steps: WorkflowStep[], invokers: PluginInfo[]): WorkflowStep {
-  const name = { invoke: 'Call an integration', approval: 'Approval', agent: 'AI review', transform: 'Compute values' }[type];
-  const id = uniqueId({ invoke: 'call', approval: 'approval', agent: 'review', transform: 'compute' }[type], steps);
+  const name = {
+    invoke: 'Call an integration',
+    approval: 'Approval',
+    agent: 'AI review',
+    transform: 'Compute values',
+    wait: 'Wait',
+    input: 'Ask for input',
+    workflow: 'Run a workflow',
+  }[type];
+  const id = uniqueId(
+    { invoke: 'call', approval: 'approval', agent: 'review', transform: 'compute', wait: 'wait', input: 'ask', workflow: 'sub' }[type],
+    steps,
+  );
   if (type === 'invoke') {
     const example = invokers.find((i) => i.type === 'webhook')?.example ?? { type: 'webhook' };
     return { id, name, type, invoker: example as InvokerConfig };
   }
   if (type === 'approval') return { id, name, type, minApprovals: 1 };
   if (type === 'agent') return { id, name, type, model: 'claude-opus-5-5', effort: 'medium', prompt: '', tools: [] };
+  if (type === 'wait') return { id, name, type, duration: '15m' };
+  if (type === 'input') return { id, name, type, inputs: { properties: {} } };
+  if (type === 'workflow') return { id, name, type, action: '', inputs: {} };
   return { id, name, type, output: {} };
 }
 
@@ -104,6 +141,9 @@ export function stepProblems(steps: WorkflowStep[], invokers: PluginInfo[]): str
       if (!s.prompt?.trim()) out.push(`${where}: write the prompt`);
       if (s.output) out.push(...fieldProblems(schemaToFields(s.output), `${where}: output field`));
     }
+    if (s.type === 'wait' && [s.duration, s.until, s.event].filter(Boolean).length !== 1) out.push(`${where}: set exactly one of duration, until or event`);
+    if (s.type === 'workflow' && !s.action) out.push(`${where}: choose the workflow to run`);
+    if (s.type === 'input') out.push(...fieldProblems(schemaToFields(s.inputs), `${where}: field`));
     if (s.type === 'transform')
       for (const k of Object.keys(s.output ?? {})) if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(k)) out.push(`${where}: invalid output key "${k}"`);
   });
@@ -308,6 +348,9 @@ export function WorkflowEditor(props: {
               {step.type === 'approval' && <ApprovalEditor step={step} onEntity={onEntity} onChange={update} />}
               {step.type === 'agent' && <AgentEditor step={step} onChange={update} />}
               {step.type === 'transform' && <TransformEditor step={step} onChange={update} />}
+              {step.type === 'wait' && <WaitEditor step={step} onChange={update} />}
+              {step.type === 'input' && <InputEditor step={step} onChange={update} />}
+              {step.type === 'workflow' && <WorkflowCallEditor step={step} onChange={update} />}
               <FlowEditor steps={steps} index={index} onChange={update} />
             </Stack>
           </Card>
@@ -437,7 +480,9 @@ function Variables({
     const earlier = steps.slice(0, index).flatMap((s) => {
       if (s.type === 'agent') return s.output ? Object.keys(s.output.properties).map((k) => `steps.${s.id}.output.${k}`) : [`steps.${s.id}.output.text`];
       if (s.type === 'transform') return Object.keys(s.output ?? {}).map((k) => `steps.${s.id}.output.${k}`);
-      if (s.type === 'approval') return [`steps.${s.id}.output.approved`, `steps.${s.id}.output.by`];
+      if (s.type === 'approval') return [`steps.${s.id}.output.approved`, `steps.${s.id}.output.by`, `steps.${s.id}.output.choice`];
+      if (s.type === 'input') return Object.keys(s.inputs?.properties ?? {}).map((k) => `steps.${s.id}.output.${k}`);
+      if (s.type === 'workflow') return [`steps.${s.id}.output.result`, `steps.${s.id}.output.status`];
       return [`steps.${s.id}.output`, `steps.${s.id}.link`];
     });
     return [
@@ -559,6 +604,157 @@ function ApprovalEditor({ step, onEntity, onChange }: { step: ApprovalStep; onEn
         onChange={(e) => onChange({ message: e.currentTarget.value || undefined })}
         styles={MONO_INPUT}
       />
+    </Stack>
+  );
+}
+
+function WaitEditor({ step, onChange }: { step: WaitStep; onChange: (p: Partial<WaitStep>) => void }) {
+  const mode = step.event ? 'event' : step.until === undefined ? 'duration' : 'until';
+  return (
+    <Stack gap="sm">
+      <SegmentedControl
+        value={mode}
+        data={[
+          { value: 'duration', label: 'For a duration' },
+          { value: 'until', label: 'Until a time' },
+          { value: 'event', label: 'For an event' },
+        ]}
+        onChange={(m) =>
+          onChange({
+            duration: m === 'duration' ? '15m' : undefined,
+            until: m === 'until' ? '{{ inputs.when }}' : undefined,
+            event: m === 'event' ? { name: 'ready' } : undefined,
+          })
+        }
+      />
+      {mode === 'duration' && (
+        <TextInput
+          label="Duration"
+          description="30s, 15m, 2h or 7d"
+          w={200}
+          value={step.duration ?? ''}
+          onChange={(e) => onChange({ duration: e.currentTarget.value })}
+        />
+      )}
+      {mode === 'until' && (
+        <TextInput
+          label="Until"
+          description="ISO date-time template, e.g. {{ inputs.window }}"
+          value={step.until ?? ''}
+          onChange={(e) => onChange({ until: e.currentTarget.value })}
+          styles={MONO_INPUT}
+        />
+      )}
+      {mode === 'event' && (
+        <>
+          <TextInput
+            label="Event name"
+            description={
+              <>
+                Post it to <code>/api/v1/runs/&lt;run&gt;/steps/{step.id}/events</code> with the step token (
+                <code>{`{{ steps.${step.id}.events.token }}`}</code>) or an admin token
+              </>
+            }
+            value={step.event?.name ?? ''}
+            onChange={(e) => onChange({ event: { ...step.event, name: e.currentTarget.value } })}
+          />
+          <TextInput
+            label="Payload filter (optional)"
+            description='JSONata over the payload, e.g. event.env = "prod"'
+            value={step.event?.filter ?? ''}
+            onChange={(e) => onChange({ event: { name: step.event?.name ?? '', filter: e.currentTarget.value || undefined } })}
+            styles={MONO_INPUT}
+          />
+        </>
+      )}
+      <Text fz="xs" c="dimmed">
+        Use the timeout under Flow to bound how long the step may wait (default 7 days).
+      </Text>
+    </Stack>
+  );
+}
+
+function InputEditor({ step, onChange }: { step: InputStep; onChange: (p: Partial<InputStep>) => void }) {
+  const [fields, setFields] = useState<FieldDraft[]>(() => schemaToFields(step.inputs));
+  return (
+    <Stack gap="sm">
+      <Textarea
+        label="Message"
+        description="Markdown template shown above the form"
+        autosize
+        minRows={2}
+        value={step.message ?? ''}
+        onChange={(e) => onChange({ message: e.currentTarget.value || undefined })}
+        styles={MONO_INPUT}
+      />
+      <Title order={6}>Who answers</Title>
+      <SubjectsEditor value={step.assignees} onChange={(assignees) => onChange({ assignees })} allowOwnerTeam emptyMeans="the requester and admins" />
+      <Title order={6}>Form</Title>
+      <FieldsEditor
+        fields={fields}
+        onChange={(f) => {
+          setFields(f);
+          onChange({ inputs: fieldsToSchema(f) });
+        }}
+      />
+    </Stack>
+  );
+}
+
+function WorkflowCallEditor({ step, onChange }: { step: WorkflowCallStep; onChange: (p: Partial<WorkflowCallStep>) => void }) {
+  const actions = useQuery({ queryKey: ['actions', 'all'], queryFn: () => api.actions() });
+  return (
+    <Stack gap="sm">
+      <Select
+        label="Workflow to run"
+        searchable
+        data={(actions.data ?? []).map((a) => ({ value: a.identifier, label: `${a.title} (${a.identifier})` }))}
+        value={step.action || null}
+        onChange={(v) => onChange({ action: v ?? '' })}
+      />
+      <Input.Wrapper label="Inputs" description="Values for the child form; templates may use inputs.*, steps.* and, in a fan-out, item">
+        <KeyValueEditor
+          value={(step.inputs ?? {}) as Record<string, string>}
+          onChange={(o) => onChange({ inputs: o })}
+          keyPlaceholder="input"
+          valuePlaceholder="value or {{ template }}"
+        />
+      </Input.Wrapper>
+      <TextInput
+        label="Entity (day-2 workflows)"
+        value={step.entity ?? ''}
+        placeholder="{{ entity.identifier }}"
+        onChange={(e) => onChange({ entity: e.currentTarget.value || undefined })}
+        styles={MONO_INPUT}
+      />
+      <Switch
+        label="Run once for each item of a list"
+        checked={!!step.forEach}
+        onChange={(e) => onChange({ forEach: e.currentTarget.checked ? { items: 'inputs.items', maxConcurrency: 3 } : undefined })}
+      />
+      {step.forEach && (
+        <SimpleGrid cols={{ base: 1, sm: 3 }}>
+          <TextInput
+            label="List (JSONata)"
+            value={step.forEach.items}
+            onChange={(e) => onChange({ forEach: { ...step.forEach!, items: e.currentTarget.value } })}
+            styles={MONO_INPUT}
+          />
+          <NumberInput
+            label="At most in parallel"
+            min={1}
+            max={20}
+            value={step.forEach.maxConcurrency ?? 3}
+            onChange={(n) => onChange({ forEach: { ...step.forEach!, maxConcurrency: Number(n) || 3 } })}
+          />
+          <Switch
+            mt={28}
+            label="Stop at the first failure"
+            checked={!!step.forEach.failFast}
+            onChange={(e) => onChange({ forEach: { ...step.forEach!, failFast: e.currentTarget.checked } })}
+          />
+        </SimpleGrid>
+      )}
     </Stack>
   );
 }

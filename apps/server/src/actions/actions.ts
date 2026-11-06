@@ -98,6 +98,7 @@ export async function upsertAction(input: unknown, opts: { managed?: boolean } =
   const def: ActionDef = actionDef.parse(input);
   const t0 = def.trigger;
   if (t0) validateTrigger(t0);
+  if (def.steps.some((s) => s.type === 'workflow' && s.action === def.identifier)) throw badRequest('A workflow cannot call itself as a sub-workflow');
   if (t0?.type === 'event' && t0.action === def.identifier) throw badRequest('Trigger: a workflow cannot be triggered by its own runs');
   const triggerBlueprint = t0 && 'blueprint' in t0 ? (t0.blueprint ?? null) : null;
   if (triggerBlueprint && !(await one('SELECT identifier FROM blueprints WHERE identifier = ?', triggerBlueprint)))

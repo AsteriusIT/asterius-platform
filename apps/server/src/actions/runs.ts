@@ -9,7 +9,7 @@ import { getEntity } from '../catalog/entities.js';
 import { compact, validate } from '../catalog/validation.js';
 import { canTrigger, getAction } from './actions.js';
 import { metrics } from '../metrics.js';
-import { canApproveStep, canManageRun, loadSteps, resumableSteps, runStepsView, stepApprovalsOf, stepDefs, stepMessage } from './steps.js';
+import { canApproveStep, canManageRun, canSubmitInput, loadSteps, resumableSteps, runStepsView, stepApprovalsOf, stepDefs, stepMessage } from './steps.js';
 
 /**
  * Run lifecycle:
@@ -47,6 +47,8 @@ export interface RunRow {
   ended_at: string | null;
   trigger_type: string | null;
   trigger_info: string | null;
+  parent_run_id: string | null;
+  parent_step_id: string | null;
   user_name?: string;
   user_email?: string;
 }
@@ -83,6 +85,7 @@ const toRun = (r: RunRow, approvals: RunApproval[]): Run => ({
   approvals,
   result: json(r.result, null),
   trigger: { type: r.trigger_type ?? 'form', ...json<Record<string, unknown>>(r.trigger_info, {}) },
+  parent: r.parent_run_id ? { runId: r.parent_run_id, stepId: r.parent_step_id ?? '' } : null,
   createdAt: r.created_at,
   startedAt: r.started_at,
   endedAt: r.ended_at,
@@ -168,14 +171,17 @@ export async function pendingApprovals(p: Principal): Promise<Run[]> {
     .map((r) => ({ ...toRun(r, approvals.get(r.id) ?? []), canApprove: true, pendingStep: null }));
   const waiting = await all<RunRow & { step_id: string }>(
     `${SELECT.replace('SELECT r.*', 'SELECT DISTINCT r.*, s.step_id')} JOIN run_steps s ON s.run_id = r.id
-     WHERE s.status = 'WAITING_APPROVAL' AND r.status = 'IN_PROGRESS' ORDER BY r.created_at LIMIT 500`,
+     WHERE s.status IN ('WAITING_APPROVAL', 'WAITING') AND r.status = 'IN_PROGRESS' ORDER BY r.created_at LIMIT 500`,
   );
   const stepApprovals = await stepApprovalsOf([...new Set(waiting.map((w) => w.id))]);
   for (const w of waiting) {
     const def = stepDefs(w).find((d) => d.id === w.step_id);
     const row = (await loadSteps(w.id)).find((s) => s.step_id === w.step_id);
-    if (!def || !row || !canApproveStep(p, w, def, row, stepApprovals.get(`${w.id}/${w.step_id}`) ?? [])) continue;
-    out.push({ ...toRun(w, []), pendingStep: { id: row.step_id, name: row.name, message: stepMessage(row) } });
+    if (!def || !row) continue;
+    const kind = def.type === 'input' ? 'input' : 'approval';
+    const allowed = kind === 'input' ? canSubmitInput(p, w, def, row) : canApproveStep(p, w, def, row, stepApprovals.get(`${w.id}/${w.step_id}`) ?? []);
+    if (!allowed) continue;
+    out.push({ ...toRun(w, []), pendingStep: { id: row.step_id, name: row.name, message: stepMessage(row), kind } });
   }
   return out;
 }
@@ -207,6 +213,7 @@ interface NewRun {
   inputs: Record<string, unknown>;
   approval: ApprovalPolicy;
   source: RunSource;
+  parent?: { runId: string; stepId: string };
 }
 
 async function insertRun(n: NewRun): Promise<string> {
@@ -215,8 +222,8 @@ async function insertRun(n: NewRun): Promise<string> {
   const t = now();
   const status: RunStatus = n.approval.required ? 'PENDING_APPROVAL' : 'QUEUED';
   await run(
-    `INSERT INTO runs (id, action, action_title, blueprint, entity, inputs, status, invoker, steps, approval, triggered_by, team, trigger_type, trigger_info, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO runs (id, action, action_title, blueprint, entity, inputs, status, invoker, steps, approval, triggered_by, team, trigger_type, trigger_info, parent_run_id, parent_step_id, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     id,
     action.identifier,
     action.title,
@@ -231,6 +238,8 @@ async function insertRun(n: NewRun): Promise<string> {
     n.entityTeam,
     n.source.type,
     JSON.stringify(n.source.info ?? {}),
+    n.parent?.runId ?? null,
+    n.parent?.stepId ?? null,
     t,
     t,
   );
@@ -290,7 +299,14 @@ export async function triggerRun(
  */
 export async function startAutomatedRun(
   actionId: string,
-  o: { blueprint?: string | null; entity?: string | null; inputs: Record<string, unknown>; source: RunSource; as?: Principal },
+  o: {
+    blueprint?: string | null;
+    entity?: string | null;
+    inputs: Record<string, unknown>;
+    source: RunSource;
+    as?: Principal;
+    parent?: { runId: string; stepId: string };
+  },
 ): Promise<string> {
   const action = await getAction(actionId);
   checkRunnable(action);
@@ -304,6 +320,7 @@ export async function startAutomatedRun(
     inputs: o.inputs,
     approval: { required: false, minApprovals: 1, allowSelfApproval: false },
     source: o.source,
+    parent: o.parent,
   });
 }
 

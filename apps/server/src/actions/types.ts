@@ -15,7 +15,7 @@ export interface RunContext {
   entity: Entity | null;
   trigger: { user: { id: string; email: string; name: string }; at: string };
   /** Earlier workflow steps: `{{ steps.review.output.risk }}`. */
-  steps: Record<string, { status: string; output: unknown; link: string | null }>;
+  steps: Record<string, { status: string; output: unknown; link: string | null; events?: { url: string; token: string } }>;
 }
 
 export type InvokeStatus = 'IN_PROGRESS' | 'SUCCESS' | 'FAILURE';

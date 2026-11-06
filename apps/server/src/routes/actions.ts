@@ -8,6 +8,7 @@ import { blueprintOf, canTrigger, isRunnable, deleteAction, forViewer, getAction
 import { addLog, cancelRun, decide, getRun, getRunRow, listRuns, pendingApprovals, triggerRun } from '../actions/runs.js';
 import { cancelSteps, decideStep, runningInvokeStep, updateStep } from '../actions/engine.js';
 import { rerun, resume, retryStep } from '../actions/recovery.js';
+import { deliverEvent, submitInput } from '../actions/waiting.js';
 import { receiveWebhook } from '../actions/triggers.js';
 import { checkRunToken, checkStepToken } from '../secrets.js';
 import { conflict, forbidden } from '../lib/errors.js';
@@ -72,6 +73,15 @@ export async function actionRoutes(app: FastifyInstance) {
     await authorizeCallback(req, id, step);
     if (!(await updateStep(id, step, { logs: parseLogs(req.body) }))) throw conflict('Only running steps accept logs');
     return { ok: true };
+  });
+
+  /** External signal for a `wait` step (`event`): authenticated by the step token or an admin token. */
+  app.post('/runs/:id/steps/:step/events', { config: { rateLimit: { max: 600, timeWindow: '1 minute' } } }, async (req, reply) => {
+    const { id, step } = stepParams.parse(req.params);
+    await authorizeCallback(req, id, step);
+    const body = z.object({ name: z.string().min(1).max(100), payload: z.unknown().optional() }).parse(req.body ?? {});
+    const delivered = await deliverEvent(id, step, body.name, body.payload);
+    return reply.code(delivered ? 200 : 202).send({ delivered });
   });
 
   /** Single-step (legacy) form: applies to the one running invoke step of the run. */
@@ -168,9 +178,16 @@ export async function actionRoutes(app: FastifyInstance) {
       const { id, step } = stepParams.parse(req.params);
       return retryStep(req.principal, id, step);
     });
+    const decision = comment.extend({ choice: z.string().max(100).optional(), values: z.record(z.string(), z.unknown()).optional() });
+    scoped.post('/runs/:id/steps/:step/input', async (req) => {
+      const { id, step } = stepParams.parse(req.params);
+      await submitInput(req.principal, id, step, z.object({ values: z.record(z.string(), z.unknown()).default({}) }).parse(req.body ?? {}).values);
+      return getRun(id, req.principal);
+    });
     scoped.post('/runs/:id/steps/:step/approve', async (req) => {
       const { id, step } = stepParams.parse(req.params);
-      await decideStep(req.principal, id, step, 'approved', comment.parse(req.body ?? {}).comment);
+      const b = decision.parse(req.body ?? {});
+      await decideStep(req.principal, id, step, 'approved', b.comment, { choice: b.choice, values: b.values });
       return getRun(id, req.principal);
     });
     scoped.post('/runs/:id/steps/:step/reject', async (req) => {

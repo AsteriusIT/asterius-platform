@@ -4,6 +4,8 @@ import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import pg from 'pg';
 
+process.env.WORKFLOW_VISIT_MS = '300';
+
 // Each test file gets a throwaway DATA_DIR (SQLite) and an empty CONFIG_DIR…
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'asterius-test-'));
 process.env.CONFIG_DIR = path.join(process.env.DATA_DIR, 'config');
