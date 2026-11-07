@@ -7,7 +7,7 @@ import { config, paths } from './config.js';
 import { entitySearchText } from './catalog/search.js';
 import { CATALOG_MIGRATIONS } from './catalog/migrations.js';
 import { AI_MIGRATIONS } from './ai/migrations.js';
-import { ORG_MIGRATIONS, renumberLegacyOrgMigrations } from './orgs/migrations.js';
+import { ORG_MIGRATIONS, columns, renumberLegacyOrgMigrations } from './orgs/migrations.js';
 import { componentLogger } from './logger.js';
 import { dbSpan } from './tracing.js';
 
@@ -459,24 +459,28 @@ export const MIGRATIONS: Migration[] = [
         CREATE INDEX actions_blueprint ON actions(blueprint);
       `);
       // `search` now also holds string property values: rebuild it for existing rows, in chunks.
-      let after: [string, string] | undefined;
+      // Databases from the first multi-tenant build already scope entities by organization: keep the key complete.
+      const scoped = (await columns(d, 'entities')).includes('org_id');
+      const org = scoped ? 'org_id' : "'' AS org_id";
+      let after: [string, string, string] | undefined;
       for (;;) {
         const rows = (
-          await d.query<{ blueprint: string; identifier: string; title: string; properties: string }>(
-            `SELECT blueprint, identifier, title, properties FROM entities ${after ? 'WHERE (blueprint, identifier) > (?, ?)' : ''} ORDER BY blueprint, identifier LIMIT 500`,
+          await d.query<{ org_id: string; blueprint: string; identifier: string; title: string; properties: string }>(
+            `SELECT ${org}, blueprint, identifier, title, properties FROM entities ${after ? `WHERE (${scoped ? 'org_id' : "''"}, blueprint, identifier) > (?, ?, ?)` : ''} ORDER BY ${scoped ? 'org_id, ' : ''}blueprint, identifier LIMIT 500`,
             after,
           )
         ).rows;
         if (!rows.length) break;
         for (const r of rows)
-          await d.query('UPDATE entities SET search = ? WHERE blueprint = ? AND identifier = ?', [
+          await d.query(`UPDATE entities SET search = ? WHERE ${scoped ? 'org_id = ? AND ' : ''}blueprint = ? AND identifier = ?`, [
             // `json` is declared further down this module: not initialized yet while migrating on open.
             entitySearchText(r.identifier, r.title, parseObject(r.properties)),
+            ...(scoped ? [r.org_id] : []),
             r.blueprint,
             r.identifier,
           ]);
         const last = rows[rows.length - 1]!;
-        after = [last.blueprint, last.identifier];
+        after = [last.org_id, last.blueprint, last.identifier];
       }
       if (d.dialect !== 'postgres') return;
       await d.exec("ALTER TABLE entities ADD COLUMN search_tsv tsvector GENERATED ALWAYS AS (to_tsvector('simple', search)) STORED");
@@ -662,11 +666,15 @@ export const MIGRATIONS: Migration[] = [
   {
     id: 30,
     name: 'inbound webhooks: persisted events processed by workers',
-    up: (d) =>
+    up: async (d) =>
       d.exec(`
         CREATE TABLE inbound_events (
           id TEXT PRIMARY KEY,
-          integration TEXT NOT NULL REFERENCES integrations(identifier) ON DELETE CASCADE,
+          integration TEXT NOT NULL${
+            // Databases from the first multi-tenant build key integrations by (org_id, identifier): no single-column parent
+            // key to reference; migration 35 rebuilds this table with the composite foreign key.
+            (await columns(d, 'integrations')).includes('org_id') ? '' : ' REFERENCES integrations(identifier) ON DELETE CASCADE'
+          },
           headers TEXT NOT NULL,
           content_type TEXT NOT NULL,
           payload TEXT NOT NULL,

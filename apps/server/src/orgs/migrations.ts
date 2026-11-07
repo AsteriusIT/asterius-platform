@@ -15,7 +15,7 @@ import type { Driver, Migration } from '../db.js';
 const DEFAULT = 'default';
 
 /** Names of the stored (non-generated) columns of a table; empty when the table does not exist. */
-async function columns(d: Driver, table: string): Promise<string[]> {
+export async function columns(d: Driver, table: string): Promise<string[]> {
   const rows =
     d.dialect === 'sqlite'
       ? (await d.query<{ name: string }>('SELECT name FROM pragma_table_info(?)', [table])).rows
