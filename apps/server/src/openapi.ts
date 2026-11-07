@@ -38,18 +38,44 @@ const SyncRunOut = z.object({
   startedAt: iso,
   endedAt: iso.nullable(),
 });
+const EntityOut = z.object({
+  blueprint: str,
+  identifier: str,
+  title: str,
+  team: str.nullable(),
+  properties: obj,
+  relations: obj,
+  source: str,
+  createdAt: iso,
+  updatedAt: iso,
+});
+const ref = z.object({ blueprint: str, identifier: str });
+const band = z.enum(['elite', 'high', 'medium', 'low']).nullable();
 const OUTPUTS: Record<string, z.ZodType> = {
-  Entity: z.object({
-    blueprint: str,
-    identifier: str,
-    title: str,
-    team: str.nullable(),
-    properties: obj,
-    relations: obj,
-    source: str,
-    createdAt: iso,
-    updatedAt: iso,
+  Entity: EntityOut,
+  EntityDocs: z.object({ property: str.describe('The `docs`-format property the Markdown came from'), url: str, markdown: str }),
+  EntityGraph: z.object({
+    root: ref,
+    nodes: z.array(ref.extend({ title: str, team: str.nullable(), depth: z.number().describe('Hops from the root'), missing: z.boolean() })),
+    edges: z.array(z.object({ from: ref, relation: str, to: ref })),
+    truncated: z.boolean().describe('The node or edge cap was hit: the graph is partial'),
   }),
+  RelatedEntities: z.object({
+    outgoing: z.record(str, z.array(EntityOut)).describe('Entities this one points to, by relation name'),
+    incoming: z.record(str, z.array(EntityOut)).describe('Entities pointing to this one, by `<blueprint>.<relation>`'),
+    incomingTitles: z.record(str, str).optional(),
+  }),
+  Insights: z
+    .object({
+      days: z.number(),
+      since: iso,
+      until: iso,
+      deploymentFrequency: z.object({ value: z.number().nullable(), unit: z.literal('per_day'), count: z.number(), band }),
+      leadTime: z.object({ value: z.number().nullable(), unit: z.literal('hours'), samples: z.number(), band }),
+      changeFailureRate: z.object({ value: z.number().nullable(), unit: z.literal('ratio'), failed: z.number(), total: z.number(), band }),
+      mttr: z.object({ value: z.number().nullable(), unit: z.literal('hours'), incidents: z.number(), band }),
+    })
+    .describe('DORA metrics; a metric without data has value null and no band'),
   SyncRun: SyncRunOut,
   IntegrationView: integrationDef.safeExtend({
     managed: z.boolean(),
@@ -88,6 +114,11 @@ const RESPONSES: Record<string, string> = {
   'GET /api/v1/blueprints/:bp/entities/:id': 'Entity',
   'POST /api/v1/blueprints/:bp/entities': 'Entity',
   'PUT /api/v1/blueprints/:bp/entities/:id': 'Entity',
+  'GET /api/v1/blueprints/:bp/entities/:id/docs': 'EntityDocs',
+  'GET /api/v1/blueprints/:bp/entities/:id/related': 'RelatedEntities',
+  'GET /api/v1/blueprints/:bp/entities/:id/graph': 'EntityGraph',
+  'GET /api/v1/entities/:bp/:id/graph': 'EntityGraph',
+  'GET /api/v1/insights': 'Insights',
   'GET /api/v1/entities': 'EntityPage',
   'GET /api/v1/integrations': 'IntegrationView[]',
   'GET /api/v1/integrations/:id': 'IntegrationView',
@@ -117,6 +148,36 @@ const BODIES: Record<string, string> = {
   'PUT /api/v1/policies/:id': 'Policy',
   'POST /api/v1/blueprints/:bp/entities': 'EntityInput',
   'PUT /api/v1/blueprints/:bp/entities/:id': 'EntityInput',
+};
+
+const qp = (name: string, schema: Record<string, unknown>, description: string) => ({ name, in: 'query', required: false, description, schema });
+const GRAPH_QUERY = [
+  qp('depth', { type: 'integer', minimum: 1, maximum: 6, default: 2 }, 'Hops to follow'),
+  qp('direction', { type: 'string', enum: ['out', 'in', 'both'], default: 'both' }, '`out`: dependencies, `in`: what depends on it (impact analysis)'),
+  qp('limit', { type: 'integer', minimum: 1, maximum: 1000, default: 1000 }, 'Maximum number of nodes'),
+];
+
+/** Query parameters of a route (`METHOD url`). */
+const QUERIES: Record<string, ReturnType<typeof qp>[]> = {
+  'GET /api/v1/blueprints/:bp/entities/:id/docs': [qp('property', { type: 'string' }, 'Which `docs`-format property to read (default: the first one set)')],
+  'GET /api/v1/blueprints/:bp/entities/:id/graph': GRAPH_QUERY,
+  'GET /api/v1/entities/:bp/:id/graph': GRAPH_QUERY,
+  'GET /api/v1/insights': [
+    qp('days', { type: 'integer', minimum: 1, maximum: 365 }, 'Window length in days'),
+    qp('team', { type: 'string' }, 'Only entities owned by this team'),
+    qp('service', { type: 'string' }, 'Only this service (identifier)'),
+    qp('deploymentBlueprint', { type: 'string' }, 'Blueprint holding deployments'),
+    qp('incidentBlueprint', { type: 'string' }, 'Blueprint holding incidents'),
+    qp('deploymentActions', { type: 'string' }, 'Comma-separated actions whose runs count as deployments'),
+  ],
+};
+
+/** Route-specific error descriptions. */
+const ERRORS: Record<string, Record<string, string>> = {
+  'GET /api/v1/blueprints/:bp/entities/:id/docs': {
+    '400': 'The documentation could not be fetched (invalid or blocked URL, too large, or unreachable)',
+    '404': 'Unknown or unreadable entity, or no docs property set',
+  },
 };
 
 const HIDDEN = [/^\/api\/v1\/ingest\//, /^\/api\/auth\//, /^\/api\/openapi/, /^\/api\/docs/];
@@ -202,14 +263,17 @@ export function buildOpenApi(routes: RouteInfo[], version = '0.1.0') {
       operationId,
       tags: [segs.filter((x) => x !== 'api' && x !== 'v1')[0] ?? 'api'],
       summary: `${r.method} ${url}`,
-      parameters: params,
+      parameters: [...params, ...(QUERIES[`${r.method} ${r.url}`] ?? [])],
       ...(body ? { requestBody: { required: true, content: { 'application/json': { schema: { $ref: `#/components/schemas/${body}` } } } } } : {}),
       responses: {
         '200': success(RESPONSES[`${r.method} ${r.url}`]),
-        '400': { description: 'Validation error', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } },
+        '400': {
+          description: ERRORS[`${r.method} ${r.url}`]?.['400'] ?? 'Validation error',
+          content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } },
+        },
         '401': { description: 'Not authenticated' },
         '403': { description: 'Forbidden' },
-        '404': { description: 'Not found' },
+        '404': { description: ERRORS[`${r.method} ${r.url}`]?.['404'] ?? 'Not found' },
       },
     };
   }
