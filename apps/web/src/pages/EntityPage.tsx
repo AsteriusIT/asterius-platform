@@ -163,7 +163,6 @@ function EntityView({ bp, e }: { bp: Blueprint; e: Entity }) {
           <Tabs.Tab value="runs" rightSection={runs.data?.total ? <Badge size="xs">{runs.data.total}</Badge> : undefined}>
             Runs
           </Tabs.Tab>
-          <Tabs.Tab value="history">History</Tabs.Tab>
           <Tabs.Tab value="json">Raw</Tabs.Tab>
         </Tabs.List>
 
@@ -257,10 +256,6 @@ function EntityView({ bp, e }: { bp: Blueprint; e: Entity }) {
 
         <Tabs.Panel value="graph">
           <GraphPanel bp={bp.identifier} id={e.identifier} />
-        </Tabs.Panel>
-
-        <Tabs.Panel value="history">
-          <HistoryPanel bp={bp.identifier} id={e.identifier} />
         </Tabs.Panel>
 
         <Tabs.Panel value="runs">
@@ -385,24 +380,6 @@ function GraphPanel({ bp, id }: { bp: string; id: string }) {
       </Group>
       <QueryView q={q}>{(g) => <RelationGraph graph={g} />}</QueryView>
     </Card>
-  );
-}
-
-function HistoryPanel({ bp, id }: { bp: string; id: string }) {
-  const q = useQuery({ queryKey: ['entity-history', bp, id], queryFn: () => api.history(bp, id) });
-  return (
-    <DataTable
-      rows={q.data?.items}
-      loading={q.isPending}
-      error={q.error}
-      rowKey={(h) => String(h.version)}
-      empty="No recorded change"
-      columns={[
-        { key: 'w', label: 'When', render: (h) => <TimeAgo at={h.at} /> },
-        { key: 'a', label: 'Change', render: (h) => <Mono>{`v${h.version} · ${h.op}`}</Mono> },
-        { key: 'u', label: 'By', render: (h) => h.actor ?? 'system' },
-      ]}
-    />
   );
 }
 

@@ -73,6 +73,27 @@ describe('EntityPage', () => {
     mount('/catalog/service/api?tab=json');
     expect(await screen.findByRole('tab', { name: 'Raw', selected: true })).toBeTruthy();
   });
+
+  it('has each tab once, and the history tab shows one panel with the versions', async () => {
+    vi.spyOn(api, 'history').mockResolvedValue({
+      items: [
+        {
+          version: 1,
+          op: 'create',
+          actor: null,
+          source: 'integration:grafana',
+          at: '2026-11-07T14:00:00Z',
+          diff: [],
+          snapshot: { title: 'API', team: null, properties: {}, relations: {} },
+        },
+      ],
+    } as unknown as Awaited<ReturnType<typeof api.history>>);
+    mount('/catalog/service/api?tab=history');
+    const tabs = (await screen.findAllByRole('tab')).map((t) => t.textContent);
+    expect(tabs).toEqual([...new Set(tabs)]);
+    expect(await screen.findByText('Version 1')).toBeTruthy();
+    expect(screen.getAllByRole('tabpanel')).toHaveLength(1);
+  });
 });
 
 describe('EntityPage docs tab', () => {
