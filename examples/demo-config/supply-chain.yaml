@@ -102,9 +102,32 @@ integrations:
     config:
       secret: ${secret:INGEST_TOKEN}
     mappings:
+      # Vulnerabilities first: the components below point at them. Identifier <service>:<vulnerability id> (Snyk uses
+      # <snyk project id>:<issue key>, so both sources never write the same entity). A delivery is the full set for the service.
+      - kind: bom
+        filter: bomFormat = "CycloneDX" and $exists(metadata.component.name)
+        items: vulnerabilities
+        prune: { relation: service, value: metadata.component.name }
+        entity:
+          blueprint: vulnerability
+          identifier: '$parent.metadata.component.name & ":" & id'
+          title: 'description ? $substring(description, 0, 120) : id'
+          properties:
+            cve: '$contains(id, /^CVE-/) ? id'
+            severity: >-
+              $lowercase(ratings[0].severity) in ["critical", "high", "medium", "low"] ? $lowercase(ratings[0].severity) : "low"
+            package: '$parent.components[`bom-ref` = $$.affects[0].ref].name'
+            version: '$parent.components[`bom-ref` = $$.affects[0].ref].version'
+            status: >-
+              analysis.state in ["resolved", "resolved_with_pedigree"] ? "fixed" :
+              analysis.state in ["false_positive", "not_affected"] ? "ignored" : "open"
+            url: 'advisories[0].url ? advisories[0].url : source.url'
+          relations:
+            service: $parent.metadata.component.name
       - kind: bom
         filter: bomFormat = "CycloneDX" and $exists(metadata.component.name)
         items: components
+        prune: { relation: service, value: metadata.component.name }
         entity:
           blueprint: sbom-component
           identifier: '$parent.metadata.component.name & "/" & (purl ? purl : name & "@" & version)'
@@ -118,3 +141,5 @@ integrations:
             supplier: supplier.name
           relations:
             service: $parent.metadata.component.name
+            vulnerabilities: >-
+              ($ref := `bom-ref`; $parent.vulnerabilities[$ref in affects.ref].($parent.metadata.component.name & ":" & id))

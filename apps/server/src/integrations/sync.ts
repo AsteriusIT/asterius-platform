@@ -18,7 +18,7 @@ import type { MappingDef } from '../schemas.js';
 import { getSource } from './sources/index.js';
 import { orgId, withOrg } from '../orgs/context.js';
 import type { SourceEnv } from './types.js';
-import { mapItem, type Bindings, type Mapped } from './mapping.js';
+import { mapItem, type Bindings, type Mapped, type PruneScope } from './mapping.js';
 import { entitySource, getIntegrationRow, toSyncRun, type IntegrationRow } from './integrations.js';
 
 const LEASE_MS = 30 * 60_000;
@@ -277,10 +277,11 @@ async function applyBatch(integration: string, me: Me, batch: Batch, stats: Sync
   }
 }
 
-async function processItem(mapping: MappingDef, item: unknown, bindings: Bindings, stats: SyncStats, log: SyncLog, batch: Batch) {
+async function processItem(mapping: MappingDef, item: unknown, bindings: Bindings, stats: SyncStats, log: SyncLog, batch: Batch, prunes?: PruneScope[]) {
   try {
-    const { mapped, skipped } = await mapItem(mapping, item, bindings);
+    const { mapped, skipped, prune } = await mapItem(mapping, item, bindings);
     stats.skipped += skipped;
+    if (prune) prunes?.push(prune);
     for (const m of mapped) {
       if (m.delete) batch.deletes.push(m);
       else batch.upserts.push({ kind: mapping.kind, m, merge: mapping.merge });
@@ -509,6 +510,41 @@ async function deleteMissing(
   log.add(`${res.deleted} entities no longer in the source were deleted`);
 }
 
+/**
+ * `prune` on a webhook mapping: the delivery is the complete set for one scope (for example the SBOM of one service).
+ * Deletes the entities of the blueprint that this integration owns (`source`), that point at the scope through the
+ * relation, and that this delivery did not emit. Guards: nothing is pruned when anything in the delivery failed; entities
+ * written after the delivery started (a concurrent delivery on another replica) are kept (`updated_at <= startedAt`);
+ * entities owned by another integration or created by hand are never touched.
+ */
+async function prune(integration: string, scopes: PruneScope[], batch: Batch, startedAt: string, stats: SyncStats, log: SyncLog) {
+  const emitted = new Set(batch.upserts.map((p) => `${p.m.blueprint}/${p.m.identifier}`));
+  const done = new Set<string>();
+  for (const s of scopes) {
+    const key = JSON.stringify([s.blueprint, s.relation, s.target]);
+    if (done.has(key)) continue;
+    done.add(key);
+    const candidates = await all<{ blueprint: string; identifier: string }>(
+      `SELECT e.blueprint, e.identifier FROM entities e
+       JOIN entity_relations r ON r.org_id = e.org_id AND r.blueprint = e.blueprint AND r.identifier = e.identifier
+       WHERE e.org_id = ? AND e.source = ? AND e.blueprint = ? AND e.updated_at <= ? AND r.relation = ? AND r.target_identifier = ?`,
+      orgId(),
+      entitySource(integration),
+      s.blueprint,
+      startedAt,
+      s.relation,
+      s.target,
+    );
+    const stale = candidates.filter((e) => !emitted.has(`${e.blueprint}/${e.identifier}`));
+    if (!stale.length) continue;
+    const res = await deleteEntities(stale, SYSTEM_ACTOR);
+    stats.deleted += res.deleted;
+    stats.skipped += res.refused.length;
+    for (const x of res.refused) log.add(`NOT pruned ${x.blueprint}/${x.identifier}: ${x.error}`);
+    log.add(`${res.deleted} ${s.blueprint} entities no longer in the delivery for ${s.relation}=${s.target} were pruned`);
+  }
+}
+
 // ---------- inbound webhooks ----------
 /**
  * Authenticate an inbound webhook against the raw request bytes. `config.preset` selects the provider's scheme:
@@ -591,8 +627,11 @@ export async function ingest(r: IntegrationRow, payload: unknown, headers: Recor
   const bindings: Bindings = { integration: { identifier: r.identifier, config: json(r.config, {}) }, headers };
   const items = Array.isArray(payload) ? payload : [payload];
   const batch = newBatch();
-  for (const item of items) for (const m of json<MappingDef[]>(r.mappings, [])) await processItem(m, item, bindings, stats, log, batch);
+  const prunes: PruneScope[] = [];
+  const startedAt = now();
+  for (const item of items) for (const m of json<MappingDef[]>(r.mappings, [])) await processItem(m, item, bindings, stats, log, batch, prunes);
   await applyBatch(r.identifier, { priority: Number(r.priority ?? 0), primaryFor: json<string[]>(r.primary_for, []) }, batch, stats, log);
+  if (prunes.length && !stats.failed) await prune(r.identifier, prunes, batch, startedAt, stats, log);
   const t = now();
   await run(
     'INSERT INTO sync_runs (id, org_id, integration, trigger, status, stats, logs, started_at, ended_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',

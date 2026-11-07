@@ -1,6 +1,11 @@
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { FastifyInstance } from 'fastify';
 import { readConfigDir } from '../src/config-loader.js';
+import { ingest } from '../src/integrations/sync.js';
+import { getIntegrationRow } from '../src/integrations/integrations.js';
+import { client, register, testApp, type Api } from './helpers.js';
+import { DEFAULT_ORG, withOrg } from '../src/orgs/context.js';
 import { mapItem } from '../src/integrations/mapping.js';
 import { evaluate } from '../src/lib/expr.js';
 
@@ -8,6 +13,21 @@ const dir = path.resolve(__dirname, '../../../examples/demo-config');
 const loaded = readConfigDir(dir, { platform: false });
 const integration = (id: string) => loaded.data.integrations.find((i) => i.identifier === id)!;
 const bindings = (id: string) => ({ integration: { identifier: id, config: integration(id).config } });
+
+const bom = (service: string, components: string[], vulnerabilities: unknown[] = []) => ({
+  bomFormat: 'CycloneDX',
+  specVersion: '1.5',
+  metadata: { component: { type: 'application', name: service } },
+  components: components.map((n) => ({ type: 'library', name: n, version: '1.0.0', purl: `pkg:npm/${n}@1.0.0`, 'bom-ref': `ref-${n}` })),
+  vulnerabilities,
+});
+const vuln = (id: string, ref: string, severity = 'High', extra: Record<string, unknown> = {}) => ({
+  id,
+  ratings: [{ severity }],
+  affects: [{ ref }],
+  advisories: [{ url: `https://example.test/${id}` }],
+  ...extra,
+});
 
 describe('supply chain examples (examples/demo-config)', () => {
   it('declares the scaffolder golden-path action with valid step references', () => {
@@ -89,7 +109,7 @@ describe('supply chain examples (examples/demo-config)', () => {
         { type: 'library', name: 'left-pad', version: '1.0.0', licenses: [{ expression: 'MIT OR Apache-2.0' }] },
       ],
     };
-    const [m] = integration('sbom').mappings;
+    const [, m] = integration('sbom').mappings;
     const { mapped } = await mapItem(m, bom, bindings('sbom'));
     expect(mapped).toHaveLength(2);
     expect(mapped[0]).toMatchObject({
@@ -123,5 +143,107 @@ describe('supply chain examples (examples/demo-config)', () => {
       no_open_critical: true,
       no_stale_high: true,
     });
+  });
+
+  it('maps CycloneDX vulnerabilities and links the affected components', async () => {
+    const doc = bom(
+      'payment-api',
+      ['lodash', 'left-pad'],
+      [vuln('CVE-2021-23337', 'ref-lodash', 'High'), vuln('GHSA-xxxx', 'ref-lodash', 'bogus', { analysis: { state: 'false_positive' } })],
+    );
+    const [v, c] = integration('sbom').mappings;
+    const vulns = (await mapItem(v, doc, bindings('sbom'))).mapped;
+    expect(vulns).toHaveLength(2);
+    expect(vulns[0]).toMatchObject({
+      blueprint: 'vulnerability',
+      identifier: 'payment-api:CVE-2021-23337',
+      properties: { cve: 'CVE-2021-23337', severity: 'high', package: 'lodash', version: '1.0.0', status: 'open', url: 'https://example.test/CVE-2021-23337' },
+      relations: { service: 'payment-api' },
+    });
+    expect(vulns[1]!.properties).toMatchObject({ severity: 'low', status: 'ignored' });
+    expect(vulns[1]!.properties.cve).toBeUndefined();
+    const comps = (await mapItem(c, doc, bindings('sbom'))).mapped;
+    expect(comps[0]!.relations.vulnerabilities).toEqual(['payment-api:CVE-2021-23337', 'payment-api:GHSA-xxxx']);
+    expect(comps[1]!.relations.vulnerabilities).toBeNull();
+  });
+});
+
+describe('SBOM deliveries (pruning of removed components)', () => {
+  let app: FastifyInstance;
+  let admin: Api;
+  beforeAll(async () => {
+    app = await testApp();
+    admin = client(app, (await register(app, 'admin@example.com')).token);
+    await admin.put('/api/v1/blueprints/service', { title: 'Service', schema: { properties: {} } });
+    for (const b of loaded.data.blueprints.filter((x) => ['vulnerability', 'sbom-component'].includes(x.identifier))) {
+      const r = await admin.put(`/api/v1/blueprints/${b.identifier}`, b);
+      expect(r.status, JSON.stringify(r.data)).toBe(200);
+    }
+    for (const s of ['payment-api', 'other-api']) await admin.put(`/api/v1/blueprints/service/entities/${s}`, { title: s });
+    const sbom = integration('sbom');
+    const saved = await admin.put('/api/v1/integrations/sbom', { title: sbom.title, type: 'webhook', config: { secret: 's3cret' }, mappings: sbom.mappings });
+    expect(saved.status, JSON.stringify(saved.data)).toBe(200);
+  });
+  afterAll(() => app.close());
+
+  const deliver = (doc: unknown) => withOrg(DEFAULT_ORG, async () => ingest(await getIntegrationRow('sbom'), doc, {}));
+  const ids = async (bp: string) =>
+    ((await admin.get(`/api/v1/blueprints/${bp}/entities?limit=100`)).data.items as { identifier: string }[]).map((e) => e.identifier).sort();
+
+  it('prunes what the latest delivery of a service no longer contains, and nothing else', async () => {
+    await admin.put('/api/v1/blueprints/sbom-component/entities/manual-one', {
+      title: 'manual',
+      properties: { purl: 'pkg:x/y', name: 'y' },
+      relations: { service: 'payment-api' },
+    });
+    await deliver(bom('other-api', ['express']));
+    const first = await deliver(bom('payment-api', ['lodash', 'left-pad'], [vuln('CVE-2021-23337', 'ref-lodash')]));
+    expect(first.errors.join('\n')).not.toMatch(/error/i);
+    expect(first).toMatchObject({ failed: 0, deleted: 0 });
+    expect(await ids('sbom-component')).toEqual([
+      'manual-one',
+      'other-api/pkg:npm/express@1.0.0',
+      'payment-api/pkg:npm/left-pad@1.0.0',
+      'payment-api/pkg:npm/lodash@1.0.0',
+    ]);
+    const lodash = (await admin.get('/api/v1/blueprints/sbom-component/entities/payment-api%2Fpkg%3Anpm%2Flodash%401.0.0')).data;
+    expect(lodash.relations.vulnerabilities).toEqual(['payment-api:CVE-2021-23337']);
+    expect(await ids('vulnerability')).toEqual(['payment-api:CVE-2021-23337']);
+
+    const second = await deliver(bom('payment-api', ['lodash']));
+    expect(second).toMatchObject({ failed: 0, deleted: 2 }); // left-pad and the vulnerability that is gone
+    expect(await ids('sbom-component')).toEqual(['manual-one', 'other-api/pkg:npm/express@1.0.0', 'payment-api/pkg:npm/lodash@1.0.0']);
+    expect(await ids('vulnerability')).toEqual([]);
+    const after = (await admin.get('/api/v1/blueprints/sbom-component/entities/payment-api%2Fpkg%3Anpm%2Flodash%401.0.0')).data;
+    expect(after.relations.vulnerabilities ?? null).toBeNull();
+  });
+
+  it('never prunes entities of another source', async () => {
+    const saved = await admin.put('/api/v1/integrations/other-scanner', {
+      title: 'Other scanner',
+      type: 'webhook',
+      config: { secret: 's3cret' },
+      mappings: [
+        {
+          kind: 'finding',
+          entity: {
+            blueprint: 'vulnerability',
+            identifier: '"snyk-proj:" & id',
+            properties: { severity: '"high"', status: '"open"' },
+            relations: { service: '"payment-api"' },
+          },
+        },
+      ],
+    });
+    expect(saved.status, JSON.stringify(saved.data)).toBe(200);
+    await withOrg(DEFAULT_ORG, async () => ingest(await getIntegrationRow('other-scanner'), { id: 'K1' }, {}));
+    await admin.put('/api/v1/blueprints/sbom-component/entities/ui-made', {
+      title: 'ui',
+      properties: { purl: 'pkg:x/z', name: 'z' },
+      relations: { service: 'payment-api' },
+    });
+    await deliver(bom('payment-api', ['lodash']));
+    expect(await ids('vulnerability')).toEqual(['snyk-proj:K1']);
+    expect(await ids('sbom-component')).toContain('ui-made');
   });
 });

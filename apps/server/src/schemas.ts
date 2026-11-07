@@ -605,6 +605,12 @@ export const mappingDef = z.object({
   items: z.string().optional(),
   delete: z.string().optional(),
   merge: z.boolean().default(false),
+  /**
+   * Webhook deliveries only: the delivery is the complete set of entities pointing at `value` through `relation`, so the
+   * entities of this blueprint written by this integration with that relation target that it did not emit are deleted.
+   * `value` is evaluated against the delivered item (not each `items` element).
+   */
+  prune: z.object({ relation: z.string().min(1).max(100), value: z.string().min(1) }).optional(),
   entity: z.object({
     blueprint: slug,
     identifier: z.string().min(1),

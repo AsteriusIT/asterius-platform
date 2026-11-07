@@ -27,6 +27,26 @@ The platform uses one language everywhere: [JSONata](https://jsonata.org).
 
 `url`, `docs` (URL of a markdown file: the entity page gets a **Docs** tab rendering it; the platform fetches it server-side through the SSRF guard, http(s) only, 1 MB cap, GitHub/GitLab `blob` URLs are turned into raw ones, relative links and images resolve against the file URL; `GET /api/v1/blueprints/:bp/entities/:id/docs`), `email`, `date`, `date-time`, `markdown`, `yaml`, `team` (team picker), `user` (user picker, stores the email), `entity` + `blueprint: <id>` (catalog search). Other options: `enum`, `enumColors` (`{ value: color }`), `default`, `minimum`/`maximum`, `pattern`, `hidden` (not shown in tables), and `order` on the schema. Action inputs use the same formats.
 
+## Pruning webhook deliveries
+
+Pull integrations remove vanished entities with `deleteMissing`; a webhook only sees one delivery, so a mapping can declare that
+the delivery is the complete set for one scope with `prune`:
+
+```yaml
+mappings:
+  - kind: bom
+    items: components
+    prune: { relation: service, value: metadata.component.name }   # JSONata on the delivered item
+    entity: { blueprint: sbom-component, ... }
+```
+
+After the delivery is applied, the entities of `entity.blueprint` that have `relation` pointing at `value`, that were written by
+this integration and that the delivery did not emit are deleted (with the usual `onDelete` rules, tombstones, history and events).
+Safe by construction: only entities whose owner is this integration are candidates (hand-made entities and other integrations'
+are never deleted); entities written after the delivery started (concurrent deliveries on other replicas) are kept; nothing is
+pruned when the mapping did not match the item or when anything in the delivery failed. Ingestion writes are not evaluated by
+`policies` (neither upserts nor prunes), like `deleteMissing`; the integration secret is what authorises them.
+
 ## Workflows
 
 A workflow (an *action*) is a **trigger** followed by **steps**. The usual trigger is a form submission (other triggers are described below):
