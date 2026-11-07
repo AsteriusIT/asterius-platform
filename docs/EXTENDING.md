@@ -199,7 +199,7 @@ If the name already exists (422) the run does not fail only when the repository 
 ```
 
 - `organization` is the organization URL and `project` the project, as for the `azure-pipeline` invoker; `templateRepo` and `repo` are repository names in that project (`other-project/repo` selects another project). `templateRef` is a branch, `refs/tags/<tag>` or a commit sha (default: the repository's default branch).
-- `token`: a PAT (sent as Basic) or `Bearer <Entra token>`. PAT scope: **Code (Read & write)**; Code (Status) is not needed.
+- `token`: a PAT (sent as Basic) or `Bearer <Entra token>`. PAT scope: **Code (Read & write)** for `pull-request`, **Code (Read, write, & manage)** for `new-repository` (see the token table).
 - `pull-request`: creates `branch` from `baseBranch` (default `main`) if it does not exist, otherwise pushes on top of it (existing files are `edit`ed, others `add`ed), then opens a PR, or reuses the active PR for the same source and target. Optional `reviewers`: reviewer ids (array or comma separated string); `description` replaces the PR body.
 - `new-repository`: creates `repo` in the project and pushes the files to `defaultBranch` (default `main`) in a first commit; `prUrl` is `null`. An existing repository is reused only if it is empty, or when `reuseExisting: true` (the push then lands on `defaultBranch`). The Azure DevOps API has no repository description; `description` is appended to the commit message.
 - Output: `repoUrl` (repository web URL), `prUrl` (`<repoUrl>/pullrequest/<id>`), `commit` (id of the pushed commit) and `number` (pull request id).
@@ -212,12 +212,28 @@ Token scopes (least privilege):
 
 | Provider | Needed |
 | --- | --- |
-| GitHub fine-grained token | `Contents: write` + `Pull requests: write` on the target repository (and `Contents: read` on the template). `new-repository` additionally needs `Administration: write` (organization/account level) and, with `team`, `Members: read`/team admin. Templates containing `.github/workflows/*` need `Workflows: write`. |
+| GitHub fine-grained token | `Contents: write` (blobs, trees, commits, refs, contents, branch rename) + `Pull requests: write` on the target repository; `Contents: read` on the template. `new-repository` additionally needs `Administration: write` or the `Repository creation` permission to create the repository (`POST /orgs/{org}/repos`, `POST /user/repos`), `Administration: write` for `topics` and `team` (`PUT /orgs/{org}/teams/{team}/repos/…`). Templates containing `.github/workflows/*` need `Workflows: write`. [1] |
 | GitHub classic token | `repo` (`workflow` if the template contains `.github/workflows/*`; `admin:org` only for `team`). |
-| GitLab | `api` (project access tokens: role Developer for `pull-request`, Maintainer/group Owner to create projects). |
-| Azure DevOps PAT | `Code (Read & write)` for both modes. Creating a repository (`new-repository`) requires the *Create repository* permission on the project/organization for the PAT owner (a project-level permission, not a PAT scope; `Code (Read, write, & manage)` also covers it). |
+| GitLab | `api`. `write_repository` is **not** enough: it only covers Git over HTTP and "does not support API authentication", while this invoker uses the REST API (commits, merge requests, projects). Project access tokens: role Developer for `pull-request`, Maintainer/group Owner to create projects. [2] |
+| Azure DevOps PAT | `Code (Read & write)` (`vso.code_write`) for `pull-request` (pushes, branches, pull requests). `new-repository` needs `Code (Read, write, & manage)` (`vso.code_manage`), the scope documented for *Repositories - Create*, **and** the *Create repository* permission of the PAT owner on the project (a security permission, not a PAT scope). Code (Status) is not needed. [3] |
+
+Sources (checked against the public documentation): [1] docs.github.com/en/rest/authentication/permissions-required-for-fine-grained-personal-access-tokens; [2] docs.gitlab.com/security/tokens/access_token_scopes/; [3] learn.microsoft.com/en-us/azure/devops/integrate/get-started/authentication/oauth (scope table) and learn.microsoft.com/en-us/rest/api/azure/devops/git/repositories/create (`vso.code_manage`), `.../git/pushes/create` (`vso.code_write`).
+
+**Re-runs and no-op pushes.** All three providers skip files whose content already matches the branch: GitHub compares the contents API payload (and the tree sha for `new-repository`), GitLab compares `GET /projects/:id/repository/files/:path?ref=` with the rendered content, Azure DevOps compares the item `objectId` with the git blob id of the rendered content. When nothing differs no commit/push is made and `commit` is the current branch tip; an existing open PR/MR is reused. (The GitLab commits docs only mention `allow_empty` for empty commits and say nothing about no-op updates, so the invoker does not rely on the server's behaviour.)
 
 Safeguards enforced by the invoker: `apiUrl` / `baseUrl` / `organization` must be `https` URLs without credentials and, like every outbound call, go through the SSRF guard (private, loopback and link-local addresses are refused unless allow-listed in `OUTBOUND_ALLOW`; plain `http` is only accepted for allow-listed hosts). Repository and ref names are restricted to plain segments (no `..`, `?`, `#`). Only `token` may be a `${secret:…}`/`${env:…}` reference: it is rejected in `variables`, `title`, `description`, `branch` and paths because the resolved value would be committed, and a final check refuses to publish any file containing the token or the run callback token. The token is masked in errors and logs. Rendered paths cannot be absolute, contain `..`, `\` or control characters, or enter `.git/` (any case). Writing `.github/workflows/` is allowed but logs a warning: a workflow runs with repository secrets once merged, so keep the PR review required and grant the `workflow` scope only when templates need it. Each successful publish writes a `scaffold.published` audit entry (provider, mode, repoUrl, prUrl, branch, file count; no token).
+
+#### Manual verification against live providers
+
+The scaffolder is tested against in-process fakes of the GitHub, GitLab and Azure DevOps APIs, not live accounts. Before relying on it, run once per provider with a throwaway repository and a token with exactly the scopes above:
+
+- `pull-request`: first run opens a PR/MR; re-run with the same run inputs adds no commit and reuses the PR/MR; change a template file and re-run to see one commit with only that file.
+- `new-repository`: creates the repository (GitHub org and user owners, GitLab nested group via `namespace`, Azure DevOps project); a second run fails with "already exists and is not empty" and succeeds with `reuseExisting: true` without a new commit.
+- GitHub: default branch rename when the account default is not `main`; `topics` and `team` (needs `Administration`); a template with `.github/workflows/*` (needs `Workflows: write`, otherwise 403/404).
+- GitLab: token with only `write_repository` is rejected (confirms `api` is required); self-managed `baseUrl`; a binary file survives base64 round-trip; protected default branch behaviour for `reuseExisting`.
+- Azure DevOps: PAT with only `Code (Read & write)` fails to create a repository, `Code (Read, write, & manage)` without the *Create repository* permission also fails; Entra `Bearer` token; `reviewers` by id; edit of an identical file is skipped (blob id match) including a CRLF/binary file.
+- Secrets: confirm the token never appears in run logs, the commit, or error messages on a failing run (e.g. revoked token).
+- MCP: see "Manual verification" in docs/MCP.md.
 
 Every invoker can also receive callbacks, for example a GitHub workflow that reports progress and the URL of what it created.
 

@@ -37,8 +37,17 @@
 
 1. In the Keycloak realm, create a client for the connector (or let the client register itself if you allow dynamic client
    registration). Use the standard flow with PKCE (public client, or confidential if the connector supports a secret) and
-   add the connector's redirect URI (Claude.ai: `https://claude.ai/api/mcp/auth_callback`; ChatGPT: the callback shown in
-   its connector settings).
+   add the connector's redirect URI:
+   - **Claude** (claude.ai web, Desktop, mobile, Cowork): `https://claude.ai/api/mcp/auth_callback`, documented at
+     claude.com/docs/connectors/building/authentication. Claude Code uses a loopback redirect on a random port
+     (`http://localhost:<port>/callback`, `http://127.0.0.1:<port>/callback`): match it ignoring the port. Claude registers via
+     DCR or a Client ID Metadata Document; it always sends PKCE S256 and needs the authorization server reachable from
+     `160.79.104.0/21`.
+   - **ChatGPT**: `https://chatgpt.com/connector_platform_oauth_redirect` (stable) or the callback-ID-specific
+     `https://chatgpt.com/connector/oauth/{callback_id}`, per developers.openai.com/apps-sdk/build/auth; use the exact URI
+     shown on the connector's management page. ChatGPT supports CIMD (`https://chatgpt.com/oauth/client.json`) and DCR.
+   These values come from the vendors' documentation at the time of writing and can change: check the client's current
+   documentation if sign-in fails with a redirect mismatch.
 2. Add an **audience mapper** to that client (Client scopes -> `<client>-dedicated` -> Add mapper -> *Audience*): set
    *Included custom audience* to `https://<your-host>/api/mcp`, and enable *Add to access token*. Without it Keycloak issues
    tokens with `aud: account` and the platform refuses them. Alternatively add the client id to `MCP_OAUTH_AUDIENCES` and
@@ -49,3 +58,9 @@
    you use on the platform.
 
 Claude Code and scripts can keep using `--header "Authorization: Bearer ast_…"`.
+
+## Manual verification
+
+Not testable without live accounts; check once per environment: Claude.ai custom connector and ChatGPT connector sign-in
+against your Keycloak (redirect URI accepted, `aud` mapper works, token refresh after expiry), tool listing and a
+read-only tool call, and that a user without catalog access sees only permitted entities through the connector.

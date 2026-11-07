@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { http, UpstreamError } from '../../../lib/http.js';
 import { guardedDownload } from '../../../lib/netguard.js';
 import { str } from '../../types.js';
@@ -62,7 +63,16 @@ async function branchTip(c: ScaffoldConfig, url: string, branch: string): Promis
   return res.data.value?.find((r) => r.name === `refs/heads/${branch}`)?.objectId ?? null;
 }
 
-/** One commit holding all files (`add`, or `edit` for files that already exist on the branch) pushed on `branch`. */
+/** Git blob id (sha1 of "blob <size>\0<bytes>") of base64 content, comparable with an ADO item's `objectId`. */
+const blobId = (b64: string) => {
+  const buf = Buffer.from(b64, 'base64');
+  return createHash('sha1').update(`blob ${buf.length}\0`).update(buf).digest('hex');
+};
+
+/**
+ * One commit holding the files that differ from the branch (`add`, or `edit` for existing files with other content)
+ * pushed on `branch`. Unchanged files are skipped; when nothing changed no push is made and `oldObjectId` (the tip) is returned.
+ */
 async function pushFiles(
   c: ScaffoldConfig,
   url: string,
@@ -75,11 +85,14 @@ async function pushFiles(
   for (const f of ctx.files) {
     let exists = false;
     if (branchExists) {
-      const found = await http(`${url}/items?path=${encodeURIComponent(`/${f.path}`)}${version(branch)}&${API}`, { headers: headers(c) }).catch((e) => {
+      const found = await http<{ objectId?: string }>(`${url}/items?path=${encodeURIComponent(`/${f.path}`)}${version(branch)}&${API}`, {
+        headers: headers(c),
+      }).catch((e) => {
         if (notFound(e)) return undefined;
         throw e;
       });
       exists = !!found;
+      if (found?.data.objectId && found.data.objectId.toLowerCase() === blobId(f.content)) continue;
     }
     changes.push({
       changeType: exists ? 'edit' : 'add',
@@ -87,6 +100,7 @@ async function pushFiles(
       newContent: { content: f.content, contentType: 'base64encoded' },
     });
   }
+  if (!changes.length) return oldObjectId;
   const push = await http<{ commits?: Array<{ commitId: string }>; refUpdates?: Array<{ newObjectId?: string }> }>(`${url}/pushes?${API}`, {
     method: 'POST',
     headers: headers(c),
