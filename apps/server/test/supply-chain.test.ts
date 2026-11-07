@@ -10,6 +10,14 @@ const integration = (id: string) => loaded.data.integrations.find((i) => i.ident
 const bindings = (id: string) => ({ integration: { identifier: id, config: integration(id).config } });
 
 describe('supply chain examples (examples/demo-config)', () => {
+  it('declares the scaffolder golden-path action with valid step references', () => {
+    const action = loaded.data.actions.find((a) => a.identifier === 'scaffold-service-template')!;
+    const steps = (action.steps ?? []) as { id: string; invoker?: Record<string, unknown> }[];
+    expect(steps.map((s) => s.id)).toEqual(['create', 'register']);
+    expect(steps[0]!.invoker).toMatchObject({ type: 'scaffolder', provider: 'github', mode: 'new-repository' });
+    expect(JSON.stringify(steps[1]!.invoker)).toContain('steps.create.output.repoUrl');
+  });
+
   it('declares the blueprints and the scorecard', () => {
     const ids = loaded.data.blueprints.map((b) => b.identifier);
     expect(ids).toEqual(expect.arrayContaining(['vulnerability', 'sbom-component']));
