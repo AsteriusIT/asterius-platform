@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import { ActionIcon, Alert, Anchor, Badge, Box, Breadcrumbs, Center, Code, Group, Loader, Stack, Text, ThemeIcon, Title, Tooltip } from '@mantine/core';
 import { Link } from 'react-router';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { IconAlertTriangle, IconInbox, IconRefresh } from '@tabler/icons-react';
 import type { RunStatus } from '@asterius/shared';
@@ -149,10 +149,26 @@ export function StatusBadge({ status, label }: { status: RunStatus; label?: stri
   return label ? <Tooltip label={label}>{badge}</Tooltip> : badge;
 }
 
-export function Markdown({ children }: { children: string }) {
+/** Resolves a relative link / image against the document it came from (`#anchors` stay as they are). */
+export function resolveAgainst(value: string, base: string) {
+  if (value.startsWith('#')) return value;
+  try {
+    return new URL(value, base).toString();
+  } catch {
+    return value;
+  }
+}
+
+export function Markdown({ children, baseUrl }: { children: string; baseUrl?: string }) {
   return (
     <Box fz="sm" style={{ lineHeight: 1.55 }} className="markdown">
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{children}</ReactMarkdown>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        urlTransform={baseUrl ? (url) => defaultUrlTransform(resolveAgainst(url, baseUrl)) : undefined}
+        components={baseUrl ? { a: ({ node: _n, ...p }) => <a {...p} target="_blank" rel="noreferrer" /> } : undefined}
+      >
+        {children}
+      </ReactMarkdown>
     </Box>
   );
 }

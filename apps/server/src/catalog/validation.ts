@@ -10,14 +10,16 @@ const addFormats = addFormatsModule as unknown as (ajv: Ajv) => Ajv;
 
 const ajv = new Ajv({ allErrors: true, strict: false, useDefaults: true, coerceTypes: false });
 addFormats(ajv);
-ajv.addFormat('url', (v: string) => {
+const isHttpUrl = (v: string) => {
   try {
     const u = new URL(v);
     return u.protocol === 'http:' || u.protocol === 'https:';
   } catch {
     return false;
   }
-});
+};
+ajv.addFormat('url', isHttpUrl);
+ajv.addFormat('docs', isHttpUrl);
 // UI hints: no extra validation.
 for (const f of ['markdown', 'yaml', 'team', 'user', 'entity', 'text']) ajv.addFormat(f, true);
 

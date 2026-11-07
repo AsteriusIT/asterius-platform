@@ -149,7 +149,7 @@ export interface PropertySchema {
   type: 'string' | 'number' | 'integer' | 'boolean' | 'array' | 'object';
   title?: string;
   description?: string;
-  /** url · email · date · date-time · markdown · yaml · team · user · entity (with `blueprint`) */
+  /** url · docs (URL of a markdown file, shown as the entity's Docs tab) · email · date · date-time · markdown · yaml · team · user · entity (with `blueprint`) */
   format?: string;
   /** For format `entity`: the blueprint the value points to. */
   blueprint?: string;

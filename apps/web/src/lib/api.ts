@@ -248,6 +248,8 @@ export const api = {
     };
   },
   entity: (bp: string, id: string) => request<Entity>('GET', v1(`/blueprints/${enc(bp)}/entities/${enc(id)}`)),
+  entityDocs: (bp: string, id: string) =>
+    request<{ property: string; url: string; markdown: string }>('GET', v1(`/blueprints/${enc(bp)}/entities/${enc(id)}/docs`)),
   related: (bp: string, id: string) => request<RelatedEntities>('GET', v1(`/blueprints/${enc(bp)}/entities/${enc(id)}/related`)),
   createEntity: (bp: string, body: unknown) => request<Entity>('POST', v1(`/blueprints/${enc(bp)}/entities`), body),
   saveEntity: (bp: string, id: string, body: unknown) => request<Entity>('PUT', v1(`/blueprints/${enc(bp)}/entities/${enc(id)}`), body),

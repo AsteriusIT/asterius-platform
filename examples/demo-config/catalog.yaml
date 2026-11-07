@@ -28,8 +28,9 @@ blueprints:
           }
         repositoryUrl: { type: string, title: Repository, format: url }
         runbook: { type: string, title: Runbook, format: url }
+        docs: { type: string, title: Documentation, format: docs, description: URL of a markdown file (GitHub/GitLab blob URLs work), shown in the Docs tab }
         onCall: { type: string, title: On-call, format: email }
-      order: [lifecycle, tier, language, repositoryUrl, runbook, onCall]
+      order: [lifecycle, tier, language, repositoryUrl, docs, runbook, onCall]
     relations:
       system: { title: System, target: system }
       dependsOn: { title: Depends on, target: service, many: true }
