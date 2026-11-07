@@ -36,6 +36,7 @@ import { ExplainRun } from '../components/AiAssistant';
 import { splitJobLog, STEP_STATUS_COLORS, STEP_STATUS_LABELS, STEP_TYPES } from '../lib/workflow';
 import { PropertyValue } from '../components/PropertyValue';
 import { initialValues, SchemaForm, validateValues, type FormValues } from '../components/SchemaForm';
+import { UserChip } from '../components/UserChip';
 
 const PAGE = 30;
 const onError = (e: unknown) => notifications.show({ color: 'red', message: errorText(e) });
@@ -59,7 +60,7 @@ const runColumns = [
     ),
   },
   { key: 's', label: 'Status', render: (r: Run) => <StatusBadge status={r.status} label={r.statusLabel} /> },
-  { key: 'u', label: 'Requested by', render: (r: Run) => r.triggeredBy.name },
+  { key: 'u', label: 'Requested by', render: (r: Run) => <UserChip user={r.triggeredBy} /> },
   { key: 't', label: 'When', render: (r: Run) => <TimeAgo at={r.createdAt} /> },
   { key: 'd', label: 'Duration', render: (r: Run) => <Text fz="sm">{r.startedAt ? duration(r.startedAt, r.endedAt) : '—'}</Text> },
 ];
@@ -423,7 +424,7 @@ function RunView({ r }: { r: Run }) {
             <Card>
               <Table withRowBorders={false} verticalSpacing={4} highlightOnHover={false} fz="sm">
                 <Table.Tbody>
-                  <Row k="Requested by" v={`${r.triggeredBy.name} <${r.triggeredBy.email}>`} />
+                  <Row k="Requested by" v={<UserChip user={r.triggeredBy} />} />
                   {r.trigger && r.trigger.type !== 'form' && <Row k="Started by" v={r.trigger.type} />}
                   {r.entity && (
                     <Row
@@ -528,7 +529,14 @@ function ApprovalTimeline({ approvals }: { approvals: Run['approvals'] }) {
           key={a.userId + a.at}
           color={a.decision === 'approved' ? 'green' : 'red'}
           bullet={a.decision === 'approved' ? <IconCheck size={12} /> : <IconX size={12} />}
-          title={`${a.userName} ${a.decision}`}
+          title={
+            <Group gap={6}>
+              <UserChip user={{ id: a.userId, name: a.userName }} />
+              <Text span fz="sm">
+                {a.decision}
+              </Text>
+            </Group>
+          }
         >
           {a.comment && <Text fz="sm">{a.comment}</Text>}
           <Text fz="xs" c="dimmed">

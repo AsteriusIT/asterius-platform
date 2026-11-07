@@ -5,6 +5,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { EntityVersion } from '@asterius/shared';
 import { api, errorText } from '../lib/api';
 import { Empty, QueryView, TimeAgo } from './ui';
+import { UserChip } from './UserChip';
 
 const show = (v: unknown) => (v === null || v === undefined ? '∅' : typeof v === 'string' ? v : JSON.stringify(v));
 const OP_COLORS: Record<EntityVersion['op'], string> = { create: 'green', update: 'blue', delete: 'red', revert: 'orange', restore: 'teal' };
@@ -49,7 +50,7 @@ export function EntityHistory({ blueprint, identifier, canEdit }: { blueprint: s
                       Version {v.version}
                     </Text>
                     <Text fz="sm" c="dimmed">
-                      by {v.actor ?? v.source} via {v.source} · <TimeAgo at={v.at} />
+                      by {v.actor ? <UserChip user={v.actor} size="xs" /> : v.source} via {v.source} · <TimeAgo at={v.at} />
                     </Text>
                   </Group>
                   {canEdit && i > 0 && v.op !== 'delete' && (

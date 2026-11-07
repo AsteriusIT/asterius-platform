@@ -6,6 +6,7 @@ import { IconArrowBackUp, IconGitCompare } from '@tabler/icons-react';
 import type { ActionVersionDiff } from '@asterius/shared';
 import { api, errorText } from '../../lib/api';
 import { QueryView, TimeAgo } from '../ui';
+import { UserChip } from '../UserChip';
 
 /** Version history of a workflow: who changed it and when, a diff with the previous version, and rollback. */
 
@@ -70,7 +71,7 @@ export function ActionHistory({ identifier, current, onRestored }: { identifier:
               <Group justify="space-between">
                 <Group gap="xs">
                   <Badge variant={v.version === current ? 'filled' : 'light'}>v{v.version}</Badge>
-                  <Text fz="sm">{v.actor ?? 'system'}</Text>
+                  <UserChip user={v.actor} />
                   <Text fz="xs" c="dimmed">
                     <TimeAgo at={v.at} />
                     {v.note ? ` · ${v.note}` : ''}

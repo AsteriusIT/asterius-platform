@@ -10,6 +10,7 @@ import { useAuth } from '../lib/auth';
 import { useAppMutation } from '../lib/queryClient';
 import { DataTable } from '../components/DataTable';
 import { PageHeader, TimeAgo } from '../components/ui';
+import { UserChip } from '../components/UserChip';
 
 /** Shows a freshly created token once. */
 export function NewTokenAlert({ token, onClose }: { token: string | null; onClose: () => void }) {
@@ -63,7 +64,7 @@ export function TokenTable({ all }: { all?: boolean }) {
           ),
         },
         { key: 'p', label: 'Token', render: (t) => <Code>{t.prefix}…</Code> },
-        ...(all ? [{ key: 'u', label: 'Owner', render: (t: ApiToken) => t.userName }] : []),
+        ...(all ? [{ key: 'u', label: 'Owner', render: (t: ApiToken) => <UserChip user={{ id: t.userId, name: t.userName }} /> }] : []),
         { key: 'c', label: 'Created', render: (t) => <TimeAgo at={t.createdAt} /> },
         { key: 'e', label: 'Expires', render: (t) => (t.expiresAt ? <TimeAgo at={t.expiresAt} /> : <Badge color="gray">never</Badge>) },
         { key: 'l', label: 'Last used', render: (t) => <TimeAgo at={t.lastUsedAt} /> },

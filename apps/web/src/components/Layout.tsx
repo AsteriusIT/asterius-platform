@@ -54,14 +54,7 @@ import { useT } from '../lib/i18n';
 import { CommandPalette } from './CommandPalette';
 import { NotificationCenter } from './NotificationCenter';
 import { BrandLogo, BrandMark } from './Brand';
-
-const initials = (name = '') =>
-  name
-    .split(/\s+/)
-    .map((p) => p[0])
-    .join('')
-    .slice(0, 2)
-    .toUpperCase();
+import { initials } from './UserChip';
 
 /**
  * LibreChat-like shell: soft sidebar (brand, navigation, account at the bottom), white canvas, slim header. On desktop the

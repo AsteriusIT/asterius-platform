@@ -19,6 +19,7 @@ import { CodeBlock } from '../components/CodeEditor';
 import { EntityIcon } from '../components/icons';
 import { RelationGraph } from '../components/RelationGraph';
 import { Empty, LevelBadge, Markdown, Mono, PageHeader, QueryView, StatusBadge, TimeAgo } from '../components/ui';
+import { UserChip } from '../components/UserChip';
 
 export function EntityPage() {
   const { bp = '', id = '' } = useParams();
@@ -277,7 +278,7 @@ function EntityView({ bp, e }: { bp: Blueprint; e: Entity }) {
                 ),
               },
               { key: 's', label: 'Status', render: (r) => <StatusBadge status={r.status} label={r.statusLabel} /> },
-              { key: 'u', label: 'By', render: (r) => r.triggeredBy.name },
+              { key: 'u', label: 'By', render: (r) => <UserChip user={r.triggeredBy} /> },
               { key: 't', label: 'When', render: (r) => <TimeAgo at={r.createdAt} /> },
             ]}
           />

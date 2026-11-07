@@ -12,6 +12,7 @@ import { notifyError, useAppMutation } from '../../lib/queryClient';
 import { DataTable } from '../../components/DataTable';
 import { InlineCode } from '../../components/CodeEditor';
 import { Mono, PageHeader, QueryView, TimeAgo } from '../../components/ui';
+import { UserChip } from '../../components/UserChip';
 
 const PAGE = 50;
 
@@ -90,7 +91,7 @@ export function AuditAdmin() {
         empty="No audit entry matches"
         columns={[
           { key: 'w', label: 'When', render: (a) => <TimeAgo at={a.at} /> },
-          { key: 'u', label: 'Who', render: (a) => <Text fz="sm">{a.actorEmail ?? 'system'}</Text> },
+          { key: 'u', label: 'Who', render: (a) => <UserChip user={a.actorEmail} /> },
           { key: 'a', label: 'Action', render: (a) => <Mono>{a.action}</Mono> },
           {
             key: 't',
