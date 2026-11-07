@@ -155,6 +155,21 @@ Child runs belong to the parent's requester, link to the parent (`parent`), are 
 | `gitlab-pipeline` | `baseUrl`, `project`, `ref`, `variables`, `token` | polls the pipeline |
 | `kubernetes-job` | `namespace`, `image`, `command`, `args`, `env`, `serviceAccountName`, `resources`, `securityContext` (pod; non-root by default), `activeDeadlineSeconds`, `context` | polls the Job (fails fast on image or config errors) and collects the pod logs |
 | `catalog` | `operation: upsert\|delete`, `blueprint`, `identifier`, `title`, `team`, `properties`, `relations`, `merge`, `cascade` (delete: also the entities that point to it) | immediate |
+| `tekton` | `pipeline`, `namespace`, `params`, `serviceAccountName`, `context` | creates a `PipelineRun` of an existing Pipeline and follows its `Succeeded` condition (the platform's service account needs create/get/patch on `pipelineruns.tekton.dev`) |
+| `scaffolder` | `provider: github\|gitlab\|azure-devops`, `mode: pull-request\|new-repository`, `templateRepo`, `templatePath`, `templateRef`, `repo`, `baseBranch`, `targetPath`, `variables`, `title`, `branch`, `token`, `apiUrl`/`baseUrl` | renders a template repository (`{{ variable }}` placeholders in paths and text files; unknown variables fail) and publishes it. Immediate; output below |
+
+### Scaffolder output and modes
+
+The scaffolder result has a stable shape, usable by later steps (`{{ steps.scaffold.output.prUrl }}`):
+
+```json
+{ "repoUrl": "https://github.com/org/new", "prUrl": "https://github.com/org/new/pull/7", "branch": "scaffold/abcdef12",
+  "commit": "<sha of the branch tip>", "provider": "github", "files": ["README.md", "src/index.ts"] }
+```
+
+`pullRequest` (same as `prUrl`) and `number` (PR/MR number) are still returned for compatibility. `prUrl` is `null` when no pull request is opened.
+
+`mode: pull-request` (default) pushes a branch to the existing repository `repo` and opens a PR/MR; implemented for `github` and `gitlab`. `mode: new-repository` and the `azure-devops` provider are accepted by the schema but fail with "not supported yet for provider X" until implemented. Code lives in `apps/server/src/actions/invokers/scaffolder/`: `config.ts` (zod schema), `types.ts` (`ScaffoldPublisher`, `ScaffoldOutput`), one module per provider registered in `index.ts`.
 
 Every invoker can also receive callbacks, for example a GitHub workflow that reports progress and the URL of what it created.
 
