@@ -236,6 +236,8 @@ scorecards:
 
 **Relations** accept `onDelete` (`ignore` default, `restrict`, `cascade`, `detach`), `inverseTitle` (name of the reverse relation on the target page) and `requireExisting` (entities written from the UI or API must point to existing entities). Changing a relation target re-indexes automatically; `POST /blueprints/:bp/repair-relations` rebuilds the index from the entities.
 
+**Supply chain.** Vulnerability and SBOM blueprints, Snyk and CycloneDX mappings and a security scorecard are described in [SUPPLY-CHAIN.md](SUPPLY-CHAIN.md).
+
 **Dashboards.** Widgets: `count` (optionally `groupBy` a property, `team` or `source`), `scorecard`, `runs`, `approvals`, `table` (a saved view), `markdown`. A dashboard with `default: true` is the home page; with `team:` it is the home page of that team; with `blueprint:` it appears on that blueprint's catalog page.
 
 ## Outbound webhooks
