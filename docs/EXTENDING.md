@@ -156,7 +156,7 @@ Child runs belong to the parent's requester, link to the parent (`parent`), are 
 | `kubernetes-job` | `namespace`, `image`, `command`, `args`, `env`, `serviceAccountName`, `resources`, `securityContext` (pod; non-root by default), `activeDeadlineSeconds`, `context` | polls the Job (fails fast on image or config errors) and collects the pod logs |
 | `catalog` | `operation: upsert\|delete`, `blueprint`, `identifier`, `title`, `team`, `properties`, `relations`, `merge`, `cascade` (delete: also the entities that point to it) | immediate |
 | `tekton` | `pipeline`, `namespace`, `params`, `serviceAccountName`, `context` | creates a `PipelineRun` of an existing Pipeline and follows its `Succeeded` condition (the platform's service account needs create/get/patch on `pipelineruns.tekton.dev`) |
-| `scaffolder` | `provider: github\|gitlab\|azure-devops`, `mode: pull-request\|new-repository`, `templateRepo`, `templatePath`, `templateRef`, `repo`, `baseBranch`, `targetPath`, `variables`, `title`, `branch`, `token`, `apiUrl`/`baseUrl` | renders a template repository (`{{ variable }}` placeholders in paths and text files; unknown variables fail) and publishes it. Immediate; output below |
+| `scaffolder` | `provider: github\|gitlab\|azure-devops`, `mode: pull-request\|new-repository`, `templateRepo`, `templatePath`, `templateRef`, `repo`, `baseBranch`, `targetPath`, `variables`, `title`, `branch`, `token`, `apiUrl`/`baseUrl`, new-repository: `description`, `visibility`, `defaultBranch`, `reuseExisting`, GitLab `namespace` | renders a template repository (`{{ variable }}` placeholders in paths and text files; unknown variables fail) and publishes it. Immediate; output below |
 
 ### Scaffolder output and modes
 
@@ -170,6 +170,8 @@ The scaffolder result has a stable shape, usable by later steps (`{{ steps.scaff
 `pullRequest` (same as `prUrl`) and `number` (PR/MR number) are still returned for compatibility. `prUrl` is `null` when no pull request is opened.
 
 `mode: pull-request` (default) pushes a branch to the existing repository `repo` and opens a PR/MR; implemented for `github` and `gitlab`. `mode: new-repository` and the `azure-devops` provider are accepted by the schema but fail with "not supported yet for provider X" until implemented. Code lives in `apps/server/src/actions/invokers/scaffolder/`: `config.ts` (zod schema), `types.ts` (`ScaffoldPublisher`, `ScaffoldOutput`), one module per provider registered in `index.ts`.
+
+GitLab `mode: new-repository` creates the project (`POST /projects`) and pushes the files as the initial commit; `prUrl` is `null`, `repoUrl` is the project `web_url`. `repo` is the project path (`group/sub/name`); alternatively `repo: name` plus `namespace: group/sub`. Optional: `description`, `visibility` (`private` default, `internal`, `public`), `defaultBranch` (default `baseBranch` or `main`). If the project already exists it is used only when empty or with `reuseExisting: true` (files are then committed on its default branch, existing paths updated); otherwise the run fails. In `pull-request` mode a re-run is idempotent: an existing branch receives the commit on top of it (existing files are updated) and an open MR for the same source/target branches is reused (same `prUrl`/`number`).
 
 Every invoker can also receive callbacks, for example a GitHub workflow that reports progress and the URL of what it created.
 
