@@ -542,7 +542,7 @@ export async function deleteApiToken(id: string, userId?: string) {
 
 const lastUsedWrites = new Map<string, number>();
 
-interface Resolved {
+export interface Resolved {
   user: UserRow;
   /** API tokens fix the organization of the request. */
   token?: NonNullable<Principal['token']> & { ipAllow: string[] | null; org: string };
@@ -636,7 +636,7 @@ async function resolveOrg(req: FastifyRequest, user: UserRow, tokenOrg?: string)
 }
 
 /** Enter the organization of the request and build its principal. */
-async function principalFor(req: FastifyRequest, found: Resolved): Promise<Principal> {
+export async function principalFor(req: FastifyRequest, found: Resolved): Promise<Principal> {
   const org = await resolveOrg(req, found.user, found.token?.org);
   if (org) enterOrg(org.id);
   return principalOf(found.user, org);

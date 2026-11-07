@@ -33,6 +33,9 @@ const redirectUri = () => `${trim(config.PUBLIC_URL)}/api/auth/keycloak/callback
 /** Account console: password, MFA, passkeys, linked identities. */
 export const accountUrl = () => (keycloakEnabled() ? `${issuer()}/account` : null);
 
+/** Back-channel JWKS URL of the realm (verifies tokens issued by `issuer()`). */
+export const keycloakJwksUrl = () => `${oidc(backBase())}/certs`;
+
 let jwks: JWTVerifyGetKey | undefined;
 const keys = () => (jwks ??= createRemoteJWKSet(new URL(`${oidc(backBase())}/certs`)));
 

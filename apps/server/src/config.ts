@@ -165,6 +165,17 @@ const schema = z.object({
   KEYCLOAK_CLIENT_ID: z.string().default('asterius-platform'),
   KEYCLOAK_CLIENT_SECRET: z.string().optional(),
 
+  // ---- MCP OAuth 2.1 (remote MCP clients: Claude.ai, ChatGPT connectors) ----
+  /**
+   * Extra OIDC issuers whose access tokens (JWT) are accepted as Bearer on the MCP endpoint, besides the Keycloak realm
+   * and OIDC_ISSUER. The first of Keycloak realm, OIDC_ISSUER, then these is advertised as the authorization server.
+   */
+  MCP_OAUTH_ISSUERS: list,
+  /** Accepted `aud` values besides the MCP resource URL itself (typically the client id of the connector). */
+  MCP_OAUTH_AUDIENCES: list,
+  /** Scopes advertised in the protected resource metadata. */
+  MCP_OAUTH_SCOPES: z.string().default('openid profile email'),
+
   // ---- organizations ----
   /** Who may create organizations: everyone signed in (self-service sign-up) or platform super-admins only. */
   ORG_CREATION: z.enum(['everyone', 'superadmin']).default('everyone'),

@@ -40,7 +40,7 @@ import { collectRoutes, registerOpenApi } from './openapi.js';
 
 const VERSION = process.env.APP_VERSION ?? '0.1.0';
 import { aiRoutes } from './routes/ai.js';
-import { mcpRoutes } from './routes/mcp.js';
+import { mcpMetadataRoutes, mcpRoutes } from './routes/mcp.js';
 
 export interface AppOptions {
   reloadConfig?: (org?: string) => Promise<void>;
@@ -144,6 +144,7 @@ export async function buildApp(opts: AppOptions = {}): Promise<FastifyInstance> 
   await app.register(authRoutes);
   await app.register(scimRoutes);
   await app.register(orgRoutes, { reloadConfig: opts.reloadConfig ?? (async () => undefined) });
+  await app.register(mcpMetadataRoutes);
   await app.register(mcpRoutes, { prefix: '/api' }); // documented address; also under /api/v1
   await app.register(
     async (v1) => {
