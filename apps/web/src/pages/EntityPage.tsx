@@ -18,7 +18,7 @@ import { EntityEditor } from '../components/EntityEditor';
 import { CodeBlock } from '../components/CodeEditor';
 import { EntityIcon } from '../components/icons';
 import { RelationGraph } from '../components/RelationGraph';
-import { Empty, LevelBadge, Mono, PageHeader, QueryView, StatusBadge, TimeAgo } from '../components/ui';
+import { Empty, LevelBadge, Markdown, Mono, PageHeader, QueryView, StatusBadge, TimeAgo } from '../components/ui';
 
 export function EntityPage() {
   const { bp = '', id = '' } = useParams();
@@ -27,7 +27,7 @@ export function EntityPage() {
   return <QueryView q={blueprint}>{(b) => <QueryView q={entity}>{(e) => <EntityView bp={b} e={e} />}</QueryView>}</QueryView>;
 }
 
-const TABS = ['overview', 'graph', 'history', 'runs', 'json'];
+const TABS = ['overview', 'docs', 'graph', 'history', 'runs', 'json'];
 
 const entityLink = (e: Pick<Entity, 'blueprint' | 'identifier'>) => `/catalog/${e.blueprint}/${encodeURIComponent(e.identifier)}`;
 
@@ -42,6 +42,7 @@ function EntityView({ bp, e }: { bp: Blueprint; e: Entity }) {
   const links = Object.entries(bp.schema.properties)
     .filter(([k, p]) => p.format === 'url' && typeof e.properties[k] === 'string' && /^https?:\/\//.test(e.properties[k] as string))
     .map(([k, p]) => ({ label: p.title ?? k, href: e.properties[k] as string }));
+  const hasDocs = Object.entries(bp.schema.properties).some(([k, p]) => p.format === 'docs' && typeof e.properties[k] === 'string' && !!e.properties[k]);
   const related = useQuery({ queryKey: ['related', bp.identifier, e.identifier], queryFn: () => api.related(bp.identifier, e.identifier) });
   const actions = useQuery({ queryKey: ['entity-actions', bp.identifier, e.identifier], queryFn: () => api.entityActions(bp.identifier, e.identifier) });
   const runs = useQuery({
@@ -156,6 +157,7 @@ function EntityView({ bp, e }: { bp: Blueprint; e: Entity }) {
       <Tabs value={tab} onChange={(t) => setParams(t && t !== 'overview' ? { tab: t } : {}, { replace: true })} keepMounted={false}>
         <Tabs.List mb="md">
           <Tabs.Tab value="overview">Overview</Tabs.Tab>
+          {hasDocs && <Tabs.Tab value="docs">Docs</Tabs.Tab>}
           <Tabs.Tab value="graph">Graph</Tabs.Tab>
           <Tabs.Tab value="history">History</Tabs.Tab>
           <Tabs.Tab value="runs" rightSection={runs.data?.total ? <Badge size="xs">{runs.data.total}</Badge> : undefined}>
@@ -246,6 +248,12 @@ function EntityView({ bp, e }: { bp: Blueprint; e: Entity }) {
             </Grid.Col>
           </Grid>
         </Tabs.Panel>
+
+        {hasDocs && (
+          <Tabs.Panel value="docs">
+            <DocsPanel bp={bp.identifier} id={e.identifier} />
+          </Tabs.Panel>
+        )}
 
         <Tabs.Panel value="graph">
           <GraphPanel bp={bp.identifier} id={e.identifier} />
@@ -340,6 +348,19 @@ function ScorecardCard({ result }: { result: ScorecardResult }) {
         ))}
       </Stack>
     </Card>
+  );
+}
+
+function DocsPanel({ bp, id }: { bp: string; id: string }) {
+  const q = useQuery({ queryKey: ['entity-docs', bp, id], queryFn: () => api.entityDocs(bp, id) });
+  return (
+    <QueryView q={q}>
+      {(d) => (
+        <Card withBorder>
+          <Markdown baseUrl={d.url}>{d.markdown}</Markdown>
+        </Card>
+      )}
+    </QueryView>
   );
 }
 

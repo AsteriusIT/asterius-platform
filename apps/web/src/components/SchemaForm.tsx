@@ -41,7 +41,7 @@ export function validateValues(schema: ObjectSchema, values: FormValues): Record
       else if (p.minLength !== undefined && v.length < p.minLength) errors[k] = `At least ${p.minLength} characters`;
       else if (p.maxLength !== undefined && v.length > p.maxLength) errors[k] = `At most ${p.maxLength} characters`;
       else if (p.format === 'email' && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v)) errors[k] = 'Must be an email address';
-      else if (p.format === 'url' && !/^https?:\/\/\S+$/.test(v)) errors[k] = 'Must be an http(s) URL';
+      else if ((p.format === 'url' || p.format === 'docs') && !/^https?:\/\/\S+$/.test(v)) errors[k] = 'Must be an http(s) URL';
     } else if (typeof v === 'number') {
       if (p.minimum !== undefined && v < p.minimum) errors[k] = `At least ${p.minimum}`;
       else if (p.maximum !== undefined && v > p.maximum) errors[k] = `At most ${p.maximum}`;
@@ -230,7 +230,15 @@ function Field({
       />
     );
   const type =
-    p.format === 'date' ? 'date' : p.format === 'date-time' ? 'datetime-local' : p.format === 'email' ? 'email' : p.format === 'url' ? 'url' : 'text';
+    p.format === 'date'
+      ? 'date'
+      : p.format === 'date-time'
+        ? 'datetime-local'
+        : p.format === 'email'
+          ? 'email'
+          : p.format === 'url' || p.format === 'docs'
+            ? 'url'
+            : 'text';
   return <TextInput {...common} type={type} value={str(value)} onChange={(e) => onChange(e.currentTarget.value)} maxLength={p.maxLength} />;
 }
 

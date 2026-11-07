@@ -26,6 +26,7 @@ import {
   upsertEntities,
   upsertEntity,
 } from '../catalog/entities.js';
+import { docsUrlOf, fetchDocs } from '../catalog/docs.js';
 import { entityGraph, MAX_DEPTH, MAX_NODES } from '../catalog/graph.js';
 import { parseFilterParams } from '../catalog/query.js';
 import { nextPageHeaders } from '../lib/cursor.js';
@@ -291,6 +292,15 @@ export async function catalogRoutes(app: FastifyInstance) {
         edges: g.edges.filter((e) => !hidden.has(key(e.from)) && !hidden.has(key(e.to))),
       };
     });
+  /** Markdown of the entity's `docs` property, fetched server-side through the SSRF guard. */
+  app.get('/blueprints/:bp/entities/:id/docs', async (req) => {
+    const { bp, id } = entityParam.parse(req.params);
+    const { property } = z.object({ property: z.string().optional() }).parse(req.query);
+    const e = await getEntity(bp, id);
+    if (!(await canRead(req.principal, e))) throw notFound(`Entity ${bp}/${id}`);
+    const doc = docsUrlOf(await getBlueprintCached(bp), e, property);
+    return { property: doc.property, ...(await fetchDocs(doc.url)) };
+  });
   app.get('/blueprints/:bp/entities/:id/related', async (req) => {
     const { bp, id } = entityParam.parse(req.params);
     if (!(await canRead(req.principal, await getEntity(bp, id)))) throw notFound(`Entity ${bp}/${id}`);

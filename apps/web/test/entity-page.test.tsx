@@ -36,9 +36,16 @@ const entity = {
   updatedAt: '',
 } as Entity;
 
+let docsOn = false;
+const bpWithDocs = () => (docsOn = true);
+
 function mount(url: string) {
-  vi.spyOn(api, 'blueprint').mockResolvedValue(bp);
-  vi.spyOn(api, 'entity').mockResolvedValue(entity);
+  const withDocs = docsOn;
+  docsOn = false;
+  vi.spyOn(api, 'blueprint').mockResolvedValue(
+    withDocs ? ({ ...bp, schema: { properties: { docs: { type: 'string', format: 'docs' } } } } as unknown as Blueprint) : bp,
+  );
+  vi.spyOn(api, 'entity').mockResolvedValue(withDocs ? ({ ...entity, properties: { docs: 'https://x/y.md' } } as Entity) : entity);
   vi.spyOn(api, 'related').mockResolvedValue({ outgoing: {}, incoming: {} });
   vi.spyOn(api, 'entityActions').mockResolvedValue([]);
   vi.spyOn(api, 'runs').mockResolvedValue({ items: [], total: 0 });
@@ -65,5 +72,25 @@ describe('EntityPage', () => {
   it('opens the tab named in the URL', async () => {
     mount('/catalog/service/api?tab=json');
     expect(await screen.findByRole('tab', { name: 'Raw', selected: true })).toBeTruthy();
+  });
+});
+
+describe('EntityPage docs tab', () => {
+  it('renders the docs of a docs property with relative links resolved', async () => {
+    bpWithDocs();
+    vi.spyOn(api, 'entityDocs').mockResolvedValue({
+      property: 'docs',
+      url: 'https://raw.example/acme/api/main/docs/index.md',
+      markdown: '# Guide\n\n[more](more.md)',
+    });
+    mount('/catalog/service/api?tab=docs');
+    expect(await screen.findByRole('heading', { name: 'Guide' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'more' }).getAttribute('href')).toBe('https://raw.example/acme/api/main/docs/more.md');
+  });
+
+  it('has no Docs tab without a docs property', async () => {
+    mount('/catalog/service/api');
+    await screen.findByText('Overview');
+    expect(screen.queryByRole('tab', { name: 'Docs' })).toBeNull();
   });
 });

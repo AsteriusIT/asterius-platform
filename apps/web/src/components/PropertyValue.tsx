@@ -26,7 +26,7 @@ export function PropertyValue({ schema, value, compact }: { schema?: PropertySch
   if (typeof value === 'object') return <Code block={!compact}>{JSON.stringify(value, null, compact ? 0 : 2)}</Code>;
   const s = String(value);
   if (schema?.enum || schema?.enumColors) return <Badge color={schema.enumColors?.[s] ?? 'gray'}>{s}</Badge>;
-  if (format === 'url')
+  if (format === 'url' || format === 'docs')
     return (
       <Anchor href={s} target="_blank" rel="noreferrer" fz="sm" style={{ overflowWrap: 'anywhere' }}>
         {compact ? s.replace(/^https?:\/\//, '').slice(0, 48) : s}

@@ -25,7 +25,7 @@ The platform uses one language everywhere: [JSONata](https://jsonata.org).
 
 ## Blueprint property formats
 
-`url`, `email`, `date`, `date-time`, `markdown`, `yaml`, `team` (team picker), `user` (user picker, stores the email), `entity` + `blueprint: <id>` (catalog search). Other options: `enum`, `enumColors` (`{ value: color }`), `default`, `minimum`/`maximum`, `pattern`, `hidden` (not shown in tables), and `order` on the schema. Action inputs use the same formats.
+`url`, `docs` (URL of a markdown file: the entity page gets a **Docs** tab rendering it; the platform fetches it server-side through the SSRF guard, http(s) only, 1 MB cap, GitHub/GitLab `blob` URLs are turned into raw ones, relative links and images resolve against the file URL; `GET /api/v1/blueprints/:bp/entities/:id/docs`), `email`, `date`, `date-time`, `markdown`, `yaml`, `team` (team picker), `user` (user picker, stores the email), `entity` + `blueprint: <id>` (catalog search). Other options: `enum`, `enumColors` (`{ value: color }`), `default`, `minimum`/`maximum`, `pattern`, `hidden` (not shown in tables), and `order` on the schema. Action inputs use the same formats.
 
 ## Workflows
 
