@@ -1,0 +1,2 @@
+# OrbStack's kubelet serves a self-signed certificate.
+args: [--kubelet-insecure-tls]

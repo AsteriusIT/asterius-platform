@@ -1,0 +1,102 @@
+# Asterius Platform on the local OrbStack cluster, every Kubernetes component of the chart turned on.
+# Secrets are not here: they live in OpenBao and reach the pods through External Secrets (manifests/platform-secrets.yaml).
+# install.sh adds the non-secret values of the repository's .env (Entra ids…) with --set.
+
+image:
+  repository: asterius-platform # built locally: docker build -t asterius-platform:local .
+  tag: local
+  pullPolicy: Never # OrbStack's Kubernetes shares the Docker image store
+
+publicUrl: https://platform.k8s.orb.local
+
+api:
+  replicas: 2
+  autoscaling: { enabled: true, minReplicas: 2, maxReplicas: 4, targetCPUUtilizationPercentage: 70 }
+worker:
+  replicas: 2
+  concurrency: 4
+
+database:
+  cnpg:
+    enabled: true
+    instances: 2
+    storage: 2Gi
+
+# ExternalSecret asterius-platform-secrets (OpenBao secret/asterius-platform/env): SECRETS_KEY, METRICS_TOKEN,
+# BOOTSTRAP_TOKEN and the secrets of .env (ANTHROPIC_API_KEY, ENTRA_CLIENT_SECRET…).
+secrets:
+  existingSecret: asterius-platform-secrets
+
+auth:
+  # .env uses Keycloak; local accounts are kept for the first admin (sign up with the BOOTSTRAP_TOKEN).
+  providers: keycloak,local
+  allowRegistration: true
+
+keycloak:
+  enabled: true
+  host: platform-id.k8s.orb.local
+  existingSecret: asterius-platform-keycloak # ExternalSecret (OpenBao secret/asterius-platform/keycloak)
+  database:
+    url: jdbc:postgresql://keycloak-db-rw:5432/keycloak # CNPG cluster of manifests/platform-secrets.yaml
+  ingress:
+    className: traefik
+    annotations:
+      cert-manager.io/cluster-issuer: local-ca
+    tlsSecretName: platform-id-tls
+    exposeAdmin: true # admin console at https://platform-id.k8s.orb.local/admin/
+
+config:
+  useImageDefaults: true # demo blueprints, actions and integrations baked in the image
+
+migrations:
+  job:
+    enabled: true
+
+ingress:
+  enabled: true
+  className: traefik
+  host: platform.k8s.orb.local
+  annotations:
+    cert-manager.io/cluster-issuer: local-ca
+  tls:
+    enabled: true
+    secretName: platform-tls
+
+networkPolicy:
+  enabled: true
+  ingressNamespaceSelector:
+    kubernetes.io/metadata.name: traefik
+  monitoringNamespaceSelector:
+    kubernetes.io/metadata.name: observability
+
+# Invokers and integrations may call in-cluster services (OpenBao, Grafana, Keycloak…).
+outbound:
+  allow: ["*.svc", "*.svc.cluster.local", "192.168.194.0/24"]
+
+rbac:
+  clusterRead:
+    enabled: true
+  jobNamespaces: [asterius-jobs]
+
+metrics:
+  tokenInExistingSecret: true
+  serviceMonitor:
+    enabled: true
+  prometheusRule:
+    enabled: true
+  dashboard:
+    enabled: true
+
+# ${vault:secret/apps/<path>#key} in actions and integrations: OpenBao with Kubernetes auth, using a projected
+# service-account token (the API pods do not automount one).
+extraEnv:
+  VAULT_ADDR: http://openbao.openbao.svc:8200
+  VAULT_K8S_ROLE: asterius-platform
+  VAULT_K8S_JWT_PATH: /var/run/secrets/openbao/token
+extraVolumes:
+  - name: openbao-token
+    projected:
+      sources:
+        - serviceAccountToken: { path: token, expirationSeconds: 3600 }
+extraVolumeMounts:
+  - { name: openbao-token, mountPath: /var/run/secrets/openbao, readOnly: true }

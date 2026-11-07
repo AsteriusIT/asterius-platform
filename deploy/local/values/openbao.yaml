@@ -1,0 +1,52 @@
+# OpenBao (open-source Vault fork) in standalone mode, namespace openbao.
+# Static auto-unseal: the key lives in the Secret openbao-unseal-key (created by install.sh), so OpenBao unseals
+# itself after every OrbStack restart. Local trial only: in production use a KMS / transit seal.
+injector:
+  enabled: false
+ui:
+  enabled: true
+server:
+  standalone:
+    enabled: true
+    config: |
+      ui = true
+      listener "tcp" {
+        tls_disable = 1
+        address = "[::]:8200"
+        cluster_address = "[::]:8201"
+        telemetry {
+          unauthenticated_metrics_access = "true"
+        }
+      }
+      storage "pebbledb" {
+        path = "/openbao/data/pebbledb"
+      }
+      seal "static" {
+        current_key_id = "local-1"
+        current_key = "file:///openbao/unseal/key"
+      }
+      telemetry {
+        prometheus_retention_time = "30s"
+        disable_hostname = true
+      }
+  volumes:
+    - name: unseal
+      secret: { secretName: openbao-unseal-key }
+  volumeMounts:
+    - { name: unseal, mountPath: /openbao/unseal, readOnly: true }
+  dataStorage:
+    size: 1Gi
+  ingress:
+    enabled: true
+    ingressClassName: traefik
+    annotations:
+      cert-manager.io/cluster-issuer: local-ca
+    hosts:
+      - host: openbao.k8s.orb.local
+        paths: []
+    tls:
+      - secretName: openbao-tls
+        hosts: [openbao.k8s.orb.local]
+serverTelemetry:
+  serviceMonitor:
+    enabled: true
