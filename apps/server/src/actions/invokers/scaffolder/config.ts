@@ -29,6 +29,17 @@ export const scaffoldConfigSchema = z.looseObject({
   apiUrl: optionalString,
   /** GitLab base URL (also read as the GitHub API URL when `apiUrl` is not set). */
   baseUrl: optionalString,
+  /** new-repository: description, visibility (github: private|internal|public, default private), topics, default branch = `baseBranch`. */
+  description: optionalString,
+  visibility: optionalString,
+  topics: z.union([z.array(z.string()), z.string()]).optional(),
+  /** github new-repository: team slug (organisation repositories) granted `teamPermission` (default push) on the new repository. */
+  team: optionalString,
+  teamPermission: optionalString,
+  /** github new-repository: `org` or `user`; detected from the token owner when not set. */
+  ownerType: optionalString,
+  /** github new-repository: push onto a repository that already exists and is not empty (empty ones are always filled). */
+  reuseExisting: z.union([z.boolean(), z.string()]).optional(),
   /** azure-devops */
   organization: optionalString,
   project: optionalString,
