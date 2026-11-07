@@ -78,6 +78,14 @@ export const cssVariablesResolver: CSSVariablesResolver = () => ({
     '--text-3': '#8f8f8f',
     '--code-bg': '#f6f6f6',
     '--card-shadow-hover': '0 0 0 1px rgba(0,0,0,0.06), 0 10px 30px rgba(0,0,0,0.08)',
+    // syntax highlighting (JSON / YAML views)
+    '--tok-key': '#0e7490',
+    '--tok-string': '#15803d',
+    '--tok-number': '#b45309',
+    '--tok-literal': '#7c3aed',
+    '--tok-comment': '#8f8f8f',
+    '--tok-punct': '#6b7280',
+    '--tok-template': '#c026d3',
   },
   dark: {
     '--mantine-color-body': '#212121',
@@ -93,5 +101,12 @@ export const cssVariablesResolver: CSSVariablesResolver = () => ({
     '--text-3': '#8a8a8a',
     '--code-bg': '#1a1a1a',
     '--card-shadow-hover': '0 0 0 1px rgba(255,255,255,0.12), 0 10px 30px rgba(0,0,0,0.45)',
+    '--tok-key': '#67e8f9',
+    '--tok-string': '#86efac',
+    '--tok-number': '#fcd34d',
+    '--tok-literal': '#c4b5fd',
+    '--tok-comment': '#7c7c7c',
+    '--tok-punct': '#9ca3af',
+    '--tok-template': '#f0abfc',
   },
 });

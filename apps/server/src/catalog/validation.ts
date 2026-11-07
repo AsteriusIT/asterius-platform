@@ -2,6 +2,7 @@ import { Ajv, type ErrorObject, type ValidateFunction } from 'ajv';
 import addFormatsModule from 'ajv-formats';
 import type { ObjectSchema } from '@asterius/shared';
 import { badRequest } from '../lib/errors.js';
+import { LRU } from '../lib/lru.js';
 
 /** JSON Schema validation of entity properties and action inputs (Ajv). */
 
@@ -9,18 +10,20 @@ const addFormats = addFormatsModule as unknown as (ajv: Ajv) => Ajv;
 
 const ajv = new Ajv({ allErrors: true, strict: false, useDefaults: true, coerceTypes: false });
 addFormats(ajv);
-ajv.addFormat('url', (v: string) => {
+const isHttpUrl = (v: string) => {
   try {
     const u = new URL(v);
     return u.protocol === 'http:' || u.protocol === 'https:';
   } catch {
     return false;
   }
-});
+};
+ajv.addFormat('url', isHttpUrl);
+ajv.addFormat('docs', isHttpUrl);
 // UI hints: no extra validation.
 for (const f of ['markdown', 'yaml', 'team', 'user', 'entity', 'text']) ajv.addFormat(f, true);
 
-const cache = new Map<string, ValidateFunction>();
+const cache = new LRU<string, ValidateFunction>(500);
 
 export const toJsonSchema = (s: ObjectSchema) => ({
   type: 'object',
@@ -38,7 +41,6 @@ export function validator(s: ObjectSchema): ValidateFunction {
     } catch (err) {
       throw badRequest(`Invalid schema: ${(err as Error).message}`);
     }
-    if (cache.size > 500) cache.clear();
     cache.set(key, v);
   }
   return v;

@@ -1,20 +1,25 @@
 import { useState } from 'react';
-import { Anchor, Badge, Button, Card, Grid, Group, Menu, SimpleGrid, Stack, Table, Tabs, Text, Tooltip } from '@mantine/core';
+import { Anchor, Badge, Button, Card, Grid, Group, Menu, SegmentedControl, SimpleGrid, Stack, Table, Tabs, Text, Tooltip } from '@mantine/core';
 import { modals } from '@mantine/modals';
 import { notifications } from '@mantine/notifications';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link, useNavigate, useParams } from 'react-router';
-import { IconChevronDown, IconDots, IconPencil, IconTrash } from '@tabler/icons-react';
-import type { Action, Blueprint, Entity } from '@asterius/shared';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
+import { IconCheck, IconChevronDown, IconDots, IconPencil, IconTrash, IconX } from '@tabler/icons-react';
+import type { Action, Blueprint, Entity, ScorecardResult } from '@asterius/shared';
 import { api, errorText } from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { formOf } from '../lib/permissions';
 import { PropertyValue } from '../components/PropertyValue';
 import { orderedFields } from '../components/SchemaForm';
 import { ActionRunModal } from '../components/ActionRunModal';
+import { EntityHistory } from '../components/EntityHistory';
 import { DataTable } from '../components/DataTable';
-import { ResourceEditor } from '../components/ResourceEditor';
+import { EntityEditor } from '../components/EntityEditor';
+import { CodeBlock } from '../components/CodeEditor';
 import { EntityIcon } from '../components/icons';
-import { Empty, Mono, PageHeader, QueryView, StatusBadge, TimeAgo } from '../components/ui';
+import { RelationGraph } from '../components/RelationGraph';
+import { Empty, LevelBadge, Markdown, Mono, PageHeader, QueryView, StatusBadge, TimeAgo } from '../components/ui';
+import { UserChip } from '../components/UserChip';
 
 export function EntityPage() {
   const { bp = '', id = '' } = useParams();
@@ -22,6 +27,8 @@ export function EntityPage() {
   const entity = useQuery({ queryKey: ['entity', bp, id], queryFn: () => api.entity(bp, id) });
   return <QueryView q={blueprint}>{(b) => <QueryView q={entity}>{(e) => <EntityView bp={b} e={e} />}</QueryView>}</QueryView>;
 }
+
+const TABS = ['overview', 'docs', 'graph', 'history', 'runs', 'json'];
 
 const entityLink = (e: Pick<Entity, 'blueprint' | 'identifier'>) => `/catalog/${e.blueprint}/${encodeURIComponent(e.identifier)}`;
 
@@ -31,6 +38,12 @@ function EntityView({ bp, e }: { bp: Blueprint; e: Entity }) {
   const qc = useQueryClient();
   const [runAction, setRunAction] = useState<Action | null>(null);
   const [editing, setEditing] = useState(false);
+  const [params, setParams] = useSearchParams();
+  const tab = TABS.includes(params.get('tab') ?? '') ? params.get('tab')! : 'overview';
+  const links = Object.entries(bp.schema.properties)
+    .filter(([k, p]) => p.format === 'url' && typeof e.properties[k] === 'string' && /^https?:\/\//.test(e.properties[k] as string))
+    .map(([k, p]) => ({ label: p.title ?? k, href: e.properties[k] as string }));
+  const hasDocs = Object.entries(bp.schema.properties).some(([k, p]) => p.format === 'docs' && typeof e.properties[k] === 'string' && !!e.properties[k]);
   const related = useQuery({ queryKey: ['related', bp.identifier, e.identifier], queryFn: () => api.related(bp.identifier, e.identifier) });
   const actions = useQuery({ queryKey: ['entity-actions', bp.identifier, e.identifier], queryFn: () => api.entityActions(bp.identifier, e.identifier) });
   const runs = useQuery({
@@ -38,15 +51,24 @@ function EntityView({ bp, e }: { bp: Blueprint; e: Entity }) {
     queryFn: () => api.runs({ blueprint: bp.identifier, entity: e.identifier, limit: 20 }),
     refetchInterval: 15_000,
   });
+  const scorecards = useQuery({
+    queryKey: ['entity-scorecards', bp.identifier, e.identifier],
+    queryFn: () => api.entityScorecards(bp.identifier, e.identifier),
+  });
   const canEdit = (isAdmin || (!!e.team && user?.teams.some((t) => t.identifier === e.team))) && !e.source.startsWith('integration:');
 
-  const day2 = (actions.data ?? []).filter((a) => a.trigger?.on === 'day-2');
-  const deletes = (actions.data ?? []).filter((a) => a.trigger?.on === 'delete');
+  const day2 = (actions.data ?? []).filter((a) => formOf(a)?.on === 'day-2');
+  const deletes = (actions.data ?? []).filter((a) => formOf(a)?.on === 'delete');
 
   const remove = () =>
     modals.openConfirmModal({
       title: `Delete ${e.title}?`,
-      children: <Text fz="sm">This removes the entity from the catalog only. Use a decommission action to also remove the real resources.</Text>,
+      children: (
+        <Text fz="sm">
+          This removes the entity from the catalog only (an admin can restore it for a limited time). Use a decommission action to also remove the real
+          resources.
+        </Text>
+      ),
       labels: { confirm: 'Delete', cancel: 'Cancel' },
       confirmProps: { color: 'red' },
       onConfirm: async () => {
@@ -63,9 +85,10 @@ function EntityView({ bp, e }: { bp: Blueprint; e: Entity }) {
   return (
     <Stack>
       <PageHeader
-        crumbs={[{ label: bp.title, to: `/catalog/${bp.identifier}` }, { label: e.identifier }]}
+        crumbs={[{ label: 'Catalog', to: '/catalog' }, { label: bp.title, to: `/catalog/${bp.identifier}` }, { label: e.identifier }]}
         title={e.title}
         icon={bp.icon}
+        refresh={[related, actions, runs, { refetch: () => qc.refetchQueries({ queryKey: ['entity', bp.identifier, e.identifier] }) }]}
         description={
           <Group gap="xs" component="span">
             {e.team && <Badge color="gray">{e.team}</Badge>}
@@ -106,7 +129,7 @@ function EntityView({ bp, e }: { bp: Blueprint; e: Entity }) {
                 <Menu.Dropdown>
                   {canEdit && (
                     <Menu.Item leftSection={<IconPencil size={16} />} onClick={() => setEditing(true)}>
-                      Edit as YAML
+                      Edit
                     </Menu.Item>
                   )}
                   {deletes.map((a) => (
@@ -132,9 +155,12 @@ function EntityView({ bp, e }: { bp: Blueprint; e: Entity }) {
         }
       />
 
-      <Tabs defaultValue="overview" keepMounted={false}>
+      <Tabs value={tab} onChange={(t) => setParams(t && t !== 'overview' ? { tab: t } : {}, { replace: true })} keepMounted={false}>
         <Tabs.List mb="md">
           <Tabs.Tab value="overview">Overview</Tabs.Tab>
+          {hasDocs && <Tabs.Tab value="docs">Docs</Tabs.Tab>}
+          <Tabs.Tab value="graph">Graph</Tabs.Tab>
+          <Tabs.Tab value="history">History</Tabs.Tab>
           <Tabs.Tab value="runs" rightSection={runs.data?.total ? <Badge size="xs">{runs.data.total}</Badge> : undefined}>
             Runs
           </Tabs.Tab>
@@ -160,6 +186,18 @@ function EntityView({ bp, e }: { bp: Blueprint; e: Entity }) {
                         </Table.Td>
                       </Table.Tr>
                     ))}
+                    {Object.entries(bp.computed ?? {}).map(([k, c]) => (
+                      <Table.Tr key={`computed-${k}`}>
+                        <Table.Td w="35%" c="dimmed" fz="sm" style={{ verticalAlign: 'top' }}>
+                          <Tooltip label={`Computed (${c.kind})`}>
+                            <span>{c.title ?? k}</span>
+                          </Tooltip>
+                        </Table.Td>
+                        <Table.Td>
+                          <PropertyValue value={e.computed?.[k]} />
+                        </Table.Td>
+                      </Table.Tr>
+                    ))}
                     {Object.keys(e.properties)
                       .filter((k) => !bp.schema.properties[k])
                       .map((k) => (
@@ -178,17 +216,47 @@ function EntityView({ bp, e }: { bp: Blueprint; e: Entity }) {
             </Grid.Col>
             <Grid.Col span={{ base: 12, md: 5 }}>
               <Stack>
+                {(scorecards.data ?? []).map((sc) => (
+                  <ScorecardCard key={sc.scorecard} result={sc} />
+                ))}
+                {links.length > 0 && (
+                  <Card>
+                    <Text fw={600} mb="xs">
+                      Links
+                    </Text>
+                    <Stack gap={4}>
+                      {links.map((l) => (
+                        <Anchor key={l.href} href={l.href} target="_blank" rel="noopener noreferrer" fz="sm">
+                          {l.label}
+                        </Anchor>
+                      ))}
+                    </Stack>
+                  </Card>
+                )}
                 <QueryView q={related}>
                   {(rel) => (
                     <>
                       <RelationCard title="Relations" groups={Object.entries(bp.relations).map(([name, r]) => [r.title ?? name, rel.outgoing[name] ?? []])} />
-                      <RelationCard title="Referenced by" groups={Object.entries(rel.incoming).map(([k, list]) => [k.replace('.', ' · '), list])} />
+                      <RelationCard
+                        title="Referenced by"
+                        groups={Object.entries(rel.incoming).map(([k, list]) => [rel.incomingTitles?.[k] ?? k.replace('.', ' · '), list])}
+                      />
                     </>
                   )}
                 </QueryView>
               </Stack>
             </Grid.Col>
           </Grid>
+        </Tabs.Panel>
+
+        {hasDocs && (
+          <Tabs.Panel value="docs">
+            <DocsPanel bp={bp.identifier} id={e.identifier} />
+          </Tabs.Panel>
+        )}
+
+        <Tabs.Panel value="graph">
+          <GraphPanel bp={bp.identifier} id={e.identifier} />
         </Tabs.Panel>
 
         <Tabs.Panel value="runs">
@@ -210,33 +278,109 @@ function EntityView({ bp, e }: { bp: Blueprint; e: Entity }) {
                 ),
               },
               { key: 's', label: 'Status', render: (r) => <StatusBadge status={r.status} label={r.statusLabel} /> },
-              { key: 'u', label: 'By', render: (r) => r.triggeredBy.name },
+              { key: 'u', label: 'By', render: (r) => <UserChip user={r.triggeredBy} /> },
               { key: 't', label: 'When', render: (r) => <TimeAgo at={r.createdAt} /> },
             ]}
           />
         </Tabs.Panel>
 
+        <Tabs.Panel value="history">
+          <EntityHistory blueprint={bp.identifier} identifier={e.identifier} canEdit={!!canEdit} />
+        </Tabs.Panel>
+
         <Tabs.Panel value="json">
           <Card>
-            <pre style={{ margin: 0, fontSize: 12, overflowX: 'auto' }}>{JSON.stringify(e, null, 2)}</pre>
+            <CodeBlock code={JSON.stringify(e, null, 2)} />
           </Card>
         </Tabs.Panel>
       </Tabs>
 
       <ActionRunModal action={runAction} entity={e} onClose={() => setRunAction(null)} />
-      <ResourceEditor
-        title={`Edit ${e.title}`}
-        isNew={false}
-        value={editing ? { identifier: e.identifier, title: e.title, team: e.team, properties: e.properties, relations: e.relations } : null}
+      <EntityEditor
+        blueprint={bp}
+        entity={e}
+        opened={editing}
         onClose={() => setEditing(false)}
-        onSave={async (_id, body) => {
-          const saved = await api.saveEntity(bp.identifier, e.identifier, body);
+        onSaved={(saved) => {
           qc.setQueryData(['entity', bp.identifier, e.identifier], saved);
           void qc.invalidateQueries({ queryKey: ['related'] });
-          return saved;
+          void qc.invalidateQueries({ queryKey: ['history'] });
+          void qc.invalidateQueries({ queryKey: ['entity-scorecards'] });
         }}
       />
     </Stack>
+  );
+}
+
+function ScorecardCard({ result }: { result: ScorecardResult }) {
+  return (
+    <Card>
+      <Group justify="space-between" mb="sm">
+        <Text fw={600}>{result.scorecardTitle}</Text>
+        <Group gap="xs">
+          <Text fz="xs" c="dimmed">
+            {result.passed}/{result.total} rules
+          </Text>
+          <LevelBadge level={result.level} color={result.levelColor} />
+        </Group>
+      </Group>
+      <Stack gap={4}>
+        {result.rules.map((r) => (
+          <Group key={r.rule} gap="xs" wrap="nowrap" align="flex-start">
+            {r.passed ? <IconCheck size={16} color="var(--mantine-color-green-6)" /> : <IconX size={16} color="var(--mantine-color-red-6)" />}
+            <Text fz="sm" style={{ flex: 1 }}>
+              {r.title}
+              {r.error && (
+                <Text span fz="xs" c="red">
+                  {' '}
+                  ({r.error})
+                </Text>
+              )}
+            </Text>
+            <Badge size="xs" color="gray" variant="outline">
+              {r.level}
+            </Badge>
+          </Group>
+        ))}
+      </Stack>
+    </Card>
+  );
+}
+
+function DocsPanel({ bp, id }: { bp: string; id: string }) {
+  const q = useQuery({ queryKey: ['entity-docs', bp, id], queryFn: () => api.entityDocs(bp, id) });
+  return (
+    <QueryView q={q}>
+      {(d) => (
+        <Card withBorder>
+          <Markdown baseUrl={d.url}>{d.markdown}</Markdown>
+        </Card>
+      )}
+    </QueryView>
+  );
+}
+
+function GraphPanel({ bp, id }: { bp: string; id: string }) {
+  const [depth, setDepth] = useState('2');
+  const q = useQuery({ queryKey: ['entity-graph', bp, id, depth], queryFn: () => api.entityGraph(bp, id, Number(depth)) });
+  return (
+    <Card>
+      <Group justify="space-between" mb="sm">
+        <Text fw={600}>Relations</Text>
+        <SegmentedControl
+          size="xs"
+          value={depth}
+          onChange={setDepth}
+          aria-label="Depth"
+          data={[
+            { value: '1', label: '1 hop' },
+            { value: '2', label: '2 hops' },
+            { value: '3', label: '3 hops' },
+          ]}
+        />
+      </Group>
+      <QueryView q={q}>{(g) => <RelationGraph graph={g} />}</QueryView>
+    </Card>
   );
 }
 

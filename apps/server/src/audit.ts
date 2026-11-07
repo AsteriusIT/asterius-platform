@@ -1,29 +1,104 @@
-import { all, json, newId, now, run, type SqlValue } from './db.js';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
+import { SCHEMA_KEY, all, dialect, json, newId, now, one, run, tx, type SqlValue } from './db.js';
+import { config } from './config.js';
+import { likeEscape } from './db.js';
+import { metrics } from './metrics.js';
+import { componentLogger } from './logger.js';
 import type { AuditEntry } from '@asterius/shared';
+import { decodeCursor, encodeCursor } from './lib/cursor.js';
+import { maybeOrgId, orgId } from './orgs/context.js';
 
-/** Append-only audit log of changes and decisions: who, what, on which target. */
+/**
+ * Append-only audit log of changes and decisions: who, what, on which target.
+ *  - Writes never break the action being audited, but failures are counted (asterius_audit_write_failures_total),
+ *    logged and retried, not silently dropped.
+ *  - AUDIT_HASH_CHAIN=true links entries (each hash covers the previous one; HMAC-keyed with AUDIT_CHAIN_KEY when set),
+ *    so edits, deletions in the middle or reordering are detected by `verifyAuditChain`.
+ *  - Entries can be exported (CSV / NDJSON) and streamed to a SIEM (audit-stream.ts).
+ *  - Entries belong to the organization of the context (null: platform-level, e.g. sign-ins and organization
+ *    management); listings and exports are per organization. The chain is platform-wide (super-admins verify it).
+ */
 
 export interface Actor {
   id: string | null;
   email: string | null;
 }
 
+const log = componentLogger('audit');
+
 export const SYSTEM: Actor = { id: null, email: 'system' };
 
-export async function audit(actor: Actor, action: string, target: string | null, detail: Record<string, unknown> = {}) {
-  try {
+const CHAIN_LOCK = 726210;
+const retryQueue: { actor: Actor; action: string; target: string | null; detail: Record<string, unknown>; org: string | null }[] = [];
+
+/** Current hash formula. v1 (legacy) did not cover org_id; v2 covers org_id and the version itself. */
+export const CHAIN_VERSION = 2;
+
+export const chainHash = (p: {
+  /** Defaults to 1 (legacy formula). */
+  version?: number;
+  orgId?: string | null;
+  prev: string;
+  seq: number;
+  id: string;
+  at: string;
+  action: string;
+  actorId: string | null;
+  actorEmail: string | null;
+  target: string | null;
+  detail: string;
+}) => {
+  const v = p.version ?? 1;
+  const data =
+    v === 1
+      ? JSON.stringify([p.prev, p.seq, p.id, p.at, p.action, p.actorId, p.actorEmail, p.target, p.detail])
+      : JSON.stringify([v, p.orgId ?? null, p.prev, p.seq, p.id, p.at, p.action, p.actorId, p.actorEmail, p.target, p.detail]);
+  return config.AUDIT_CHAIN_KEY ? createHmac('sha256', config.AUDIT_CHAIN_KEY).update(data).digest('hex') : createHash('sha256').update(data).digest('hex');
+};
+
+async function insert(actor: Actor, action: string, target: string | null, detail: Record<string, unknown>, org: string | null) {
+  const id = newId();
+  const text = JSON.stringify(detail);
+  if (!config.AUDIT_HASH_CHAIN) {
     await run(
-      'INSERT INTO audit_log (id, at, action, actor_id, actor_email, target, detail) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      newId(),
+      'INSERT INTO audit_log (id, org_id, at, action, actor_id, actor_email, target, detail) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      id,
+      org,
       now(),
       action,
       actor.id,
       actor.email,
       target,
-      JSON.stringify(detail),
+      text,
     );
+    return;
+  }
+  // Chained: serialize across replicas, read the tip, append.
+  await tx(async (d) => {
+    if (dialect === 'postgres') await d.query(`SELECT pg_advisory_xact_lock(${SCHEMA_KEY}, ?)`, [CHAIN_LOCK]);
+    const tip = (
+      await d.query<{ chain_seq: number; hash: string }>('SELECT chain_seq, hash FROM audit_log WHERE chain_seq IS NOT NULL ORDER BY chain_seq DESC LIMIT 1')
+    ).rows[0];
+    const seq = Number(tip?.chain_seq ?? 0) + 1;
+    const prev = tip?.hash ?? '';
+    const at = now();
+    const hash = chainHash({ version: CHAIN_VERSION, orgId: org, prev, seq, id, at, action, actorId: actor.id, actorEmail: actor.email, target, detail: text });
+    await d.query(
+      'INSERT INTO audit_log (id, org_id, at, action, actor_id, actor_email, target, detail, chain_seq, prev_hash, hash, chain_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [id, org, at, action, actor.id, actor.email, target, text, seq, prev, hash, CHAIN_VERSION],
+    );
+  });
+}
+
+export async function audit(actor: Actor, action: string, target: string | null, detail: Record<string, unknown> = {}, org = maybeOrgId()) {
+  try {
+    await insert(actor, action, target, detail, org);
+    // Entries that failed earlier are retried as soon as the database accepts writes again.
+    for (let e = retryQueue.shift(); e; e = retryQueue.shift()) await insert(e.actor, e.action, e.target, e.detail, e.org);
   } catch (err) {
-    console.error('[audit] could not record', action, err); // never break the action itself
+    metrics.auditFailure();
+    log.error({ err, action, target }, 'audit write failed'); // never break the action itself
+    if (retryQueue.length < 1000) retryQueue.push({ actor, action, target, detail, org });
   }
 }
 
@@ -36,19 +111,183 @@ interface Row {
   detail: string;
 }
 
-export async function listAudit(q: { search?: string; limit: number; offset: number }): Promise<AuditEntry[]> {
-  const where: string[] = [];
-  const params: SqlValue[] = [];
+const toEntry = (r: Row): AuditEntry => ({ id: r.id, at: r.at, action: r.action, actorEmail: r.actor_email, target: r.target, detail: json(r.detail, {}) });
+
+export interface AuditQuery {
+  /** Also platform-level entries (sign-ins, organization management): super-admins. */
+  platform?: boolean;
+  search?: string;
+  /** Exact action, or a prefix ending in `*` (`token.*`). */
+  action?: string;
+  actor?: string;
+  target?: string;
+  from?: string;
+  to?: string;
+}
+
+/** Entries of the current organization matching the query. */
+function filter(q: AuditQuery) {
+  const where: string[] = [q.platform ? '(org_id = ? OR org_id IS NULL)' : 'org_id = ?'];
+  const params: SqlValue[] = [orgId()];
+  const like = (s: string) => `%${likeEscape(s)}%`;
   if (q.search) {
     where.push("(action LIKE ? ESCAPE '\\' OR target LIKE ? ESCAPE '\\' OR actor_email LIKE ? ESCAPE '\\')");
-    const s = `%${q.search.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
-    params.push(s, s, s);
+    params.push(like(q.search), like(q.search), like(q.search));
+  }
+  if (q.action) {
+    if (q.action.endsWith('*')) {
+      where.push("action LIKE ? ESCAPE '\\'");
+      params.push(`${likeEscape(q.action.slice(0, -1))}%`);
+    } else {
+      where.push('action = ?');
+      params.push(q.action);
+    }
+  }
+  if (q.actor) {
+    where.push("actor_email LIKE ? ESCAPE '\\'");
+    params.push(like(q.actor));
+  }
+  if (q.target) {
+    where.push("target LIKE ? ESCAPE '\\'");
+    params.push(like(q.target));
+  }
+  if (q.from) {
+    where.push('at >= ?');
+    params.push(q.from);
+  }
+  if (q.to) {
+    where.push('at <= ?');
+    params.push(q.to);
+  }
+  return { w: `WHERE ${where.join(' AND ')}`, params };
+}
+
+export async function listAudit(q: AuditQuery & { limit: number; offset: number; cursor?: string }): Promise<{ entries: AuditEntry[]; nextCursor?: string }> {
+  const { w, params } = filter(q);
+  let where = w;
+  if (q.cursor) {
+    where = `${w} AND (at, id) < (?, ?)`;
+    params.push(...decodeCursor(q.cursor, { s: 'audit', d: 'desc', n: 2 }));
   }
   const rows = await all<Row>(
-    `SELECT id, at, action, actor_email, target, detail FROM audit_log ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY at DESC LIMIT ? OFFSET ?`,
+    `SELECT id, at, action, actor_email, target, detail FROM audit_log ${where} ORDER BY at DESC, id DESC LIMIT ? OFFSET ?`,
     ...params,
-    q.limit,
-    q.offset,
+    q.limit + 1,
+    q.cursor ? 0 : q.offset,
   );
-  return rows.map((r) => ({ id: r.id, at: r.at, action: r.action, actorEmail: r.actor_email, target: r.target, detail: json(r.detail, {}) }));
+  const more = rows.length > q.limit;
+  if (more) rows.pop();
+  const last = rows.at(-1);
+  return { entries: rows.map(toEntry), nextCursor: more && last ? encodeCursor({ s: 'audit', d: 'desc', v: [last.at, last.id] }) : undefined };
 }
+
+/** Distinct actions and most active actors, to build filters. */
+export async function auditFacets(q: AuditQuery = {}) {
+  const { w, params } = filter(q);
+  const actions = await all<{ action: string; n: number }>(
+    `SELECT action, count(*) AS n FROM audit_log ${w} GROUP BY action ORDER BY n DESC LIMIT 200`,
+    ...params,
+  );
+  const actors = await all<{ actor_email: string; n: number }>(
+    `SELECT actor_email, count(*) AS n FROM audit_log ${w} AND actor_email IS NOT NULL GROUP BY actor_email ORDER BY n DESC LIMIT 100`,
+    ...params,
+  );
+  return { actions: actions.map((a) => ({ value: a.action, count: Number(a.n) })), actors: actors.map((a) => ({ value: a.actor_email, count: Number(a.n) })) };
+}
+
+/** Oldest first, in pages, for exports (bounded by AUDIT_EXPORT_MAX rows). */
+export async function* exportAudit(q: AuditQuery): AsyncGenerator<AuditEntry> {
+  const { w, params } = filter(q);
+  const PAGE = 1000;
+  for (let offset = 0; offset < config.AUDIT_EXPORT_MAX; offset += PAGE) {
+    const rows = await all<Row>(
+      `SELECT id, at, action, actor_email, target, detail FROM audit_log ${w} ORDER BY at, id LIMIT ? OFFSET ?`,
+      ...params,
+      PAGE,
+      offset,
+    );
+    for (const r of rows) yield toEntry(r);
+    if (rows.length < PAGE) return;
+  }
+}
+
+/** Neutralize spreadsheet formula injection (=, +, -, @, tab, CR) and quote for CSV. */
+export const csvCell = (v: unknown) => {
+  let s = v == null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v as string | number | boolean);
+  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
+  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+};
+export const CSV_HEADER = 'id,at,action,actor,target,detail\n';
+export const csvRow = (e: AuditEntry) => `${[e.id, e.at, e.action, e.actorEmail, e.target, e.detail].map(csvCell).join(',')}\n`;
+
+// ---------- tamper evidence ----------
+export interface ChainReport {
+  enabled: boolean;
+  ok: boolean;
+  checked: number;
+  /** Sequence number of the first entry that does not verify. */
+  brokenAt?: number;
+  reason?: string;
+}
+
+const eq = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
+
+/**
+ * Walk the chain from its oldest remaining entry (older ones may have been purged by retention; that entry's
+ * `prev_hash` is the anchor) and recompute every hash according to the row's `chain_version` (1: legacy, no org_id;
+ * 2: covers org_id). The chain may move from v1 to v2 once, never back. Entries written while the chain was disabled are ignored.
+ */
+export async function verifyAuditChain(): Promise<ChainReport> {
+  let checked = 0;
+  let expectedSeq: number | undefined;
+  let prevHash: string | undefined;
+  let prevVersion = 1;
+  const BATCH = 500;
+  for (let after = 0; ;) {
+    const rows = await all<{
+      id: string;
+      org_id: string | null;
+      chain_version: number;
+      at: string;
+      action: string;
+      actor_id: string | null;
+      actor_email: string | null;
+      target: string | null;
+      detail: string;
+      chain_seq: number;
+      prev_hash: string;
+      hash: string;
+    }>('SELECT * FROM audit_log WHERE chain_seq > ? ORDER BY chain_seq LIMIT ?', after, BATCH);
+    if (!rows.length) break;
+    for (const r of rows) {
+      const seq = Number(r.chain_seq);
+      if (expectedSeq !== undefined && seq !== expectedSeq) return { enabled: true, ok: false, checked, brokenAt: expectedSeq, reason: 'missing entry' };
+      if (prevHash !== undefined && !eq(r.prev_hash, prevHash)) return { enabled: true, ok: false, checked, brokenAt: seq, reason: 'broken link' };
+      const version = Number(r.chain_version ?? 1);
+      if (version !== 1 && version !== CHAIN_VERSION) return { enabled: true, ok: false, checked, brokenAt: seq, reason: 'unknown chain version' };
+      if (version < prevVersion) return { enabled: true, ok: false, checked, brokenAt: seq, reason: 'chain version downgrade' };
+      prevVersion = version;
+      const h = chainHash({
+        version,
+        orgId: r.org_id,
+        prev: r.prev_hash,
+        seq,
+        id: r.id,
+        at: r.at,
+        action: r.action,
+        actorId: r.actor_id,
+        actorEmail: r.actor_email,
+        target: r.target,
+        detail: r.detail,
+      });
+      if (!eq(h, r.hash)) return { enabled: true, ok: false, checked, brokenAt: seq, reason: 'entry was modified' };
+      prevHash = r.hash;
+      expectedSeq = seq + 1;
+      after = seq;
+      checked++;
+    }
+  }
+  return { enabled: config.AUDIT_HASH_CHAIN, ok: true, checked };
+}
+
+export const auditCount = async () => Number((await one<{ n: number }>('SELECT count(*) AS n FROM audit_log'))?.n ?? 0);

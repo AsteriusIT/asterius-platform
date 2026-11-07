@@ -1,6 +1,8 @@
 import { badRequest } from '../lib/errors.js';
-import { checkExpression, checkTemplate } from '../lib/expr.js';
+import { checkExpression, checkTemplate, hasRefs } from '../lib/expr.js';
 import { validator } from '../catalog/validation.js';
+import { config } from '../config.js';
+import { checkGuardrails } from '../ai/guardrails.js';
 import { validateInvoker } from './invokers/index.js';
 import type { ActionDef, WorkflowStepDef } from '../schemas.js';
 
@@ -51,10 +53,30 @@ export function validateWorkflow(steps: Step[]) {
           break;
         case 'agent':
           checkTemplate([s.prompt, s.system ?? '', s.apiKey ?? '']);
+          // Secret values must never reach the model: only `apiKey` may reference secrets.
+          if (hasRefs([s.prompt, s.system ?? '']))
+            throw badRequest('prompt and system cannot reference secrets or environment variables (they are sent to the model)');
           if (s.output) validator(s.output as never);
+          checkGuardrails(s);
+          if (s.mcpServers.length && (s.provider ?? config.AI_PROVIDER) !== 'anthropic') throw badRequest('MCP servers need the Anthropic provider');
           break;
         case 'transform':
           for (const expr of Object.values(s.output)) checkExpression(expr);
+          break;
+        case 'wait': {
+          const modes = [s.duration, s.until, s.event].filter(Boolean).length;
+          if (modes !== 1) throw new Error('set exactly one of duration, until or event');
+          if (s.until) checkTemplate(s.until);
+          if (s.event?.filter) checkExpression(s.event.filter);
+          break;
+        }
+        case 'input':
+          validator(s.inputs as never);
+          if (s.message) checkTemplate(s.message);
+          break;
+        case 'workflow':
+          checkTemplate([s.inputs, s.entity ?? '']);
+          if (s.forEach) checkExpression(s.forEach.items);
           break;
       }
     } catch (err) {

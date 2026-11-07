@@ -1,4 +1,6 @@
 import { kube } from '../../lib/kube.js';
+import { orgId } from '../../orgs/context.js';
+import { assertKubernetesAllowed } from '../../orgs/orgs.js';
 import { str } from '../../actions/types.js';
 import { MAX_PAGES, type Source } from '../types.js';
 
@@ -12,6 +14,18 @@ export const kubernetesSource: Source = {
     title: 'Kubernetes',
     description: 'Any resource of a cluster (workloads, namespaces, ingresses, CRDs such as Argo CD applications).',
     kinds: ['v1/Namespace', 'apps/v1/Deployment', 'apps/v1/StatefulSet', 'networking.k8s.io/v1/Ingress', 'batch/v1/CronJob'],
+    fields: [
+      {
+        key: 'cluster',
+        label: 'Cluster name',
+        kind: 'text',
+        placeholder: 'prod-weu',
+        help: 'Free label, available in mappings as $integration.config.cluster',
+      },
+      { key: 'namespaces', label: 'Namespaces', kind: 'list', help: 'Empty: every namespace (needs cluster-wide list RBAC)' },
+      { key: 'labelSelector', label: 'Label selector', kind: 'text', placeholder: 'app.kubernetes.io/part-of' },
+      { key: 'context', label: 'Kubeconfig context', kind: 'text', help: 'Empty: in-cluster service account', advanced: true },
+    ],
     example: {
       type: 'kubernetes',
       config: { cluster: 'prod-weu', namespaces: ['payments', 'checkout'], labelSelector: 'app.kubernetes.io/part-of' },
@@ -38,6 +52,7 @@ export const kubernetesSource: Source = {
     if (c.namespaces !== undefined && !Array.isArray(c.namespaces)) throw new Error('kubernetes: namespaces is a list');
   },
   async *list(kind, { config, log }) {
+    await assertKubernetesAllowed(orgId());
     const i = kind.lastIndexOf('/');
     if (i <= 0) throw new Error(`kubernetes: kind must be <apiVersion>/<Kind>, got "${kind}"`);
     const apiVersion = kind.slice(0, i);

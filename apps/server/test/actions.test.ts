@@ -160,12 +160,52 @@ describe('approvals', () => {
     expect((await bob.post(`/api/v1/runs/${run.data.id}/approve`, {})).status).toBe(403); // not in the team
     expect((await carol.get('/api/v1/approvals')).data.map((r: { id: string }) => r.id)).toEqual([run.data.id]);
     const approved = await carol.post(`/api/v1/runs/${run.data.id}/approve`, { comment: 'lgtm' });
-    expect(approved.data.status).toBe('QUEUED');
+    expect(['QUEUED', 'IN_PROGRESS', 'SUCCESS']).toContain(approved.data.status); // a worker may already have picked it up
     expect((await runStatus(alice, run.data.id, ['SUCCESS', 'FAILURE'])).approvals[0]).toMatchObject({
       userName: 'carol',
       decision: 'approved',
       comment: 'lgtm',
     });
+  });
+
+  it('notifies approvers, then the requester, with read state and preferences', async () => {
+    const run = await alice.post('/api/v1/actions/prod-change/runs', { entity: 'api', inputs: { reason: 'notify' } });
+    const carolInbox = (await carol.get('/api/v1/notifications')).data;
+    const asked = carolInbox.items.find((n: { link: string }) => n.link === `/runs/${run.data.id}`);
+    expect(asked).toMatchObject({ kind: 'approval.requested', read: false });
+    expect(carolInbox.unread).toBeGreaterThan(0);
+    expect((await bob.get('/api/v1/notifications')).data.items.some((n: { link: string }) => n.link === `/runs/${run.data.id}`)).toBe(false);
+    expect((await alice.get('/api/v1/notifications')).data.items.some((n: { link: string }) => n.link === `/runs/${run.data.id}`)).toBe(false);
+
+    await carol.post(`/api/v1/runs/${run.data.id}/reject`, { comment: 'no' });
+    const aliceInbox = (await alice.get('/api/v1/notifications?unread=true')).data;
+    expect(aliceInbox.items.some((n: { kind: string; link: string }) => n.kind === 'run.rejected' && n.link === `/runs/${run.data.id}`)).toBe(true);
+
+    expect((await carol.post('/api/v1/notifications/read', { ids: [asked.id] })).data.changed).toBe(1);
+    expect((await carol.post('/api/v1/notifications/read', { ids: [asked.id] })).data.changed).toBe(0);
+    expect((await carol.post('/api/v1/notifications/read', { all: true })).status).toBe(200);
+    expect((await carol.get('/api/v1/notifications')).data.unread).toBe(0);
+
+    expect((await carol.get('/api/v1/notifications/preferences')).data).toEqual({ email: false, slack: false });
+    expect((await carol.put('/api/v1/notifications/preferences', { email: true, slack: false })).data).toEqual({ email: true, slack: false });
+    expect((await carol.get('/api/v1/notifications/preferences')).data.email).toBe(true);
+  });
+
+  it('streams run events over SSE and resumes after Last-Event-ID', async () => {
+    const run = await alice.post('/api/v1/actions/prod-change/runs', { entity: 'api' });
+    await carol.post(`/api/v1/runs/${run.data.id}/reject`, { comment: 'no' });
+    const first = await alice.get(`/api/v1/runs/${run.data.id}/events`);
+    expect(first.status).toBe(200);
+    const body = first.data as string;
+    expect(body).toContain('event: log');
+    expect(body).toContain('event: run');
+    expect(body).toContain('event: done');
+    const lastId = [...body.matchAll(/^id: (\d+)$/gm)].pop()![1];
+    const resumed = (await alice.get(`/api/v1/runs/${run.data.id}/events`, { 'last-event-id': lastId })).data as string;
+    expect(resumed).not.toContain('event: log'); // nothing new after the cursor
+    expect(resumed).toContain('event: done');
+    expect((await bob.get(`/api/v1/runs/${run.data.id}/events`)).status).toBe(404); // not a viewer of this run (see canViewRun)
+    expect((await client(app).get(`/api/v1/runs/${run.data.id}/events`)).status).toBe(401);
   });
 
   it('rejects with a reason, and lets the requester cancel', async () => {
@@ -195,9 +235,65 @@ describe('outbound webhooks', () => {
     const got = await waitFor(async () => sink.received.find((r) => JSON.parse(r.body).data.entity?.identifier === 'hooked'), 20_000);
     const evt = JSON.parse(got.body);
     expect(evt.type).toBe('entity.created');
-    expect(got.headers['x-asterius-signature']).toBe(`sha256=${createHmac('sha256', 'signing-key-123').update(got.body).digest('hex')}`);
-    const deliveries = await admin.get('/api/v1/webhooks/sink/deliveries');
-    expect(deliveries.data.some((d: { status: string }) => d.status === 'success')).toBe(true);
+    const sig = String(got.headers['x-asterius-signature']);
+    const t = /t=(\d+)/.exec(sig)![1]!;
+    expect(Math.abs(Date.now() / 1000 - Number(t))).toBeLessThan(60);
+    expect(sig).toBe(`t=${t},v1=${createHmac('sha256', 'signing-key-123').update(`${t}.${got.body}`).digest('hex')}`);
+    // The delivery row is marked successful after the response is read, so the sink may see the request first.
+    const delivered = await waitFor(async () => {
+      const deliveries = await admin.get('/api/v1/webhooks/sink/deliveries');
+      return deliveries.data.some((d: { status: string }) => d.status === 'success') || undefined;
+    }, 10_000);
+    expect(delivered).toBe(true);
+    await sink.close();
+  });
+
+  it('filters, transforms, adds headers, and bulk redelivers failed deliveries', async () => {
+    const sink = await fakeServer();
+    const saved = await admin.put('/api/v1/webhooks/chatty', {
+      title: 'Chatty',
+      url: sink.url,
+      events: ['entity.*'],
+      blueprints: ['service'],
+      headers: { authorization: 'Bearer ${secret:SIGNING}' },
+      filter: 'data.entity.properties.tier = 9',
+      transform: '{ "text": "Service " & data.entity.identifier & " created" }',
+    });
+    expect(saved.status, JSON.stringify(saved.data)).toBe(200);
+    expect((await admin.put('/api/v1/webhooks/bad', { title: 'B', url: sink.url, events: ['*'], filter: '(((' })).status).toBe(400);
+    expect((await admin.put('/api/v1/webhooks/bad', { title: 'B', url: sink.url, events: ['*'], headers: { 'X-Asterius-Signature': 'x' } })).status).toBe(400);
+    await admin.put('/api/v1/blueprints/service/entities/skipped', { team: 'payments', properties: { tier: 2 } });
+    await admin.put('/api/v1/blueprints/service/entities/shown', { team: 'payments', properties: { tier: 9 } });
+    const got = await waitFor(async () => sink.received.find((r) => r.body.includes('shown')), 20_000);
+    expect(JSON.parse(got.body)).toEqual({ text: 'Service shown created' });
+    expect(got.headers.authorization).toBe('Bearer signing-key-123');
+    expect(sink.received.some((r) => r.body.includes('skipped'))).toBe(false);
+    await sink.close();
+
+    // A dead endpoint: the delivery fails fast (4xx is final), then a bulk redelivery requeues it.
+    const dead = await fakeServer(() => ({ status: 400 }));
+    await admin.put('/api/v1/webhooks/dead', { title: 'Dead', url: dead.url, events: ['entity.created'], blueprints: ['service'] });
+    await admin.put('/api/v1/blueprints/service/entities/will-fail', { team: 'payments', properties: { tier: 1 } });
+    await waitFor(async () => (await admin.get('/api/v1/deliveries?status=failed&webhook=dead')).data.length > 0, 20_000);
+    const before = dead.received.length;
+    const re = await admin.post('/api/v1/deliveries/redeliver-failed', { webhook: 'dead' });
+    expect(re.data.requeued).toBeGreaterThan(0);
+    await waitFor(async () => dead.received.length > before, 20_000);
+    await dead.close();
+  });
+
+  it('emits team, user and step events and redelivers a selection', async () => {
+    const sink = await fakeServer();
+    expect((await admin.put('/api/v1/webhooks/directory', { title: 'Dir', url: sink.url, events: ['team.*', 'user.*'] })).status).toBe(200);
+    await admin.put('/api/v1/teams/events-team', { title: 'Events team' });
+    const got = await waitFor(async () => sink.received.find((r) => JSON.parse(r.body).type === 'team.created'), 20_000);
+    expect(JSON.parse(got.body).data.team.identifier).toBe('events-team');
+    await admin.del('/api/v1/teams/events-team');
+    await waitFor(async () => sink.received.find((r) => JSON.parse(r.body).type === 'team.deleted'), 20_000);
+    const all = (await admin.get('/api/v1/deliveries?webhook=directory&limit=10&offset=0')).data as Array<{ id: string }>;
+    const before = sink.received.length;
+    expect((await admin.post('/api/v1/deliveries/redeliver', { ids: [all[0]!.id] })).data.queued).toBe(1);
+    await waitFor(async () => sink.received.length > before, 20_000);
     await sink.close();
   });
 });

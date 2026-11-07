@@ -11,3 +11,5 @@ CONFIG_DIR=$PWD/examples/demo-config DATA_DIR=$PWD/data-demo npm run dev -w apps
 ```
 
 Or copy individual files into `config/`. Identifiers must stay unique across all files.
+
+Supply chain: `supply-chain.yaml` adds vulnerability and SBOM blueprints, Snyk and CycloneDX integrations and a security scorecard (see docs/SUPPLY-CHAIN.md).

@@ -14,7 +14,7 @@ x-ado-pipeline: &ado-pipeline
   type: azure-pipeline
   organization: https://dev.azure.com/AsteriusIT # the organization where projects are created
   project: Platform # the project that holds the pipeline
-  pipelineId: 1 # Pipelines → the pipeline → the id in its URL (definitionId)
+  pipelineId: 22 # Pipelines → the pipeline → the id in its URL (definitionId)
   branch: main
   token: ${secret:ADO_PAT} # Admin → Secrets: PAT with "Build: Read & execute"
 # ────────────────────────────────────────────────────────────────────────────────────────────────────

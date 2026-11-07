@@ -1,0 +1,42 @@
+# Prometheus Operator + Prometheus + Alertmanager + Grafana for the local OrbStack cluster (namespace observability).
+fullnameOverride: kps
+
+prometheus:
+  prometheusSpec:
+    # Pick up every ServiceMonitor / PodMonitor / PrometheusRule of the cluster (platform, CNPG, OpenBao, ESO).
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    retention: 3d
+    resources:
+      requests: { cpu: 100m, memory: 512Mi }
+
+alertmanager:
+  alertmanagerSpec:
+    resources:
+      requests: { cpu: 10m, memory: 32Mi }
+
+grafana:
+  # Admin credentials come from OpenBao through External Secrets (manifests/observability-secrets.yaml).
+  admin:
+    existingSecret: grafana-admin
+    userKey: admin-user
+    passwordKey: admin-password
+  ingress:
+    enabled: true
+    ingressClassName: traefik
+    annotations:
+      cert-manager.io/cluster-issuer: local-ca
+    hosts: [platform-grafana.k8s.orb.local]
+    tls:
+      - secretName: platform-grafana-tls
+        hosts: [platform-grafana.k8s.orb.local]
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      labelValue: "1"
+      searchNamespace: ALL # the platform chart ships its dashboard as a ConfigMap in its own namespace
+  grafana.ini:
+    server:
+      root_url: https://platform-grafana.k8s.orb.local

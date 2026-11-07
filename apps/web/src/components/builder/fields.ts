@@ -17,6 +17,7 @@ export const FIELD_TYPES = [
   { value: 'tags', label: 'List of values' },
   { value: 'email', label: 'Email' },
   { value: 'url', label: 'URL' },
+  { value: 'docs', label: 'Docs (markdown URL)' },
   { value: 'date', label: 'Date' },
   { value: 'datetime', label: 'Date & time' },
   { value: 'team', label: 'Team' },
@@ -87,6 +88,7 @@ const TEXT_FORMATS: Record<string, FieldType> = {
   yaml: 'textarea',
   email: 'email',
   url: 'url',
+  docs: 'docs',
   date: 'date',
   'date-time': 'datetime',
   team: 'team',
@@ -169,6 +171,7 @@ function fieldToProperty(f: FieldDraft): PropertySchema {
       break;
     case 'email':
     case 'url':
+    case 'docs':
     case 'date':
     case 'team':
     case 'user':

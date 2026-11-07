@@ -1,0 +1,121 @@
+# Namespace nexus: Sonatype Nexus Repository Community Edition, embedded database on a persistent volume.
+# The admin password comes from OpenBao (secret/nexus/server) through External Secrets; install.sh creates the
+# read-only user of the platform through the REST API.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: openbao-reader # Kubernetes auth role eso-nexus
+  namespace: nexus
+---
+apiVersion: external-secrets.io/v1
+kind: SecretStore
+metadata:
+  name: openbao
+  namespace: nexus
+spec:
+  provider:
+    vault:
+      server: http://openbao.openbao.svc:8200
+      path: secret
+      version: v2
+      auth:
+        kubernetes:
+          mountPath: kubernetes
+          role: eso-nexus
+          serviceAccountRef: { name: openbao-reader }
+---
+# ADMIN_PASSWORD: initial password of the admin user (read on the first start only).
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: nexus-secrets
+  namespace: nexus
+spec:
+  refreshInterval: 1m
+  secretStoreRef: { kind: SecretStore, name: openbao }
+  target: { name: nexus-secrets, creationPolicy: Owner }
+  dataFrom:
+    - extract: { key: nexus/server }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nexus-data
+  namespace: nexus
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: { requests: { storage: 5Gi } }
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: nexus
+  namespace: nexus
+  labels: { app.kubernetes.io/name: nexus }
+spec:
+  replicas: 1
+  serviceName: nexus
+  selector: { matchLabels: { app.kubernetes.io/name: nexus } }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: nexus }
+    spec:
+      securityContext: { runAsUser: 200, runAsGroup: 200, fsGroup: 200 }
+      containers:
+        - name: nexus
+          image: sonatype/nexus3:3.98.1
+          ports: [{ name: http, containerPort: 8081 }]
+          env:
+            # Sized for a laptop (Nexus defaults to a 2.7 GB heap).
+            - name: INSTALL4J_ADD_VM_PARAMS
+              value: "-Xms512m -Xmx1g -XX:MaxDirectMemorySize=512m -Djava.util.prefs.userRoot=/nexus-data/javaprefs"
+            - name: NEXUS_SECURITY_RANDOMPASSWORD
+              value: "false"
+            - name: NEXUS_SECURITY_INITIAL_PASSWORD
+              valueFrom: { secretKeyRef: { name: nexus-secrets, key: ADMIN_PASSWORD } }
+          resources:
+            requests: { cpu: 200m, memory: 1Gi }
+            limits: { memory: 2Gi }
+          volumeMounts: [{ name: data, mountPath: /nexus-data }]
+          startupProbe:
+            httpGet: { path: /service/rest/v1/status, port: http }
+            periodSeconds: 10
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: { path: /service/rest/v1/status, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /service/rest/v1/status, port: http }
+            periodSeconds: 30
+            failureThreshold: 6
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: nexus-data }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nexus
+  namespace: nexus
+  labels: { app.kubernetes.io/name: nexus }
+spec:
+  selector: { app.kubernetes.io/name: nexus }
+  ports: [{ name: http, port: 8081, targetPort: http }]
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: nexus
+  namespace: nexus
+  annotations:
+    cert-manager.io/cluster-issuer: local-ca
+spec:
+  ingressClassName: traefik
+  tls: [{ secretName: nexus-tls, hosts: [nexus.k8s.orb.local] }]
+  rules:
+    - host: nexus.k8s.orb.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend: { service: { name: nexus, port: { name: http } } }

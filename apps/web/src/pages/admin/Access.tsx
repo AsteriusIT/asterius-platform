@@ -31,6 +31,7 @@ import { DataTable } from '../../components/DataTable';
 import { Mono, PageHeader, TimeAgo } from '../../components/ui';
 import { NewTokenAlert, TokenTable } from '../Profile';
 import { ResourceAdmin, strip } from './ResourceAdmin';
+import { TeamBuilder } from '../../components/builder/SimpleBuilders';
 
 export function TeamsAdmin() {
   return (
@@ -62,7 +63,8 @@ export function TeamsAdmin() {
         },
         { key: 'g', label: 'Entra group', render: (t) => (t.entraGroupId ? <Mono>{t.entraGroupId}</Mono> : '—') },
       ]}
-      templates={[{ label: 'Team', value: { identifier: 'my-team', title: 'My team', description: '', entraGroupId: null } }]}
+      templates={[{ label: 'Team', value: { identifier: '', title: '', description: '', entraGroupId: null } }]}
+      editor={(p) => <TeamBuilder {...p} />}
       toEditable={(t) => strip(t, ['managed', 'members'])}
       save={api.saveTeam}
       remove={(t) => api.deleteTeam(t.identifier)}
@@ -93,6 +95,7 @@ export function UsersAdmin() {
     <Stack>
       <PageHeader
         title="Users & service accounts"
+        refresh={[users, teams]}
         description="Roles: admins manage the platform; members use it. Team membership drives ownership and approvals."
         actions={
           <Button leftSection={<IconPlus size={16} />} onClick={() => setCreating(true)}>
@@ -230,6 +233,7 @@ function ServiceAccountModal({
 export function SecretsAdmin() {
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ['secrets'], queryFn: api.secrets });
+  const providers = useQuery({ queryKey: ['secret-providers'], queryFn: api.secretProviders });
   const [name, setName] = useState('');
   const [value, setValue] = useState('');
   const [description, setDescription] = useState('');
@@ -247,6 +251,7 @@ export function SecretsAdmin() {
     <Stack>
       <PageHeader
         title="Secrets"
+        refresh={q}
         description={
           <>
             Encrypted (AES-256-GCM) and only resolved at execution time. Reference them as <Code>{'${secret:NAME}'}</Code> in actions, integrations and
@@ -254,6 +259,24 @@ export function SecretsAdmin() {
           </>
         }
       />
+      <Card>
+        <Stack gap={4}>
+          <Text fw={600} fz="sm">
+            External secret managers
+          </Text>
+          {(providers.data ?? []).map((p) => (
+            <Group key={p.kind} gap="xs">
+              <Text fz="sm" w={220}>
+                {p.title}
+              </Text>
+              <Mono>{p.example}</Mono>
+              <Text fz="xs" c={p.enabled ? 'green' : 'dimmed'}>
+                {p.enabled ? 'configured' : 'not configured'}
+              </Text>
+            </Group>
+          ))}
+        </Stack>
+      </Card>
       <Card>
         <Stack gap="sm">
           <Group grow align="flex-start">

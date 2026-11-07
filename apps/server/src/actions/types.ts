@@ -9,13 +9,14 @@ import type { Entity, PluginInfo } from '@asterius/shared';
 
 /** Data available to `{{ }}` templates of the invoker configuration. */
 export interface RunContext {
-  run: { id: string; url: string; callback: { url: string; token: string } };
+  /** `idempotencyKey` is stable per run and step (same across retries): receivers can deduplicate repeated starts. */
+  run: { id: string; url: string; idempotencyKey: string; callback: { url: string; token: string } };
   action: { identifier: string; title: string; blueprint: string | null };
   inputs: Record<string, unknown>;
-  entity: Entity | null;
+  entity: (Entity & { scorecards?: Record<string, { level: string | null; rank: number; passed: number; total: number }> }) | null;
   trigger: { user: { id: string; email: string; name: string }; at: string };
   /** Earlier workflow steps: `{{ steps.review.output.risk }}`. */
-  steps: Record<string, { status: string; output: unknown; link: string | null }>;
+  steps: Record<string, { status: string; output: unknown; link: string | null; events?: { url: string; token: string } }>;
 }
 
 export type InvokeStatus = 'IN_PROGRESS' | 'SUCCESS' | 'FAILURE';

@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { client, register, testApp, type Api } from './helpers.js';
+import { blueprintDef } from '../src/schemas.js';
 
 let app: FastifyInstance;
 let admin: Api;
@@ -70,6 +71,30 @@ describe('auth', () => {
     }
   });
 
+  it('describes every integration source for the UI builder, with the brand', async () => {
+    const meta = (await anon.get('/api/meta')).data;
+    expect(meta.name).toBe('Asterius Platform');
+    expect(meta.logo).toBeNull();
+    // The core sources describe their connection fields; others fall back to the JSON config in the form.
+    const described = meta.sources.filter((s: { fields?: unknown[] }) => s.fields?.length);
+    expect(described.map((s: { type: string }) => s.type)).toEqual(expect.arrayContaining(['github', 'azure-devops', 'gitlab', 'kubernetes', 'http']));
+    for (const src of described) {
+      for (const f of src.fields.filter((x: { required?: boolean }) => x.required)) expect(src.example.config, `${src.type}.${f.key}`).toHaveProperty(f.key);
+    }
+  });
+
+  it('accepts built-in icon names and custom image icons only', () => {
+    const icon = (v: string) => blueprintDef.safeParse({ identifier: 'x', title: 'X', icon: v }).success;
+    expect(icon('brand-github')).toBe(true);
+    expect(icon('https://cdn.example.com/logo.svg')).toBe(true);
+    expect(icon('data:image/png;base64,iVBORw0KGgo=')).toBe(true);
+    expect(icon('data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=')).toBe(true);
+    expect(icon('http://insecure.example.com/x.png')).toBe(false);
+    expect(icon('javascript:alert(1)')).toBe(false);
+    expect(icon('data:text/html;base64,PHNjcmlwdD4=')).toBe(false);
+    expect(icon(`data:image/png;base64,${'A'.repeat(70_000)}`)).toBe(false);
+  });
+
   it('keeps admin endpoints for admins', async () => {
     expect((await alice.get('/api/v1/users')).status).toBe(403);
     expect((await alice.put('/api/v1/blueprints/x', { title: 'X' })).status).toBe(403);
@@ -103,10 +128,34 @@ describe('catalog', () => {
     expect(found.data.items.map((e: { identifier: string }) => e.identifier)).toEqual(['worker']);
     const tier1 = await bob.get('/api/v1/blueprints/service/entities?filter.tier=1');
     expect(tier1.data.total).toBe(1);
+    const asc = await bob.get('/api/v1/blueprints/service/entities?sort=identifier');
+    const desc = await bob.get('/api/v1/blueprints/service/entities?sort=identifier&order=desc');
+    const ids = (r: { data: { items: { identifier: string }[] } }) => r.data.items.map((e) => e.identifier);
+    expect(ids(desc)).toEqual(ids(asc).reverse());
+    expect((await bob.get('/api/v1/blueprints/service/entities?sort=prop.tier')).status).toBe(200);
+    expect((await bob.get('/api/v1/blueprints/service/entities?sort=prop.x;drop')).status).toBe(400);
     const rel = await bob.get('/api/v1/blueprints/service/entities/api/related');
     expect(Object.keys(rel.data.incoming)).toEqual(['service.dependsOn']);
     const out = await bob.get('/api/v1/blueprints/service/entities/worker/related');
     expect(out.data.outgoing.dependsOn.map((e: { source: string }) => e.source)).toEqual(['ui', 'missing']);
+  });
+
+  it('serves the relation graph and the change history of an entity', async () => {
+    const g = await bob.get('/api/v1/blueprints/service/entities/worker/graph?depth=2');
+    expect(g.status, JSON.stringify(g.data)).toBe(200);
+    const ids = g.data.nodes.map((n: { blueprint: string; identifier: string }) => `${n.blueprint}/${n.identifier}`);
+    expect(ids).toContain('service/worker');
+    expect(ids).toContain('service/api');
+    expect(
+      g.data.edges.some(
+        (e: { from: { blueprint: string; identifier: string }; to: { blueprint: string; identifier: string }; relation: string }) =>
+          e.from.identifier === 'worker' && e.to.identifier === 'api' && e.relation === 'dependsOn',
+      ),
+    ).toBe(true);
+    expect(g.data.nodes.find((n: { identifier: string }) => n.identifier === 'worker').depth).toBe(0);
+    const h = await bob.get('/api/v1/blueprints/service/entities/worker/history');
+    expect(h.data.items[0]).toMatchObject({ op: expect.stringMatching(/create|update/), actor: 'alice@example.com' });
+    expect((await bob.get('/api/v1/blueprints/service/entities/nope/history')).status).toBe(404);
   });
 
   it('accepts identifiers with slashes (third-party ids)', async () => {

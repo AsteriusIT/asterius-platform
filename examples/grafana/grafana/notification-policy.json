@@ -1,0 +1,7 @@
+{
+  "receiver": "asterius-platform",
+  "group_by": ["grafana_folder", "alertname"],
+  "group_wait": "10s",
+  "group_interval": "1m",
+  "repeat_interval": "1h"
+}

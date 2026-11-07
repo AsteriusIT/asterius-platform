@@ -4,6 +4,9 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { config, paths } from './config.js';
+import { baseline } from './schema.js';
+import { componentLogger } from './logger.js';
+import { dbSpan } from './tracing.js';
 
 /**
  * Storage: Postgres in production (DATABASE_URL, any number of replicas) or SQLite for local development.
@@ -49,6 +52,16 @@ const toPg = (sql: string) => {
   return sql.replace(/\?/g, () => `$${++i}`);
 };
 
+/** Every query becomes a `db.<OP>` span (no-op unless tracing is enabled). */
+function traced(d: Driver): Driver {
+  return {
+    dialect: d.dialect,
+    query: (sql, params) => dbSpan(d.dialect, sql, () => d.query(sql, params)),
+    exec: (sql) => d.exec(sql),
+    close: () => d.close(),
+  };
+}
+
 export function postgresDriver(conn: pg.Pool | pg.PoolClient): Driver {
   return {
     dialect: 'postgres',
@@ -65,325 +78,81 @@ export function postgresDriver(conn: pg.Pool | pg.PoolClient): Driver {
   };
 }
 
-// ---------- schema ----------
-const ddl = (d: Driver, sql: string) => (d.dialect === 'postgres' ? sql.replace(/INTEGER PRIMARY KEY AUTOINCREMENT/g, 'BIGSERIAL PRIMARY KEY') : sql);
-
-const SCHEMA_V1 = `
-CREATE TABLE users (
-  id TEXT PRIMARY KEY,
-  provider TEXT NOT NULL,              -- local | entra | service
-  external_id TEXT,                    -- entra: <tenant id>:<object id>
-  email TEXT NOT NULL,
-  name TEXT NOT NULL,
-  password_hash TEXT,
-  role TEXT NOT NULL DEFAULT 'member', -- admin | member
-  active INTEGER NOT NULL DEFAULT 1,
-  groups TEXT NOT NULL DEFAULT '[]',   -- Entra group object ids at last sign-in
-  last_login_at TEXT,
-  created_at TEXT NOT NULL
-);
-CREATE UNIQUE INDEX users_email_provider ON users(provider, email);
-CREATE UNIQUE INDEX users_external ON users(provider, external_id) WHERE external_id IS NOT NULL;
-
-CREATE TABLE sessions (
-  token_hash TEXT PRIMARY KEY,
-  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  expires_at TEXT NOT NULL
-);
-CREATE INDEX sessions_user ON sessions(user_id);
-
-CREATE TABLE oauth_states (
-  state TEXT PRIMARY KEY,
-  nonce TEXT NOT NULL,
-  code_verifier TEXT NOT NULL,
-  return_to TEXT NOT NULL,
-  expires_at TEXT NOT NULL
-);
-
-CREATE TABLE api_tokens (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  token_hash TEXT NOT NULL UNIQUE,
-  prefix TEXT NOT NULL,
-  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  created_by TEXT,
-  created_at TEXT NOT NULL,
-  expires_at TEXT,
-  last_used_at TEXT
-);
-
-CREATE TABLE teams (
-  identifier TEXT PRIMARY KEY,
-  title TEXT NOT NULL,
-  description TEXT NOT NULL DEFAULT '',
-  entra_group_id TEXT,
-  managed INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL
-);
-CREATE TABLE team_members (
-  team TEXT NOT NULL REFERENCES teams(identifier) ON DELETE CASCADE,
-  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  via TEXT NOT NULL DEFAULT 'manual', -- manual | entra
-  PRIMARY KEY (team, user_id)
-);
-CREATE INDEX team_members_user ON team_members(user_id);
-
-CREATE TABLE blueprints (
-  identifier TEXT PRIMARY KEY,
-  title TEXT NOT NULL,
-  description TEXT NOT NULL DEFAULT '',
-  icon TEXT,
-  schema TEXT NOT NULL,
-  relations TEXT NOT NULL DEFAULT '{}',
-  managed INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-
-CREATE TABLE entities (
-  blueprint TEXT NOT NULL REFERENCES blueprints(identifier),
-  identifier TEXT NOT NULL,
-  title TEXT NOT NULL,
-  team TEXT,
-  properties TEXT NOT NULL DEFAULT '{}',
-  relations TEXT NOT NULL DEFAULT '{}',
-  source TEXT NOT NULL,
-  search TEXT NOT NULL DEFAULT '',     -- lower-cased identifier + title for LIKE search
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  PRIMARY KEY (blueprint, identifier)
-);
-CREATE INDEX entities_title ON entities(blueprint, title);
-CREATE INDEX entities_source ON entities(source, blueprint);
-CREATE INDEX entities_team ON entities(team);
-CREATE INDEX entities_updated ON entities(updated_at);
-
-CREATE TABLE entity_relations (
-  blueprint TEXT NOT NULL,
-  identifier TEXT NOT NULL,
-  relation TEXT NOT NULL,
-  target_blueprint TEXT NOT NULL,
-  target_identifier TEXT NOT NULL,
-  PRIMARY KEY (blueprint, identifier, relation, target_identifier),
-  FOREIGN KEY (blueprint, identifier) REFERENCES entities(blueprint, identifier) ON DELETE CASCADE
-);
-CREATE INDEX entity_relations_target ON entity_relations(target_blueprint, target_identifier);
-
-CREATE TABLE actions (
-  identifier TEXT PRIMARY KEY,
-  title TEXT NOT NULL,
-  description TEXT NOT NULL DEFAULT '',
-  icon TEXT,
-  blueprint TEXT,
-  trigger TEXT NOT NULL,
-  inputs TEXT NOT NULL,
-  invoker TEXT NOT NULL,
-  approval TEXT NOT NULL,
-  allowed TEXT NOT NULL,
-  enabled INTEGER NOT NULL DEFAULT 1,
-  managed INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-
-CREATE TABLE runs (
-  id TEXT PRIMARY KEY,
-  action TEXT NOT NULL,
-  action_title TEXT NOT NULL,
-  blueprint TEXT,
-  entity TEXT,
-  inputs TEXT NOT NULL,
-  status TEXT NOT NULL,
-  status_label TEXT,
-  link TEXT,
-  result TEXT,
-  invoker TEXT NOT NULL,               -- snapshot of the action's invoker at trigger time
-  approval TEXT NOT NULL,              -- snapshot of the approval policy
-  state TEXT,                          -- invoker state (external ids) for polling
-  triggered_by TEXT NOT NULL REFERENCES users(id),
-  team TEXT,                           -- team owning the target entity at trigger time
-  worker TEXT,
-  locked_until TEXT,
-  next_poll_at TEXT,
-  created_at TEXT NOT NULL,
-  started_at TEXT,
-  ended_at TEXT,
-  updated_at TEXT NOT NULL
-);
-CREATE INDEX runs_status ON runs(status, next_poll_at);
-CREATE INDEX runs_user ON runs(triggered_by, created_at);
-CREATE INDEX runs_entity ON runs(blueprint, entity, created_at);
-CREATE INDEX runs_created ON runs(created_at);
-
-CREATE TABLE run_approvals (
-  run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
-  user_id TEXT NOT NULL REFERENCES users(id),
-  decision TEXT NOT NULL,
-  comment TEXT NOT NULL DEFAULT '',
-  at TEXT NOT NULL,
-  PRIMARY KEY (run_id, user_id)
-);
-
-CREATE TABLE run_logs (
-  seq INTEGER PRIMARY KEY AUTOINCREMENT,
-  run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
-  at TEXT NOT NULL,
-  level TEXT NOT NULL,
-  message TEXT NOT NULL
-);
-CREATE INDEX run_logs_run ON run_logs(run_id, seq);
-
-CREATE TABLE integrations (
-  identifier TEXT PRIMARY KEY,
-  title TEXT NOT NULL,
-  type TEXT NOT NULL,
-  enabled INTEGER NOT NULL DEFAULT 1,
-  config TEXT NOT NULL,
-  mappings TEXT NOT NULL,
-  interval_minutes INTEGER NOT NULL DEFAULT 60,
-  delete_missing INTEGER NOT NULL DEFAULT 0,
-  managed INTEGER NOT NULL DEFAULT 0,
-  next_sync_at TEXT,
-  locked_until TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-
-CREATE TABLE sync_runs (
-  id TEXT PRIMARY KEY,
-  integration TEXT NOT NULL REFERENCES integrations(identifier) ON DELETE CASCADE,
-  trigger TEXT NOT NULL,
-  status TEXT NOT NULL,
-  stats TEXT NOT NULL DEFAULT '{}',
-  logs TEXT NOT NULL DEFAULT '[]',
-  started_at TEXT NOT NULL,
-  ended_at TEXT
-);
-CREATE INDEX sync_runs_integration ON sync_runs(integration, started_at);
-
-CREATE TABLE webhooks (
-  identifier TEXT PRIMARY KEY,
-  title TEXT NOT NULL,
-  url TEXT NOT NULL,
-  events TEXT NOT NULL,
-  blueprints TEXT NOT NULL DEFAULT '[]',
-  secret TEXT,                          -- reference: \${secret:NAME} / \${env:NAME}
-  enabled INTEGER NOT NULL DEFAULT 1,
-  managed INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-
-CREATE TABLE deliveries (
-  id TEXT PRIMARY KEY,
-  webhook TEXT NOT NULL REFERENCES webhooks(identifier) ON DELETE CASCADE,
-  event TEXT NOT NULL,
-  payload TEXT NOT NULL,
-  status TEXT NOT NULL,                -- pending | success | failed
-  attempts INTEGER NOT NULL DEFAULT 0,
-  next_attempt_at TEXT NOT NULL,
-  locked_until TEXT,
-  response_status INTEGER,
-  last_error TEXT,
-  created_at TEXT NOT NULL,
-  delivered_at TEXT
-);
-CREATE INDEX deliveries_due ON deliveries(status, next_attempt_at);
-CREATE INDEX deliveries_webhook ON deliveries(webhook, created_at);
-
-CREATE TABLE secrets (
-  name TEXT PRIMARY KEY,
-  value_enc TEXT NOT NULL,
-  description TEXT NOT NULL DEFAULT '',
-  updated_by TEXT,
-  updated_at TEXT NOT NULL
-);
-
-CREATE TABLE audit_log (
-  id TEXT PRIMARY KEY,
-  at TEXT NOT NULL,
-  action TEXT NOT NULL,
-  actor_id TEXT,
-  actor_email TEXT,
-  target TEXT,
-  detail TEXT NOT NULL DEFAULT '{}'
-);
-CREATE INDEX audit_at ON audit_log(at);
-`;
-
 export interface Migration {
   id: number;
   name: string;
   up: (d: Driver) => Promise<void>;
+  /**
+   * SQLite: run with foreign keys off (table rebuilds; a DROP TABLE would otherwise cascade to the children) and
+   * check them before committing. The pragma is a no-op inside a transaction, so it is set around it.
+   */
+  sqliteForeignKeysOff?: boolean;
 }
 
-export const MIGRATIONS: Migration[] = [
-  { id: 1, name: 'developer portal schema', up: (d) => d.exec(ddl(d, SCHEMA_V1)) },
-  { id: 2, name: 'onboarding tour', up: (d) => d.exec('ALTER TABLE users ADD COLUMN tour_completed_at TEXT') },
-  {
-    id: 3,
-    name: 'workflows: steps, step approvals, step logs',
-    up: (d) =>
-      d.exec(`
-        ALTER TABLE actions ADD COLUMN steps TEXT;
-        ALTER TABLE runs ADD COLUMN steps TEXT;
-        ALTER TABLE run_logs ADD COLUMN step_id TEXT;
-        CREATE TABLE run_steps (
-          run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
-          step_id TEXT NOT NULL,
-          position INTEGER NOT NULL,
-          name TEXT NOT NULL,
-          type TEXT NOT NULL,
-          status TEXT NOT NULL,   -- PENDING QUEUED RUNNING WAITING_APPROVAL SUCCESS FAILURE SKIPPED CANCELLED
-          status_label TEXT,
-          attempt INTEGER NOT NULL DEFAULT 0,
-          output TEXT,
-          state TEXT,             -- invoker state (external ids), approval message
-          link TEXT,
-          worker TEXT,
-          locked_until TEXT,      -- lease while a worker executes the step
-          next_at TEXT,           -- QUEUED: not before (retry backoff) · RUNNING: next status poll
-          deadline_at TEXT,       -- timeout
-          started_at TEXT,
-          ended_at TEXT,
-          PRIMARY KEY (run_id, step_id)
-        );
-        CREATE INDEX run_steps_due ON run_steps(status, next_at);
-        CREATE TABLE step_approvals (
-          run_id TEXT NOT NULL,
-          step_id TEXT NOT NULL,
-          user_id TEXT NOT NULL REFERENCES users(id),
-          decision TEXT NOT NULL,
-          comment TEXT NOT NULL DEFAULT '',
-          at TEXT NOT NULL,
-          PRIMARY KEY (run_id, step_id, user_id),
-          FOREIGN KEY (run_id, step_id) REFERENCES run_steps(run_id, step_id) ON DELETE CASCADE
-        );
-      `),
-  },
-];
+/**
+ * Baseline policy: the migration history was flattened into migration 1 (schema.ts) on 2026-11-07, before the first
+ * production release. From now on append migrations (id 2, 3…) and never edit the baseline once it has shipped.
+ */
+export const MIGRATIONS: Migration[] = [{ id: 1, name: 'baseline schema', up: baseline }];
 
-/** Apply pending numbered migrations (idempotent; serialized across replicas by an advisory lock on Postgres). */
+/**
+ * Apply pending numbered migrations (idempotent; serialized across replicas by an advisory lock on Postgres).
+ * Each migration and its bookkeeping row commit atomically (DDL is transactional on both Postgres and SQLite), so a
+ * failure half way never leaves a partly applied migration behind.
+ */
 export async function migrate(d: Driver, migrations = MIGRATIONS) {
   await d.exec('CREATE TABLE IF NOT EXISTS schema_migrations (id INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)');
   const done = new Set((await d.query<{ id: number }>('SELECT id FROM schema_migrations')).rows.map((r) => Number(r.id)));
   for (const m of migrations) {
     if (done.has(m.id)) continue;
-    await m.up(d);
-    await d.query('INSERT INTO schema_migrations (id, name, applied_at) VALUES (?, ?, ?)', [m.id, m.name, new Date().toISOString()]);
+    const fkOff = !!m.sqliteForeignKeysOff && d.dialect === 'sqlite';
+    if (fkOff) await d.exec('PRAGMA foreign_keys = OFF');
+    await d.exec('BEGIN');
+    try {
+      await m.up(d);
+      if (fkOff) {
+        const broken = (await d.query('PRAGMA foreign_key_check')).rows;
+        if (broken.length) throw new Error(`migration ${m.id}: foreign key check failed: ${JSON.stringify(broken.slice(0, 3))}`);
+      }
+      await d.query('INSERT INTO schema_migrations (id, name, applied_at) VALUES (?, ?, ?)', [m.id, m.name, new Date().toISOString()]);
+      await d.exec('COMMIT');
+    } catch (err) {
+      await d.exec('ROLLBACK').catch(() => undefined);
+      throw err;
+    } finally {
+      if (fkOff) await d.exec('PRAGMA foreign_keys = ON');
+    }
   }
 }
 
+/** Wait (bounded) for the migration job to bring the schema to this build's version, then fail so the pod restarts. */
+async function assertMigrated(d: Driver) {
+  for (let attempt = 1; ; attempt++) {
+    const done = new Set<number>();
+    try {
+      for (const r of (await d.query<{ id: number }>('SELECT id FROM schema_migrations')).rows) done.add(Number(r.id));
+    } catch {
+      // table missing: nothing applied yet
+    }
+    const missing = MIGRATIONS.filter((m) => !done.has(m.id));
+    if (!missing.length) return;
+    if (attempt >= 100) throw new Error(`Database schema is behind: pending migrations ${missing.map((m) => m.id).join(', ')} (run the migration job)`);
+    if (attempt === 1) console.warn(`[db] waiting for the migration job (pending: ${missing.map((m) => m.id).join(', ')})`);
+    await new Promise((r) => setTimeout(r, 3000));
+  }
+}
+
+const log = componentLogger('db');
 let pool: pg.Pool | undefined;
 
 async function open(): Promise<Driver> {
   if (!config.DATABASE_URL?.startsWith('postgres')) {
     const d = sqliteDriver(paths.db);
-    await migrate(d);
+    await migrate(d); // SQLite is single-process: always migrate on open
     return d;
   }
   pool = new pg.Pool({ connectionString: config.DATABASE_URL, max: config.DATABASE_POOL_SIZE });
-  pool.on('error', (err) => console.error('[db] idle client error', err.message)); // never crash on a dropped idle connection
+  pool.on('error', (err) => log.error({ err }, 'idle client error')); // never crash on a dropped idle connection
   // The database may start after the pods (fresh install, failover): wait instead of crash-looping.
   let client: pg.PoolClient | undefined;
   for (let attempt = 1; !client; attempt++) {
@@ -391,22 +160,37 @@ async function open(): Promise<Driver> {
       client = await pool.connect();
     } catch (err) {
       if (attempt >= 30) throw err;
-      console.warn(`[db] waiting for PostgreSQL (attempt ${attempt}/30): ${(err as Error).message}`);
+      log.warn({ attempt, err: (err as Error).message }, 'waiting for PostgreSQL');
       await new Promise((r) => setTimeout(r, Math.min(1000 * attempt, 5000)));
     }
   }
   try {
-    await client.query('SELECT pg_advisory_lock(726201)');
-    await migrate(postgresDriver(client));
+    // MIGRATE_ON_START=false: a pre-upgrade job (`npm run migrate`) owns the schema, pods only verify nothing is pending.
+    if (config.MIGRATE_ON_START) {
+      await client.query(`SELECT pg_advisory_lock(${SCHEMA_KEY}, 726201)`);
+      await migrate(postgresDriver(client));
+    } else await assertMigrated(postgresDriver(client)); // no lock held while waiting
   } finally {
-    await client.query('SELECT pg_advisory_unlock(726201)').catch(() => undefined);
+    await client.query(`SELECT pg_advisory_unlock(${SCHEMA_KEY}, 726201)`).catch(() => undefined);
     client.release();
   }
   return postgresDriver(pool);
 }
 
-export const driver = await open();
+/**
+ * Postgres advisory locks are per database, not per schema: the first key is the current schema, so two installations
+ * (or test files) in different schemas of one database never wait on each other. Replicas of one installation share
+ * the schema, hence the lock.
+ */
+export const SCHEMA_KEY = 'hashtext(current_schema())';
+
+/** Connection pool occupancy (Postgres only), for the metrics endpoint. */
+export const poolStats = () => (pool ? { total: pool.totalCount, idle: pool.idleCount, waiting: pool.waitingCount } : undefined);
+
+export const driver = traced(await open());
 export const dialect = driver.dialect;
+/** Row lock suffix for `SELECT … FOR UPDATE` inside `tx` (SQLite serializes transactions in-process instead). */
+export const forUpdate = dialect === 'postgres' ? ' FOR UPDATE' : '';
 
 let sqliteChain: Promise<unknown> = Promise.resolve();
 
@@ -433,7 +217,7 @@ export async function tx<T>(fn: (d: Driver) => Promise<T>): Promise<T> {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const r = await fn(postgresDriver(client));
+    const r = await fn(traced(postgresDriver(client)));
     await client.query('COMMIT');
     return r;
   } catch (err) {
@@ -449,12 +233,81 @@ export async function withAdvisoryLock<T>(key: number, fn: () => Promise<T>): Pr
   if (!pool) return fn();
   const client = await pool.connect();
   try {
-    await client.query('SELECT pg_advisory_lock($1)', [key]);
+    await client.query(`SELECT pg_advisory_lock(${SCHEMA_KEY}, $1)`, [key]);
     return await fn();
   } finally {
-    await client.query('SELECT pg_advisory_unlock($1)', [key]).catch(() => undefined);
+    await client.query(`SELECT pg_advisory_unlock(${SCHEMA_KEY}, $1)`, [key]).catch(() => undefined);
     client.release();
   }
+}
+
+/**
+ * Run `fn` when this replica wins a Postgres session advisory lock, skip (return undefined) when another replica holds
+ * it. Use for periodic jobs where one replica per period is enough. In-process guard on SQLite.
+ */
+const localLocks = new Set<number>();
+export async function tryAdvisoryLock<T>(key: number, fn: () => Promise<T>): Promise<T | undefined> {
+  if (!pool) {
+    if (localLocks.has(key)) return undefined;
+    localLocks.add(key);
+    try {
+      return await fn();
+    } finally {
+      localLocks.delete(key);
+    }
+  }
+  const client = await pool.connect();
+  try {
+    const { rows } = await client.query<{ ok: boolean }>(`SELECT pg_try_advisory_lock(${SCHEMA_KEY}, $1) AS ok`, [key]);
+    if (!rows[0]?.ok) return undefined;
+    try {
+      return await fn();
+    } finally {
+      await client.query(`SELECT pg_advisory_unlock(${SCHEMA_KEY}, $1)`, [key]).catch(() => undefined);
+    }
+  } finally {
+    client.release();
+  }
+}
+
+/** Wake sleeping workers on other replicas (Postgres LISTEN/NOTIFY); no-op on SQLite, where everything is in-process. */
+export async function notify(channel: string) {
+  if (pool) await pool.query('SELECT pg_notify($1, $2)', [channel, '']).catch(() => undefined);
+}
+
+/** LISTEN on a dedicated connection, reconnecting after failures. Returns a stop function. */
+export function listen(channel: string, onMessage: () => void): () => Promise<void> {
+  if (!pool || !config.DATABASE_URL) return async () => undefined;
+  let stopped = false;
+  let client: pg.Client | undefined;
+  const connect = async () => {
+    if (stopped) return;
+    const c = new pg.Client({ connectionString: config.DATABASE_URL });
+    c.on('notification', (m) => m.channel === channel && onMessage());
+    const retry = () => {
+      if (client === c) client = undefined;
+      c.removeAllListeners();
+      c.end().catch(() => undefined);
+      if (!stopped) setTimeout(() => void connect(), 5000).unref();
+    };
+    c.on('error', retry);
+    c.on('end', retry);
+    try {
+      await c.connect();
+      await c.query(`LISTEN ${channel}`);
+      client = c;
+    } catch {
+      retry();
+    }
+  };
+  void connect();
+  return async () => {
+    stopped = true;
+    const c = client;
+    client = undefined;
+    c?.removeAllListeners();
+    await c?.end().catch(() => undefined);
+  };
 }
 
 export const newId = () => randomUUID();

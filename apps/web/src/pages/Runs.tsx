@@ -7,30 +7,40 @@ import {
   Button,
   Card,
   Code,
-  Grid,
+  Drawer,
   Group,
   MultiSelect,
-  ScrollArea,
+  NativeSelect,
   SegmentedControl,
+  Select,
   Stack,
   Table,
   Text,
   Textarea,
+  TextInput,
   Timeline,
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
-import { IconCheck, IconExternalLink, IconPlayerStop, IconX } from '@tabler/icons-react';
+import { Link, Navigate, useLocation, useNavigate, useParams, useSearchParams } from 'react-router';
+import { IconCheck, IconExternalLink, IconFileText, IconInfoCircle, IconPlayerPlay, IconPlayerStop, IconRepeat, IconX } from '@tabler/icons-react';
 import type { Run, RunStatus, RunStep } from '@asterius/shared';
 import { api, errorText } from '../lib/api';
 import { DataTable } from '../components/DataTable';
-import { duration, Empty, Markdown, PageHeader, QueryView, StatusBadge, STATUS_COLORS, TimeAgo } from '../components/ui';
-import { WorkflowGraph } from '../components/WorkflowGraph';
-import { STEP_STATUS_COLORS, STEP_STATUS_LABELS, STEP_TYPES } from '../lib/workflow';
+import { useUrlParams } from '../lib/urlState';
+import { useRunStream } from '../lib/runStream';
+import { LogViewer } from '../components/LogViewer';
+import { duration, Empty, Markdown, PageHeader, QueryView, StatusBadge, STATUS_COLORS, STATUS_LABELS, TimeAgo } from '../components/ui';
+import { TRIGGER_ID, WorkflowFlow, type FlowStep, type FlowTrigger } from '../components/WorkflowFlow';
+import { FlowShell } from '../components/FlowShell';
+import { ExplainRun } from '../components/AiAssistant';
+import { splitJobLog, STEP_STATUS_COLORS, STEP_STATUS_LABELS, STEP_TYPES, stepTone } from '../lib/workflow';
 import { PropertyValue } from '../components/PropertyValue';
+import { initialValues, SchemaForm, validateValues, type FormValues } from '../components/SchemaForm';
+import { UserChip } from '../components/UserChip';
 
 const PAGE = 30;
+const onError = (e: unknown) => notifications.show({ color: 'red', message: errorText(e) });
 const ACTIVE: RunStatus[] = ['PENDING_APPROVAL', 'QUEUED', 'IN_PROGRESS'];
 
 const runColumns = [
@@ -51,33 +61,40 @@ const runColumns = [
     ),
   },
   { key: 's', label: 'Status', render: (r: Run) => <StatusBadge status={r.status} label={r.statusLabel} /> },
-  { key: 'u', label: 'Requested by', render: (r: Run) => r.triggeredBy.name },
+  { key: 'u', label: 'Requested by', render: (r: Run) => <UserChip user={r.triggeredBy} /> },
   { key: 't', label: 'When', render: (r: Run) => <TimeAgo at={r.createdAt} /> },
   { key: 'd', label: 'Duration', render: (r: Run) => <Text fz="sm">{r.startedAt ? duration(r.startedAt, r.endedAt) : '—'}</Text> },
 ];
 
 export function Runs() {
-  const [params, setParams] = useSearchParams();
+  const [params, set] = useUrlParams();
   const navigate = useNavigate();
   const scope = params.get('scope') ?? 'mine';
   const status = params.get('status')?.split(',').filter(Boolean) ?? [];
   const page = Number(params.get('page') ?? 1);
+  const action = params.get('action');
+  const blueprint = params.get('blueprint');
+  const entity = params.get('entity');
+  const blueprints = useQuery({ queryKey: ['blueprints'], queryFn: api.blueprints, staleTime: 30_000 });
+  const actions = useQuery({ queryKey: ['actions', 'all'], queryFn: () => api.actions(), staleTime: 60_000 });
   const q = useQuery({
-    queryKey: ['runs', scope, status.join(','), page],
-    queryFn: () => api.runs({ mine: scope === 'mine', status: status.join(',') || undefined, limit: PAGE, offset: (page - 1) * PAGE }),
+    queryKey: ['runs', scope, status.join(','), action, blueprint, entity, page],
+    queryFn: () =>
+      api.runs({
+        mine: scope === 'mine',
+        status: status.join(',') || undefined,
+        action: action ?? undefined,
+        blueprint: blueprint ?? undefined,
+        entity: entity ?? undefined,
+        limit: PAGE,
+        offset: (page - 1) * PAGE,
+      }),
     placeholderData: keepPreviousData,
     refetchInterval: (query) => (query.state.data?.items.some((r) => ACTIVE.includes(r.status)) ? 5_000 : 30_000),
   });
-  const set = (k: string, v: string) => {
-    const n = new URLSearchParams(params);
-    if (v) n.set(k, v);
-    else n.delete(k);
-    if (k !== 'page') n.delete('page');
-    setParams(n, { replace: true });
-  };
   return (
     <Stack>
-      <PageHeader title="Runs" description="Every self-service request and its execution." />
+      <PageHeader title="Runs" description="Every self-service request and its execution." refresh={q} />
       <Group>
         <SegmentedControl
           value={scope}
@@ -87,7 +104,41 @@ export function Runs() {
             { value: 'all', label: 'Everyone' },
           ]}
         />
-        <MultiSelect placeholder="Any status" clearable data={Object.keys(STATUS_COLORS)} value={status} onChange={(v) => set('status', v.join(','))} w={360} />
+        <MultiSelect
+          placeholder="Any status"
+          aria-label="Filter by status"
+          clearable
+          data={(Object.keys(STATUS_COLORS) as RunStatus[]).map((k) => ({ value: k, label: STATUS_LABELS[k] }))}
+          value={status}
+          onChange={(v) => set('status', v.join(','))}
+          w={320}
+        />
+        <Select
+          placeholder="Any blueprint"
+          aria-label="Filter by blueprint"
+          clearable
+          data={(blueprints.data ?? []).map((b) => ({ value: b.identifier, label: b.title }))}
+          value={blueprint}
+          onChange={(v) => set('blueprint', v ?? '')}
+          w={200}
+        />
+        <TextInput
+          placeholder="Entity identifier"
+          aria-label="Filter by entity"
+          value={entity ?? ''}
+          onChange={(e) => set('entity', e.currentTarget.value)}
+          w={200}
+        />
+        <Select
+          placeholder="Any action"
+          aria-label="Filter by action"
+          searchable
+          clearable
+          data={(actions.data ?? []).map((a) => ({ value: a.identifier, label: a.title }))}
+          value={action}
+          onChange={(v) => set('action', v ?? '')}
+          w={240}
+        />
       </Group>
       <DataTable
         rows={q.data?.items}
@@ -103,17 +154,74 @@ export function Runs() {
   );
 }
 
+const approvalKey = (r: Run) => `${r.id}/${r.pendingStep?.id ?? ''}`;
+
 export function Approvals() {
   const q = useQuery({ queryKey: ['approvals'], queryFn: api.approvals, refetchInterval: 15_000 });
   const navigate = useNavigate();
+  const qc = useQueryClient();
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [comment, setComment] = useState('');
+  const decide = useMutation({
+    mutationFn: async (d: 'approve' | 'reject') => {
+      const targets = (q.data ?? []).filter((r) => selected.has(approvalKey(r)));
+      const results = await Promise.allSettled(
+        targets.map((r) => {
+          if (r.pendingStep) return d === 'approve' ? api.approveStep(r.id, r.pendingStep.id, comment) : api.rejectStep(r.id, r.pendingStep.id, comment);
+          return d === 'approve' ? api.approve(r.id, comment) : api.reject(r.id, comment);
+        }),
+      );
+      return { d, ok: results.filter((x) => x.status === 'fulfilled').length, failed: results.filter((x) => x.status === 'rejected').length };
+    },
+    onSuccess: ({ d, ok, failed }) => {
+      notifications.show({
+        color: failed ? 'orange' : 'green',
+        message: `${ok} ${d === 'approve' ? 'approved' : 'rejected'}${failed ? `, ${failed} failed` : ''}`,
+      });
+      setSelected(new Set());
+      setComment('');
+      void qc.invalidateQueries({ queryKey: ['approvals'] });
+      void qc.invalidateQueries({ queryKey: ['runs'] });
+    },
+    onError,
+  });
   return (
     <Stack>
-      <PageHeader title="Approvals" description="Requests and workflow steps waiting for a decision you can make." />
+      <PageHeader title="Approvals" description="Requests and workflow steps waiting for a decision you can make." refresh={q} />
+      {selected.size > 0 && (
+        <Group align="flex-end">
+          <Text fz="sm">{selected.size} selected</Text>
+          <Textarea
+            aria-label="Comment for the decision"
+            placeholder="Comment (required to reject)"
+            value={comment}
+            onChange={(e) => setComment(e.currentTarget.value)}
+            autosize
+            minRows={1}
+            style={{ flex: 1, maxWidth: 420 }}
+          />
+          <Button color="green" size="xs" leftSection={<IconCheck size={14} />} loading={decide.isPending} onClick={() => decide.mutate('approve')}>
+            Approve selected
+          </Button>
+          <Button
+            color="red"
+            variant="light"
+            size="xs"
+            leftSection={<IconX size={14} />}
+            loading={decide.isPending}
+            disabled={!comment.trim()}
+            onClick={() => decide.mutate('reject')}
+          >
+            Reject selected
+          </Button>
+        </Group>
+      )}
       <DataTable
+        selection={{ selected, onChange: setSelected }}
         rows={q.data}
         loading={q.isPending}
         error={q.error}
-        rowKey={(r) => `${r.id}/${r.pendingStep?.id ?? ''}`}
+        rowKey={approvalKey}
         onRowClick={(r) => navigate(`/runs/${r.id}${r.pendingStep ? `?step=${r.pendingStep.id}` : ''}`)}
         empty={<Empty title="Nothing to approve">You are all caught up.</Empty>}
         columns={[
@@ -145,241 +253,159 @@ export function Approvals() {
   );
 }
 
-export function RunPage() {
-  const { id = '' } = useParams();
-  const q = useQuery({
-    queryKey: ['run', id],
-    queryFn: () => api.run(id),
-    refetchInterval: (query) => (query.state.data && !ACTIVE.includes(query.state.data.status) ? false : 2_500),
-  });
-  return <QueryView q={q}>{(r) => <RunView r={r} />}</QueryView>;
-}
-
-const LOG_COLORS = { info: undefined, warn: 'var(--mantine-color-yellow-6)', error: 'var(--mantine-color-red-6)' } as const;
-
-/** The step to show first: ?step=, else the one needing attention, else the last that ran. */
-function defaultStep(r: Run, requested: string | null) {
-  const steps = r.steps ?? [];
-  if (requested && steps.some((s) => s.id === requested)) return requested;
-  return (
-    steps.find((s) => s.canApprove)?.id ??
-    steps.find((s) => s.status === 'RUNNING' || s.status === 'WAITING_APPROVAL')?.id ??
-    [...steps].reverse().find((s) => s.startedAt)?.id ??
-    steps[0]?.id ??
-    null
-  );
-}
-
-function RunView({ r }: { r: Run }) {
+/** A run, kept live: server-sent events, polling only while the stream is not connected. */
+function useLiveRun(id: string) {
   const qc = useQueryClient();
-  const [params] = useSearchParams();
-  const [comment, setComment] = useState('');
-  const [selected, setSelected] = useState<string | null>(() => defaultStep(r, params.get('step')));
-  const [allLogs, setAllLogs] = useState(false);
-  const refresh = (run: Run) => {
-    qc.setQueryData(['run', r.id], run);
+  const live = useRunStream(id, true);
+  return useQuery({
+    queryKey: ['run', id],
+    // Poll incrementally: fetch only the log lines past the last one we hold and append them.
+    queryFn: async () => {
+      const prev = qc.getQueryData<Run>(['run', id]);
+      const after = prev?.logs?.length ? prev.logs[prev.logs.length - 1].seq : undefined;
+      const r = await api.run(id, after);
+      return after === undefined ? r : { ...r, logs: [...(prev?.logs ?? []), ...(r.logs ?? [])] };
+    },
+    refetchInterval: (query) => (live || (query.state.data && !ACTIVE.includes(query.state.data.status)) ? false : 2_500),
+  });
+}
+
+/** Stores a run returned by an action (approve, cancel…) and refreshes the lists that show it. */
+function useRunRefresh(id: string) {
+  const qc = useQueryClient();
+  return (run: Run) => {
+    qc.setQueryData(['run', id], run);
     void qc.invalidateQueries({ queryKey: ['approvals'] });
     void qc.invalidateQueries({ queryKey: ['runs'] });
   };
-  const onError = (e: unknown) => notifications.show({ color: 'red', message: errorText(e) });
+}
+
+/**
+ * A run as a full-panel graph (the sidebar and top bar stay): the trigger and the steps coloured by status, the run's
+ * buttons on top. Clicking a node opens its details on the side, next to the live graph: a step's status, decision
+ * form and logs; the trigger's request, inputs, approvals and AI explanation. ?step= opens that step.
+ */
+export function RunPage() {
+  const { id = '' } = useParams();
+  const q = useLiveRun(id);
+  return <QueryView q={q}>{(r) => <RunFlow key={r.id} r={r} />}</QueryView>;
+}
+
+/** The former full-view URL. */
+export function RunFlowPage() {
+  const { id = '' } = useParams();
+  const { search } = useLocation();
+  return <Navigate to={`/runs/${id}${search}`} replace />;
+}
+
+/** Open, resume, run again, cancel: the run's buttons. */
+function RunActions({ r, onDone, size }: { r: Run; onDone: (run: Run) => void; size?: 'xs' | 'sm' }) {
+  const qc = useQueryClient();
+  const navigate = useNavigate();
+  const cancel = useMutation({ mutationFn: () => api.cancel(r.id), onSuccess: onDone, onError });
+  const resume = useMutation({ mutationFn: () => api.resume(r.id), onSuccess: onDone, onError });
+  const rerun = useMutation({
+    mutationFn: () => api.rerun(r.id),
+    onSuccess: (run) => {
+      void qc.invalidateQueries({ queryKey: ['runs'] });
+      void navigate(`/runs/${run.id}`);
+    },
+    onError,
+  });
+  return (
+    <>
+      {r.link && (
+        <Button
+          size={size}
+          component="a"
+          href={r.link}
+          target={r.link.startsWith(window.location.origin) ? undefined : '_blank'}
+          variant="default"
+          rightSection={<IconExternalLink size={16} />}
+        >
+          Open
+        </Button>
+      )}
+      {r.canResume && (
+        <Button size={size} variant="light" leftSection={<IconPlayerPlay size={16} />} loading={resume.isPending} onClick={() => resume.mutate()}>
+          Resume
+        </Button>
+      )}
+      {r.canRerun && (
+        <Button size={size} variant="default" leftSection={<IconRepeat size={16} />} loading={rerun.isPending} onClick={() => rerun.mutate()}>
+          Run again
+        </Button>
+      )}
+      {r.canCancel && (
+        <Button size={size} color="red" variant="light" leftSection={<IconPlayerStop size={16} />} loading={cancel.isPending} onClick={() => cancel.mutate()}>
+          Cancel
+        </Button>
+      )}
+    </>
+  );
+}
+
+/** The request waits for the caller's approval before any step starts. */
+function RequestApproval({ r, onDone }: { r: Run; onDone: (run: Run) => void }) {
+  const [comment, setComment] = useState('');
   const decide = useMutation({
     mutationFn: (d: 'approve' | 'reject') => (d === 'approve' ? api.approve(r.id, comment) : api.reject(r.id, comment)),
     onSuccess: (run) => {
-      refresh(run);
+      onDone(run);
       setComment('');
     },
     onError,
   });
-  const cancel = useMutation({ mutationFn: () => api.cancel(r.id), onSuccess: refresh, onError });
-  const steps = r.steps ?? [];
-  const step = steps.find((s) => s.id === selected) ?? null;
-  const logs = (r.logs ?? []).filter((l) => allLogs || !step || l.stepId === step.id);
-
   return (
-    <Stack>
-      <PageHeader
-        crumbs={[{ label: 'Runs', to: '/runs' }, { label: r.id.slice(0, 8) }]}
-        title={r.actionTitle}
-        description={
-          <Group gap="xs" component="span">
-            <StatusBadge status={r.status} />
-            {r.statusLabel && (
-              <Text span fz="sm" c="dimmed">
-                {r.statusLabel}
-              </Text>
-            )}
-          </Group>
-        }
-        actions={
-          <>
-            {r.link && (
-              <Button
-                component="a"
-                href={r.link}
-                target={r.link.startsWith(window.location.origin) ? undefined : '_blank'}
-                variant="default"
-                rightSection={<IconExternalLink size={16} />}
-              >
-                Open
-              </Button>
-            )}
-            {r.canCancel && (
-              <Button color="red" variant="light" leftSection={<IconPlayerStop size={16} />} loading={cancel.isPending} onClick={() => cancel.mutate()}>
-                Cancel
-              </Button>
-            )}
-          </>
-        }
-      />
-
-      {r.canApprove && (
-        <Alert color="yellow" title="Your approval is requested to start this request">
-          <Stack gap="xs">
-            <Textarea placeholder="Comment (required to reject)" value={comment} onChange={(e) => setComment(e.currentTarget.value)} autosize minRows={2} />
-            <Group>
-              <Button
-                color="green"
-                leftSection={<IconCheck size={16} />}
-                loading={decide.isPending && decide.variables === 'approve'}
-                onClick={() => decide.mutate('approve')}
-              >
-                Approve
-              </Button>
-              <Button
-                color="red"
-                variant="light"
-                leftSection={<IconX size={16} />}
-                loading={decide.isPending && decide.variables === 'reject'}
-                onClick={() => decide.mutate('reject')}
-              >
-                Reject
-              </Button>
-            </Group>
-          </Stack>
-        </Alert>
-      )}
-
-      {steps.length > 0 && (
-        <Card padding="md">
-          <Text fw={600} mb="sm">
-            Workflow
-          </Text>
-          <WorkflowGraph
-            steps={steps.map((s) => ({ id: s.id, name: s.name, type: s.type, needs: s.needs, status: s.status }))}
-            selected={selected}
-            onSelect={(id) => {
-              setSelected(id);
-              setAllLogs(false);
-            }}
-          />
-        </Card>
-      )}
-
-      <Grid>
-        <Grid.Col span={{ base: 12, md: 4 }}>
-          <Stack>
-            <Card>
-              <Table withRowBorders={false} verticalSpacing={4} highlightOnHover={false} fz="sm">
-                <Table.Tbody>
-                  <Row k="Requested by" v={`${r.triggeredBy.name} <${r.triggeredBy.email}>`} />
-                  {r.entity && (
-                    <Row
-                      k="Entity"
-                      v={
-                        <Anchor component={Link} to={`/catalog/${r.blueprint}/${encodeURIComponent(r.entity)}`} fz="sm">
-                          {r.blueprint}/{r.entity}
-                        </Anchor>
-                      }
-                    />
-                  )}
-                  <Row k="Created" v={<TimeAgo at={r.createdAt} />} />
-                  <Row k="Started" v={<TimeAgo at={r.startedAt} />} />
-                  <Row k="Duration" v={r.startedAt ? duration(r.startedAt, r.endedAt) : '—'} />
-                  <Row k="Action" v={<Code>{r.action}</Code>} />
-                </Table.Tbody>
-              </Table>
-            </Card>
-            <Card>
-              <Text fw={600} mb="xs">
-                Inputs
-              </Text>
-              {Object.keys(r.inputs).length ? (
-                <Table withRowBorders={false} verticalSpacing={4} highlightOnHover={false}>
-                  <Table.Tbody>
-                    {Object.entries(r.inputs).map(([k, v]) => (
-                      <Row key={k} k={k} v={<PropertyValue value={v} />} />
-                    ))}
-                  </Table.Tbody>
-                </Table>
-              ) : (
-                <Text c="dimmed" fz="sm">
-                  No inputs
-                </Text>
-              )}
-            </Card>
-            {r.approvals.length > 0 && (
-              <Card>
-                <Text fw={600} mb="xs">
-                  Request approvals
-                </Text>
-                <ApprovalTimeline approvals={r.approvals} />
-              </Card>
-            )}
-          </Stack>
-        </Grid.Col>
-        <Grid.Col span={{ base: 12, md: 8 }}>
-          <Stack>
-            {step && <StepPanel run={r} step={step} onDone={refresh} />}
-            <Card p={0}>
-              <Group justify="space-between" p="sm" style={{ borderBottom: '1px solid var(--hairline)' }}>
-                <Group gap="xs">
-                  <Text fw={600}>Logs</Text>
-                  {step && !allLogs && (
-                    <Badge color="gray" variant="light">
-                      {step.name}
-                    </Badge>
-                  )}
-                </Group>
-                <Group gap="xs">
-                  {ACTIVE.includes(r.status) && (
-                    <Badge variant="dot" color="blue">
-                      live
-                    </Badge>
-                  )}
-                  {step && (
-                    <SegmentedControl
-                      size="xs"
-                      value={allLogs ? 'all' : 'step'}
-                      onChange={(v) => setAllLogs(v === 'all')}
-                      data={[
-                        { value: 'step', label: 'This step' },
-                        { value: 'all', label: 'All' },
-                      ]}
-                    />
-                  )}
-                </Group>
-              </Group>
-              <ScrollArea h={420} type="auto">
-                <pre
-                  className="log-view"
-                  style={{ margin: 0, padding: 14, minHeight: '100%', fontSize: 12.5, lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
-                >
-                  {logs.length === 0 && <span style={{ opacity: 0.55 }}>No log lines yet.</span>}
-                  {logs.map((l, i) => (
-                    <div key={i} style={{ color: LOG_COLORS[l.level] }}>
-                      <span style={{ opacity: 0.55 }}>{new Date(l.at).toLocaleTimeString()} </span>
-                      {allLogs && l.stepId && <span style={{ opacity: 0.7 }}>[{l.stepId}] </span>}
-                      {l.message}
-                    </div>
-                  ))}
-                </pre>
-              </ScrollArea>
-            </Card>
-          </Stack>
-        </Grid.Col>
-      </Grid>
-    </Stack>
+    <Alert color="yellow" title="Your approval is requested to start this request">
+      <Stack gap="xs">
+        <Textarea placeholder="Comment (required to reject)" value={comment} onChange={(e) => setComment(e.currentTarget.value)} autosize minRows={2} />
+        <Group>
+          <Button
+            color="green"
+            leftSection={<IconCheck size={16} />}
+            loading={decide.isPending && decide.variables === 'approve'}
+            onClick={() => decide.mutate('approve')}
+          >
+            Approve
+          </Button>
+          <Button
+            color="red"
+            variant="light"
+            leftSection={<IconX size={16} />}
+            loading={decide.isPending && decide.variables === 'reject'}
+            onClick={() => decide.mutate('reject')}
+          >
+            Reject
+          </Button>
+        </Group>
+      </Stack>
+    </Alert>
   );
+}
+
+/** The run's steps as graph nodes, coloured by status. */
+function runFlowSteps(r: Run): FlowStep[] {
+  return (r.steps ?? []).map((s) => ({
+    id: s.id,
+    name: s.name,
+    type: s.type,
+    needs: s.needs,
+    tone: stepTone(s.status),
+    detail: s.statusLabel || (s.status === 'PENDING' ? null : STEP_STATUS_LABELS[s.status]),
+    badges: [...(s.maxAttempts > 1 && s.attempt > 1 ? [`attempt ${s.attempt}/${s.maxAttempts}`] : []), ...(s.canApprove || s.canSubmit ? ['needs you'] : [])],
+  }));
+}
+
+/** The node before the steps: what started the run, coloured by the request's own approval. */
+function runTrigger(r: Run): FlowTrigger {
+  const type = r.trigger?.type ?? 'form';
+  return {
+    title: type === 'form' ? 'Form submitted' : `${type[0]!.toUpperCase()}${type.slice(1)} trigger`,
+    subtitle: r.triggeredBy.name,
+    tone: r.status === 'PENDING_APPROVAL' ? 'pending' : r.status === 'REJECTED' ? 'failure' : 'success',
+    badges: r.status === 'PENDING_APPROVAL' ? ['awaiting approval'] : r.approvals.length ? ['approved'] : [],
+  };
 }
 
 function ApprovalTimeline({ approvals }: { approvals: Run['approvals'] }) {
@@ -390,7 +416,14 @@ function ApprovalTimeline({ approvals }: { approvals: Run['approvals'] }) {
           key={a.userId + a.at}
           color={a.decision === 'approved' ? 'green' : 'red'}
           bullet={a.decision === 'approved' ? <IconCheck size={12} /> : <IconX size={12} />}
-          title={`${a.userName} ${a.decision}`}
+          title={
+            <Group gap={6}>
+              <UserChip user={{ id: a.userId, name: a.userName }} />
+              <Text span fz="sm">
+                {a.decision}
+              </Text>
+            </Group>
+          }
         >
           {a.comment && <Text fz="sm">{a.comment}</Text>}
           <Text fz="xs" c="dimmed">
@@ -402,15 +435,217 @@ function ApprovalTimeline({ approvals }: { approvals: Run['approvals'] }) {
   );
 }
 
+type Panel = { kind: 'request' } | { kind: 'logs' } | { kind: 'step'; id: string } | null;
+
+function RunFlow({ r }: { r: Run }) {
+  const refresh = useRunRefresh(r.id);
+  const [params] = useSearchParams();
+  const steps = r.steps ?? [];
+  const [panel, setPanel] = useState<Panel>(() => {
+    const requested = params.get('step');
+    return requested && steps.some((s) => s.id === requested) ? { kind: 'step', id: requested } : null;
+  });
+  const [job, setJob] = useState<string | null>(null);
+  const flowSteps = runFlowSteps(r);
+  const step = panel?.kind === 'step' ? (steps.find((s) => s.id === panel.id) ?? null) : null;
+  const needsMe = steps.find((x) => x.canApprove || x.canSubmit);
+  const waiting: Panel = r.canApprove ? { kind: 'request' } : needsMe ? { kind: 'step', id: needsMe.id } : null;
+  const live = ACTIVE.includes(r.status);
+  const allLogs = r.logs ?? [];
+  const jobs = [...new Set(allLogs.map((l) => splitJobLog(l.message).job).filter((j): j is string => !!j))];
+  const selected = panel?.kind === 'step' ? panel.id : panel?.kind === 'request' ? TRIGGER_ID : null;
+
+  return (
+    <>
+      <FlowShell
+        back={{ to: '/runs', label: 'Back to runs' }}
+        title={r.actionTitle}
+        meta={
+          <>
+            <StatusBadge status={r.status} />
+            {r.statusLabel && (
+              <Text span fz="xs" c="dimmed" truncate>
+                {r.statusLabel}
+              </Text>
+            )}
+          </>
+        }
+        actions={
+          <>
+            <Button size="xs" variant="default" leftSection={<IconInfoCircle size={14} />} onClick={() => setPanel({ kind: 'request' })}>
+              Request
+            </Button>
+            <Button size="xs" variant="default" leftSection={<IconFileText size={14} />} onClick={() => setPanel({ kind: 'logs' })}>
+              All logs
+            </Button>
+            <RunActions r={r} onDone={refresh} size="xs" />
+          </>
+        }
+        banner={
+          waiting &&
+          !panel && (
+            <Alert color="orange" py="xs">
+              <Group justify="space-between" wrap="nowrap">
+                <Text fz="sm" fw={500}>
+                  {waiting.kind === 'request' ? 'Your approval is requested to start this request' : 'A step is waiting for you'}
+                </Text>
+                <Button size="xs" color="orange" onClick={() => setPanel(waiting)}>
+                  Review
+                </Button>
+              </Group>
+            </Alert>
+          )
+        }
+        hint="Click a node for its details and logs."
+      >
+        <WorkflowFlow
+          bare
+          height="100%"
+          trigger={runTrigger(r)}
+          steps={flowSteps}
+          selected={selected}
+          onSelect={(id) => setPanel(id === TRIGGER_ID ? { kind: 'request' } : { kind: 'step', id })}
+        />
+      </FlowShell>
+
+      <Drawer
+        opened={!!panel}
+        onClose={() => setPanel(null)}
+        position="right"
+        size="lg"
+        // No overlay: the graph stays visible (and live) next to the details.
+        withOverlay={false}
+        shadow="xl"
+        title={<Text fw={600}>{panel?.kind === 'request' ? 'Request' : panel?.kind === 'logs' ? 'All logs' : (step?.name ?? '')}</Text>}
+      >
+        {panel?.kind === 'request' && (
+          <Stack>
+            {r.canApprove && <RequestApproval r={r} onDone={refresh} />}
+            {['SUCCESS', 'FAILURE', 'CANCELLED', 'REJECTED'].includes(r.status) && <ExplainRun runId={r.id} failed={r.status === 'FAILURE'} />}
+            <Table withRowBorders={false} verticalSpacing={4} highlightOnHover={false} fz="sm">
+              <Table.Tbody>
+                <Row k="Requested by" v={<UserChip user={r.triggeredBy} />} />
+                {r.trigger && r.trigger.type !== 'form' && <Row k="Started by" v={r.trigger.type} />}
+                {r.entity && (
+                  <Row
+                    k="Entity"
+                    v={
+                      <Anchor component={Link} to={`/catalog/${r.blueprint}/${encodeURIComponent(r.entity)}`} fz="sm">
+                        {r.blueprint}/{r.entity}
+                      </Anchor>
+                    }
+                  />
+                )}
+                <Row k="Created" v={<TimeAgo at={r.createdAt} />} />
+                <Row k="Started" v={<TimeAgo at={r.startedAt} />} />
+                <Row k="Duration" v={r.startedAt ? duration(r.startedAt, r.endedAt) : '—'} />
+                <Row k="Action" v={<Code>{r.action}</Code>} />
+                {!!r.costUsd && <Row k="AI cost" v={`$${r.costUsd.toFixed(4)}`} />}
+              </Table.Tbody>
+            </Table>
+            <Text fw={600} fz="sm">
+              Inputs
+            </Text>
+            {Object.keys(r.inputs).length ? (
+              <Table withRowBorders={false} verticalSpacing={4} highlightOnHover={false} fz="sm">
+                <Table.Tbody>
+                  {Object.entries(r.inputs).map(([k, v]) => (
+                    <Row key={k} k={k} v={<PropertyValue value={v} />} />
+                  ))}
+                </Table.Tbody>
+              </Table>
+            ) : (
+              <Text c="dimmed" fz="sm">
+                No inputs
+              </Text>
+            )}
+            {r.approvals.length > 0 && (
+              <>
+                <Text fw={600} fz="sm">
+                  Request approvals
+                </Text>
+                <ApprovalTimeline approvals={r.approvals} />
+              </>
+            )}
+          </Stack>
+        )}
+        {panel?.kind === 'logs' && (
+          <LogsCard
+            lines={allLogs.filter((l) => !job || splitJobLog(l.message).job === job)}
+            showStep
+            filename={`run-${r.id}.log`}
+            live={live}
+            extra={
+              jobs.length > 1 && (
+                <NativeSelect
+                  size="xs"
+                  aria-label="Filter by job"
+                  value={job ?? ''}
+                  onChange={(e) => setJob(e.currentTarget.value || null)}
+                  data={[{ value: '', label: 'All jobs' }, ...jobs.map((j) => ({ value: j, label: j }))]}
+                />
+              )
+            }
+          />
+        )}
+        {step && (
+          <Stack>
+            <StepPanel key={step.id} run={r} step={step} onDone={refresh} />
+            <LogsCard lines={allLogs.filter((l) => l.stepId === step.id)} filename={`run-${r.id}-${step.id}.log`} live={live} />
+          </Stack>
+        )}
+      </Drawer>
+    </>
+  );
+}
+
+function LogsCard(props: { lines: NonNullable<Run['logs']>; filename: string; live: boolean; showStep?: boolean; extra?: React.ReactNode }) {
+  return (
+    <Card p={0}>
+      <Group justify="space-between" p="sm" style={{ borderBottom: '1px solid var(--hairline)' }}>
+        <Text fw={600}>Logs</Text>
+        <Group gap="xs">
+          {props.live && (
+            <Badge variant="dot" color="blue">
+              live
+            </Badge>
+          )}
+          {props.extra}
+        </Group>
+      </Group>
+      <LogViewer lines={props.lines} showStep={props.showStep} filename={props.filename} follow={props.live} />
+    </Card>
+  );
+}
+
 /** One step: status, output, approval decision. */
 function StepPanel({ run, step, onDone }: { run: Run; step: RunStep; onDone: (r: Run) => void }) {
   const [comment, setComment] = useState('');
+  const form = step.form ?? { properties: {} };
+  const [values, setValues] = useState<FormValues>(() => initialValues(form));
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [choice, setChoice] = useState<string | null>(null);
+  const onError = (e: unknown) => notifications.show({ color: 'red', message: errorText(e) });
   const decide = useMutation({
-    mutationFn: (d: 'approve' | 'reject') => (d === 'approve' ? api.approveStep(run.id, step.id, comment) : api.rejectStep(run.id, step.id, comment)),
+    mutationFn: (d: 'approve' | 'reject') =>
+      d === 'approve'
+        ? api.approveStep(run.id, step.id, comment, { choice: choice ?? undefined, values: step.form ? values : undefined })
+        : api.rejectStep(run.id, step.id, comment),
     onSuccess: (r) => {
       setComment('');
       onDone(r);
     },
+    onError,
+  });
+  const submitInput = useMutation({ mutationFn: () => api.submitInput(run.id, step.id, values), onSuccess: onDone, onError });
+  const validated = (go: () => void) => {
+    const e = validateValues(form, values);
+    setErrors(e);
+    if (!Object.keys(e).length) go();
+  };
+  const retry = useMutation({
+    mutationFn: () => api.retryStep(run.id, step.id),
+    onSuccess: onDone,
     onError: (e) => notifications.show({ color: 'red', message: errorText(e) }),
   });
   const output = step.output as Record<string, unknown> | null;
@@ -430,14 +665,22 @@ function StepPanel({ run, step, onDone }: { run: Run; step: RunStep; onDone: (r:
             {step.statusLabel ? `${step.statusLabel} · ` : ''}
             {step.startedAt ? duration(step.startedAt, step.endedAt) : 'not started'}
             {step.maxAttempts > 1 ? ` · attempt ${Math.max(step.attempt, 1)}/${step.maxAttempts}` : ''}
+            {step.costUsd ? ` · AI cost $${step.costUsd.toFixed(4)}` : ''}
             {step.continueOnError ? ' · may fail without failing the workflow' : ''}
           </Text>
         </div>
-        {step.link && (
-          <Button size="xs" component="a" href={step.link} target="_blank" variant="default" rightSection={<IconExternalLink size={14} />}>
-            Open
-          </Button>
-        )}
+        <Group gap="xs">
+          {step.canRetry && (
+            <Button size="xs" variant="light" leftSection={<IconRepeat size={14} />} loading={retry.isPending} onClick={() => retry.mutate()}>
+              Retry step
+            </Button>
+          )}
+          {step.link && (
+            <Button size="xs" component="a" href={step.link} target="_blank" variant="default" rightSection={<IconExternalLink size={14} />}>
+              Open
+            </Button>
+          )}
+        </Group>
       </Group>
 
       {step.message && (
@@ -445,15 +688,45 @@ function StepPanel({ run, step, onDone }: { run: Run; step: RunStep; onDone: (r:
           <Markdown>{step.message}</Markdown>
         </Box>
       )}
+      {step.type === 'input' && step.canSubmit && (
+        <Stack gap="xs" mt="xs">
+          <SchemaForm schema={form} values={values} onChange={setValues} errors={errors} />
+          <Group>
+            <Button leftSection={<IconCheck size={16} />} loading={submitInput.isPending} onClick={() => validated(() => submitInput.mutate())}>
+              Submit
+            </Button>
+          </Group>
+        </Stack>
+      )}
+      {step.children && step.children.length > 0 && (
+        <Stack gap={4} mt="xs">
+          <Text fz="sm" fw={500}>
+            {step.children.length > 1 ? 'Child runs' : 'Child run'}
+          </Text>
+          {step.children.map((c) => (
+            <Group key={c.runId} gap="xs">
+              <Badge variant="light" color={STATUS_COLORS[c.status as RunStatus] ?? 'gray'}>
+                {c.status}
+              </Badge>
+              <Text component={Link} to={`/runs/${c.runId}`} fz="sm">
+                {c.item !== undefined ? `${typeof c.item === 'string' ? c.item : JSON.stringify(c.item)} · ` : ''}
+                {c.runId.slice(0, 8)}
+              </Text>
+            </Group>
+          ))}
+        </Stack>
+      )}
       {step.canApprove && (
         <Stack gap="xs" mt="xs">
+          {step.choices && step.choices.length > 0 && <Select label="Your decision" data={step.choices} value={choice} onChange={setChoice} />}
+          {step.type === 'approval' && step.form && <SchemaForm schema={form} values={values} onChange={setValues} errors={errors} />}
           <Textarea placeholder="Comment (required to reject)" value={comment} onChange={(e) => setComment(e.currentTarget.value)} autosize minRows={2} />
           <Group>
             <Button
               color="green"
               leftSection={<IconCheck size={16} />}
               loading={decide.isPending && decide.variables === 'approve'}
-              onClick={() => decide.mutate('approve')}
+              onClick={() => (step.form ? validated(() => decide.mutate('approve')) : decide.mutate('approve'))}
             >
               Approve
             </Button>

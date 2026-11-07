@@ -11,13 +11,18 @@ export async function testApp() {
 
 export type Api = ReturnType<typeof client>;
 
-/** Small JSON client over fastify.inject. */
-export function client(app: FastifyInstance, token?: string) {
+/** Small JSON client over fastify.inject; `org` sets X-Asterius-Org (the organization a session works in). */
+export function client(app: FastifyInstance, token?: string, org?: string) {
   const call = async (method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE', url: string, body?: unknown, headers: Record<string, string> = {}) => {
     const res = await app.inject({
       method,
       url,
-      headers: { ...(token ? { authorization: `Bearer ${token}` } : {}), ...(body !== undefined ? { 'content-type': 'application/json' } : {}), ...headers },
+      headers: {
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+        ...(org ? { 'x-asterius-org': org } : {}),
+        ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
+        ...headers,
+      },
       payload: body === undefined ? undefined : JSON.stringify(body),
     });
     const data = res.body ? (res.headers['content-type']?.includes('json') ? res.json() : res.body) : undefined;
@@ -45,8 +50,42 @@ export interface Received {
   body: string;
 }
 
+const wantsStream = (body: string) => {
+  try {
+    return (JSON.parse(body) as { stream?: boolean }).stream === true;
+  } catch {
+    return false;
+  }
+};
+
+interface FakeMessage {
+  content: ({ type: string; text?: string; input?: unknown } & Record<string, unknown>)[];
+  usage: Record<string, number>;
+  stop_reason: string;
+}
+
+/** The server-sent events of a Messages API stream for a complete message. */
+export function messageEvents(m: FakeMessage): string {
+  const ev = (type: string, data: object) => `event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`;
+  let out = ev('message_start', { message: { ...m, content: [], stop_reason: null, usage: { ...m.usage, output_tokens: 1 } } });
+  m.content.forEach((block, index) => {
+    if (block.type === 'text') {
+      out += ev('content_block_start', { index, content_block: { type: 'text', text: '' } });
+      out += ev('content_block_delta', { index, delta: { type: 'text_delta', text: block.text } });
+    } else {
+      out += ev('content_block_start', { index, content_block: { ...block, input: {} } });
+      out += ev('content_block_delta', { index, delta: { type: 'input_json_delta', partial_json: JSON.stringify(block.input ?? {}) } });
+    }
+    out += ev('content_block_stop', { index });
+  });
+  out += ev('message_delta', { delta: { stop_reason: m.stop_reason, stop_sequence: null }, usage: m.usage });
+  return out + ev('message_stop', {});
+}
+
 /** A local HTTP server standing in for external systems (webhook endpoints, CI APIs). */
-export async function fakeServer(handler: (r: Received) => { status?: number; body?: unknown } = () => ({ status: 200, body: { ok: true } })) {
+export async function fakeServer(
+  handler: (r: Received) => { status?: number; body?: unknown; headers?: Record<string, string> } = () => ({ status: 200, body: { ok: true } }),
+) {
   const received: Received[] = [];
   const server = http.createServer((req, res) => {
     let body = '';
@@ -55,7 +94,14 @@ export async function fakeServer(handler: (r: Received) => { status?: number; bo
       const r = { method: req.method ?? '', url: req.url ?? '', headers: req.headers, body };
       received.push(r);
       const out = handler(r);
-      res.writeHead(out.status ?? 200, { 'content-type': 'application/json' });
+      const message = out.body as { type?: string } | undefined;
+      if (message?.type === 'message' && wantsStream(body)) {
+        // The Claude SDK streams: answer with the server-sent events of a complete message.
+        res.writeHead(out.status ?? 200, { 'content-type': 'text/event-stream' });
+        res.end(messageEvents(message as never));
+        return;
+      }
+      res.writeHead(out.status ?? 200, { 'content-type': 'application/json', ...out.headers });
       res.end(JSON.stringify(out.body ?? {}));
     });
   });
@@ -86,3 +132,12 @@ export const silentLog = {
   },
   level: 'silent',
 } as never;
+
+/**
+ * Run test code that calls platform internals directly (syncs, run engine, secrets…) in the default organization, as
+ * the workers do for the organization of what they process. HTTP requests made inside open their own context.
+ */
+export async function inDefaultOrg<T>(fn: () => Promise<T>): Promise<T> {
+  const { DEFAULT_ORG, withOrg } = await import('../src/orgs/context.js');
+  return withOrg(DEFAULT_ORG, fn);
+}

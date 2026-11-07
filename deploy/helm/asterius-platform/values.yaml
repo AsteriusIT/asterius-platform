@@ -53,6 +53,29 @@ database:
     storage: 10Gi
     storageClass: ""
     imageName: "" # e.g. ghcr.io/cloudnative-pg/postgresql:17
+    # Continuous WAL archiving + base backups to an object store (Barman Cloud), enabling point-in-time recovery.
+    backup:
+      enabled: false
+      destinationPath: "" # s3://my-bucket/asterius, https://<account>.blob.core.windows.net/<container>, gs://…
+      endpointURL: "" # S3-compatible endpoints (MinIO, Ceph); empty for AWS S3 / Azure / GCS
+      retentionPolicy: 30d
+      schedule: "0 0 2 * * *" # ScheduledBackup cron, 6 fields (seconds first): daily at 02:00
+      compression: gzip # gzip | bzip2 | snappy
+      # Name of an existing Secret with the object store credentials, and which keys to read (S3 shown;
+      # for Azure/GCS set `credentials` to the CloudNativePG barmanObjectStore block verbatim instead).
+      s3Credentials:
+        secretName: ""
+        accessKeyIdKey: ACCESS_KEY_ID
+        secretAccessKeyKey: ACCESS_SECRET_KEY
+      credentials: {} # optional raw barmanObjectStore credentials (azureCredentials / googleCredentials), merged as-is
+    # Disaster recovery: create the cluster from a backup of another cluster instead of an empty database.
+    # Set only when restoring (see docs/OPERATIONS.md); remove afterwards.
+    recovery:
+      enabled: false
+      sourceClusterName: "" # name of the cluster whose backups are read
+      destinationPath: "" # object store path of that cluster's backups
+      endpointURL: ""
+      targetTime: "" # point-in-time target, e.g. "2026-11-06 10:15:00+00"; empty = latest
 
 # ---------- secrets ----------
 # Keys read from the Secret: DATABASE_URL, SECRETS_KEY (32 bytes, base64 or hex), ENTRA_CLIENT_SECRET, METRICS_TOKEN, ANTHROPIC_API_KEY (agent steps),
@@ -66,14 +89,68 @@ secrets:
 
 # ---------- sign-in ----------
 auth:
-  providers: entra # local | entra | local,entra
+  providers: entra # local | entra | keycloak, comma-separated (keycloak: see the keycloak section)
   allowRegistration: false
-  adminEmails: [] # bootstrap admins
+  adminEmails: [] # bootstrap admins (alternatively put a one-time BOOTSTRAP_TOKEN in the Secret: the first account registered with it becomes admin)
   sessionDays: 7
   entra:
     tenantId: ""
     clientId: ""
     adminGroups: [] # Entra group object ids whose members are platform admins
+    # Re-sync roles/teams of signed-in users every N minutes (0: at sign-in only). Needs the Graph application
+    # permission GroupMember.Read.All on the app registration (also resolves the >200 groups overage).
+    resyncMinutes: 60
+
+# ---------- organizations (tenants) ----------
+organizations:
+  # Who creates organizations: "everyone" (self-service sign-up) or "superadmin" (platform operators only).
+  creation: everyone
+  # New accounts join the default organization (single-tenant behaviour). Off: a new account belongs to no
+  # organization until it creates one, is invited, or signs in through an organization's SSO.
+  autoJoinDefault: false
+  # Organizations allowed to use the platform's own Kubernetes access (source, Job and Tekton invokers).
+  kubernetesOrgs: [default]
+  # Organizations allowed to use the platform's own cloud identity: external secret managers (vault, awssm, azkv,
+  # gcpsm, k8s references) and auth blocks without credentials (Azure workload identity, GCP metadata, AWS IRSA).
+  platformIdentityOrgs: [default]
+
+# ---------- Keycloak: registration, login, per-organization SSO ----------
+# auth.providers must include "keycloak". Either deploy Keycloak with the chart (enabled) or use an existing one (url).
+keycloak:
+  enabled: false
+  # Existing Keycloak (enabled: false): its public URL, and the in-cluster URL when it differs.
+  url: ""
+  internalUrl: ""
+  realm: asterius
+  clientId: asterius-platform
+  # Deployed by the chart: public host (ingress), image, database.
+  host: "" # e.g. id.example.com
+  image: quay.io/keycloak/keycloak:26.8.0
+  replicas: 1
+  # Secret with KC_DB_USERNAME, KC_DB_PASSWORD, KC_BOOTSTRAP_ADMIN_USERNAME, KC_BOOTSTRAP_ADMIN_PASSWORD and
+  # ASTERIUS_CLIENT_SECRET (the platform client). Empty: the chart creates one (passwords generated once, kept).
+  existingSecret: ""
+  database:
+    url: "" # jdbc:postgresql://postgres:5432/keycloak
+    username: keycloak # chart-managed Secret only
+    password: "" # chart-managed Secret only
+  resources:
+    requests: { cpu: 250m, memory: 768Mi }
+    limits: { memory: 1536Mi }
+  ingress:
+    className: nginx
+    annotations:
+      cert-manager.io/cluster-issuer: letsencrypt
+    tlsSecretName: asterius-keycloak-tls
+    # Route the admin console (/admin) through the ingress. Off: administer Keycloak from inside the cluster only.
+    exposeAdmin: false
+
+# ---------- MCP OAuth 2.1 (remote MCP clients) ----------
+# The Keycloak realm (else OIDC_ISSUER) is the advertised authorization server; see docs/MCP.md.
+mcp:
+  oauthIssuers: [] # extra issuers whose access tokens are accepted on /api/mcp
+  oauthAudiences: [] # accepted `aud` besides <publicUrl>/api/mcp (e.g. the connector client id)
+  oauthScopes: "" # default: openid profile email
 
 # ---------- configuration as code ----------
 # Files mounted at /etc/asterius/config (blueprints, actions, integrations, webhooks, teams).
@@ -84,6 +161,39 @@ config:
   existingConfigMap: ""
   # Use the example configuration baked in the image (demo / first steps).
   useImageDefaults: false
+  # Keep the configuration in a repository: a sync sidecar clones it into a shared volume and the platform
+  # re-reads it every minute. Replaces the ConfigMap (`files`, `existingConfigMap`).
+  gitSync:
+    enabled: false
+    repo: "" # https://example.com/acme/platform-config.git
+    ref: main
+    path: "" # sub-directory of the repository that holds the YAML files
+    period: 60s
+    image: registry.k8s.io/git-sync/git-sync:v4.4.0
+    # Secret with `username` and `password` (token) keys, for private repositories over HTTPS. Optional.
+    credentialsSecret: ""
+    resources:
+      requests: { cpu: 10m, memory: 32Mi }
+      limits: { memory: 128Mi }
+
+# ---------- plugins ----------
+# In-process plugins (docs/EXTENDING.md): ES modules loaded at startup. Provide them as a ConfigMap (small plugins)
+# or a PersistentVolumeClaim, and/or list packages that are installed in your image. They run with the server's
+# privileges: install only code you trust.
+plugins:
+  # ConfigMap whose keys are *.mjs files, mounted read-only at /plugins.
+  existingConfigMap: ""
+  # PersistentVolumeClaim holding plugin files, mounted read-only at /plugins.
+  existingClaim: ""
+  # Plugin packages or paths installed in the image (PLUGINS).
+  packages: []
+
+# ---------- outbound HTTP (SSRF guard) ----------
+# Invokers, pull sources and outbound webhooks cannot reach loopback, private (10/8, 172.16/12, 192.168/16),
+# link-local or cloud metadata (169.254.169.254) addresses unless allowed here (hostnames, *.suffix, IPs, CIDRs).
+outbound:
+  allow: [] # e.g. ["*.internal.example.com", "10.20.0.0/16"]
+  deny: [] # never reachable, wins over allow
 
 # ---------- settings ----------
 settings:
@@ -91,7 +201,30 @@ settings:
   runPollSeconds: 15
   runTimeoutHours: 24
   httpTimeoutSeconds: 30
+  httpRetries: 3
+  httpRetryBaseMs: 500
+  httpRetryMaxDelaySeconds: 60
+  httpMaxConcurrencyPerHost: 8
+  httpCircuitThreshold: 5
+  httpCircuitCooldownSeconds: 60
   retentionDays: 90
+  # Proxies whose X-Forwarded-For is trusted for client IPs (rate limit, login lockout): the ingress controller's
+  # CIDR is best, e.g. "10.42.0.0/16". Default: private ranges only (never a client-supplied header from the internet).
+  trustProxy: "loopback,linklocal,uniquelocal"
+  stepTimeoutMinutes: 1440 # default timeout of one step; runTimeoutHours bounds the whole run
+  # memory: per-pod counters (fine for one replica). database: shared across API replicas, one upsert per request.
+  rateLimitStore: database
+# Schema migrations. With job.enabled, a Helm hook Job migrates and pods start with MIGRATE_ON_START=false;
+# otherwise every pod migrates at startup under a database advisory lock (fine for additive migrations).
+migrations:
+  job:
+    enabled: false
+    timeoutSeconds: 600
+# Product name and logo shown in the UI (sidebar, sign-in page, browser tab and favicon).
+branding:
+  name: Asterius Platform
+  # https:// image URL or data:image/...;base64 URI (empty: the built-in logo).
+  logo: ""
 # Extra non-secret environment variables.
 extraEnv: {}
 
@@ -139,17 +272,51 @@ rbac:
         verbs: [get, list]
   # Namespaces where the Kubernetes Job invoker may create jobs (and read their pods' logs).
   jobNamespaces: []
+  # Service accounts an action may run its jobs as (empty: any service account of the namespace).
+  jobServiceAccounts: []
+  # Other kubeconfig contexts the Job invoker may target (default: only the in-cluster one).
+  jobContexts: []
 
+# One ServiceAccount per role: the API never receives a Kubernetes token, only the worker (Kubernetes source / Job invoker) is bound to RBAC.
 serviceAccount:
   create: true
-  name: ""
-  annotations: {} # e.g. azure.workload.identity/client-id for Entra workload identity
+  name: "" # set to use a single existing ServiceAccount for both roles (legacy); otherwise <fullname>-api / <fullname>-worker
+  annotations: {} # both roles, e.g. azure.workload.identity/client-id for Entra workload identity
+  api: { name: "", annotations: {} }
+  worker: { name: "", annotations: {} }
 
 # ---------- observability ----------
 metrics:
+  # /metrics is served on this port by a separate listener, reachable through the Services only (never the ingress).
+  # Set to 0 to serve /metrics on the HTTP port instead.
+  port: 9090
+  # /metrics is protected by a METRICS_TOKEN (generated in the chart-managed Secret and used by the ServiceMonitor).
+  # With secrets.existingSecret, put METRICS_TOKEN in it and set this to true so the ServiceMonitor sends it.
+  tokenInExistingSecret: false
   serviceMonitor:
     enabled: false
     interval: 30s
     labels: {}
+  # Alerts for the Prometheus operator (queue age, failed syncs, delivery failures, worker loop age, database).
+  prometheusRule:
+    enabled: false
+    labels: {} # e.g. release: kube-prometheus-stack
+    thresholds:
+      runQueueSeconds: 300 # oldest QUEUED run waiting longer than this
+      deliveryBacklogSeconds: 600 # oldest due webhook delivery waiting longer than this
+      syncStaleSeconds: 86400 # no successful sync of an integration for this long (scheduled integrations only)
+      workerLoopSeconds: 120 # a worker loop (runs, deliveries, syncs) has not completed an iteration
+      http5xxRatio: 0.05 # share of 5xx responses over 10 minutes
+  # Grafana dashboard in a ConfigMap picked up by the Grafana sidecar (label grafana_dashboard=1).
+  dashboard:
+    enabled: false
+    labels: { grafana_dashboard: "1" }
+    annotations: {}
 tracing:
   otlpEndpoint: "" # http://otel-collector.monitoring:4318
+
+# ---------- extension points ----------
+# Extra volumes / mounts for the platform container (CA bundles, CSI secrets, …) and extra sidecars (log shipper, cloud-sql-proxy, …).
+extraVolumes: []
+extraVolumeMounts: []
+extraContainers: []

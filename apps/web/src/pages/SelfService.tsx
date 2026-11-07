@@ -1,11 +1,13 @@
-import { useState } from 'react';
-import { Badge, Button, Card, Group, SimpleGrid, Stack, Text, TextInput, ThemeIcon, Title, Tooltip } from '@mantine/core';
+import { useEffect, useState } from 'react';
+import { ActionIcon, Badge, Button, Card, Group, SimpleGrid, Stack, Text, TextInput, ThemeIcon, Title, Tooltip } from '@mantine/core';
 import { useQuery } from '@tanstack/react-query';
-import { IconSearch, IconShieldCheck } from '@tabler/icons-react';
+import { useSearchParams } from 'react-router';
+import { loadFavourites, loadRecent, parseInputsParam, toggleFavourite } from '../lib/drafts';
+import { IconSearch, IconShieldCheck, IconStar, IconStarFilled } from '@tabler/icons-react';
 import type { Action } from '@asterius/shared';
 import { api, type ActionView } from '../lib/api';
 import { workflowSummary } from '../lib/workflow';
-import { isRunnable } from '../lib/permissions';
+import { formOf, isRunnable } from '../lib/permissions';
 import { ActionRunModal } from '../components/ActionRunModal';
 import { EntityIcon } from '../components/icons';
 import { Empty, PageHeader, QueryView } from '../components/ui';
@@ -16,11 +18,25 @@ export function SelfService() {
   const blueprints = useQuery({ queryKey: ['blueprints'], queryFn: api.blueprints, staleTime: 30_000 });
   const [run, setRun] = useState<Action | null>(null);
   const [filter, setFilter] = useState('');
+  const [favourites, setFavourites] = useState(loadFavourites);
+  const [params, setParams] = useSearchParams();
+  const prefill = parseInputsParam(params.get('inputs'));
+  const wanted = params.get('action');
+  // ?action=<id>&inputs=<json> opens the form prefilled (shareable links, "run again").
+  useEffect(() => {
+    const a = actions.data?.find((x) => x.identifier === wanted);
+    if (a) setRun(a);
+  }, [actions.data, wanted]);
+  const closeRun = () => {
+    setRun(null);
+    if (wanted) setParams({}, { replace: true });
+  };
 
   return (
     <Stack>
-      <PageHeader title="Self-service" description="Request infrastructure and changes through the platform's golden paths." />
+      <PageHeader title="Self-service" description="Request infrastructure and changes through the platform's golden paths." refresh={actions} />
       <TextInput
+        className="search-input"
         placeholder="Filter actions"
         leftSection={<IconSearch size={16} />}
         value={filter}
@@ -31,9 +47,13 @@ export function SelfService() {
         {(list) => {
           const visible = list.filter((a) => isRunnable(a) && `${a.title} ${a.description}`.toLowerCase().includes(filter.toLowerCase()));
           if (!visible.length) return <Empty title="No self-service action" />;
+          const recent = loadRecent()
+            .map((id) => visible.find((a) => a.identifier === id))
+            .filter((a): a is ActionView => !!a);
           const groups = new Map<string, ActionView[]>();
-          for (const a of visible) groups.set(a.trigger?.blueprint ?? '', [...(groups.get(a.trigger?.blueprint ?? '') ?? []), a]);
-          return [...groups.entries()].map(([bp, items]) => {
+          const sorted = [...visible].sort((a, b) => Number(favourites.includes(b.identifier)) - Number(favourites.includes(a.identifier)));
+          for (const a of sorted) groups.set(formOf(a)?.blueprint ?? '', [...(groups.get(formOf(a)?.blueprint ?? '') ?? []), a]);
+          const groupsView = [...groups.entries()].map(([bp, items]) => {
             const b = blueprints.data?.find((x) => x.identifier === bp);
             return (
               <Stack key={bp} gap="xs">
@@ -50,7 +70,16 @@ export function SelfService() {
                           </ThemeIcon>
                           <Text fw={600}>{a.title}</Text>
                         </Group>
-                        {a.trigger?.approval.required && (
+                        <ActionIcon
+                          variant="subtle"
+                          color={favourites.includes(a.identifier) ? 'yellow' : 'gray'}
+                          aria-label={`${favourites.includes(a.identifier) ? 'Remove from' : 'Add to'} favourites: ${a.title}`}
+                          aria-pressed={favourites.includes(a.identifier)}
+                          onClick={() => setFavourites(toggleFavourite(a.identifier))}
+                        >
+                          {favourites.includes(a.identifier) ? <IconStarFilled size={16} /> : <IconStar size={16} />}
+                        </ActionIcon>
+                        {formOf(a)?.approval.required && (
                           <Tooltip label="Requires approval">
                             <Badge color="yellow" leftSection={<IconShieldCheck size={12} />} style={{ flexShrink: 0 }}>
                               approval
@@ -77,9 +106,26 @@ export function SelfService() {
               </Stack>
             );
           });
+          return (
+            <>
+              {recent.length > 0 && !filter && (
+                <Group gap="xs">
+                  <Text fz="sm" c="dimmed">
+                    Recent
+                  </Text>
+                  {recent.map((a) => (
+                    <Button key={a.identifier} size="compact-sm" variant="default" disabled={!a.allowedForMe} onClick={() => setRun(a)}>
+                      {a.title}
+                    </Button>
+                  ))}
+                </Group>
+              )}
+              {groupsView}
+            </>
+          );
         }}
       </QueryView>
-      <ActionRunModal action={run} onClose={() => setRun(null)} />
+      <ActionRunModal action={run} prefill={prefill} onClose={closeRun} />
     </Stack>
   );
 }

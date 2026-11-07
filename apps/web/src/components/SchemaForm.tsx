@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { Checkbox, JsonInput, MultiSelect, NumberInput, Select, Stack, TagsInput, Textarea, TextInput } from '@mantine/core';
+import { Checkbox, MultiSelect, NumberInput, Select, Stack, TagsInput, Textarea, TextInput } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { useQuery } from '@tanstack/react-query';
 import type { ObjectSchema, PropertySchema } from '@asterius/shared';
 import { api } from '../lib/api';
+import { CodeEditor } from './CodeEditor';
 
 /**
  * Form generated from a JSON Schema (action inputs, entity properties). Formats map to dedicated inputs:
@@ -34,13 +35,29 @@ export function validateValues(schema: ObjectSchema, values: FormValues): Record
     if (v === undefined || v === null || v === '' || (Array.isArray(v) && !v.length)) errors[k] = 'Required';
   }
   for (const [k, p] of Object.entries(schema.properties ?? {})) {
+    if (errors[k]) continue;
     const v = values[k];
-    if (typeof v === 'string' && v && p.pattern && !new RegExp(p.pattern).test(v)) errors[k] = p.description ?? `Must match ${p.pattern}`;
+    if (typeof v === 'string' && v) {
+      if (p.pattern && !new RegExp(p.pattern).test(v)) errors[k] = p.description ?? `Must match ${p.pattern}`;
+      else if (p.minLength !== undefined && v.length < p.minLength) errors[k] = `At least ${p.minLength} characters`;
+      else if (p.maxLength !== undefined && v.length > p.maxLength) errors[k] = `At most ${p.maxLength} characters`;
+      else if (p.format === 'email' && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v)) errors[k] = 'Must be an email address';
+      else if ((p.format === 'url' || p.format === 'docs') && !/^https?:\/\/\S+$/.test(v)) errors[k] = 'Must be an http(s) URL';
+    } else if (typeof v === 'number') {
+      if (p.minimum !== undefined && v < p.minimum) errors[k] = `At least ${p.minimum}`;
+      else if (p.maximum !== undefined && v > p.maximum) errors[k] = `At most ${p.maximum}`;
+      else if (p.type === 'integer' && !Number.isInteger(v)) errors[k] = 'Must be a whole number';
+    } else if (Array.isArray(v)) {
+      const min = p.minItems as number | undefined;
+      const max = p.maxItems as number | undefined;
+      if (min !== undefined && v.length < min) errors[k] = `At least ${min} items`;
+      else if (max !== undefined && v.length > max) errors[k] = `At most ${max} items`;
+    }
   }
   return errors;
 }
 
-function EntitySelect(props: {
+export function EntitySelect(props: {
   blueprint: string;
   label: string;
   description?: string;
@@ -99,6 +116,41 @@ function UserSelect(props: {
   return <Select {...props} searchable clearable data={(users.data ?? []).map((u) => ({ value: u.email, label: `${u.name} <${u.email}>` }))} />;
 }
 
+/** Several entities of one blueprint (a `many` relation). */
+export function EntityMultiSelect(props: {
+  blueprint: string;
+  label: string;
+  description?: string;
+  value: string[];
+  onChange: (v: string[]) => void;
+  error?: string;
+  required?: boolean;
+}) {
+  const [search, setSearch] = useState('');
+  const [debounced] = useDebouncedValue(search, 250);
+  const q = useQuery({
+    queryKey: ['entity-options', props.blueprint, debounced],
+    queryFn: () => api.entities({ blueprint: props.blueprint, search: debounced, limit: 30 }),
+  });
+  const data = (q.data?.items ?? []).map((e) => ({ value: e.identifier, label: e.title === e.identifier ? e.identifier : `${e.title} (${e.identifier})` }));
+  for (const v of props.value) if (!data.some((d) => d.value === v)) data.unshift({ value: v, label: v });
+  return (
+    <MultiSelect
+      label={props.label}
+      description={props.description}
+      required={props.required}
+      error={props.error}
+      searchable
+      data={data}
+      value={props.value}
+      onChange={props.onChange}
+      onSearchChange={setSearch}
+      nothingFoundMessage={q.isFetching ? 'Searching…' : 'No match'}
+      filter={({ options }) => options}
+    />
+  );
+}
+
 function Field({
   name,
   p,
@@ -148,11 +200,11 @@ function Field({
   }
   if (p.type === 'object')
     return (
-      <JsonInput
+      <CodeEditor
         {...common}
-        autosize
+        language="json"
         minRows={3}
-        formatOnBlur
+        maxRows={20}
         value={typeof value === 'string' ? value : value ? JSON.stringify(value, null, 2) : ''}
         onChange={(v) => {
           try {
@@ -167,19 +219,19 @@ function Field({
     return <EntitySelect {...common} blueprint={p.blueprint} value={value ? str(value) : null} onChange={(v) => onChange(v ?? undefined)} />;
   if (p.format === 'team') return <TeamSelect {...common} value={value ? str(value) : null} onChange={(v) => onChange(v ?? undefined)} />;
   if (p.format === 'user') return <UserSelect {...common} value={value ? str(value) : null} onChange={(v) => onChange(v ?? undefined)} />;
-  if (p.format === 'markdown' || p.format === 'yaml' || p.format === 'text')
-    return (
-      <Textarea
-        {...common}
-        autosize
-        minRows={3}
-        value={str(value)}
-        onChange={(e) => onChange(e.currentTarget.value)}
-        ff={p.format === 'yaml' ? 'monospace' : undefined}
-      />
-    );
+  if (p.format === 'yaml') return <CodeEditor {...common} language="yaml" minRows={3} maxRows={20} value={str(value)} onChange={(v) => onChange(v)} />;
+  if (p.format === 'markdown' || p.format === 'text')
+    return <Textarea {...common} autosize minRows={3} value={str(value)} onChange={(e) => onChange(e.currentTarget.value)} />;
   const type =
-    p.format === 'date' ? 'date' : p.format === 'date-time' ? 'datetime-local' : p.format === 'email' ? 'email' : p.format === 'url' ? 'url' : 'text';
+    p.format === 'date'
+      ? 'date'
+      : p.format === 'date-time'
+        ? 'datetime-local'
+        : p.format === 'email'
+          ? 'email'
+          : p.format === 'url' || p.format === 'docs'
+            ? 'url'
+            : 'text';
   return <TextInput {...common} type={type} value={str(value)} onChange={(e) => onChange(e.currentTarget.value)} maxLength={p.maxLength} />;
 }
 

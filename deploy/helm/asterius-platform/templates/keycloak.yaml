@@ -1,0 +1,147 @@
+{{- /*
+Keycloak (optional, keycloak.enabled): registration, sign-in and per-organization SSO for the platform. The realm,
+the platform's OIDC client and its service account are imported at startup from deploy/keycloak/realm-asterius.json
+(only when the realm does not exist yet: later changes are made in Keycloak itself).
+*/ -}}
+{{- if .Values.keycloak.enabled }}
+{{- $v := .Values -}}
+{{- $kc := $v.keycloak -}}
+{{- $name := include "ap.keycloakName" . -}}
+{{- if not $kc.existingSecret }}
+{{- $existing := lookup "v1" "Secret" .Release.Namespace $name }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $name }}
+  labels: {{- include "ap.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+type: Opaque
+stringData:
+  KC_DB_USERNAME: {{ $kc.database.username | quote }}
+  KC_DB_PASSWORD: {{ $kc.database.password | default (and $existing (index $existing.data "KC_DB_PASSWORD" | default "" | b64dec)) | quote }}
+  KC_BOOTSTRAP_ADMIN_USERNAME: admin
+  KC_BOOTSTRAP_ADMIN_PASSWORD: {{ (and $existing (index $existing.data "KC_BOOTSTRAP_ADMIN_PASSWORD" | default "" | b64dec)) | default (randAlphaNum 32) | quote }}
+  ASTERIUS_CLIENT_SECRET: {{ (and $existing (index $existing.data "ASTERIUS_CLIENT_SECRET" | default "" | b64dec)) | default (randAlphaNum 48) | quote }}
+---
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}-realm
+  labels: {{- include "ap.labels" . | nindent 4 }}
+data:
+  realm-asterius.json: |
+    {{- .Files.Get "files/realm-asterius.json" | replace "\"realm\": \"asterius\"" (printf "\"realm\": %q" $kc.realm) | replace "\"clientId\": \"asterius-platform\"" (printf "\"clientId\": %q" $kc.clientId) | replace "\"serviceAccountClientId\": \"asterius-platform\"" (printf "\"serviceAccountClientId\": %q" $kc.clientId) | nindent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels: {{- include "ap.labels" . | nindent 4 }}
+    app.kubernetes.io/component: keycloak
+spec:
+  replicas: {{ $kc.replicas }}
+  selector:
+    matchLabels: {{- include "ap.selector" (dict "root" . "component" "keycloak") | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "ap.selector" (dict "root" . "component" "keycloak") | nindent 8 }}
+      annotations:
+        checksum/realm: {{ .Files.Get "files/realm-asterius.json" | sha256sum }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: keycloak
+          image: {{ $kc.image | quote }}
+          args: [start, --import-realm]
+          ports:
+            - { name: http, containerPort: 8080 }
+            - { name: management, containerPort: 9000 }
+          env:
+            - { name: KC_DB, value: postgres }
+            - { name: KC_DB_URL, value: {{ $kc.database.url | quote }} }
+            - { name: KC_HOSTNAME, value: {{ printf "https://%s" $kc.host | quote }} }
+            - { name: KC_HTTP_ENABLED, value: "true" }
+            - { name: KC_PROXY_HEADERS, value: xforwarded }
+            - { name: KC_HEALTH_ENABLED, value: "true" }
+            - { name: KC_METRICS_ENABLED, value: "true" }
+            {{- if gt (int $kc.replicas) 1 }}
+            - { name: KC_CACHE, value: ispn }
+            - { name: KC_CACHE_STACK, value: kubernetes }
+            - { name: JAVA_OPTS_APPEND, value: "-Djgroups.dns.query={{ $name }}-headless.{{ .Release.Namespace }}.svc.cluster.local" }
+            {{- end }}
+            - { name: ASTERIUS_PUBLIC_URL, value: {{ $v.publicUrl | trimSuffix "/" | quote }} }
+          envFrom:
+            - secretRef: { name: {{ include "ap.keycloakSecretName" . }} }
+          volumeMounts:
+            - { name: realm, mountPath: /opt/keycloak/data/import, readOnly: true }
+          startupProbe:
+            httpGet: { path: /health/started, port: management }
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: { path: /health/ready, port: management }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health/live, port: management }
+            periodSeconds: 20
+          resources: {{- toYaml $kc.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+      volumes:
+        - name: realm
+          configMap: { name: {{ $name }}-realm }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels: {{- include "ap.labels" . | nindent 4 }}
+spec:
+  selector: {{- include "ap.selector" (dict "root" . "component" "keycloak") | nindent 4 }}
+  ports:
+    - { name: http, port: 8080, targetPort: http }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}-headless
+  labels: {{- include "ap.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  selector: {{- include "ap.selector" (dict "root" . "component" "keycloak") | nindent 4 }}
+  ports:
+    - { name: jgroups, port: 7800 }
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $name }}
+  labels: {{- include "ap.labels" . | nindent 4 }}
+  {{- with $kc.ingress.annotations }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with $kc.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  tls:
+    - hosts: [{{ $kc.host | quote }}]
+      secretName: {{ $kc.ingress.tlsSecretName }}
+  rules:
+    - host: {{ $kc.host | quote }}
+      http:
+        paths:
+          # People use /realms and /resources. The admin console is off the ingress unless keycloak.ingress.exposeAdmin
+          # (a port-forward does not help: Keycloak redirects to KC_HOSTNAME).
+          - { path: /realms, pathType: Prefix, backend: { service: { name: {{ $name }}, port: { name: http } } } }
+          - { path: /resources, pathType: Prefix, backend: { service: { name: {{ $name }}, port: { name: http } } } }
+          {{- if $kc.ingress.exposeAdmin }}
+          - { path: /admin, pathType: Prefix, backend: { service: { name: {{ $name }}, port: { name: http } } } }
+          {{- end }}
+{{- end }}

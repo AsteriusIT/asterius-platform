@@ -1,5 +1,7 @@
 import jsonata from 'jsonata';
+import { config } from '../config.js';
 import { badRequest } from './errors.js';
+import { LRU } from './lru.js';
 
 /**
  * One expression language everywhere: JSONata (https://jsonata.org).
@@ -8,18 +10,16 @@ import { badRequest } from './errors.js';
  *    and `${secret:NAME}` / `${env:NAME}` references resolved at execution time.
  */
 
-const cache = new Map<string, jsonata.Expression>();
-const MAX_CACHE = 2000;
+const cache = new LRU<string, jsonata.Expression>(2000);
 
 export function compile(expr: string): jsonata.Expression {
   let c = cache.get(expr);
   if (!c) {
     try {
-      c = jsonata(expr);
+      c = jsonata(expr, { timeout: config.EXPR_TIMEOUT_MS, stack: config.EXPR_MAX_DEPTH });
     } catch (err) {
       throw badRequest(`Invalid expression "${expr}": ${(err as { message?: string }).message}`);
     }
-    if (cache.size > MAX_CACHE) cache.clear();
     cache.set(expr, c);
   }
   return c;
@@ -31,8 +31,23 @@ export function checkExpression(expr: string) {
 }
 
 export async function evaluate(expr: string, data: unknown, bindings?: Record<string, unknown>): Promise<unknown> {
-  const v = await compile(expr).evaluate(data, bindings);
+  let v: unknown;
+  try {
+    v = await compile(expr).evaluate(data, bindings);
+  } catch (err) {
+    throw evaluationError(err, expr);
+  }
   return normalize(v);
+}
+
+/** JSONata throws plain objects; the time and depth limits get a message that says what to do. */
+function evaluationError(err: unknown, expr: string): Error {
+  const e = err as { code?: string; message?: string; value?: number };
+  if (e?.code === 'D1012')
+    return new Error(`Expression "${expr.slice(0, 80)}" took longer than ${config.EXPR_TIMEOUT_MS} ms and was stopped (infinite loop or too much data?)`);
+  if (e?.code === 'D1011')
+    return new Error(`Expression "${expr.slice(0, 80)}" is nested more than ${config.EXPR_MAX_DEPTH} levels deep (non-terminating recursion?)`);
+  return err instanceof Error ? err : new Error(e?.message ?? String(err));
 }
 
 /** JSONata returns arrays with a `sequence` marker and may return functions; keep plain JSON. */
@@ -43,9 +58,25 @@ function normalize(v: unknown): unknown {
   return v;
 }
 
-export type RefResolver = (kind: 'secret' | 'env', name: string) => Promise<string>;
+export interface RenderOptions {
+  /** Applied to every `{{ expression }}` value (untrusted data) before it joins the text. */
+  wrap?: (text: string, expression: string) => string;
+  /** Reject `${secret:…}` / `${env:…}` references (text that is sent to a model). */
+  noRefs?: boolean;
+}
 
-const TOKEN = /\{\{((?:(?!\}\})[\s\S])+)\}\}|\$\{(secret|env):([A-Za-z0-9_.-]+)\}/g;
+/** Does a template contain `${secret:…}` / `${env:…}` references? */
+export function hasRefs(template: unknown): boolean {
+  if (typeof template === 'string') return [...template.matchAll(TOKEN)].some((m) => m[2] !== undefined);
+  if (Array.isArray(template)) return template.some(hasRefs);
+  if (template && typeof template === 'object') return Object.values(template).some(hasRefs);
+  return false;
+}
+
+/** `secret` / `env` plus the external secret manager kinds (vault, awssm, azkv, gcpsm, k8s). */
+export type RefResolver = (kind: string, name: string) => Promise<string>;
+
+const TOKEN = /\{\{((?:(?!\}\})[\s\S])+)\}\}|\$\{(secret|env|vault|awssm|azkv|gcpsm|k8s):([^}\s]+)\}/g;
 
 /** `"{{ expr }}"` alone (whitespace aside) keeps the expression's type (object, number…) instead of a string. */
 function wholeExpression(t: string): string | undefined {
@@ -64,12 +95,20 @@ const stringify = (v: unknown) => {
  * (inputs, entity properties) or from secrets are never re-interpreted as templates or references.
  * Returns the rendered value and the secret values it used (to redact them from logs).
  */
-export async function render(template: unknown, ctx: unknown, resolveRef: RefResolver): Promise<{ value: unknown; secrets: string[] }> {
+export async function render(
+  template: unknown,
+  ctx: unknown,
+  resolveRef: RefResolver,
+  opts: RenderOptions = {},
+): Promise<{ value: unknown; secrets: string[] }> {
   const secrets: string[] = [];
   const walk = async (t: unknown): Promise<unknown> => {
     if (typeof t === 'string') {
       const whole = wholeExpression(t);
-      if (whole !== undefined) return evaluate(whole, ctx);
+      if (whole !== undefined) {
+        const v = await evaluate(whole, ctx);
+        return opts.wrap && v !== undefined ? opts.wrap(stringify(v), whole.trim()) : v;
+      }
       if (!t.includes('{{') && !t.includes('${')) return t;
       let out = '';
       let last = 0;
@@ -77,9 +116,11 @@ export async function render(template: unknown, ctx: unknown, resolveRef: RefRes
         out += t.slice(last, m.index);
         last = m.index + m[0].length;
         if (m[1] !== undefined) {
-          out += stringify(await evaluate(m[1], ctx));
+          const text = stringify(await evaluate(m[1], ctx));
+          out += opts.wrap ? opts.wrap(text, m[1].trim()) : text;
         } else {
-          const secret = await resolveRef(m[2] as 'secret' | 'env', m[3]);
+          if (opts.noRefs) throw badRequest('Secret and environment references are not allowed here');
+          const secret = await resolveRef(m[2], m[3]);
           if (secret) secrets.push(secret);
           out += secret;
         }
@@ -106,9 +147,51 @@ export function checkTemplate(template: unknown) {
   walk(template);
 }
 
-/** Replace known secret values in a log line. */
+/** Secrets shorter than this are not masked (masking 4-character substrings would shred ordinary text). */
+export const MIN_SECRET_LENGTH = 8;
+
+/**
+ * The forms a secret takes once it travelled through a header, a URL or a JSON body: raw, URL-encoded, JSON-escaped,
+ * hex, and base64 / base64url (including the three byte alignments, since `user:secret` encodes differently from `secret`).
+ */
+export function secretVariants(secret: string): string[] {
+  const out = new Set<string>([secret]);
+  const add = (v: string) => v.length >= MIN_SECRET_LENGTH && out.add(v);
+  add(encodeURIComponent(secret));
+  add(encodeURI(secret));
+  add(JSON.stringify(secret).slice(1, -1));
+  add(Buffer.from(secret).toString('hex'));
+  const bytes = Buffer.from(secret);
+  for (let k = 0; k < 3; k++) {
+    const enc = Buffer.concat([Buffer.alloc(k), bytes]).toString('base64');
+    // Drop the characters that mix in the bytes before / after the secret, and the padding.
+    const head = k ? Math.ceil((k * 8) / 6) : 0;
+    const body = enc.replace(/=+$/, '');
+    const tail = (k + bytes.length) % 3 ? 1 : 0;
+    const core = body.slice(head, body.length - tail);
+    if (core.length >= MIN_SECRET_LENGTH) {
+      out.add(core);
+      out.add(core.replace(/\+/g, '-').replace(/\//g, '_'));
+    }
+  }
+  return [...out];
+}
+
+/** Replace known secret values (and their encoded forms) in persisted text: run logs, results, sync logs. */
 export function redact(text: string, secrets: string[]) {
   let out = text;
-  for (const s of secrets) if (s.length >= 4) out = out.split(s).join('****');
+  const all = new Set<string>();
+  for (const s of secrets) if (s.length >= MIN_SECRET_LENGTH) for (const v of secretVariants(s)) all.add(v);
+  // Longest first, so a variant that contains a shorter one is masked as a whole.
+  for (const v of [...all].sort((a, b) => b.length - a.length)) out = out.split(v).join('****');
   return out;
+}
+
+/** Redact every string inside a JSON-like value. */
+export function redactDeep<T>(value: T, secrets: string[]): T {
+  if (!secrets.length) return value;
+  if (typeof value === 'string') return redact(value, secrets) as T;
+  if (Array.isArray(value)) return value.map((v) => redactDeep(v, secrets)) as T;
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, redactDeep(v, secrets)])) as T;
+  return value;
 }

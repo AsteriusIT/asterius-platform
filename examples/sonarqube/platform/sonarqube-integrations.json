@@ -1,0 +1,89 @@
+{
+  "integrations": [
+    {
+      "identifier": "sonarqube",
+      "title": "SonarQube projects and quality gates",
+      "type": "sonarqube",
+      "intervalMinutes": 15,
+      "deleteMissing": true,
+      "config": {
+        "baseUrl": "http://sonarqube-sonarqube.sonarqube.svc:9000",
+        "publicUrl": "https://sonarqube.k8s.orb.local",
+        "token": "${vault:secret/apps/sonarqube#token}"
+      },
+      "mappings": [
+        {
+          "kind": "project",
+          "merge": true,
+          "entity": {
+            "blueprint": "sonarqube-project",
+            "identifier": "key",
+            "title": "name",
+            "properties": {
+              "url": "$integration.config.publicUrl & \"/dashboard?id=\" & $encodeUrlComponent(key)"
+            }
+          }
+        },
+        {
+          "kind": "quality-gate",
+          "entity": {
+            "blueprint": "sonarqube-quality-gate",
+            "identifier": "$lowercase($replace($trim(name), /[^A-Za-z0-9]+/, \"-\"))",
+            "title": "name",
+            "properties": {
+              "isDefault": "isDefault",
+              "isBuiltIn": "isBuiltIn",
+              "url": "$integration.config.publicUrl & \"/quality_gates/show/\" & $encodeUrlComponent(name)"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "identifier": "sonarqube-analyses",
+      "title": "SonarQube analysis notifications",
+      "type": "webhook",
+      "config": {
+        "secret": "${vault:secret/apps/sonarqube#webhookSecret}",
+        "signatureHeader": "X-Sonar-Webhook-HMAC-SHA256"
+      },
+      "mappings": [
+        {
+          "kind": "event",
+          "entity": {
+            "blueprint": "sonarqube-analysis",
+            "identifier": "taskId",
+            "title": "project.name & \" · \" & $substring(analysedAt, 0, 16)",
+            "properties": {
+              "status": "status",
+              "qualityGate": "qualityGate.status",
+              "failedConditions": "[qualityGate.conditions[status = \"ERROR\"].(metric & \" \" & operator & \" \" & errorThreshold & \" (actual \" & value & \")\")]",
+              "branch": "branch.name",
+              "revision": "revision",
+              "analysedAt": "analysedAt",
+              "url": "branch.url ? branch.url : project.url"
+            },
+            "relations": {
+              "project": "project.key"
+            }
+          }
+        },
+        {
+          "kind": "event",
+          "filter": "$not($exists(branch)) or branch.isMain",
+          "merge": true,
+          "entity": {
+            "blueprint": "sonarqube-project",
+            "identifier": "project.key",
+            "title": "project.name",
+            "properties": {
+              "qualityGate": "qualityGate.status",
+              "lastAnalysis": "analysedAt",
+              "revision": "revision"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,18 +1,66 @@
 import { useState } from 'react';
-import { ActionIcon, Anchor, Badge, Code, CopyButton, Drawer, Group, Stack, Text, Tooltip } from '@mantine/core';
+import { ActionIcon, Anchor, Badge, Code, CopyButton, Drawer, Group, Select, Stack, Text, Tooltip } from '@mantine/core';
+import { AiDraft, JsonPreview } from '../../components/AiAssistant';
 import { notifications } from '@mantine/notifications';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import { IconCopy, IconRefresh, IconSend } from '@tabler/icons-react';
-import type { Action, Blueprint, Integration, Webhook } from '@asterius/shared';
+import type { Action, Blueprint, Dashboard, Integration, Policy, Scorecard, Webhook } from '@asterius/shared';
+import { useAppMutation } from '../../lib/queryClient';
+import { FormEditor } from '../../components/builder/FormEditor';
+import { IntegrationForm } from '../../components/builder/IntegrationForm';
+import { WebhookForm } from '../../components/builder/WebhookForm';
 import { api, errorText } from '../../lib/api';
 import { DataTable } from '../../components/DataTable';
 import { EntityIcon } from '../../components/icons';
 import { Mono, TimeAgo } from '../../components/ui';
 import { ResourceAdmin, strip } from './ResourceAdmin';
 import { ActionBuilder } from '../../components/builder/ActionBuilder';
-import { workflowSummary } from '../../lib/workflow';
+import { formOf } from '../../lib/permissions';
+import { triggerBadge, workflowSummary } from '../../lib/workflow';
 import { BlueprintBuilder } from '../../components/builder/BlueprintBuilder';
+import { PolicyBuilder, ScorecardBuilder } from '../../components/builder/GovernanceBuilders';
+import { DashboardBuilder } from '../../components/builder/DashboardBuilder';
+
+const G = {
+  scm: 'Source control',
+  cicd: 'CI/CD & deployment',
+  inc: 'Incidents & observability',
+  sec: 'Security & quality',
+  cloud: 'Cloud & cluster',
+  id: 'Identity & ITSM',
+  gen: 'Generic',
+};
+/** Vendor logo (components/icons names) and category of each source type; unknown types fall back to a generic icon. */
+const SOURCE_LOOK: Record<string, { icon: string; group: string }> = {
+  github: { icon: 'github', group: G.scm },
+  gitlab: { icon: 'gitlab', group: G.scm },
+  'azure-devops': { icon: 'azure-devops', group: G.scm },
+  'git-descriptors': { icon: 'git-branch', group: G.scm },
+  argocd: { icon: 'argo-cd', group: G.cicd },
+  'terraform-cloud-workspaces': { icon: 'terraform', group: G.cicd },
+  nexus: { icon: 'package', group: G.cicd },
+  pagerduty: { icon: 'pagerduty', group: G.inc },
+  opsgenie: { icon: 'bell', group: G.inc },
+  grafana: { icon: 'grafana', group: G.inc },
+  datadog: { icon: 'datadog', group: G.inc },
+  snyk: { icon: 'bug', group: G.sec },
+  sonarqube: { icon: 'sonarqube', group: G.sec },
+  kubernetes: { icon: 'kubernetes', group: G.cloud },
+  'aws-resources': { icon: 'aws', group: G.cloud },
+  'azure-resource-graph': { icon: 'azure', group: G.cloud },
+  'gcp-assets': { icon: 'google-cloud', group: G.cloud },
+  jira: { icon: 'jira', group: G.id },
+  servicenow: { icon: 'servicenow', group: G.id },
+  okta: { icon: 'okta', group: G.id },
+  'entra-directory': { icon: 'azure', group: G.id },
+  http: { icon: 'globe', group: G.gen },
+  graphql: { icon: 'globe', group: G.gen },
+  sql: { icon: 'database', group: G.gen },
+  external: { icon: 'plug', group: G.gen },
+  webhook: { icon: 'bolt', group: G.gen },
+};
+const sourceLook = (type: string) => SOURCE_LOOK[type] ?? { icon: 'plug', group: G.gen };
 
 const meta = () => ({ queryKey: ['meta'], queryFn: api.meta, staleTime: Infinity });
 
@@ -72,8 +120,8 @@ export function ActionsAdmin() {
           label: 'Trigger',
           render: (a) =>
             a.trigger ? (
-              <Badge color={a.trigger.on === 'delete' ? 'red' : a.trigger.on === 'create' ? 'green' : 'blue'} variant="light">
-                form · {a.trigger.on}
+              <Badge color={triggerBadge(a.trigger).color} variant="light">
+                {triggerBadge(a.trigger).label}
               </Badge>
             ) : (
               <Badge color="gray" variant="outline">
@@ -81,19 +129,14 @@ export function ActionsAdmin() {
               </Badge>
             ),
         },
-        { key: 'b', label: 'Blueprint', render: (a) => a.trigger?.blueprint ?? '—' },
+        { key: 'b', label: 'Blueprint', render: (a) => (a.trigger && 'blueprint' in a.trigger ? a.trigger.blueprint : null) ?? '—' },
         { key: 'i', label: 'Steps', render: (a) => <Mono>{workflowSummary(a)}</Mono> },
-        { key: 'a', label: 'Approval', render: (a) => (a.trigger?.approval.required ? <Badge color="yellow">required</Badge> : '—') },
+        { key: 'a', label: 'Approval', render: (a) => (formOf(a)?.approval.required ? <Badge color="yellow">required</Badge> : '—') },
         { key: 'e', label: 'Enabled', render: (a) => (a.enabled ? 'yes' : <Badge color="gray">disabled</Badge>) },
       ]}
       templates={[{ label: 'Workflow', value: blankAction }]}
       editor={(p) => <ActionBuilder {...p} />}
-      help={
-        <Text fz="xs" c="dimmed">
-          Templates: <Code>{'{{ inputs.x }}'}</Code>, <Code>{'{{ entity.properties.x }}'}</Code>, <Code>{'{{ trigger.user.email }}'}</Code>,{' '}
-          <Code>{'{{ run.callback.url }}'}</Code> (JSONata). Secrets: <Code>{'${secret:NAME}'}</Code>.
-        </Text>
-      }
+      openPath={(a) => `/admin/actions/${encodeURIComponent(a.identifier)}`}
       toEditable={(a) => strip(a, ['managed', 'allowedForMe'])}
       save={api.saveAction}
       remove={(a) => api.deleteAction(a.identifier)}
@@ -130,7 +173,13 @@ export function IntegrationsAdmin() {
           render: (i) =>
             i.lastSync ? (
               <Group gap={6} wrap="nowrap">
-                <Badge color={i.lastSync.status === 'success' ? 'green' : i.lastSync.status === 'running' ? 'blue' : 'red'}>{i.lastSync.status}</Badge>
+                <Badge
+                  color={
+                    i.lastSync.status === 'success' ? 'green' : i.lastSync.status === 'running' ? 'blue' : i.lastSync.status === 'partial' ? 'yellow' : 'red'
+                  }
+                >
+                  {i.lastSync.status}
+                </Badge>
                 <Text fz="xs" c="dimmed">
                   <TimeAgo at={i.lastSync.startedAt} />
                 </Text>
@@ -152,19 +201,30 @@ export function IntegrationsAdmin() {
       onRowClick={setDetail}
       templates={(m.data?.sources ?? []).map((s) => ({
         label: s.title,
+        description: s.description,
+        ...sourceLook(s.type),
+        badge: s.type === 'webhook' ? 'webhook' : 'pull',
+        keywords: [s.type],
         value: {
-          identifier: `my-${s.type}`,
-          title: s.title,
+          identifier: '',
+          title: '',
           enabled: true,
           intervalMinutes: s.type === 'webhook' ? 0 : 60,
           deleteMissing: false,
           ...s.example,
         },
       }))}
-      toEditable={(i) => strip(i, ['managed', 'lastSync', 'webhookUrl'])}
+      toEditable={(i) => strip(i, ['managed', 'lastSync', 'lastSuccessAt', 'webhookUrl'])}
       save={api.saveIntegration}
       remove={(i) => api.deleteIntegration(i.identifier)}
       removeWarning={() => 'Entities it ingested stay in the catalog.'}
+      editor={(p) => (
+        <FormEditor
+          {...p}
+          title={p.isNew ? 'New integration' : `${p.readOnly ? 'View' : 'Edit'} ${String(p.value?.identifier ?? '')}`}
+          form={(doc, patch) => <IntegrationForm doc={doc} patch={patch} isNew={p.isNew} />}
+        />
+      )}
     >
       <IntegrationDrawer integration={detail} onClose={() => setDetail(null)} />
     </ResourceAdmin>
@@ -202,6 +262,7 @@ function IntegrationDrawer({ integration, onClose }: { integration: Integration 
               </Text>
             </Stack>
           )}
+          <MappingSuggest />
           <Text fz="sm" fw={500}>
             History
           </Text>
@@ -232,6 +293,172 @@ function IntegrationDrawer({ integration, onClose }: { integration: Integration 
         </Stack>
       )}
     </Drawer>
+  );
+}
+
+export function ScorecardsAdmin() {
+  return (
+    <ResourceAdmin<Scorecard>
+      title="Scorecards"
+      description="Quality rules per blueprint, grouped into levels. Rules are JSONata expressions over the entity (properties, relations, related, team)."
+      queryKey="scorecards"
+      list={() => api.scorecards()}
+      columns={[
+        { key: 'b', label: 'Blueprint', render: (s) => <Badge color="gray">{s.blueprint}</Badge> },
+        { key: 'l', label: 'Levels', render: (s) => s.levels.map((l) => l.name).join(' < ') },
+        { key: 'r', label: 'Rules', render: (s) => s.rules.length },
+      ]}
+      templates={[
+        {
+          label: 'Scorecard',
+          value: {
+            identifier: 'production-readiness',
+            title: 'Production readiness',
+            description: '',
+            blueprint: 'service',
+            levels: [
+              { name: 'Bronze', color: 'orange' },
+              { name: 'Silver', color: 'gray' },
+              { name: 'Gold', color: 'yellow' },
+            ],
+            rules: [
+              { identifier: 'has_owner', title: 'Has an owner team', level: 'Bronze', expression: 'team != null' },
+              { identifier: 'has_docs', title: 'Links to documentation', level: 'Silver', expression: 'properties.docs != null' },
+            ],
+          },
+        },
+      ]}
+      toEditable={(s) => strip(s, ['managed'])}
+      editor={(p) => <ScorecardBuilder {...p} />}
+      save={api.saveScorecard}
+      remove={(s) => api.deleteScorecard(s.identifier)}
+    />
+  );
+}
+
+export function PoliciesAdmin() {
+  return (
+    <ResourceAdmin<Policy>
+      title="Policies"
+      description="Guard rails evaluated before a run is queued or an entity is written. The JSONata expression must evaluate to true to allow; errors deny."
+      queryKey="policies"
+      list={api.policies}
+      columns={[
+        {
+          key: 't',
+          label: 'Applies to',
+          render: (p) => <Badge color={p.target === 'run' ? 'blue' : 'grape'}>{p.target === 'run' ? 'runs' : 'entity writes'}</Badge>,
+        },
+        {
+          key: 'm',
+          label: 'Match',
+          render: (p) => [...(p.match.actions ?? []), ...(p.match.blueprints ?? []), ...(p.match.operations ?? [])].join(', ') || 'everything',
+        },
+        { key: 'e', label: 'Enabled', render: (p) => (p.enabled ? 'yes' : <Badge color="gray">disabled</Badge>) },
+      ]}
+      templates={[
+        {
+          label: 'Run policy',
+          value: {
+            identifier: 'no-prod-without-ticket',
+            title: 'Production runs need a ticket',
+            description: '',
+            enabled: true,
+            target: 'run',
+            match: { actions: [] },
+            expression: 'inputs.environment != "production" or $exists(inputs.ticket)',
+            message: 'Production runs must reference a ticket ({{ action.title }})',
+          },
+        },
+        {
+          label: 'Entity policy',
+          value: {
+            identifier: 'service-needs-owner',
+            title: 'Services need an owner team',
+            description: '',
+            enabled: true,
+            target: 'entity',
+            match: { blueprints: ['service'], operations: ['create', 'update'] },
+            expression: 'entity.team != null',
+            message: 'A service must have an owner team',
+          },
+        },
+      ]}
+      toEditable={(p) => strip(p, ['managed'])}
+      editor={(p) => <PolicyBuilder {...p} />}
+      save={api.savePolicy}
+      remove={(p) => api.deletePolicy(p.identifier)}
+    />
+  );
+}
+
+export function DashboardsAdmin() {
+  return (
+    <ResourceAdmin<Dashboard>
+      title="Dashboards"
+      description="Widgets (counts, scorecard levels, runs, approvals, saved tables, DORA insights, markdown) shown on the home page, per team, or on a blueprint's page."
+      queryKey="dashboards"
+      editor={(p) => <DashboardBuilder {...p} />}
+      list={api.dashboards}
+      columns={[
+        {
+          key: 'w',
+          label: 'Where',
+          render: (d) =>
+            d.blueprint ? <Badge color="gray">{d.blueprint} page</Badge> : d.team ? <Badge>{d.team} home</Badge> : d.default ? 'Home (everyone)' : '—',
+        },
+        { key: 'n', label: 'Widgets', render: (d) => d.widgets.length },
+      ]}
+      templates={[
+        {
+          label: 'Home dashboard',
+          value: {
+            identifier: 'home',
+            title: 'Home',
+            description: '',
+            default: true,
+            widgets: [
+              { type: 'count', title: 'Services', blueprint: 'service', width: 3 },
+              { type: 'count', title: 'By tier', blueprint: 'service', groupBy: 'tier', width: 3 },
+              { type: 'approvals', width: 6 },
+              { type: 'runs', mine: true, width: 12 },
+            ],
+          },
+        },
+      ]}
+      toEditable={(d) => strip(d, ['managed'])}
+      save={api.saveDashboard}
+      remove={(d) => api.deleteDashboard(d.identifier)}
+    />
+  );
+}
+
+/** Paste one item from a source, pick the target blueprint: the assistant proposes the JSONata mapping and shows the entity it gives. */
+function MappingSuggest() {
+  const blueprints = useQuery({ queryKey: ['blueprints'], queryFn: api.blueprints });
+  const [blueprint, setBlueprint] = useState<string | null>(null);
+  return (
+    <Group>
+      <AiDraft
+        label="Suggest a mapping with AI"
+        title="Suggest a mapping"
+        help="Paste one JSON item as the source returns it and choose the blueprint it becomes. Copy the proposed mapping into the integration after checking the preview."
+        placeholder='{ "name": "orders-api", "owner": { "login": "payments" }, "language": "Go" }'
+        extra={
+          <Select
+            label="Blueprint"
+            data={(blueprints.data ?? []).map((b) => ({ value: b.identifier, label: b.title }))}
+            value={blueprint}
+            onChange={setBlueprint}
+            searchable
+          />
+        }
+        disabled={!blueprint && !blueprints.data?.length}
+        run={(text) => api.aiSuggestMapping({ blueprint: blueprint ?? '', sample: JSON.parse(text) as unknown })}
+        preview={(d) => <JsonPreview value={{ mapping: d.mapping, preview: d.preview }} />}
+        onDraft={(d) => void navigator.clipboard?.writeText(JSON.stringify(d.mapping, null, 2)).then(() => notifications.show({ message: 'Mapping copied' }))}
+      />
+    </Group>
   );
 }
 
@@ -271,19 +498,26 @@ export function WebhooksAdmin() {
         {
           label: 'Webhook',
           value: {
-            identifier: 'my-webhook',
-            title: 'My webhook',
-            url: 'https://example.internal/hook',
+            identifier: '',
+            title: '',
+            url: '',
             events: ['entity.*', 'run.updated'],
             blueprints: [],
-            secret: '${secret:WEBHOOK_SIGNING_KEY}',
+            secret: null,
             enabled: true,
           },
         },
       ]}
-      toEditable={async (w) => strip(await api.webhook(w.identifier), ['managed', 'hasSecret'])}
+      toEditable={async (w) => strip(await api.webhook(w.identifier), ['managed', 'hasSecret', 'hasSecondarySecret'])}
       save={api.saveWebhook}
       remove={(w) => api.deleteWebhook(w.identifier)}
+      editor={(p) => (
+        <FormEditor
+          {...p}
+          title={p.isNew ? 'New webhook' : `${p.readOnly ? 'View' : 'Edit'} ${String(p.value?.identifier ?? '')}`}
+          form={(doc, patch) => <WebhookForm doc={doc} patch={patch} isNew={p.isNew} />}
+        />
+      )}
     >
       <DeliveriesDrawer webhook={detail} onClose={() => setDetail(null)} />
     </ResourceAdmin>
@@ -292,6 +526,10 @@ export function WebhooksAdmin() {
 
 function DeliveriesDrawer({ webhook, onClose }: { webhook: Webhook | null; onClose: () => void }) {
   const qc = useQueryClient();
+  const redeliver = useAppMutation({
+    mutationFn: (id: string) => api.redeliver(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['deliveries'] }),
+  });
   const q = useQuery({
     queryKey: ['deliveries', webhook?.identifier],
     queryFn: () => api.deliveries(webhook!.identifier),
@@ -329,13 +567,7 @@ function DeliveriesDrawer({ webhook, onClose }: { webhook: Webhook | null; onClo
             render: (d) =>
               d.status === 'failed' ? (
                 <Tooltip label="Redeliver">
-                  <ActionIcon
-                    variant="subtle"
-                    onClick={async () => {
-                      await api.redeliver(d.id);
-                      void qc.invalidateQueries({ queryKey: ['deliveries'] });
-                    }}
-                  >
+                  <ActionIcon variant="subtle" aria-label="Redeliver" onClick={() => redeliver.mutate(d.id)}>
                     <IconSend size={16} />
                   </ActionIcon>
                 </Tooltip>

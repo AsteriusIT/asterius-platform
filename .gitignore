@@ -12,3 +12,5 @@ backups/
 .beads-credential-key
 .beads/proxieddb/
 data-*/
+test-results/
+playwright-report/

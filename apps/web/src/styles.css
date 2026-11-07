@@ -19,17 +19,46 @@ h4,
   scrollbar-color: var(--border-strong) transparent;
 }
 
-/* ---- shell: white canvas, soft sidebar, no hard borders ---- */
+/* ---- shell: sidebar and top bar share one soft surface; the page sits in a rounded panel ---- */
 .app-header {
-  background: var(--mantine-color-body);
-  border-bottom: 1px solid var(--hairline);
+  background: var(--surface);
+  border-bottom: none;
 }
 .app-navbar {
   background: var(--surface);
   border-right: none;
 }
 .app-main {
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+}
+.app-panel {
+  flex: 1;
+  margin: 0 12px 12px 0;
+  padding: var(--mantine-spacing-xl);
   background: var(--mantine-color-body);
+  border: 1px solid var(--hairline);
+  border-radius: 16px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+  min-width: 0;
+}
+/* Flow views: the canvas takes the whole panel, which keeps its rounded frame. */
+.app-panel.app-panel-flush {
+  padding: 0;
+  overflow: hidden;
+  position: relative;
+  display: flex;
+}
+@media (max-width: 48em) {
+  .app-panel {
+    margin: 0 8px 8px;
+    padding: var(--mantine-spacing-md);
+    border-radius: 14px;
+  }
+  .app-panel.app-panel-flush {
+    padding: 0;
+  }
 }
 .app-content {
   max-width: 1240px;
@@ -58,6 +87,25 @@ h4,
 .nav-link[data-active] .mantine-NavLink-section {
   color: var(--mantine-color-text);
 }
+.nav-section-rule {
+  height: 1px;
+  margin: 10px 12px;
+  background: var(--hairline);
+}
+/* Folded sidebar: icon-only items, centered. */
+.app-navbar[data-mini] .nav-link {
+  justify-content: center;
+  padding: 10px;
+}
+.app-navbar[data-mini] .nav-link .mantine-NavLink-section {
+  margin-inline-end: 0;
+}
+.app-navbar[data-mini] .nav-link .mantine-NavLink-body {
+  display: none;
+}
+.app-navbar {
+  transition: width 0.15s ease;
+}
 .nav-section {
   font-size: 12px;
   font-weight: 500;
@@ -81,12 +129,14 @@ h4,
   border-color: var(--mantine-color-error);
 }
 
-/* Search box in the header: filled, borderless, LibreChat-style. */
-.header-search .mantine-Input-input {
-  background: var(--surface-2);
-  border-color: transparent;
+/* Search boxes (top bar, catalog, self-service): the sidebar tone with a soft outline. */
+.header-search .mantine-Input-input,
+.search-input .mantine-Input-input {
+  background: var(--surface);
+  border-color: var(--mantine-color-default-border);
 }
-.header-search .mantine-Input-input:focus {
+.header-search .mantine-Input-input:focus,
+.search-input .mantine-Input-input:focus {
   background: var(--mantine-color-body);
   border-color: var(--border-strong);
 }
@@ -159,6 +209,87 @@ h4,
   background: var(--code-bg);
 }
 
+/* JSON / YAML: highlighted <pre> under a transparent <textarea>, same cell, same metrics. */
+.code-editor {
+  display: grid;
+  border: 1px solid var(--mantine-color-default-border);
+  border-radius: var(--mantine-radius-md);
+  background: var(--code-bg);
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+.code-editor:focus-within {
+  border-color: var(--border-strong);
+  box-shadow: 0 0 0 3px var(--hairline);
+}
+.code-editor[data-error] {
+  border-color: var(--mantine-color-error);
+}
+.code-editor-layer,
+.code-block {
+  font-family: var(--mantine-font-family-monospace);
+  font-size: 12.5px;
+  line-height: 1.6;
+  tab-size: 2;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 0;
+  padding: 10px 12px;
+}
+.code-editor-layer {
+  grid-area: 1 / 1;
+  border: 0;
+}
+.code-editor-input {
+  resize: none;
+  overflow: hidden;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--mantine-color-text);
+  outline: none;
+}
+.code-editor-input::selection {
+  color: transparent;
+  background: color-mix(in srgb, var(--mantine-color-brand-6) 28%, transparent);
+}
+.code-inline {
+  font-family: var(--mantine-font-family-monospace);
+  font-size: 12px;
+  padding: 1px 5px;
+  border-radius: var(--mantine-radius-sm);
+  background: var(--code-bg);
+  overflow-wrap: anywhere;
+}
+.code-block {
+  background: var(--code-bg);
+  border-radius: var(--mantine-radius-md);
+  overflow-x: auto;
+}
+.tok-key {
+  color: var(--tok-key);
+}
+.tok-string {
+  color: var(--tok-string);
+}
+.tok-number {
+  color: var(--tok-number);
+}
+.tok-literal {
+  color: var(--tok-literal);
+}
+.tok-comment {
+  color: var(--tok-comment);
+  font-style: italic;
+}
+.tok-punct {
+  color: var(--tok-punct);
+}
+.tok-template {
+  color: var(--tok-template);
+  font-weight: 500;
+}
+
 /* Markdown */
 .markdown > :first-child {
   margin-top: 0;
@@ -173,10 +304,94 @@ h4,
   padding: 1px 5px;
   border-radius: 6px;
 }
+/* Service logos with dark parts (AWS wordmark…): lightened in dark mode, brand hues kept. */
+[data-mantine-color-scheme='dark'] .vendor-invert-dark {
+  filter: invert(1) hue-rotate(180deg);
+}
+
+/* Refresh buttons: the icon turns while data loads. */
+.spin {
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation: none;
+  }
   .hover-card,
   .hover-card:hover {
     transition: none;
     transform: none;
   }
+}
+
+/* Workflow flow view (React Flow): a faint grid everywhere, stronger under each node. Positions are multiples of
+   the 24px grid, so the halo's lines meet the background's. */
+.workflow-flow {
+  --flow-grid-faint: color-mix(in srgb, var(--mantine-color-text) 5%, transparent);
+  --flow-grid-strong: color-mix(in srgb, var(--mantine-color-text) 16%, transparent);
+  border-radius: 16px;
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+}
+.workflow-flow.workflow-flow-bare {
+  border: 0;
+  border-radius: 0;
+}
+.workflow-flow .react-flow {
+  --xy-background-color: transparent;
+  --xy-edge-stroke-selected: var(--mantine-color-brand-6);
+}
+.workflow-flow .react-flow__controls {
+  box-shadow: none;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.workflow-flow .react-flow__node {
+  cursor: pointer;
+}
+.flow-node-halo {
+  position: absolute;
+  inset: -48px;
+  pointer-events: none;
+  z-index: -1;
+  background-image:
+    linear-gradient(to right, var(--flow-grid-strong) 1px, transparent 1px), linear-gradient(to bottom, var(--flow-grid-strong) 1px, transparent 1px);
+  background-size: 24px 24px;
+  mask-image: radial-gradient(closest-side, #000 45%, transparent);
+}
+.flow-node {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--mantine-color-body);
+  border: 1px solid var(--mantine-color-default-border);
+  transition: box-shadow 0.15s;
+}
+.flow-node[data-selected] {
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--mantine-color-brand-6) 18%, transparent);
+}
+.workflow-flow .react-flow__handle {
+  width: 8px;
+  height: 8px;
+  background: var(--mantine-color-body);
+  border: 1.5px solid var(--mantine-color-gray-5);
+}
+.flow-node-add {
+  position: absolute;
+  right: -34px;
+  top: 50%;
+  transform: translateY(-50%);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.react-flow__node:hover .flow-node-add,
+.flow-node-add[aria-expanded='true'] {
+  opacity: 1;
 }

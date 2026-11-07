@@ -1,0 +1,11 @@
+policies:
+  # Guard rails: the expression must evaluate to true to allow; any error denies.
+  - identifier: service-needs-owner
+    title: Services need an owner team
+    description: Services cannot be created or updated without an owner team.
+    target: entity
+    match:
+      blueprints: [service]
+      operations: [create, update]
+    expression: entity.team != null
+    message: '{{ entity.identifier }} must have an owner team'

@@ -1,0 +1,47 @@
+{
+  "blueprints": [
+    {
+      "identifier": "nexus-repository",
+      "title": "Nexus repository",
+      "icon": "package",
+      "description": "Repositories of the Nexus Repository instance (nexus integration).",
+      "schema": {
+        "properties": {
+          "format": { "type": "string", "title": "Format" },
+          "type": {
+            "type": "string",
+            "title": "Type",
+            "enum": ["hosted", "proxy", "group"],
+            "enumColors": { "hosted": "blue", "proxy": "violet", "group": "gray" }
+          },
+          "remoteUrl": { "type": "string", "title": "Proxied URL", "format": "url" },
+          "url": { "type": "string", "title": "Repository URL", "format": "url" },
+          "browseUrl": { "type": "string", "title": "Open in Nexus", "format": "url" }
+        },
+        "order": ["format", "type", "url", "remoteUrl", "browseUrl"]
+      }
+    },
+    {
+      "identifier": "nexus-component",
+      "title": "Nexus component",
+      "icon": "box",
+      "description": "Components stored in the Nexus repositories (nexus-components integration): packages, images, artifacts.",
+      "schema": {
+        "properties": {
+          "format": { "type": "string", "title": "Format" },
+          "group": { "type": "string", "title": "Group" },
+          "name": { "type": "string", "title": "Name" },
+          "version": { "type": "string", "title": "Version" },
+          "assets": { "type": "number", "title": "Assets" },
+          "size": { "type": "number", "title": "Size (bytes)" },
+          "lastModified": { "type": "string", "title": "Last modified", "format": "date-time" },
+          "downloadUrl": { "type": "string", "title": "Download", "format": "url" }
+        },
+        "order": ["format", "group", "name", "version", "lastModified", "assets", "size", "downloadUrl"]
+      },
+      "relations": {
+        "repository": { "title": "Repository", "target": "nexus-repository", "inverseTitle": "Components" }
+      }
+    }
+  ]
+}

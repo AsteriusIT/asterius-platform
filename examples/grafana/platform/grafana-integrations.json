@@ -1,0 +1,125 @@
+{
+  "integrations": [
+    {
+      "identifier": "grafana",
+      "title": "Grafana dashboards and folders",
+      "type": "grafana",
+      "intervalMinutes": 15,
+      "deleteMissing": true,
+      "config": {
+        "baseUrl": "http://kps-grafana.observability.svc",
+        "publicUrl": "https://platform-grafana.k8s.orb.local",
+        "token": "${vault:secret/apps/grafana#token}"
+      },
+      "mappings": [
+        {
+          "kind": "folder",
+          "entity": {
+            "blueprint": "grafana-folder",
+            "identifier": "uid",
+            "title": "title",
+            "properties": { "url": "$integration.config.publicUrl & \"/dashboards/f/\" & uid" },
+            "relations": { "parent": "parentUid" }
+          }
+        },
+        {
+          "kind": "dashboard",
+          "entity": {
+            "blueprint": "grafana-dashboard",
+            "identifier": "uid",
+            "title": "title",
+            "properties": { "url": "$integration.config.publicUrl & url", "tags": "tags" },
+            "relations": { "folder": "folderUid" }
+          }
+        }
+      ]
+    },
+    {
+      "identifier": "grafana-datasources",
+      "title": "Grafana data sources",
+      "type": "http",
+      "intervalMinutes": 60,
+      "deleteMissing": true,
+      "config": {
+        "url": "http://kps-grafana.observability.svc/api/datasources",
+        "headers": { "Authorization": "Bearer ${vault:secret/apps/grafana#token}" }
+      },
+      "mappings": [
+        {
+          "kind": "item",
+          "entity": {
+            "blueprint": "grafana-datasource",
+            "identifier": "uid",
+            "title": "name",
+            "properties": { "type": "type", "url": "url", "isDefault": "isDefault" }
+          }
+        }
+      ]
+    },
+    {
+      "identifier": "grafana-alert-rules",
+      "title": "Grafana alert rules",
+      "type": "http",
+      "intervalMinutes": 15,
+      "deleteMissing": true,
+      "config": {
+        "url": "http://kps-grafana.observability.svc/api/v1/provisioning/alert-rules",
+        "publicUrl": "https://platform-grafana.k8s.orb.local",
+        "headers": { "Authorization": "Bearer ${vault:secret/apps/grafana#token}" }
+      },
+      "mappings": [
+        {
+          "kind": "item",
+          "entity": {
+            "blueprint": "grafana-alert-rule",
+            "identifier": "uid",
+            "title": "title",
+            "properties": {
+              "severity": "labels.severity",
+              "group": "ruleGroup",
+              "summary": "annotations.summary",
+              "pendingFor": "`for`",
+              "paused": "isPaused",
+              "labels": "labels",
+              "url": "$integration.config.publicUrl & \"/alerting/grafana/\" & uid & \"/view\""
+            },
+            "relations": { "folder": "folderUID", "dashboard": "annotations.__dashboardUid__" }
+          }
+        }
+      ]
+    },
+    {
+      "identifier": "grafana-alerts",
+      "title": "Grafana alert notifications",
+      "type": "webhook",
+      "config": {
+        "secret": "${vault:secret/apps/grafana#webhookToken}"
+      },
+      "mappings": [
+        {
+          "kind": "event",
+          "items": "alerts",
+          "entity": {
+            "blueprint": "grafana-alert",
+            "identifier": "fingerprint",
+            "title": "labels.alertname",
+            "properties": {
+              "status": "status",
+              "severity": "labels.severity",
+              "summary": "annotations.summary",
+              "startsAt": "startsAt",
+              "endsAt": "status = \"resolved\" ? endsAt",
+              "url": "generatorURL",
+              "silenceUrl": "silenceURL",
+              "labels": "labels"
+            },
+            "relations": {
+              "rule": "$match(generatorURL, /\\/alerting\\/grafana\\/([^\\/?]+)/).groups[0]",
+              "dashboard": "$match(dashboardURL, /\\/d\\/([^\\/?]+)/).groups[0]"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

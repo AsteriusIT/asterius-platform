@@ -37,7 +37,7 @@ Create an account; the first one becomes admin. New users get a short guided tou
 
 ## Extending by configuration
 
-Everything is declared in YAML: in [config/](config/) (configuration as code, GitOps) or in the admin UI (same format, exportable to Git). Blueprints (Admin → Blueprints: properties with option colors and a display preview, relations) and self-service workflows have **guided builders**. A workflow is a **trigger** followed by **steps**: Admin → Actions → New only asks for a title and a description; the editor then shows the workflow as nodes, where you add the trigger (a *form submission*: where it is offered, form fields with a live preview, who can submit it, approval before it starts) and the steps one by one (integration call, approval, AI agent, transform). JSON and YAML views edit the same document, and an unfinished workflow can be saved as a draft (users don't see it until it has a trigger and a step). For example, a day-2 workflow that runs an Azure pipeline after the owning team approves it:
+Everything is declared in YAML: in [config/](config/) (configuration as code, GitOps) or in the admin UI (same format, exportable to Git). Blueprints (Admin → Blueprints: properties with option colors and a display preview, relations) and self-service workflows have **guided builders**. Integrations (connection fields per source type, mappings), webhooks, teams and catalog entities are edited in **form dialogs** too, each with JSON / YAML views of the same document. Blueprint and action icons are picked from **official service logos** (Azure, Azure DevOps, Kubernetes, Helm, Argo CD, Terraform, GitHub, Prometheus, PostgreSQL… — `icon: azure-devops`; regenerate with `npm run icons:vendor -w apps/web`), generic icons, or are a **custom image** (an https:// URL or an uploaded PNG / JPEG / GIF / WebP / SVG up to 48 KB, stored in the definition). A workflow is a **trigger** followed by **steps**: Admin → Actions → New only asks for a title and a description; the editor then shows the workflow as nodes, where you add the trigger (a *form submission*: where it is offered, form fields with a live preview, who can submit it, approval before it starts) and the steps one by one (integration call, approval, AI agent, transform). JSON and YAML views edit the same document, and an unfinished workflow can be saved as a draft (users don't see it until it has a trigger and a step). For example, a day-2 workflow that runs an Azure pipeline after the owning team approves it:
 
 ```yaml
 actions:
@@ -89,6 +89,24 @@ To plug in a **custom service**, use one of three paths:
 
 See [docs/EXTENDING.md](docs/EXTENDING.md) for the API, the callback contract and the plugin interfaces.
 
+## Organizations, sign-in and AI assistants
+
+**Organizations (tenants).** Everything (catalog and its history, scorecards, dashboards, workflows and their versions, runs, integrations, webhooks, secrets, notifications, AI budgets and usage, audit log, API tokens) belongs to an organization. People belong to several organizations with a role in each (admin or member) and switch from the sidebar. Platform super-admins (`ADMIN_EMAILS`, the bootstrap account) see every organization under *Platform → All organizations*. Existing installs are migrated into the `default` organization. A new account belongs to no organization: it lands on *Create your organization*, unless it was invited or came in through an organization's SSO. Anyone signed in can create an organization (`ORG_CREATION=superadmin` restricts it); `AUTO_JOIN_DEFAULT_ORG=true` restores the single-tenant behaviour (everyone joins the default organization). Inbound webhooks and workflow webhook triggers carry the organization in their URL (`/api/v1/ingest/<org>/<integration>`, `/api/v1/hooks/<org>/<action>`; without it: the default organization). The platform's own Kubernetes access and cloud identity (external secret managers, `auth` blocks without credentials) are reserved to the organizations listed in `KUBERNETES_ORGS` and `PLATFORM_IDENTITY_ORGS` (default: the default organization). Platform-wide sign-in providers (Entra ID, generic OIDC, GitHub, SAML) serve the default organization; SCIM tokens provision the organization they were created in.
+
+**Registration, login and SSO per organization: Keycloak.** With `AUTH_PROVIDERS=keycloak` (and `KEYCLOAK_URL`), Keycloak handles registration, password reset, MFA and passkeys. Each platform organization is a Keycloak *Organization*. Organization admins connect their own identity provider (Entra ID, Okta, Google, any OIDC or SAML) and invite people from *Organization → Single sign-on / Members*: the platform drives Keycloak's admin API. Email domains must be verified with a DNS TXT record before they route sign-ins or let people join, so no organization can claim someone else's domain. Typing an email on the sign-in page goes straight to the identity provider connected for its domain (no Keycloak page): people who come through an organization's identity provider with an email of its verified domains become members on their first sign-in (and are mirrored in the Keycloak Organization), nobody manages members in Keycloak. Registering with a password, even with a matching email, joins nothing. Locally: `docker compose -f deploy/keycloak/docker-compose.yaml up -d` (realm `asterius` imported from [deploy/keycloak/realm-asterius.json](deploy/keycloak/realm-asterius.json)). In Kubernetes: `keycloak.enabled=true` in the chart, or `keycloak.url` for an existing Keycloak. Local accounts and the direct Entra integration (default organization) remain available.
+
+**Configuration as code per organization.** The default organization reads `CONFIG_DIR`; another organization reads `CONFIG_DIR/orgs/<slug>/` (mounted by the operators) or **its own Git repository** (https, read-only token kept as an organization secret, pulled every 2 minutes). Organizations can also be declared in the platform files (`organizations: [{ slug, name, domains, admins }]`).
+
+**MCP server.** `POST /api/mcp` (also `/api/v1/mcp`, Streamable HTTP) lets AI assistants search the catalog, read entities, start self-service actions and follow runs, with the permissions of the token's owner in the token's organization:
+
+```bash
+claude mcp add --transport http acme https://platform.example.com/api/mcp --header "Authorization: Bearer ast_…"
+```
+
+Remote clients (Claude.ai, ChatGPT connectors) sign in with OAuth 2.1 against the Keycloak realm: the server publishes RFC 9728 metadata at `/.well-known/oauth-protected-resource` and accepts the realm's access tokens; see [docs/MCP.md](docs/MCP.md).
+
+`whoami` and `list_approvals` show the token's organization and what waits for a decision; approving requests is deliberately not exposed to assistants.
+
 ## Deploying on Kubernetes
 
 ```bash
@@ -111,9 +129,11 @@ What the chart does:
 - **Configuration.** Non-secret settings come from a ConfigMap and secrets from a Secret, ideally an existing one from External Secrets or Sealed Secrets. A checksum annotation rolls pods when settings change. `SECRETS_KEY` is generated once and kept (`resource-policy: keep`).
 - **Network.** A NetworkPolicy allows ingress only from the ingress controller, Prometheus and the release itself; egress can optionally be restricted.
 - **Database.** Bring your own PostgreSQL (`database.url` / `DATABASE_URL`), or let the chart create a **CloudNativePG** cluster (`database.cnpg.enabled=true`).
+- **Branding.** `branding.name` / `branding.logo` (`BRAND_NAME` / `BRAND_LOGO`: an https:// image URL or a `data:image/…` URI) set the product name and logo shown in the sidebar, the sign-in page, the browser tab and the favicon.
 - **Optional extras.** Least-privilege RBAC for the Kubernetes source (cluster read) and the Job invoker (per-namespace Role), a ServiceMonitor, OpenTelemetry tracing, and `helm test`.
+- **Optional extras.** Least-privilege RBAC for the Kubernetes source (cluster read) and the Job invoker (per-namespace Role) bound to a worker-only ServiceAccount (the API pods get no Kubernetes token), a ServiceMonitor, a PrometheusRule (queue age, failed/stale syncs, delivery failures, worker loop age, database), a Grafana dashboard ConfigMap, CloudNativePG backups to an object store with scheduled base backups and point-in-time recovery (`database.cnpg.backup` / `database.cnpg.recovery`), `values.schema.json`, `extraVolumes` / `extraVolumeMounts` / `extraContainers`, OpenTelemetry tracing, and `helm test`.
 
-**Sizing (≈500 users, tens of thousands of entities):** 2–3 API pods and 2 worker pods at 100m CPU / 256 Mi each, plus a small PostgreSQL instance (2 vCPU, 4 GB) cover this comfortably. The UI polls instead of holding long-lived connections, so any replica can serve any request.
+**Sizing (≈500 users, tens of thousands of entities):** 2–3 API pods and 2 worker pods at 100m CPU / 256 Mi each, plus a small PostgreSQL instance (2 vCPU, 4 GB) cover this comfortably. The UI polls instead of holding long-lived connections, so any replica can serve any request. Reproducible load test and latency budgets: [docs/PERFORMANCE.md](docs/PERFORMANCE.md); backups and disaster recovery: [docs/OPERATIONS.md](docs/OPERATIONS.md).
 
 ## Development
 

@@ -1,0 +1,68 @@
+{
+  "integrations": [
+    {
+      "identifier": "nexus",
+      "title": "Nexus repositories",
+      "type": "nexus",
+      "intervalMinutes": 15,
+      "deleteMissing": true,
+      "config": {
+        "baseUrl": "http://nexus.nexus.svc:8081",
+        "publicUrl": "https://nexus.k8s.orb.local",
+        "user": "asterius-platform",
+        "password": "${vault:secret/apps/nexus#password}"
+      },
+      "mappings": [
+        {
+          "kind": "repository",
+          "entity": {
+            "blueprint": "nexus-repository",
+            "identifier": "name",
+            "title": "name",
+            "properties": {
+              "format": "format",
+              "type": "type",
+              "remoteUrl": "attributes.proxy.remoteUrl",
+              "url": "$integration.config.publicUrl & \"/repository/\" & name & \"/\"",
+              "browseUrl": "$integration.config.publicUrl & \"/#browse/browse:\" & name"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "identifier": "nexus-components",
+      "title": "Nexus components",
+      "type": "nexus",
+      "intervalMinutes": 30,
+      "deleteMissing": true,
+      "config": {
+        "baseUrl": "http://nexus.nexus.svc:8081",
+        "publicUrl": "https://nexus.k8s.orb.local",
+        "user": "asterius-platform",
+        "password": "${vault:secret/apps/nexus#password}"
+      },
+      "mappings": [
+        {
+          "kind": "component",
+          "entity": {
+            "blueprint": "nexus-component",
+            "identifier": "id",
+            "title": "$join([group, name, version][$ != \"\"], \":\")",
+            "properties": {
+              "format": "format",
+              "group": "group",
+              "name": "name",
+              "version": "version",
+              "assets": "$count(assets)",
+              "size": "$sum(assets.fileSize)",
+              "lastModified": "$fromMillis($max(assets.$toMillis(lastModified)))",
+              "downloadUrl": "$integration.config.publicUrl & \"/repository/\" & repository & \"/\" & $replace(assets[$not($contains(path, /\\.(md5|sha1|sha256|sha512|asc)$/))][0].path, /^\\//, \"\")"
+            },
+            "relations": { "repository": "repository" }
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -7,7 +7,6 @@ import {
   Checkbox,
   Group,
   Input,
-  JsonInput,
   MultiSelect,
   Select,
   Stack,
@@ -23,6 +22,7 @@ import { useQuery } from '@tanstack/react-query';
 import { IconPlus, IconTrash } from '@tabler/icons-react';
 import type { PluginField, Subjects } from '@asterius/shared';
 import { api } from '../../lib/api';
+import { CodeEditor } from '../CodeEditor';
 
 /** Small editors shared by the builders (actions today; integrations can reuse them). */
 
@@ -124,7 +124,7 @@ export function SubjectsEditor({
       <Group grow align="flex-start">
         <MultiSelect
           label="Roles"
-          data={['admin', 'member']}
+          data={[...new Set(['admin', 'member', 'integration-admin', 'blueprint-owner', 'approver', ...(v.roles ?? [])])]}
           value={v.roles ?? []}
           onChange={(r) => set({ roles: r as Subjects['roles'] })}
           placeholder="Any role"
@@ -258,10 +258,10 @@ export function JsonEditor({
   const [text, setText] = useState(() => (value === undefined ? '' : JSON.stringify(value, null, 2)));
   const [error, setError] = useState<string | null>(null);
   return (
-    <JsonInput
+    <CodeEditor
+      language="json"
       label={label}
       description={description}
-      autosize
       minRows={minRows}
       maxRows={20}
       value={text}

@@ -63,6 +63,27 @@ actions:
           team: '{{ inputs.team }}'
           properties: { type: '{{ inputs.type }}', region: '{{ inputs.region }}', expiresAt: '{{ inputs.expiresAt }}' }
 
+  - identifier: decommission-expired-environment
+    title: Decommission expired environments
+    icon: trash
+    description: Deletes an environment once its expiry date has passed (event entity.expired, see ttlProperty of the environment blueprint).
+    trigger:
+      type: event
+      event: entity.expired
+      blueprint: environment
+      # Production environments are never removed automatically.
+      filter: 'event.entity.properties.type != "production"'
+      inputs: { name: '{{ event.entity.identifier }}' }
+    steps:
+      - id: run
+        name: Delete the environment
+        type: invoke
+        invoker:
+          type: catalog
+          operation: delete
+          blueprint: environment
+          identifier: '{{ inputs.name }}'
+
   - identifier: change-lifecycle
     title: Change lifecycle
     icon: refresh
@@ -273,6 +294,60 @@ actions:
             system: '{{ inputs.system }}'
             callback_url: '{{ run.callback.url }}'
             callback_token: '{{ run.callback.token }}'
+
+  # Same golden path without a GitHub workflow: the scaffolder invoker renders a template repository, creates the
+  # repository and pushes the files; a catalog step then registers the service from the scaffolder output.
+  - identifier: scaffold-service-template
+    title: Create a new service (template repository)
+    icon: brand-github
+    description: |
+      Creates a GitHub repository from the golden-path template repository (placeholders filled from the form)
+      and registers the service in the catalog with the new repository URL.
+    trigger:
+      type: form
+      on: create
+      blueprint: service
+      inputs:
+        properties:
+          name: { type: string, title: Service name, pattern: '^[a-z][a-z0-9-]{2,40}$' }
+          language: { type: string, title: Language, enum: [go, java, node, python, dotnet] }
+          team: { type: string, title: Owning team, format: team }
+          system: { type: string, title: System, format: entity, blueprint: system }
+        required: [name, language, team, system]
+      approval:
+        required: true
+        approvers: { teams: [platform] }
+    steps:
+      - id: create
+        name: Create the repository from the template
+        type: invoke
+        invoker:
+          type: scaffolder
+          provider: github
+          mode: new-repository
+          templateRepo: my-org/golden-path-template
+          templatePath: skeleton
+          templateRef: main
+          repo: 'my-org/{{ inputs.name }}'
+          description: 'Service {{ inputs.name }}, owned by {{ inputs.team }}'
+          visibility: private
+          topics: [service, golden-path]
+          variables:
+            name: '{{ inputs.name }}'
+            language: '{{ inputs.language }}'
+            team: '{{ inputs.team }}'
+          token: ${secret:GITHUB_TOKEN}
+      - id: register
+        name: Register the service
+        type: invoke
+        invoker:
+          type: catalog
+          operation: upsert
+          blueprint: service
+          identifier: '{{ inputs.name }}'
+          team: '{{ inputs.team }}'
+          properties: { language: '{{ inputs.language }}', repositoryUrl: '{{ steps.create.output.repoUrl }}' }
+          relations: { system: '{{ inputs.system }}' }
 
   - identifier: deploy-service
     title: Deploy

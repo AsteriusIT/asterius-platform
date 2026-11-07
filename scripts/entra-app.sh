@@ -56,6 +56,11 @@ if [ "$NEW_APP" = 1 ]; then
   else echo "• admin consent not granted (needs an admin) — users will be asked to consent on first sign-in"; fi
 fi
 
+# Optional, needs a tenant admin: GroupMember.Read.All (application) lets the platform resolve group overage (>200
+# groups) at sign-in and re-sync roles/teams of signed-in users (ENTRA_RESYNC_MINUTES). Without it, users with
+# more than 200 groups cannot sign in (the platform fails closed instead of treating them as group-less).
+echo "• for group overage / periodic re-sync grant the application permission GroupMember.Read.All (Graph) with admin consent"
+
 if [ "${ASSIGNMENT_REQUIRED:-0}" = 1 ]; then
   az ad sp update --id "$APP_ID" --set appRoleAssignmentRequired=true >/dev/null
   echo "✓ only users/groups assigned to the enterprise application can sign in"

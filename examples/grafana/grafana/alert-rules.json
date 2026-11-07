@@ -1,0 +1,152 @@
+[
+  {
+    "uid": "asterius-api-down",
+    "title": "Asterius API down",
+    "ruleGroup": "asterius-platform",
+    "folderUID": "asterius-platform",
+    "condition": "C",
+    "for": "5m",
+    "noDataState": "Alerting",
+    "execErrState": "Error",
+    "labels": {
+      "severity": "critical"
+    },
+    "annotations": {
+      "summary": "No Asterius API pod is scraped as up.",
+      "__dashboardUid__": "asterius-platform",
+      "__panelId__": "1"
+    },
+    "data": [
+      {
+        "refId": "A",
+        "datasourceUid": "prometheus",
+        "relativeTimeRange": {
+          "from": 300,
+          "to": 0
+        },
+        "model": {
+          "refId": "A",
+          "expr": "sum(up{namespace=\"asterius-platform\", job=\"asterius-platform\"})",
+          "instant": true
+        }
+      },
+      {
+        "refId": "C",
+        "datasourceUid": "__expr__",
+        "model": {
+          "refId": "C",
+          "type": "threshold",
+          "expression": "A",
+          "conditions": [
+            {
+              "evaluator": {
+                "type": "lt",
+                "params": [1]
+              }
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "uid": "asterius-run-queue",
+    "title": "Asterius runs waiting",
+    "ruleGroup": "asterius-platform",
+    "folderUID": "asterius-platform",
+    "condition": "C",
+    "for": "5m",
+    "noDataState": "OK",
+    "execErrState": "Error",
+    "labels": {
+      "severity": "warning"
+    },
+    "annotations": {
+      "summary": "The oldest queued run has waited more than 5 minutes: workers are saturated or stopped.",
+      "__dashboardUid__": "asterius-platform",
+      "__panelId__": "3"
+    },
+    "data": [
+      {
+        "refId": "A",
+        "datasourceUid": "prometheus",
+        "relativeTimeRange": {
+          "from": 300,
+          "to": 0
+        },
+        "model": {
+          "refId": "A",
+          "expr": "max(asterius_queue_oldest_run_age_seconds{namespace=\"asterius-platform\"})",
+          "instant": true
+        }
+      },
+      {
+        "refId": "C",
+        "datasourceUid": "__expr__",
+        "model": {
+          "refId": "C",
+          "type": "threshold",
+          "expression": "A",
+          "conditions": [
+            {
+              "evaluator": {
+                "type": "gt",
+                "params": [300]
+              }
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "uid": "asterius-heartbeat",
+    "title": "Asterius heartbeat",
+    "ruleGroup": "asterius-platform",
+    "folderUID": "asterius-platform",
+    "condition": "C",
+    "for": "0s",
+    "noDataState": "Alerting",
+    "execErrState": "Error",
+    "labels": {
+      "severity": "info"
+    },
+    "annotations": {
+      "summary": "Always firing: proves that Grafana notifications reach the platform (like Alertmanager's Watchdog).",
+      "__dashboardUid__": "asterius-platform",
+      "__panelId__": "12"
+    },
+    "data": [
+      {
+        "refId": "A",
+        "datasourceUid": "prometheus",
+        "relativeTimeRange": {
+          "from": 300,
+          "to": 0
+        },
+        "model": {
+          "refId": "A",
+          "expr": "vector(1)",
+          "instant": true
+        }
+      },
+      {
+        "refId": "C",
+        "datasourceUid": "__expr__",
+        "model": {
+          "refId": "C",
+          "type": "threshold",
+          "expression": "A",
+          "conditions": [
+            {
+              "evaluator": {
+                "type": "gt",
+                "params": [0]
+              }
+            }
+          ]
+        }
+      }
+    ]
+  }
+]

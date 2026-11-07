@@ -1,10 +1,10 @@
 import { useState, type ReactNode } from 'react';
-import { Alert, Box, Button, Group, JsonInput, Modal, ScrollArea, Stack, Tabs, Text, Textarea } from '@mantine/core';
+import { Alert, Box, Button, Group, Modal, ScrollArea, Stack, Tabs, Text } from '@mantine/core';
 import { useMediaQuery } from '@mantine/hooks';
 import { parse, stringify } from 'yaml';
 import { IconAlertTriangle, IconBraces, IconCode } from '@tabler/icons-react';
 import { errorText } from '../../lib/api';
-import { MONO_INPUT } from './blocks';
+import { CodeEditor } from '../CodeEditor';
 
 /**
  * The frame shared by the builders (actions, blueprints): large dialog with overlay scrollbars, builder tabs
@@ -22,13 +22,25 @@ export const slugify = (title: string) =>
     .replace(/-+$/, '')
     .slice(0, 64);
 
-export function BuilderModal({ opened, onClose, title, children }: { opened: boolean; onClose: () => void; title: string; children: ReactNode }) {
+export function BuilderModal({
+  opened,
+  onClose,
+  title,
+  children,
+  size = '76rem',
+}: {
+  opened: boolean;
+  onClose: () => void;
+  title: string;
+  children: ReactNode;
+  size?: string;
+}) {
   const mobile = useMediaQuery('(max-width: 48em)');
   return (
     <Modal
       opened={opened}
       onClose={onClose}
-      size="76rem"
+      size={size}
       fullScreen={mobile}
       title={<Text fw={600}>{title}</Text>}
       scrollAreaComponent={ScrollArea.Autosize}
@@ -85,29 +97,10 @@ export function CodePanels({ view, readOnly }: { view: CodeView; readOnly?: bool
   return (
     <>
       <Tabs.Panel value="json">
-        <JsonInput
-          value={view.text}
-          onChange={(t) => view.change(t, 'json')}
-          autosize
-          minRows={18}
-          error={view.error}
-          readOnly={readOnly}
-          styles={MONO_INPUT}
-          fz="xs"
-        />
+        <CodeEditor language="json" value={view.text} onChange={(t) => view.change(t, 'json')} error={view.error} readOnly={readOnly} />
       </Tabs.Panel>
       <Tabs.Panel value="yaml">
-        <Textarea
-          value={view.text}
-          onChange={(e) => view.change(e.currentTarget.value, 'yaml')}
-          autosize
-          minRows={18}
-          error={view.error}
-          readOnly={readOnly}
-          styles={MONO_INPUT}
-          fz="xs"
-          spellCheck={false}
-        />
+        <CodeEditor language="yaml" value={view.text} onChange={(t) => view.change(t, 'yaml')} error={view.error} readOnly={readOnly} />
       </Tabs.Panel>
     </>
   );

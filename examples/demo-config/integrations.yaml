@@ -70,6 +70,7 @@ integrations:
             version: version
             url: url
             deployedAt: $now()
+            mergedAt: mergedAt
           relations:
             service: service
             environment: environment

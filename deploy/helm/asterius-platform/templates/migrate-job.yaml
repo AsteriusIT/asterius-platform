@@ -1,0 +1,57 @@
+{{- $v := .Values -}}
+{{- if $v.migrations.job.enabled }}
+# Schema migrations run once per release, before the new pods start (pre-upgrade) or as soon as the install created
+# its resources (post-install; pods wait for the schema meanwhile). Pods run with MIGRATE_ON_START=false.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "ap.fullname" . }}-migrate-{{ .Release.Revision }}
+  labels: {{- include "ap.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    helm.sh/hook: post-install,pre-upgrade
+    helm.sh/hook-weight: "-5"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: {{ $v.migrations.job.timeoutSeconds }}
+  template:
+    metadata:
+      labels: {{- include "ap.selector" (dict "root" . "component" "migrate") | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ include "ap.serviceAccountName" (dict "root" . "role" "api") }}
+      automountServiceAccountToken: false
+      {{- with $v.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: migrate
+          image: {{ include "ap.image" . | quote }}
+          imagePullPolicy: {{ $v.image.pullPolicy }}
+          command: ["node", "dist/migrate.js"]
+          env:
+            {{- if $v.database.cnpg.enabled }}
+            - name: DATABASE_URL
+              valueFrom: { secretKeyRef: { name: {{ include "ap.cnpgName" . }}-app, key: uri } }
+            {{- end }}
+          envFrom:
+            - configMapRef: { name: {{ include "ap.fullname" . }}-env }
+            - secretRef: { name: {{ include "ap.secretName" . }} }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { memory: 256Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+      volumes:
+        - { name: tmp, emptyDir: {} }
+{{- end }}

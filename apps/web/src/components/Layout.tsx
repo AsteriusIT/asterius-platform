@@ -8,85 +8,106 @@ import {
   Burger,
   Group,
   Indicator,
+  Kbd,
   Menu,
   NavLink,
   ScrollArea,
+  Stack,
   Text,
   TextInput,
   Tooltip,
   UnstyledButton,
   useMantineColorScheme,
 } from '@mantine/core';
-import { useDisclosure, useMediaQuery } from '@mantine/hooks';
-import { useQueryClient } from '@tanstack/react-query';
-import { useQuery } from '@tanstack/react-query';
+import { useDisclosure, useHotkeys, useLocalStorage, useMediaQuery } from '@mantine/hooks';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { ADMIN_CATEGORIES, tabIsActive } from './adminSections';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router';
 import {
   IconActivity,
-  IconBolt,
+  IconCategory2,
   IconChecklist,
   IconDots,
-  IconHistory,
   IconHome,
-  IconKey,
-  IconLock,
+  IconLayoutSidebarLeftCollapse,
+  IconLayoutSidebarLeftExpand,
   IconLogout,
   IconMoon,
-  IconPlugConnected,
+  IconRefresh,
   IconRocket,
-  IconSchema,
   IconSearch,
-  IconSettingsAutomation,
   IconSun,
   IconUser,
   IconHelpCircle,
-  IconUsersGroup,
-  IconWebhook,
+  IconBuilding,
+  IconBuildingCommunity,
+  IconCheck,
+  IconPlus,
+  IconSelector,
+  IconShieldLock,
 } from '@tabler/icons-react';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { Tour } from './Tour';
 import { tourSteps } from './tourSteps';
-import { EntityIcon } from './icons';
+import { useT } from '../lib/i18n';
+import { CommandPalette } from './CommandPalette';
+import { NotificationCenter } from './NotificationCenter';
+import { BrandLogo, BrandMark } from './Brand';
+import { initials } from './UserChip';
 
-const initials = (name = '') =>
-  name
-    .split(/\s+/)
-    .map((p) => p[0])
-    .join('')
-    .slice(0, 2)
-    .toUpperCase();
+/**
+ * LibreChat-like shell: soft sidebar (brand, navigation, account at the bottom), white canvas, slim header. On desktop the
+ * sidebar folds to icons only (remembered per browser; Ctrl/⌘+B); on mobile it is a drawer.
+ */
+/** Pages drawn as a full-panel graph. */
+const FLOW_VIEW = /^\/(runs|admin\/actions)\/[^/]+(\/flow)?$/;
 
-/** LibreChat-like shell: soft sidebar (brand, navigation, account at the bottom), white canvas, slim header. */
 export function Layout() {
   const [opened, { toggle, open, close }] = useDisclosure();
   const [touring, setTouring] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const t = useT();
   const isMobile = useMediaQuery('(max-width: 48em)');
   const qc = useQueryClient();
-  const { user, isAdmin, signOut } = useAuth();
+  const { user, isAdmin, isSuperadmin, org, signOut, switchOrg } = useAuth();
   const { colorScheme, setColorScheme } = useMantineColorScheme();
   const location = useLocation();
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
+  const [refreshing, setRefreshing] = useState(false);
+  const refreshAll = () => {
+    setRefreshing(true);
+    void qc.refetchQueries({ type: 'active' }).finally(() => setRefreshing(false));
+  };
   const blueprints = useQuery({ queryKey: ['blueprints'], queryFn: api.blueprints, staleTime: 30_000 });
+  const meta = useQuery({ queryKey: ['meta'], queryFn: api.meta, staleTime: Infinity });
+  const entityTotal = blueprints.data?.reduce((n, b) => n + (b.entityCount ?? 0), 0);
+  const [collapsed, setCollapsed] = useLocalStorage({ key: 'asterius.nav-collapsed', defaultValue: false, getInitialValueInEffect: false });
+  const mini = collapsed && !isMobile;
+  const toggleMini = () => setCollapsed((c) => !c);
+  useHotkeys([['mod+B', toggleMini]]);
   const approvals = useQuery({ queryKey: ['approvals'], queryFn: api.approvals, refetchInterval: 30_000 });
 
   const active = (to: string) => (to === '/' ? location.pathname === '/' : location.pathname === to || location.pathname.startsWith(`${to}/`));
-  const link = (to: string, label: string, icon: React.ReactNode, right?: React.ReactNode, tour?: string) => (
-    <NavLink
-      key={to}
-      data-tour={tour}
-      className="nav-link"
-      component={Link}
-      to={to}
-      label={label}
-      leftSection={icon}
-      rightSection={right}
-      active={active(to)}
-      onClick={close}
-    />
+  const link = (to: string, label: string, icon: React.ReactNode, right?: React.ReactNode, tour?: string, isActive?: boolean) => (
+    <Tooltip key={to} label={label} position="right" disabled={!mini} openDelay={0}>
+      <NavLink
+        data-tour={tour}
+        className="nav-link"
+        component={Link}
+        to={to}
+        label={mini ? undefined : label}
+        aria-label={label}
+        leftSection={icon}
+        rightSection={mini ? undefined : right}
+        active={isActive ?? active(to)}
+        onClick={close}
+      />
+    </Tooltip>
   );
-  const section = (label: string) => <div className="nav-section">{label}</div>;
+  // Folded sidebar: section titles become a thin separator.
+  const section = (label: string) => (mini ? <div className="nav-section-rule" aria-hidden /> : <div className="nav-section">{label}</div>);
 
   // Onboarding: start the tour on a user's first visit (completion is stored server-side, across devices).
   useEffect(() => {
@@ -109,13 +130,22 @@ export function Layout() {
   };
 
   return (
-    <AppShell layout="alt" header={{ height: 60 }} navbar={{ width: 264, breakpoint: 'sm', collapsed: { mobile: !opened } }} padding="xl">
+    <AppShell layout="alt" header={{ height: 60 }} navbar={{ width: mini ? 68 : 264, breakpoint: 'sm', collapsed: { mobile: !opened } }} padding={0}>
+      <a
+        href="#main-content"
+        style={{ position: 'absolute', left: -9999, top: 0, zIndex: 1000, background: 'var(--mantine-color-body)', padding: 8 }}
+        onFocus={(e) => (e.currentTarget.style.left = '8px')}
+        onBlur={(e) => (e.currentTarget.style.left = '-9999px')}
+      >
+        {t('app.skipToContent')}
+      </a>
+      <CommandPalette isAdmin={isAdmin} opened={paletteOpen} onOpenChange={setPaletteOpen} />
       <AppShell.Header className="app-header">
         <Group h="100%" px="lg" justify="space-between" wrap="nowrap" gap="md">
           <Group gap="sm" wrap="nowrap">
             <Burger opened={opened} onClick={toggle} hiddenFrom="sm" size="sm" />
             <UnstyledButton component={Link} to="/" hiddenFrom="sm" aria-label="Home">
-              <img src="/favicon.svg" width={26} height={26} alt="" />
+              <BrandLogo size={26} />
             </UnstyledButton>
           </Group>
           <form
@@ -134,6 +164,8 @@ export function Layout() {
               value={search}
               onChange={(e) => setSearch(e.currentTarget.value)}
               aria-label="Search the catalog"
+              rightSection={<Kbd size="xs">Ctrl K</Kbd>}
+              rightSectionWidth={64}
             />
           </form>
           <Group gap={4} wrap="nowrap">
@@ -152,9 +184,15 @@ export function Layout() {
                 </ActionIcon>
               </Indicator>
             </Tooltip>
+            <NotificationCenter />
             <Tooltip label="Runs">
               <ActionIcon component={Link} to="/runs" data-tour="runs" variant={active('/runs') ? 'light' : 'subtle'} color="gray" size="lg" aria-label="Runs">
                 <IconActivity size={19} stroke={1.6} />
+              </ActionIcon>
+            </Tooltip>
+            <Tooltip label="Refresh data">
+              <ActionIcon variant="subtle" color="gray" size="lg" onClick={refreshAll} aria-label="Refresh data" aria-busy={refreshing}>
+                <IconRefresh size={19} stroke={1.6} className={refreshing ? 'spin' : undefined} />
               </ActionIcon>
             </Tooltip>
             <Tooltip label={colorScheme === 'dark' ? 'Light theme' : 'Dark theme'}>
@@ -172,48 +210,140 @@ export function Layout() {
         </Group>
       </AppShell.Header>
 
-      <AppShell.Navbar className="app-navbar" p="sm">
-        <AppShell.Section>
-          <UnstyledButton component={Link} to="/" onClick={close} px={10} py={6} visibleFrom="sm">
-            <Group gap={10} wrap="nowrap">
-              <img src="/favicon.svg" width={28} height={28} alt="" />
-              <Text fw={600} fz={16} style={{ letterSpacing: '-0.015em' }}>
-                Asterius Platform
-              </Text>
+      <AppShell.Navbar className="app-navbar" p="sm" data-mini={mini || undefined}>
+        <AppShell.Section visibleFrom="sm">
+          {mini ? (
+            <Stack gap={6} align="center">
+              <UnstyledButton component={Link} to="/" py={6} aria-label="Home">
+                <BrandLogo size={28} />
+              </UnstyledButton>
+              <Tooltip label="Expand sidebar (Ctrl/⌘+B)" position="right">
+                <ActionIcon variant="subtle" color="gray" size="lg" onClick={toggleMini} aria-label="Expand sidebar">
+                  <IconLayoutSidebarLeftExpand size={19} stroke={1.6} />
+                </ActionIcon>
+              </Tooltip>
+            </Stack>
+          ) : (
+            <Group justify="space-between" wrap="nowrap" gap={4}>
+              <UnstyledButton component={Link} to="/" onClick={close} px={10} py={6} display="block" aria-label="Home" style={{ minWidth: 0 }}>
+                <BrandMark />
+              </UnstyledButton>
+              <Tooltip label="Collapse sidebar (Ctrl/⌘+B)">
+                <ActionIcon variant="subtle" color="gray" size="lg" onClick={toggleMini} aria-label="Collapse sidebar">
+                  <IconLayoutSidebarLeftCollapse size={19} stroke={1.6} />
+                </ActionIcon>
+              </Tooltip>
             </Group>
-          </UnstyledButton>
+          )}
         </AppShell.Section>
 
-        <AppShell.Section grow component={ScrollArea} mt="sm" mx={-4} px={4}>
+        {/* Organization switcher: the tenant every page works in. */}
+        <AppShell.Section mt="sm">
+          <Menu position={mini ? 'right-start' : 'bottom-start'} width={260}>
+            <Menu.Target>
+              <Tooltip label={org?.name ?? 'Organization'} position="right" disabled={!mini}>
+                <UnstyledButton className="nav-link org-switcher" w="100%" display="block" aria-label={`Organization: ${org?.name ?? 'none'}`} data-tour="org">
+                  <Group gap={10} wrap="nowrap" justify={mini ? 'center' : undefined}>
+                    <Avatar radius="md" size={26} color="brand" variant="filled">
+                      {initials(org?.name)}
+                    </Avatar>
+                    {!mini && (
+                      <>
+                        <Box style={{ flex: 1, minWidth: 0 }}>
+                          <Text fz={13.5} fw={600} truncate>
+                            {org?.name}
+                          </Text>
+                          <Text fz={11.5} c="var(--text-3)" truncate>
+                            {isAdmin ? 'Admin' : 'Member'}
+                            {user?.organizations && user.organizations.length > 1 ? ` · ${user.organizations.length} organizations` : ''}
+                          </Text>
+                        </Box>
+                        <IconSelector size={15} color="var(--text-3)" />
+                      </>
+                    )}
+                  </Group>
+                </UnstyledButton>
+              </Tooltip>
+            </Menu.Target>
+            <Menu.Dropdown>
+              <Menu.Label>Organizations</Menu.Label>
+              {user?.organizations?.map((o) => (
+                <Menu.Item
+                  key={o.id}
+                  leftSection={
+                    <Avatar radius="sm" size={20} color="brand" variant={o.slug === org?.slug ? 'filled' : 'light'} fz={10}>
+                      {initials(o.name)}
+                    </Avatar>
+                  }
+                  rightSection={o.slug === org?.slug ? <IconCheck size={14} /> : undefined}
+                  onClick={() => {
+                    if (o.slug === org?.slug) return;
+                    close();
+                    switchOrg(o.slug);
+                    void navigate('/');
+                  }}
+                >
+                  {o.name}
+                </Menu.Item>
+              ))}
+              {org && !user?.organizations?.some((o) => o.slug === org.slug) && (
+                <Menu.Item leftSection={<IconBuilding size={16} />} rightSection={<IconCheck size={14} />} disabled>
+                  {org.name} (super-admin)
+                </Menu.Item>
+              )}
+              <Menu.Divider />
+              {isAdmin && (
+                <Menu.Item component={Link} to="/admin/organization" leftSection={<IconBuilding size={16} />} onClick={close}>
+                  Organization settings
+                </Menu.Item>
+              )}
+              <Menu.Item component={Link} to="/orgs/new" leftSection={<IconPlus size={16} />} onClick={close}>
+                New organization
+              </Menu.Item>
+              {isSuperadmin && (
+                <Menu.Item component={Link} to="/platform/organizations" leftSection={<IconBuildingCommunity size={16} />} onClick={close}>
+                  All organizations
+                </Menu.Item>
+              )}
+            </Menu.Dropdown>
+          </Menu>
+        </AppShell.Section>
+
+        <AppShell.Section grow component={ScrollArea} mt={4} mx={-4} px={4}>
           {link('/', 'Home', <IconHome size={18} stroke={1.6} />)}
           {link('/self-service', 'Self-service', <IconRocket size={18} stroke={1.6} />, undefined, 'self-service')}
 
-          <div data-tour="catalog">
-            {section('Catalog')}
-            {blueprints.data?.map((b) =>
-              link(
-                `/catalog/${b.identifier}`,
-                b.title,
-                <EntityIcon name={b.icon} />,
-                <Text fz="xs" c="var(--text-3)">
-                  {b.entityCount}
-                </Text>,
-              ),
-            )}
-          </div>
+          {link(
+            '/catalog',
+            'Catalog',
+            <IconCategory2 size={18} stroke={1.6} />,
+            entityTotal !== undefined ? (
+              <Text fz="xs" c="var(--text-3)">
+                {entityTotal}
+              </Text>
+            ) : undefined,
+            'catalog',
+          )}
 
           {isAdmin && (
             <div data-tour="admin">
               {section('Administration')}
-              {link('/admin/blueprints', 'Blueprints', <IconSchema size={18} stroke={1.6} />)}
-              {link('/admin/actions', 'Actions', <IconBolt size={18} stroke={1.6} />)}
-              {link('/admin/integrations', 'Integrations', <IconPlugConnected size={18} stroke={1.6} />)}
-              {link('/admin/webhooks', 'Webhooks', <IconWebhook size={18} stroke={1.6} />)}
-              {link('/admin/teams', 'Teams', <IconUsersGroup size={18} stroke={1.6} />)}
-              {link('/admin/users', 'Users & service accounts', <IconKey size={18} stroke={1.6} />)}
-              {link('/admin/secrets', 'Secrets', <IconLock size={18} stroke={1.6} />)}
-              {link('/admin/audit', 'Audit log', <IconHistory size={18} stroke={1.6} />)}
-              {link('/admin/config', 'Configuration', <IconSettingsAutomation size={18} stroke={1.6} />)}
+              {ADMIN_CATEGORIES.map((c) =>
+                link(
+                  c.tabs[0].path,
+                  c.title,
+                  c.icon,
+                  undefined,
+                  undefined,
+                  c.tabs.some((t) => tabIsActive(location.pathname, t.path)),
+                ),
+              )}
+            </div>
+          )}
+          {isSuperadmin && (
+            <div>
+              {section('Platform')}
+              {link('/platform/organizations', 'All organizations', <IconBuildingCommunity size={18} stroke={1.6} />)}
             </div>
           )}
         </AppShell.Section>
@@ -222,19 +352,21 @@ export function Layout() {
           <Menu position="top-start" width={248}>
             <Menu.Target>
               <UnstyledButton className="nav-link" w="100%" display="block" aria-label="Account" data-tour="account">
-                <Group gap={10} wrap="nowrap">
+                <Group gap={10} wrap="nowrap" justify={mini ? 'center' : undefined}>
                   <Avatar radius="xl" size={30} variant="light">
                     {initials(user?.name)}
                   </Avatar>
-                  <Box style={{ flex: 1, minWidth: 0 }}>
-                    <Text fz={14} fw={500} truncate>
-                      {user?.name}
-                    </Text>
-                    <Text fz={12} c="var(--text-3)" truncate>
-                      {user?.email}
-                    </Text>
-                  </Box>
-                  <IconDots size={16} color="var(--text-3)" />
+                  {!mini && (
+                    <Box style={{ flex: 1, minWidth: 0 }}>
+                      <Text fz={14} fw={500} truncate>
+                        {user?.name}
+                      </Text>
+                      <Text fz={12} c="var(--text-3)" truncate>
+                        {user?.email}
+                      </Text>
+                    </Box>
+                  )}
+                  {!mini && <IconDots size={16} color="var(--text-3)" />}
                 </Group>
               </UnstyledButton>
             </Menu.Target>
@@ -254,6 +386,11 @@ export function Layout() {
               <Menu.Item component={Link} to="/profile" leftSection={<IconUser size={16} />} onClick={close}>
                 Profile & API tokens
               </Menu.Item>
+              {meta.data?.accountUrl && user?.provider === 'keycloak' && (
+                <Menu.Item component="a" href={meta.data.accountUrl} target="_blank" rel="noreferrer" leftSection={<IconShieldLock size={16} />}>
+                  Password, MFA & linked accounts
+                </Menu.Item>
+              )}
               <Menu.Item leftSection={<IconHelpCircle size={16} />} onClick={startTour}>
                 Take the tour
               </Menu.Item>
@@ -265,10 +402,19 @@ export function Layout() {
         </AppShell.Section>
       </AppShell.Navbar>
 
-      <AppShell.Main className="app-main">
-        <div className="app-content">
-          <Outlet />
-        </div>
+      <AppShell.Main className="app-main" id="main-content" tabIndex={-1}>
+        {/* Flow views (a run, the workflow editor) fill the panel: no padding, no width limit. */}
+        {FLOW_VIEW.test(location.pathname) ? (
+          <div className="app-panel app-panel-flush">
+            <Outlet />
+          </div>
+        ) : (
+          <div className="app-panel">
+            <div className="app-content">
+              <Outlet />
+            </div>
+          </div>
+        )}
       </AppShell.Main>
       <Tour steps={tourSteps({ name: user?.name.split(' ')[0] ?? '', isAdmin })} opened={touring} onClose={endTour} />
     </AppShell>

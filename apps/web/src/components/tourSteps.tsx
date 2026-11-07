@@ -18,8 +18,8 @@ export function tourSteps(opts: { name: string; isAdmin: boolean }): TourStep[] 
       title: 'The software catalog',
       body: (
         <>
-          Services, systems, environments, repositories… each kind has its own page. Entities show their owner team, properties, relations and the actions you
-          can run on them. Much of it is kept up to date automatically from GitHub, Azure DevOps or Kubernetes.
+          Services, systems, environments, repositories… the catalog page lists every kind, and each kind has its own page. Entities show their owner team,
+          properties, relations and the actions you can run on them. Much of it is kept up to date automatically from GitHub, Azure DevOps or Kubernetes.
         </>
       ),
     },
@@ -58,8 +58,9 @@ export function tourSteps(opts: { name: string; isAdmin: boolean }): TourStep[] 
             title: 'Administration',
             body: (
               <>
-                Define blueprints, actions, integrations and webhooks: in YAML here, or as code in the configuration repository (<Code>CONFIG_DIR</Code>).
-                Secrets are stored encrypted and referenced as <Code>{'${secret:NAME}'}</Code>.
+                Five categories (catalog model, automation, access, governance, settings), each with tabs. Define blueprints, actions, integrations and
+                webhooks: in YAML here, or as code in the configuration repository (<Code>CONFIG_DIR</Code>). Secrets are stored encrypted and referenced as{' '}
+                <Code>{'${secret:NAME}'}</Code>.
               </>
             ),
           } satisfies TourStep,

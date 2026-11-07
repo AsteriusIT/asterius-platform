@@ -1,0 +1,145 @@
+# Supply chain data model (see docs/SUPPLY-CHAIN.md): vulnerabilities (Snyk) and SBOM components (CycloneDX)
+# per service, and a security scorecard on top of them.
+blueprints:
+  - identifier: vulnerability
+    title: Vulnerability
+    icon: shield-exclamation
+    description: A known vulnerability affecting a package used by a service (Snyk issues).
+    schema:
+      properties:
+        cve: { type: string, title: CVE / advisory }
+        severity: { type: string, title: Severity, enum: [critical, high, medium, low], enumColors: { critical: red, high: orange, medium: yellow, low: gray } }
+        package: { type: string, title: Package }
+        version: { type: string, title: Version }
+        fixedIn: { type: string, title: Fixed in }
+        status: { type: string, title: Status, enum: [open, fixed, ignored], default: open, enumColors: { open: red, fixed: green, ignored: gray } }
+        url: { type: string, title: Advisory, format: url }
+        firstSeen: { type: string, title: First seen, format: date-time }
+      required: [severity, status]
+      order: [severity, status, cve, package, version, fixedIn, firstSeen, url]
+    relations:
+      service: { title: Service, target: service, inverseTitle: Vulnerabilities }
+
+  - identifier: sbom-component
+    title: SBOM component
+    icon: packages
+    description: A software component listed in the SBOM (CycloneDX) of a service.
+    schema:
+      properties:
+        purl: { type: string, title: Package URL }
+        name: { type: string, title: Name }
+        version: { type: string, title: Version }
+        type: { type: string, title: Type, enum: [library, application, framework, container, operating-system, device, firmware, file] }
+        license: { type: string, title: License }
+        supplier: { type: string, title: Supplier }
+      required: [purl, name]
+      order: [name, version, type, license, supplier, purl]
+    relations:
+      service: { title: Service, target: service, inverseTitle: SBOM components }
+      vulnerabilities: { title: Vulnerabilities, target: vulnerability, many: true }
+
+scorecards:
+  - identifier: supply-chain-security
+    title: Supply chain security
+    description: Vulnerabilities and SBOM coverage of a service.
+    blueprint: service
+    levels: [{ name: Bronze }, { name: Silver }, { name: Gold }]
+    rules:
+      - identifier: has_sbom
+        title: An SBOM is published
+        level: Bronze
+        expression: '$count(incoming."sbom-component.service") > 0'
+      - identifier: no_open_critical
+        title: No open critical vulnerability
+        level: Silver
+        expression: '$count(incoming."vulnerability.service"[properties.severity = "critical" and properties.status = "open"]) = 0'
+      - identifier: no_stale_high
+        title: No open high vulnerability older than 30 days
+        level: Gold
+        expression: >-
+          $count(incoming."vulnerability.service"[properties.severity = "high" and properties.status = "open"
+          and $toMillis(properties.firstSeen) < $millis() - 2592000000]) = 0
+
+integrations:
+  # Pull: Snyk issues every 6 hours (needs the SNYK_TOKEN secret, then set enabled: true).
+  # serviceByProject maps Snyk project ids to service identifiers (the issues API only returns the project id).
+  - identifier: snyk-issues
+    title: Snyk issues
+    type: snyk
+    enabled: false
+    intervalMinutes: 360
+    deleteMissing: true
+    config:
+      orgId: 00000000-0000-0000-0000-000000000000
+      token: ${secret:SNYK_TOKEN}
+      serviceByProject:
+        '11111111-1111-1111-1111-111111111111': payment-api
+    mappings:
+      - kind: issue
+        filter: attributes.type = "package_vulnerability"
+        entity:
+          blueprint: vulnerability
+          identifier: relationships.scan_item.data.id & ":" & attributes.key
+          title: attributes.title
+          properties:
+            cve: attributes.problems[0].id
+            severity: attributes.effective_severity_level
+            package: attributes.coordinates[0].representations[0].dependency.package_name
+            version: attributes.coordinates[0].representations[0].dependency.package_version
+            fixedIn: attributes.coordinates[0].remedies[0].details.upgrade_package
+            status: 'attributes.ignored ? "ignored" : attributes.status = "resolved" ? "fixed" : "open"'
+            url: attributes.problems[0].url
+            firstSeen: attributes.created_at
+          relations:
+            service: '$lookup($integration.config.serviceByProject, relationships.scan_item.data.id)'
+
+  # Push: CI posts the CycloneDX JSON SBOM of a build to /api/v1/ingest/<org>/sbom
+  #   curl -X POST $URL -H "X-Asterius-Token: $INGEST_TOKEN" -H 'content-type: application/json' -d @bom.json
+  # The service is bom.metadata.component.name (set it with `--output-name`/`--component-name` in the generator).
+  - identifier: sbom
+    title: SBOM (CycloneDX)
+    type: webhook
+    config:
+      secret: ${secret:INGEST_TOKEN}
+    mappings:
+      # Vulnerabilities first: the components below point at them. Identifier <service>:<vulnerability id> (Snyk uses
+      # <snyk project id>:<issue key>, so both sources never write the same entity). A delivery is the full set for the service.
+      - kind: bom
+        filter: bomFormat = "CycloneDX" and $exists(metadata.component.name)
+        items: vulnerabilities
+        prune: { relation: service, value: metadata.component.name }
+        entity:
+          blueprint: vulnerability
+          identifier: '$parent.metadata.component.name & ":" & id'
+          title: 'description ? $substring(description, 0, 120) : id'
+          properties:
+            cve: '$contains(id, /^CVE-/) ? id'
+            severity: >-
+              $lowercase(ratings[0].severity) in ["critical", "high", "medium", "low"] ? $lowercase(ratings[0].severity) : "low"
+            package: '$parent.components[`bom-ref` = $$.affects[0].ref].name'
+            version: '$parent.components[`bom-ref` = $$.affects[0].ref].version'
+            status: >-
+              analysis.state in ["resolved", "resolved_with_pedigree"] ? "fixed" :
+              analysis.state in ["false_positive", "not_affected"] ? "ignored" : "open"
+            url: 'advisories[0].url ? advisories[0].url : source.url'
+          relations:
+            service: $parent.metadata.component.name
+      - kind: bom
+        filter: bomFormat = "CycloneDX" and $exists(metadata.component.name)
+        items: components
+        prune: { relation: service, value: metadata.component.name }
+        entity:
+          blueprint: sbom-component
+          identifier: '$parent.metadata.component.name & "/" & (purl ? purl : name & "@" & version)'
+          title: 'name & (version ? "@" & version : "")'
+          properties:
+            purl: 'purl ? purl : "pkg:generic/" & name & (version ? "@" & version : "")'
+            name: name
+            version: version
+            type: type
+            license: 'licenses[0].(license.id ? license.id : license.name ? license.name : expression)'
+            supplier: supplier.name
+          relations:
+            service: $parent.metadata.component.name
+            vulnerabilities: >-
+              ($ref := `bom-ref`; $parent.vulnerabilities[$ref in affects.ref].($parent.metadata.component.name & ":" & id))
