@@ -50,7 +50,6 @@ describe('scaffolder modes and providers not implemented yet', () => {
   const inv = getInvoker('scaffolder');
   it.each([
     [{ provider: 'gitlab', mode: 'new-repository' }, /not supported yet for provider gitlab/],
-    [{ provider: 'azure-devops' }, /not supported yet for provider azure-devops/],
   ])('%j fails clearly before any network call', async (extra, re) => {
     await expect(inv.start({ ctx, config: { ...base, ...extra }, log })).rejects.toThrow(re);
   });

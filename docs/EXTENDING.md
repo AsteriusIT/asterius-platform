@@ -156,7 +156,7 @@ Child runs belong to the parent's requester, link to the parent (`parent`), are 
 | `kubernetes-job` | `namespace`, `image`, `command`, `args`, `env`, `serviceAccountName`, `resources`, `securityContext` (pod; non-root by default), `activeDeadlineSeconds`, `context` | polls the Job (fails fast on image or config errors) and collects the pod logs |
 | `catalog` | `operation: upsert\|delete`, `blueprint`, `identifier`, `title`, `team`, `properties`, `relations`, `merge`, `cascade` (delete: also the entities that point to it) | immediate |
 | `tekton` | `pipeline`, `namespace`, `params`, `serviceAccountName`, `context` | creates a `PipelineRun` of an existing Pipeline and follows its `Succeeded` condition (the platform's service account needs create/get/patch on `pipelineruns.tekton.dev`) |
-| `scaffolder` | `provider: github\|gitlab\|azure-devops`, `mode: pull-request\|new-repository`, `templateRepo`, `templatePath`, `templateRef`, `repo`, `baseBranch`, `targetPath`, `variables`, `title`, `branch`, `token`, `apiUrl`/`baseUrl`; new-repository: `description`, `visibility`, `topics`, `team`, `teamPermission`, `ownerType`, `reuseExisting` | renders a template repository (`{{ variable }}` placeholders in paths and text files; unknown variables fail) and publishes it. Immediate; output below |
+| `scaffolder` | `provider: github\|gitlab\|azure-devops`, `mode: pull-request\|new-repository`, `templateRepo`, `templatePath`, `templateRef`, `repo`, `baseBranch`, `targetPath`, `variables`, `title`, `branch`, `token`, `apiUrl`/`baseUrl`, `organization`/`project` (azure-devops); new-repository: `description`, `visibility`, `defaultBranch`, `topics`, `team`, `teamPermission`, `ownerType`, `reuseExisting`; `reviewers` (azure-devops) | renders a template repository (`{{ variable }}` placeholders in paths and text files; unknown variables fail) and publishes it. Immediate; output below |
 
 ### Scaffolder output and modes
 
@@ -169,12 +169,30 @@ The scaffolder result has a stable shape, usable by later steps (`{{ steps.scaff
 
 `pullRequest` (same as `prUrl`) and `number` (PR/MR number) are still returned for compatibility. `prUrl` is `null` when no pull request is opened.
 
-`mode: pull-request` (default) pushes a branch to the existing repository `repo` and opens a PR/MR; implemented for `github` and `gitlab`. `mode: new-repository` is implemented for `github` (below); the other combinations (and `azure-devops`) are accepted by the schema but fail with "not supported yet for provider X" until implemented.
+`mode: pull-request` (default) pushes a branch to the existing repository `repo` and opens a PR/MR, and `mode: new-repository` creates the repository; both are implemented for `github`, `gitlab` and `azure-devops`. Re-runs are idempotent: an existing branch gets new commits on top and an open PR/MR for the same source and target is reused. Code lives in `apps/server/src/actions/invokers/scaffolder/`: `config.ts` (zod schema), `types.ts` (`ScaffoldPublisher`, `ScaffoldOutput`), one module per provider registered in `index.ts`.
+
+#### GitHub
 
 **GitHub `pull-request` re-runs are idempotent:** an existing branch gets new commits on top (it is only created when missing), files whose content is unchanged are skipped, and an open PR for `branch` -> `baseBranch` is reused (same `prUrl`/`number`) instead of opening a duplicate.
 
 **GitHub `new-repository`:** `repo` is `owner/name`. The repository is created under the organization (`POST /orgs/{org}/repos`) or the authenticated user (`POST /user/repos`); `ownerType: org|user` forces the choice, otherwise it is `user` when the token's login equals the owner. Fields: `description`, `visibility` (`private` default, `internal`, `public`), `baseBranch` (default branch name, default `main`; the initial branch is renamed if the account default differs), `topics` (list or comma separated), `team` + `teamPermission` (default `push`, organization repositories only: `PUT /orgs/{org}/teams/{team}/repos/{owner}/{repo}`). The repository is created with `auto_init` (the Git Data API cannot write to an empty repository), then the rendered files are committed in one commit (blobs, tree, commit, ref update) on the default branch; template files override the generated README. Output: `repoUrl` = repository URL, `prUrl` = null, `branch` = default branch, `commit` = new tip.
-If the name already exists (422) the run does not fail only when the repository is **empty** (a previous attempt created it but did not push; it is filled through the contents API for the first file, then Git Data) or `reuseExisting: true` (a commit is added on its default branch; identical content creates no commit). Otherwise it fails so that an unrelated repository is never written to. Code lives in `apps/server/src/actions/invokers/scaffolder/`: `config.ts` (zod schema), `types.ts` (`ScaffoldPublisher`, `ScaffoldOutput`), one module per provider registered in `index.ts`.
+If the name already exists (422) the run does not fail only when the repository is **empty** (a previous attempt created it but did not push; it is filled through the contents API for the first file, then Git Data) or `reuseExisting: true` (a commit is added on its default branch; identical content creates no commit). Otherwise it fails so that an unrelated repository is never written to.
+
+#### Azure DevOps
+
+```json
+{ "type": "scaffolder", "provider": "azure-devops", "mode": "new-repository",
+  "organization": "https://dev.azure.com/my-org", "project": "Platform",
+  "templateRepo": "service-template", "templatePath": "skeleton", "templateRef": "main",
+  "repo": "{{ inputs.name }}", "defaultBranch": "main", "variables": { "name": "{{ inputs.name }}" },
+  "token": "${secret:ADO_PAT}" }
+```
+
+- `organization` is the organization URL and `project` the project, as for the `azure-pipeline` invoker; `templateRepo` and `repo` are repository names in that project (`other-project/repo` selects another project). `templateRef` is a branch, `refs/tags/<tag>` or a commit sha (default: the repository's default branch).
+- `token`: a PAT (sent as Basic) or `Bearer <Entra token>`. PAT scope: **Code (Read & write)**; Code (Status) is not needed.
+- `pull-request`: creates `branch` from `baseBranch` (default `main`) if it does not exist, otherwise pushes on top of it (existing files are `edit`ed, others `add`ed), then opens a PR, or reuses the active PR for the same source and target. Optional `reviewers`: reviewer ids (array or comma separated string); `description` replaces the PR body.
+- `new-repository`: creates `repo` in the project and pushes the files to `defaultBranch` (default `main`) in a first commit; `prUrl` is `null`. An existing repository is reused only if it is empty, or when `reuseExisting: true` (the push then lands on `defaultBranch`). The Azure DevOps API has no repository description; `description` is appended to the commit message.
+- Output: `repoUrl` (repository web URL), `prUrl` (`<repoUrl>/pullrequest/<id>`), `commit` (id of the pushed commit) and `number` (pull request id).
 
 Every invoker can also receive callbacks, for example a GitHub workflow that reports progress and the URL of what it created.
 

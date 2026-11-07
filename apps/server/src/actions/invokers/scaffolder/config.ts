@@ -43,6 +43,14 @@ export const scaffoldConfigSchema = z.looseObject({
   /** azure-devops */
   organization: optionalString,
   project: optionalString,
+  /** new-repository: branch that receives the initial commit (default main). */
+  defaultBranch: optionalString,
+  /** Repository / pull request description. */
+  description: optionalString,
+  /** new-repository: push into an existing non-empty repository instead of failing. */
+  reuseExisting: z.union([z.boolean(), z.enum(['true', 'false']).transform((v) => v === 'true')]).optional(),
+  /** azure-devops: reviewer ids (array or comma separated). */
+  reviewers: z.union([z.array(z.string()), z.string()]).optional(),
 });
 
 export type ScaffoldConfig = z.infer<typeof scaffoldConfigSchema>;
