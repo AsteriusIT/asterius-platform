@@ -59,6 +59,7 @@ import {
   IconSelector,
   IconShieldLock,
   IconWebhook,
+  IconShieldCheck,
 } from '@tabler/icons-react';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -351,6 +352,7 @@ export function Layout() {
               {link('/admin/integrations', 'Integrations', <IconPlugConnected size={18} stroke={1.6} />)}
               {link('/admin/dashboards', 'Dashboards', <IconLayoutDashboard size={18} stroke={1.6} />)}
               {link('/admin/scorecards', 'Scorecards', <IconMedal size={18} stroke={1.6} />)}
+              {link('/admin/policies', 'Policies', <IconShieldCheck size={18} stroke={1.6} />)}
               {link('/admin/webhooks', 'Webhooks', <IconWebhook size={18} stroke={1.6} />)}
               {link('/admin/deliveries', 'Deliveries', <IconSend size={18} stroke={1.6} />)}
               {link('/admin/teams', 'Teams', <IconUsersGroup size={18} stroke={1.6} />)}

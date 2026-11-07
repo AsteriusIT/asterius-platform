@@ -29,6 +29,7 @@ import type {
   RelatedEntities,
   Run,
   RunPage,
+  Policy,
   Scorecard,
   ScorecardResult,
   ScorecardSummary,
@@ -314,6 +315,9 @@ export const api = {
   saveNotificationPrefs: (p: InboxPrefs) => request<InboxPrefs>('PUT', v1('/notifications/preferences'), p),
   previewMapping: (body: { mapping: unknown; item: unknown }) => request<{ mapped: unknown[]; skipped: number }>('POST', v1('/mappings/preview'), body),
 
+  policies: () => request<Policy[]>('GET', v1('/policies')),
+  savePolicy: (id: string, body: unknown) => request<Policy>('PUT', v1(`/policies/${enc(id)}`), body),
+  deletePolicy: (id: string) => request('DELETE', v1(`/policies/${enc(id)}`)),
   scorecards: (blueprint?: string) => request<Scorecard[]>('GET', v1(`/scorecards${qs({ blueprint })}`)),
   saveScorecard: (id: string, body: unknown) => request<Scorecard>('PUT', v1(`/scorecards/${enc(id)}`), body),
   deleteScorecard: (id: string) => request('DELETE', v1(`/scorecards/${enc(id)}`)),

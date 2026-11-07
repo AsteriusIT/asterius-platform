@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { DESCRIPTOR_SCHEMA } from './integrations/sources/descriptors.js';
-import { actionDef, blueprintDef, configFile, entityInput, integrationDef, teamDef, webhookDef } from './schemas.js';
+import { actionDef, blueprintDef, configFile, entityInput, integrationDef, policyDef, teamDef, webhookDef } from './schemas.js';
 
 /**
  * OpenAPI 3.1 description of the REST API. Paths come from the registered Fastify routes (so they cannot drift),
@@ -16,6 +16,7 @@ const COMPONENTS: Record<string, z.ZodType> = {
   Integration: integrationDef,
   Webhook: webhookDef,
   Team: teamDef,
+  Policy: policyDef,
   EntityInput: entityInput,
   ConfigFile: configFile,
 };
@@ -56,6 +57,7 @@ const OUTPUTS: Record<string, z.ZodType> = {
     lastSuccessAt: iso.nullable(),
     webhookUrl: str.optional(),
   }),
+  PolicyView: policyDef.safeExtend({ managed: z.boolean() }),
   WebhookView: webhookDef.safeExtend({ managed: z.boolean(), hasSecret: z.boolean() }),
   Delivery: z.object({
     id: str,
@@ -95,6 +97,9 @@ const RESPONSES: Record<string, string> = {
   'PUT /api/v1/webhooks/:id': 'WebhookView',
   'GET /api/v1/webhooks/:id/deliveries': 'Delivery[]',
   'GET /api/v1/deliveries': 'Delivery[]',
+  'GET /api/v1/policies': 'PolicyView[]',
+  'GET /api/v1/policies/:id': 'PolicyView',
+  'PUT /api/v1/policies/:id': 'PolicyView',
   'GET /api/v1/runs': 'RunPage',
   'GET /api/v1/runs/:id': 'Run',
   'GET /api/v1/config/status': 'ConfigStatus',
@@ -109,6 +114,7 @@ const BODIES: Record<string, string> = {
   'PUT /api/v1/integrations/:id': 'Integration',
   'PUT /api/v1/webhooks/:id': 'Webhook',
   'PUT /api/v1/teams/:id': 'Team',
+  'PUT /api/v1/policies/:id': 'Policy',
   'POST /api/v1/blueprints/:bp/entities': 'EntityInput',
   'PUT /api/v1/blueprints/:bp/entities/:id': 'EntityInput',
 };

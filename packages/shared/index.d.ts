@@ -1003,6 +1003,22 @@ export interface ScorecardSummary {
   trend: { day: string; distribution: Record<string, number> }[];
 }
 
+// ---------- policies ----------
+export interface Policy {
+  identifier: string;
+  title: string;
+  description: string;
+  enabled: boolean;
+  /** `run`: before a run is queued; `entity`: before an entity is created, updated or deleted. */
+  target: 'run' | 'entity';
+  match: { actions?: string[]; blueprints?: string[]; operations?: ('create' | 'update' | 'delete')[] };
+  /** JSONata over { inputs, entity, previous, principal, action, blueprint, operation }: true allows. */
+  expression: string;
+  /** Deny message (may embed {{ expression }}). */
+  message: string;
+  managed: boolean;
+}
+
 // ---------- blueprint change impact ----------
 export type EntityMigration =
   { type: 'rename'; from: string; to: string } | { type: 'default'; property: string; value: unknown } | { type: 'remove'; property: string };

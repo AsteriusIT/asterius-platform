@@ -5,7 +5,7 @@ import { notifications } from '@mantine/notifications';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import { IconCopy, IconRefresh, IconSend } from '@tabler/icons-react';
-import type { Action, Blueprint, Dashboard, Integration, Scorecard, Webhook } from '@asterius/shared';
+import type { Action, Blueprint, Dashboard, Integration, Policy, Scorecard, Webhook } from '@asterius/shared';
 import { useAppMutation } from '../../lib/queryClient';
 import { FormEditor } from '../../components/builder/FormEditor';
 import { IntegrationForm } from '../../components/builder/IntegrationForm';
@@ -284,6 +284,61 @@ export function ScorecardsAdmin() {
       toEditable={(s) => strip(s, ['managed'])}
       save={api.saveScorecard}
       remove={(s) => api.deleteScorecard(s.identifier)}
+    />
+  );
+}
+
+export function PoliciesAdmin() {
+  return (
+    <ResourceAdmin<Policy>
+      title="Policies"
+      description="Guard rails evaluated before a run is queued or an entity is written. The JSONata expression must evaluate to true to allow; errors deny."
+      queryKey="policies"
+      list={api.policies}
+      columns={[
+        {
+          key: 't',
+          label: 'Applies to',
+          render: (p) => <Badge color={p.target === 'run' ? 'blue' : 'grape'}>{p.target === 'run' ? 'runs' : 'entity writes'}</Badge>,
+        },
+        {
+          key: 'm',
+          label: 'Match',
+          render: (p) => [...(p.match.actions ?? []), ...(p.match.blueprints ?? []), ...(p.match.operations ?? [])].join(', ') || 'everything',
+        },
+        { key: 'e', label: 'Enabled', render: (p) => (p.enabled ? 'yes' : <Badge color="gray">disabled</Badge>) },
+      ]}
+      templates={[
+        {
+          label: 'Run policy',
+          value: {
+            identifier: 'no-prod-without-ticket',
+            title: 'Production runs need a ticket',
+            description: '',
+            enabled: true,
+            target: 'run',
+            match: { actions: [] },
+            expression: 'inputs.environment != "production" or $exists(inputs.ticket)',
+            message: 'Production runs must reference a ticket ({{ action.title }})',
+          },
+        },
+        {
+          label: 'Entity policy',
+          value: {
+            identifier: 'service-needs-owner',
+            title: 'Services need an owner team',
+            description: '',
+            enabled: true,
+            target: 'entity',
+            match: { blueprints: ['service'], operations: ['create', 'update'] },
+            expression: 'entity.team != null',
+            message: 'A service must have an owner team',
+          },
+        },
+      ]}
+      toEditable={(p) => strip(p, ['managed'])}
+      save={api.savePolicy}
+      remove={(p) => api.deletePolicy(p.identifier)}
     />
   );
 }

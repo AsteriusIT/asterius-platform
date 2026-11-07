@@ -722,6 +722,28 @@ export const MIGRATIONS: Migration[] = [
       `),
   },
   ...ORG_MIGRATIONS,
+  {
+    id: 38,
+    name: 'policies: JSONata policy gate on runs and entity writes (per organization)',
+    up: (d) =>
+      d.exec(`
+        CREATE TABLE policies (
+          org_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+          identifier TEXT NOT NULL,
+          title TEXT NOT NULL,
+          description TEXT NOT NULL DEFAULT '',
+          enabled INTEGER NOT NULL DEFAULT 1,
+          target TEXT NOT NULL,
+          filters TEXT NOT NULL DEFAULT '{}',
+          expression TEXT NOT NULL,
+          message TEXT NOT NULL DEFAULT '',
+          managed INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (org_id, identifier)
+        );
+      `),
+  },
 ];
 
 /**
