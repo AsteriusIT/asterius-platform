@@ -43,7 +43,8 @@ h upgrade --install metrics-server metrics-server/metrics-server -n kube-system 
 
 log "kube-prometheus-stack (Prometheus Operator, Prometheus, Alertmanager, Grafana)"
 # No --wait: Grafana starts once External Secrets has written its admin Secret (later in this script).
-h upgrade --install kps prometheus-community/kube-prometheus-stack -n observability -f "$HERE/values/kube-prometheus-stack.yaml"
+# Pinned: chart 93.0.0 ships prometheus-operator v0.95.1, which has no linux/arm64 image (OrbStack on Apple silicon).
+h upgrade --install kps prometheus-community/kube-prometheus-stack --version 92.22.0 -n observability -f "$HERE/values/kube-prometheus-stack.yaml"
 k -n observability rollout status deploy/kps-operator --timeout=300s
 
 log "OpenBao"
@@ -266,7 +267,9 @@ if [[ "$(n GET '/v1/security/users?userId=asterius-platform' | jq '[.[] | select
   n POST /v1/security/users --data "$(jq -nc --arg p "$nexus_password" '{userId:"asterius-platform", firstName:"Asterius", lastName:"Platform",
     emailAddress:"asterius-platform@localhost", password:$p, status:"active", roles:["asterius-platform-read"]}')" >/dev/null
 else
-  n PUT /v1/security/users/asterius-platform/change-password -H 'content-type: text/plain' --data "$nexus_password" >/dev/null
+  # Not n(): its JSON content type would be sent alongside text/plain, and Nexus answers 415.
+  curl -fsS -u "$NAUTH" -H 'content-type: text/plain' -X PUT "$NEXUS/service/rest/v1/security/users/asterius-platform/change-password" \
+    --data "$nexus_password" >/dev/null
 fi
 
 log "Platform configuration (config/ + examples/{grafana,sonarqube,nexus}/platform)"
