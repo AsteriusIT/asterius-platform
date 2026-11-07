@@ -19,6 +19,7 @@ import { ActionBuilder } from '../../components/builder/ActionBuilder';
 import { formOf } from '../../lib/permissions';
 import { triggerBadge, workflowSummary } from '../../lib/workflow';
 import { BlueprintBuilder } from '../../components/builder/BlueprintBuilder';
+import { PolicyBuilder, ScorecardBuilder } from '../../components/builder/GovernanceBuilders';
 
 const meta = () => ({ queryKey: ['meta'], queryFn: api.meta, staleTime: Infinity });
 
@@ -282,6 +283,7 @@ export function ScorecardsAdmin() {
         },
       ]}
       toEditable={(s) => strip(s, ['managed'])}
+      editor={(p) => <ScorecardBuilder {...p} />}
       save={api.saveScorecard}
       remove={(s) => api.deleteScorecard(s.identifier)}
     />
@@ -337,6 +339,7 @@ export function PoliciesAdmin() {
         },
       ]}
       toEditable={(p) => strip(p, ['managed'])}
+      editor={(p) => <PolicyBuilder {...p} />}
       save={api.savePolicy}
       remove={(p) => api.deletePolicy(p.identifier)}
     />
