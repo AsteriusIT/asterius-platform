@@ -744,6 +744,11 @@ export const MIGRATIONS: Migration[] = [
         );
       `),
   },
+  {
+    id: 39,
+    name: 'audit: chain_version (v2 hash covers org_id)',
+    up: (d) => d.exec('ALTER TABLE audit_log ADD COLUMN chain_version INTEGER NOT NULL DEFAULT 1'),
+  },
 ];
 
 /**

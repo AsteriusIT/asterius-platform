@@ -31,7 +31,13 @@ export const SYSTEM: Actor = { id: null, email: 'system' };
 const CHAIN_LOCK = 726210;
 const retryQueue: { actor: Actor; action: string; target: string | null; detail: Record<string, unknown>; org: string | null }[] = [];
 
+/** Current hash formula. v1 (legacy) did not cover org_id; v2 covers org_id and the version itself. */
+export const CHAIN_VERSION = 2;
+
 export const chainHash = (p: {
+  /** Defaults to 1 (legacy formula). */
+  version?: number;
+  orgId?: string | null;
   prev: string;
   seq: number;
   id: string;
@@ -42,7 +48,11 @@ export const chainHash = (p: {
   target: string | null;
   detail: string;
 }) => {
-  const data = JSON.stringify([p.prev, p.seq, p.id, p.at, p.action, p.actorId, p.actorEmail, p.target, p.detail]);
+  const v = p.version ?? 1;
+  const data =
+    v === 1
+      ? JSON.stringify([p.prev, p.seq, p.id, p.at, p.action, p.actorId, p.actorEmail, p.target, p.detail])
+      : JSON.stringify([v, p.orgId ?? null, p.prev, p.seq, p.id, p.at, p.action, p.actorId, p.actorEmail, p.target, p.detail]);
   return config.AUDIT_CHAIN_KEY ? createHmac('sha256', config.AUDIT_CHAIN_KEY).update(data).digest('hex') : createHash('sha256').update(data).digest('hex');
 };
 
@@ -72,10 +82,10 @@ async function insert(actor: Actor, action: string, target: string | null, detai
     const seq = Number(tip?.chain_seq ?? 0) + 1;
     const prev = tip?.hash ?? '';
     const at = now();
-    const hash = chainHash({ prev, seq, id, at, action, actorId: actor.id, actorEmail: actor.email, target, detail: text });
+    const hash = chainHash({ version: CHAIN_VERSION, orgId: org, prev, seq, id, at, action, actorId: actor.id, actorEmail: actor.email, target, detail: text });
     await d.query(
-      'INSERT INTO audit_log (id, org_id, at, action, actor_id, actor_email, target, detail, chain_seq, prev_hash, hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [id, org, at, action, actor.id, actor.email, target, text, seq, prev, hash],
+      'INSERT INTO audit_log (id, org_id, at, action, actor_id, actor_email, target, detail, chain_seq, prev_hash, hash, chain_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [id, org, at, action, actor.id, actor.email, target, text, seq, prev, hash, CHAIN_VERSION],
     );
   });
 }
@@ -224,16 +234,20 @@ const eq = (a: string, b: string) => a.length === b.length && timingSafeEqual(Bu
 
 /**
  * Walk the chain from its oldest remaining entry (older ones may have been purged by retention; that entry's
- * `prev_hash` is the anchor) and recompute every hash. Entries written while the chain was disabled are ignored.
+ * `prev_hash` is the anchor) and recompute every hash according to the row's `chain_version` (1: legacy, no org_id;
+ * 2: covers org_id). The chain may move from v1 to v2 once, never back. Entries written while the chain was disabled are ignored.
  */
 export async function verifyAuditChain(): Promise<ChainReport> {
   let checked = 0;
   let expectedSeq: number | undefined;
   let prevHash: string | undefined;
+  let prevVersion = 1;
   const BATCH = 500;
   for (let after = 0; ;) {
     const rows = await all<{
       id: string;
+      org_id: string | null;
+      chain_version: number;
       at: string;
       action: string;
       actor_id: string | null;
@@ -249,7 +263,13 @@ export async function verifyAuditChain(): Promise<ChainReport> {
       const seq = Number(r.chain_seq);
       if (expectedSeq !== undefined && seq !== expectedSeq) return { enabled: true, ok: false, checked, brokenAt: expectedSeq, reason: 'missing entry' };
       if (prevHash !== undefined && !eq(r.prev_hash, prevHash)) return { enabled: true, ok: false, checked, brokenAt: seq, reason: 'broken link' };
+      const version = Number(r.chain_version ?? 1);
+      if (version !== 1 && version !== CHAIN_VERSION) return { enabled: true, ok: false, checked, brokenAt: seq, reason: 'unknown chain version' };
+      if (version < prevVersion) return { enabled: true, ok: false, checked, brokenAt: seq, reason: 'chain version downgrade' };
+      prevVersion = version;
       const h = chainHash({
+        version,
+        orgId: r.org_id,
         prev: r.prev_hash,
         seq,
         id: r.id,

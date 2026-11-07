@@ -80,6 +80,73 @@ describe('audit log', () => {
     expect(csvCell('a,"b"')).toBe('"a,""b"""');
   });
 
+  it('v2 hashes cover org_id; v1 legacy rows verify; mixed ok; downgrade rejected', async () => {
+    const { run, one, all } = await import('../src/db.js');
+    const { chainHash, verifyAuditChain } = await import('../src/audit.js');
+    expect((await verifyAuditChain()).ok).toBe(true);
+    const row = await one<{ id: string; org_id: string | null; chain_version: number }>(
+      "SELECT id, org_id, chain_version FROM audit_log WHERE action = 'team.created' AND chain_seq IS NOT NULL ORDER BY chain_seq DESC LIMIT 1",
+    );
+    expect(Number(row!.chain_version)).toBe(2);
+    await run("UPDATE audit_log SET org_id = 'other-org' WHERE id = ?", row!.id);
+    expect(await verifyAuditChain()).toMatchObject({ ok: false, reason: 'entry was modified' });
+    await run('UPDATE audit_log SET org_id = ? WHERE id = ?', row!.org_id, row!.id);
+    expect((await verifyAuditChain()).ok).toBe(true);
+
+    // Rewrite the first N rows as legacy v1 (recomputing links) to emulate a pre-migration chain.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rows = await all<Record<string, any>>('SELECT * FROM audit_log WHERE chain_seq IS NOT NULL ORDER BY chain_seq');
+    const rehash = async (upToV1: number) => {
+      let prev = rows[0].prev_hash as string;
+      for (const r of rows) {
+        const version = Number(r.chain_seq) <= upToV1 ? 1 : 2;
+        const h = chainHash({
+          version,
+          orgId: r.org_id,
+          prev,
+          seq: Number(r.chain_seq),
+          id: r.id,
+          at: r.at,
+          action: r.action,
+          actorId: r.actor_id,
+          actorEmail: r.actor_email,
+          target: r.target,
+          detail: r.detail,
+        });
+        await run('UPDATE audit_log SET chain_version = ?, prev_hash = ?, hash = ? WHERE id = ?', version, prev, h, r.id);
+        prev = h;
+      }
+    };
+    const firstSeq = Number(rows[0].chain_seq);
+    await rehash(firstSeq + 2);
+    expect((await verifyAuditChain()).ok).toBe(true); // mixed v1 -> v2
+    await rehash(firstSeq - 1);
+    expect((await verifyAuditChain()).ok).toBe(true); // all v2
+    await rehash(firstSeq + 1000000);
+    expect((await verifyAuditChain()).ok).toBe(true); // all v1
+    // downgrade: v2 followed by v1
+    await rehash(firstSeq + 2);
+    const last = rows.at(-1)!;
+    await run('UPDATE audit_log SET chain_version = 1 WHERE id = ?', last.id);
+    expect(await verifyAuditChain()).toMatchObject({ ok: false });
+    const pv = await one<{ hash: string }>('SELECT hash FROM audit_log WHERE chain_seq = ?', Number(last.chain_seq) - 1);
+    const h1 = chainHash({
+      version: 1,
+      prev: pv!.hash,
+      seq: Number(last.chain_seq),
+      id: last.id,
+      at: last.at,
+      action: last.action,
+      actorId: last.actor_id,
+      actorEmail: last.actor_email,
+      target: last.target,
+      detail: last.detail,
+    });
+    await run('UPDATE audit_log SET hash = ? WHERE id = ?', h1, last.id);
+    expect(await verifyAuditChain()).toMatchObject({ ok: false, reason: 'chain version downgrade' });
+    await rehash(firstSeq - 1);
+  });
+
   it('keeps a verifiable hash chain and detects tampering', async () => {
     const ok = (await admin.get('/api/v1/audit/verify')).data;
     expect(ok).toMatchObject({ enabled: true, ok: true });
