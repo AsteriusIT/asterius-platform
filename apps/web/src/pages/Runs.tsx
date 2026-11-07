@@ -7,7 +7,7 @@ import {
   Button,
   Card,
   Code,
-  Grid,
+  Drawer,
   Group,
   MultiSelect,
   NativeSelect,
@@ -22,8 +22,8 @@ import {
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
-import { IconCheck, IconExternalLink, IconPlayerPlay, IconPlayerStop, IconRepeat, IconX } from '@tabler/icons-react';
+import { Link, Navigate, useLocation, useNavigate, useParams, useSearchParams } from 'react-router';
+import { IconCheck, IconExternalLink, IconFileText, IconInfoCircle, IconPlayerPlay, IconPlayerStop, IconRepeat, IconX } from '@tabler/icons-react';
 import type { Run, RunStatus, RunStep } from '@asterius/shared';
 import { api, errorText } from '../lib/api';
 import { DataTable } from '../components/DataTable';
@@ -31,9 +31,10 @@ import { useUrlParams } from '../lib/urlState';
 import { useRunStream } from '../lib/runStream';
 import { LogViewer } from '../components/LogViewer';
 import { duration, Empty, Markdown, PageHeader, QueryView, StatusBadge, STATUS_COLORS, STATUS_LABELS, TimeAgo } from '../components/ui';
-import { WorkflowGraph } from '../components/WorkflowGraph';
+import { TRIGGER_ID, WorkflowFlow, type FlowStep, type FlowTrigger } from '../components/WorkflowFlow';
+import { FlowShell } from '../components/FlowShell';
 import { ExplainRun } from '../components/AiAssistant';
-import { splitJobLog, STEP_STATUS_COLORS, STEP_STATUS_LABELS, STEP_TYPES } from '../lib/workflow';
+import { splitJobLog, STEP_STATUS_COLORS, STEP_STATUS_LABELS, STEP_TYPES, stepTone } from '../lib/workflow';
 import { PropertyValue } from '../components/PropertyValue';
 import { initialValues, SchemaForm, validateValues, type FormValues } from '../components/SchemaForm';
 import { UserChip } from '../components/UserChip';
@@ -252,12 +253,11 @@ export function Approvals() {
   );
 }
 
-export function RunPage() {
-  const { id = '' } = useParams();
-  // Live updates over SSE; polling is only the fallback while the stream is not connected.
+/** A run, kept live: server-sent events, polling only while the stream is not connected. */
+function useLiveRun(id: string) {
   const qc = useQueryClient();
   const live = useRunStream(id, true);
-  const q = useQuery({
+  return useQuery({
     queryKey: ['run', id],
     // Poll incrementally: fetch only the log lines past the last one we hold and append them.
     queryFn: async () => {
@@ -268,45 +268,42 @@ export function RunPage() {
     },
     refetchInterval: (query) => (live || (query.state.data && !ACTIVE.includes(query.state.data.status)) ? false : 2_500),
   });
-  return <QueryView q={q}>{(r) => <RunView r={r} />}</QueryView>;
 }
 
-/** The step to show first: ?step=, else the one needing attention, else the last that ran. */
-function defaultStep(r: Run, requested: string | null) {
-  const steps = r.steps ?? [];
-  if (requested && steps.some((s) => s.id === requested)) return requested;
-  return (
-    steps.find((s) => s.canApprove)?.id ??
-    steps.find((s) => s.status === 'RUNNING' || s.status === 'WAITING_APPROVAL')?.id ??
-    [...steps].reverse().find((s) => s.startedAt)?.id ??
-    steps[0]?.id ??
-    null
-  );
-}
-
-function RunView({ r }: { r: Run }) {
+/** Stores a run returned by an action (approve, cancel…) and refreshes the lists that show it. */
+function useRunRefresh(id: string) {
   const qc = useQueryClient();
-  const navigate = useNavigate();
-  const [params] = useSearchParams();
-  const [comment, setComment] = useState('');
-  const [selected, setSelected] = useState<string | null>(() => defaultStep(r, params.get('step')));
-  const [allLogs, setAllLogs] = useState(false);
-  const [job, setJob] = useState<string | null>(null);
-  const refresh = (run: Run) => {
-    qc.setQueryData(['run', r.id], run);
+  return (run: Run) => {
+    qc.setQueryData(['run', id], run);
     void qc.invalidateQueries({ queryKey: ['approvals'] });
     void qc.invalidateQueries({ queryKey: ['runs'] });
   };
-  const decide = useMutation({
-    mutationFn: (d: 'approve' | 'reject') => (d === 'approve' ? api.approve(r.id, comment) : api.reject(r.id, comment)),
-    onSuccess: (run) => {
-      refresh(run);
-      setComment('');
-    },
-    onError,
-  });
-  const cancel = useMutation({ mutationFn: () => api.cancel(r.id), onSuccess: refresh, onError });
-  const resume = useMutation({ mutationFn: () => api.resume(r.id), onSuccess: refresh, onError });
+}
+
+/**
+ * A run as a full-panel graph (the sidebar and top bar stay): the trigger and the steps coloured by status, the run's
+ * buttons on top. Clicking a node opens its details on the side, next to the live graph: a step's status, decision
+ * form and logs; the trigger's request, inputs, approvals and AI explanation. ?step= opens that step.
+ */
+export function RunPage() {
+  const { id = '' } = useParams();
+  const q = useLiveRun(id);
+  return <QueryView q={q}>{(r) => <RunFlow key={r.id} r={r} />}</QueryView>;
+}
+
+/** The former full-view URL. */
+export function RunFlowPage() {
+  const { id = '' } = useParams();
+  const { search } = useLocation();
+  return <Navigate to={`/runs/${id}${search}`} replace />;
+}
+
+/** Open, resume, run again, cancel: the run's buttons. */
+function RunActions({ r, onDone, size }: { r: Run; onDone: (run: Run) => void; size?: 'xs' | 'sm' }) {
+  const qc = useQueryClient();
+  const navigate = useNavigate();
+  const cancel = useMutation({ mutationFn: () => api.cancel(r.id), onSuccess: onDone, onError });
+  const resume = useMutation({ mutationFn: () => api.resume(r.id), onSuccess: onDone, onError });
   const rerun = useMutation({
     mutationFn: () => api.rerun(r.id),
     onSuccess: (run) => {
@@ -315,210 +312,100 @@ function RunView({ r }: { r: Run }) {
     },
     onError,
   });
-  const steps = r.steps ?? [];
-  const step = steps.find((s) => s.id === selected) ?? null;
-  const stepLogs = (r.logs ?? []).filter((l) => allLogs || !step || l.stepId === step.id);
-  const jobs = [...new Set(stepLogs.map((l) => splitJobLog(l.message).job).filter((j): j is string => !!j))];
-  const logs = stepLogs.filter((l) => !job || splitJobLog(l.message).job === job);
-
   return (
-    <Stack>
-      <PageHeader
-        crumbs={[{ label: 'Runs', to: '/runs' }, { label: r.id.slice(0, 8) }]}
-        title={r.actionTitle}
-        description={
-          <Group gap="xs" component="span">
-            <StatusBadge status={r.status} />
-            {r.statusLabel && (
-              <Text span fz="sm" c="dimmed">
-                {r.statusLabel}
-              </Text>
-            )}
-            {!!r.costUsd && (
-              <Text span fz="sm" c="dimmed">
-                AI cost ${r.costUsd.toFixed(4)}
-              </Text>
-            )}
-          </Group>
-        }
-        actions={
-          <>
-            {r.link && (
-              <Button
-                component="a"
-                href={r.link}
-                target={r.link.startsWith(window.location.origin) ? undefined : '_blank'}
-                variant="default"
-                rightSection={<IconExternalLink size={16} />}
-              >
-                Open
-              </Button>
-            )}
-            {r.canResume && (
-              <Button variant="light" leftSection={<IconPlayerPlay size={16} />} loading={resume.isPending} onClick={() => resume.mutate()}>
-                Resume
-              </Button>
-            )}
-            {r.canRerun && (
-              <Button variant="default" leftSection={<IconRepeat size={16} />} loading={rerun.isPending} onClick={() => rerun.mutate()}>
-                Run again
-              </Button>
-            )}
-            {r.canCancel && (
-              <Button color="red" variant="light" leftSection={<IconPlayerStop size={16} />} loading={cancel.isPending} onClick={() => cancel.mutate()}>
-                Cancel
-              </Button>
-            )}
-          </>
-        }
-      />
-
-      {r.canApprove && (
-        <Alert color="yellow" title="Your approval is requested to start this request">
-          <Stack gap="xs">
-            <Textarea placeholder="Comment (required to reject)" value={comment} onChange={(e) => setComment(e.currentTarget.value)} autosize minRows={2} />
-            <Group>
-              <Button
-                color="green"
-                leftSection={<IconCheck size={16} />}
-                loading={decide.isPending && decide.variables === 'approve'}
-                onClick={() => decide.mutate('approve')}
-              >
-                Approve
-              </Button>
-              <Button
-                color="red"
-                variant="light"
-                leftSection={<IconX size={16} />}
-                loading={decide.isPending && decide.variables === 'reject'}
-                onClick={() => decide.mutate('reject')}
-              >
-                Reject
-              </Button>
-            </Group>
-          </Stack>
-        </Alert>
+    <>
+      {r.link && (
+        <Button
+          size={size}
+          component="a"
+          href={r.link}
+          target={r.link.startsWith(window.location.origin) ? undefined : '_blank'}
+          variant="default"
+          rightSection={<IconExternalLink size={16} />}
+        >
+          Open
+        </Button>
       )}
-
-      {['SUCCESS', 'FAILURE', 'CANCELLED', 'REJECTED'].includes(r.status) && <ExplainRun runId={r.id} failed={r.status === 'FAILURE'} />}
-
-      {steps.length > 0 && (
-        <Card padding="md">
-          <Text fw={600} mb="sm">
-            Workflow
-          </Text>
-          <WorkflowGraph
-            steps={steps.map((s) => ({ id: s.id, name: s.name, type: s.type, needs: s.needs, status: s.status }))}
-            selected={selected}
-            onSelect={(id) => {
-              setSelected(id);
-              setAllLogs(false);
-            }}
-          />
-        </Card>
+      {r.canResume && (
+        <Button size={size} variant="light" leftSection={<IconPlayerPlay size={16} />} loading={resume.isPending} onClick={() => resume.mutate()}>
+          Resume
+        </Button>
       )}
-
-      <Grid>
-        <Grid.Col span={{ base: 12, md: 4 }}>
-          <Stack>
-            <Card>
-              <Table withRowBorders={false} verticalSpacing={4} highlightOnHover={false} fz="sm">
-                <Table.Tbody>
-                  <Row k="Requested by" v={<UserChip user={r.triggeredBy} />} />
-                  {r.trigger && r.trigger.type !== 'form' && <Row k="Started by" v={r.trigger.type} />}
-                  {r.entity && (
-                    <Row
-                      k="Entity"
-                      v={
-                        <Anchor component={Link} to={`/catalog/${r.blueprint}/${encodeURIComponent(r.entity)}`} fz="sm">
-                          {r.blueprint}/{r.entity}
-                        </Anchor>
-                      }
-                    />
-                  )}
-                  <Row k="Created" v={<TimeAgo at={r.createdAt} />} />
-                  <Row k="Started" v={<TimeAgo at={r.startedAt} />} />
-                  <Row k="Duration" v={r.startedAt ? duration(r.startedAt, r.endedAt) : '—'} />
-                  <Row k="Action" v={<Code>{r.action}</Code>} />
-                </Table.Tbody>
-              </Table>
-            </Card>
-            <Card>
-              <Text fw={600} mb="xs">
-                Inputs
-              </Text>
-              {Object.keys(r.inputs).length ? (
-                <Table withRowBorders={false} verticalSpacing={4} highlightOnHover={false}>
-                  <Table.Tbody>
-                    {Object.entries(r.inputs).map(([k, v]) => (
-                      <Row key={k} k={k} v={<PropertyValue value={v} />} />
-                    ))}
-                  </Table.Tbody>
-                </Table>
-              ) : (
-                <Text c="dimmed" fz="sm">
-                  No inputs
-                </Text>
-              )}
-            </Card>
-            {r.approvals.length > 0 && (
-              <Card>
-                <Text fw={600} mb="xs">
-                  Request approvals
-                </Text>
-                <ApprovalTimeline approvals={r.approvals} />
-              </Card>
-            )}
-          </Stack>
-        </Grid.Col>
-        <Grid.Col span={{ base: 12, md: 8 }}>
-          <Stack>
-            {step && <StepPanel run={r} step={step} onDone={refresh} />}
-            <Card p={0}>
-              <Group justify="space-between" p="sm" style={{ borderBottom: '1px solid var(--hairline)' }}>
-                <Group gap="xs">
-                  <Text fw={600}>Logs</Text>
-                  {step && !allLogs && (
-                    <Badge color="gray" variant="light">
-                      {step.name}
-                    </Badge>
-                  )}
-                </Group>
-                <Group gap="xs">
-                  {ACTIVE.includes(r.status) && (
-                    <Badge variant="dot" color="blue">
-                      live
-                    </Badge>
-                  )}
-                  {jobs.length > 1 && (
-                    <NativeSelect
-                      size="xs"
-                      aria-label="Filter by job"
-                      value={job ?? ''}
-                      onChange={(e) => setJob(e.currentTarget.value || null)}
-                      data={[{ value: '', label: 'All jobs' }, ...jobs.map((j) => ({ value: j, label: j }))]}
-                    />
-                  )}
-                  {step && (
-                    <SegmentedControl
-                      size="xs"
-                      value={allLogs ? 'all' : 'step'}
-                      onChange={(v) => setAllLogs(v === 'all')}
-                      data={[
-                        { value: 'step', label: 'This step' },
-                        { value: 'all', label: 'All' },
-                      ]}
-                    />
-                  )}
-                </Group>
-              </Group>
-              <LogViewer lines={logs} showStep={allLogs} filename={`run-${r.id}.log`} follow={ACTIVE.includes(r.status)} />
-            </Card>
-          </Stack>
-        </Grid.Col>
-      </Grid>
-    </Stack>
+      {r.canRerun && (
+        <Button size={size} variant="default" leftSection={<IconRepeat size={16} />} loading={rerun.isPending} onClick={() => rerun.mutate()}>
+          Run again
+        </Button>
+      )}
+      {r.canCancel && (
+        <Button size={size} color="red" variant="light" leftSection={<IconPlayerStop size={16} />} loading={cancel.isPending} onClick={() => cancel.mutate()}>
+          Cancel
+        </Button>
+      )}
+    </>
   );
+}
+
+/** The request waits for the caller's approval before any step starts. */
+function RequestApproval({ r, onDone }: { r: Run; onDone: (run: Run) => void }) {
+  const [comment, setComment] = useState('');
+  const decide = useMutation({
+    mutationFn: (d: 'approve' | 'reject') => (d === 'approve' ? api.approve(r.id, comment) : api.reject(r.id, comment)),
+    onSuccess: (run) => {
+      onDone(run);
+      setComment('');
+    },
+    onError,
+  });
+  return (
+    <Alert color="yellow" title="Your approval is requested to start this request">
+      <Stack gap="xs">
+        <Textarea placeholder="Comment (required to reject)" value={comment} onChange={(e) => setComment(e.currentTarget.value)} autosize minRows={2} />
+        <Group>
+          <Button
+            color="green"
+            leftSection={<IconCheck size={16} />}
+            loading={decide.isPending && decide.variables === 'approve'}
+            onClick={() => decide.mutate('approve')}
+          >
+            Approve
+          </Button>
+          <Button
+            color="red"
+            variant="light"
+            leftSection={<IconX size={16} />}
+            loading={decide.isPending && decide.variables === 'reject'}
+            onClick={() => decide.mutate('reject')}
+          >
+            Reject
+          </Button>
+        </Group>
+      </Stack>
+    </Alert>
+  );
+}
+
+/** The run's steps as graph nodes, coloured by status. */
+function runFlowSteps(r: Run): FlowStep[] {
+  return (r.steps ?? []).map((s) => ({
+    id: s.id,
+    name: s.name,
+    type: s.type,
+    needs: s.needs,
+    tone: stepTone(s.status),
+    detail: s.statusLabel || (s.status === 'PENDING' ? null : STEP_STATUS_LABELS[s.status]),
+    badges: [...(s.maxAttempts > 1 && s.attempt > 1 ? [`attempt ${s.attempt}/${s.maxAttempts}`] : []), ...(s.canApprove || s.canSubmit ? ['needs you'] : [])],
+  }));
+}
+
+/** The node before the steps: what started the run, coloured by the request's own approval. */
+function runTrigger(r: Run): FlowTrigger {
+  const type = r.trigger?.type ?? 'form';
+  return {
+    title: type === 'form' ? 'Form submitted' : `${type[0]!.toUpperCase()}${type.slice(1)} trigger`,
+    subtitle: r.triggeredBy.name,
+    tone: r.status === 'PENDING_APPROVAL' ? 'pending' : r.status === 'REJECTED' ? 'failure' : 'success',
+    badges: r.status === 'PENDING_APPROVAL' ? ['awaiting approval'] : r.approvals.length ? ['approved'] : [],
+  };
 }
 
 function ApprovalTimeline({ approvals }: { approvals: Run['approvals'] }) {
@@ -545,6 +432,189 @@ function ApprovalTimeline({ approvals }: { approvals: Run['approvals'] }) {
         </Timeline.Item>
       ))}
     </Timeline>
+  );
+}
+
+type Panel = { kind: 'request' } | { kind: 'logs' } | { kind: 'step'; id: string } | null;
+
+function RunFlow({ r }: { r: Run }) {
+  const refresh = useRunRefresh(r.id);
+  const [params] = useSearchParams();
+  const steps = r.steps ?? [];
+  const [panel, setPanel] = useState<Panel>(() => {
+    const requested = params.get('step');
+    return requested && steps.some((s) => s.id === requested) ? { kind: 'step', id: requested } : null;
+  });
+  const [job, setJob] = useState<string | null>(null);
+  const flowSteps = runFlowSteps(r);
+  const step = panel?.kind === 'step' ? (steps.find((s) => s.id === panel.id) ?? null) : null;
+  const needsMe = steps.find((x) => x.canApprove || x.canSubmit);
+  const waiting: Panel = r.canApprove ? { kind: 'request' } : needsMe ? { kind: 'step', id: needsMe.id } : null;
+  const live = ACTIVE.includes(r.status);
+  const allLogs = r.logs ?? [];
+  const jobs = [...new Set(allLogs.map((l) => splitJobLog(l.message).job).filter((j): j is string => !!j))];
+  const selected = panel?.kind === 'step' ? panel.id : panel?.kind === 'request' ? TRIGGER_ID : null;
+
+  return (
+    <>
+      <FlowShell
+        back={{ to: '/runs', label: 'Back to runs' }}
+        title={r.actionTitle}
+        meta={
+          <>
+            <StatusBadge status={r.status} />
+            {r.statusLabel && (
+              <Text span fz="xs" c="dimmed" truncate>
+                {r.statusLabel}
+              </Text>
+            )}
+          </>
+        }
+        actions={
+          <>
+            <Button size="xs" variant="default" leftSection={<IconInfoCircle size={14} />} onClick={() => setPanel({ kind: 'request' })}>
+              Request
+            </Button>
+            <Button size="xs" variant="default" leftSection={<IconFileText size={14} />} onClick={() => setPanel({ kind: 'logs' })}>
+              All logs
+            </Button>
+            <RunActions r={r} onDone={refresh} size="xs" />
+          </>
+        }
+        banner={
+          waiting &&
+          !panel && (
+            <Alert color="orange" py="xs">
+              <Group justify="space-between" wrap="nowrap">
+                <Text fz="sm" fw={500}>
+                  {waiting.kind === 'request' ? 'Your approval is requested to start this request' : 'A step is waiting for you'}
+                </Text>
+                <Button size="xs" color="orange" onClick={() => setPanel(waiting)}>
+                  Review
+                </Button>
+              </Group>
+            </Alert>
+          )
+        }
+        hint="Click a node for its details and logs."
+      >
+        <WorkflowFlow
+          bare
+          height="100%"
+          trigger={runTrigger(r)}
+          steps={flowSteps}
+          selected={selected}
+          onSelect={(id) => setPanel(id === TRIGGER_ID ? { kind: 'request' } : { kind: 'step', id })}
+        />
+      </FlowShell>
+
+      <Drawer
+        opened={!!panel}
+        onClose={() => setPanel(null)}
+        position="right"
+        size="lg"
+        // No overlay: the graph stays visible (and live) next to the details.
+        withOverlay={false}
+        shadow="xl"
+        title={<Text fw={600}>{panel?.kind === 'request' ? 'Request' : panel?.kind === 'logs' ? 'All logs' : (step?.name ?? '')}</Text>}
+      >
+        {panel?.kind === 'request' && (
+          <Stack>
+            {r.canApprove && <RequestApproval r={r} onDone={refresh} />}
+            {['SUCCESS', 'FAILURE', 'CANCELLED', 'REJECTED'].includes(r.status) && <ExplainRun runId={r.id} failed={r.status === 'FAILURE'} />}
+            <Table withRowBorders={false} verticalSpacing={4} highlightOnHover={false} fz="sm">
+              <Table.Tbody>
+                <Row k="Requested by" v={<UserChip user={r.triggeredBy} />} />
+                {r.trigger && r.trigger.type !== 'form' && <Row k="Started by" v={r.trigger.type} />}
+                {r.entity && (
+                  <Row
+                    k="Entity"
+                    v={
+                      <Anchor component={Link} to={`/catalog/${r.blueprint}/${encodeURIComponent(r.entity)}`} fz="sm">
+                        {r.blueprint}/{r.entity}
+                      </Anchor>
+                    }
+                  />
+                )}
+                <Row k="Created" v={<TimeAgo at={r.createdAt} />} />
+                <Row k="Started" v={<TimeAgo at={r.startedAt} />} />
+                <Row k="Duration" v={r.startedAt ? duration(r.startedAt, r.endedAt) : '—'} />
+                <Row k="Action" v={<Code>{r.action}</Code>} />
+                {!!r.costUsd && <Row k="AI cost" v={`$${r.costUsd.toFixed(4)}`} />}
+              </Table.Tbody>
+            </Table>
+            <Text fw={600} fz="sm">
+              Inputs
+            </Text>
+            {Object.keys(r.inputs).length ? (
+              <Table withRowBorders={false} verticalSpacing={4} highlightOnHover={false} fz="sm">
+                <Table.Tbody>
+                  {Object.entries(r.inputs).map(([k, v]) => (
+                    <Row key={k} k={k} v={<PropertyValue value={v} />} />
+                  ))}
+                </Table.Tbody>
+              </Table>
+            ) : (
+              <Text c="dimmed" fz="sm">
+                No inputs
+              </Text>
+            )}
+            {r.approvals.length > 0 && (
+              <>
+                <Text fw={600} fz="sm">
+                  Request approvals
+                </Text>
+                <ApprovalTimeline approvals={r.approvals} />
+              </>
+            )}
+          </Stack>
+        )}
+        {panel?.kind === 'logs' && (
+          <LogsCard
+            lines={allLogs.filter((l) => !job || splitJobLog(l.message).job === job)}
+            showStep
+            filename={`run-${r.id}.log`}
+            live={live}
+            extra={
+              jobs.length > 1 && (
+                <NativeSelect
+                  size="xs"
+                  aria-label="Filter by job"
+                  value={job ?? ''}
+                  onChange={(e) => setJob(e.currentTarget.value || null)}
+                  data={[{ value: '', label: 'All jobs' }, ...jobs.map((j) => ({ value: j, label: j }))]}
+                />
+              )
+            }
+          />
+        )}
+        {step && (
+          <Stack>
+            <StepPanel key={step.id} run={r} step={step} onDone={refresh} />
+            <LogsCard lines={allLogs.filter((l) => l.stepId === step.id)} filename={`run-${r.id}-${step.id}.log`} live={live} />
+          </Stack>
+        )}
+      </Drawer>
+    </>
+  );
+}
+
+function LogsCard(props: { lines: NonNullable<Run['logs']>; filename: string; live: boolean; showStep?: boolean; extra?: React.ReactNode }) {
+  return (
+    <Card p={0}>
+      <Group justify="space-between" p="sm" style={{ borderBottom: '1px solid var(--hairline)' }}>
+        <Text fw={600}>Logs</Text>
+        <Group gap="xs">
+          {props.live && (
+            <Badge variant="dot" color="blue">
+              live
+            </Badge>
+          )}
+          {props.extra}
+        </Group>
+      </Group>
+      <LogViewer lines={props.lines} showStep={props.showStep} filename={props.filename} follow={props.live} />
+    </Card>
   );
 }
 

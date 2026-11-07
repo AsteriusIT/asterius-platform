@@ -136,6 +136,7 @@ export function ActionsAdmin() {
       ]}
       templates={[{ label: 'Workflow', value: blankAction }]}
       editor={(p) => <ActionBuilder {...p} />}
+      openPath={(a) => `/admin/actions/${encodeURIComponent(a.identifier)}`}
       toEditable={(a) => strip(a, ['managed', 'allowedForMe'])}
       save={api.saveAction}
       remove={(a) => api.deleteAction(a.identifier)}

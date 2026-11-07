@@ -3,6 +3,7 @@ import { ActionIcon, Button, Group, Menu, Stack, Text, Tooltip } from '@mantine/
 import { modals } from '@mantine/modals';
 import { notifications } from '@mantine/notifications';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useNavigate } from 'react-router';
 import { IconChevronDown, IconPencil, IconPlus, IconTrash } from '@tabler/icons-react';
 import { errorText } from '../../lib/api';
 import { notifyError } from '../../lib/queryClient';
@@ -39,6 +40,8 @@ export function ResourceAdmin<T extends Resource>(props: {
   removeWarning?: (item: T) => ReactNode;
   rowActions?: (item: T) => ReactNode;
   onRowClick?: (item: T) => void;
+  /** Existing items open on their own page (row click and the edit button) instead of the editor dialog. */
+  openPath?: (item: T) => string;
   help?: ReactNode;
   children?: ReactNode;
   /** Form dialog editing one resource (builders in components/builder). Without it: the YAML editor. */
@@ -57,7 +60,9 @@ export function ResourceAdmin<T extends Resource>(props: {
     void qc.invalidateQueries({ queryKey: ['actions'] });
     return r;
   };
+  const navigate = useNavigate();
   const open = async (item: T) => {
+    if (props.openPath) return void navigate(props.openPath(item));
     try {
       setEditing({ value: await props.toEditable(item), isNew: false, readOnly: item.managed });
     } catch (e) {

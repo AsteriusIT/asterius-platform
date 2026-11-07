@@ -14,7 +14,18 @@ import { CodeEditor, JsonBlock } from '../CodeEditor';
 
 const COLORS = { planned: 'blue', skipped: 'gray', error: 'red' } as const;
 
-export function DryRunModal({ identifier, body, onClose }: { identifier: string; body: () => Record<string, unknown>; onClose: () => void }) {
+export function DryRunModal({
+  identifier,
+  body,
+  onClose,
+  onResult,
+}: {
+  identifier: string;
+  body: () => Record<string, unknown>;
+  onClose: () => void;
+  /** Set: the result is handed over (the flow view draws it on the graph) and the dialog closes. */
+  onResult?: (r: DryRunResult) => void;
+}) {
   const [inputs, setInputs] = useState('{}');
   const [entity, setEntity] = useState('');
   const [mock, setMock] = useState('{}');
@@ -32,6 +43,11 @@ export function DryRunModal({ identifier, body, onClose }: { identifier: string;
       }
       setParseError(null);
       return api.dryRun(identifier, { definition: body(), inputs: parsedInputs, entity: entity || null, mock: parsedMock });
+    },
+    onSuccess: (r) => {
+      if (!onResult) return;
+      onResult(r);
+      onClose();
     },
   });
   const r: DryRunResult | undefined = test.data;

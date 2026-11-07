@@ -1,4 +1,4 @@
-import { useMemo, useState, type KeyboardEvent } from 'react';
+import { useMemo, useState } from 'react';
 import {
   Accordion,
   ActionIcon,
@@ -6,12 +6,8 @@ import {
   Badge,
   Code,
   Button,
-  Box,
-  Card,
-  Grid,
   Group,
   Input,
-  Menu,
   MultiSelect,
   NumberInput,
   SegmentedControl,
@@ -23,30 +19,14 @@ import {
   Text,
   Textarea,
   TextInput,
-  ThemeIcon,
   Title,
-  Tooltip,
-  UnstyledButton,
 } from '@mantine/core';
 import { modals } from '@mantine/modals';
 import { useQuery } from '@tanstack/react-query';
-import {
-  IconArrowDown,
-  IconArrowUp,
-  IconBolt,
-  IconCode,
-  IconForms,
-  IconHourglass,
-  IconPlus,
-  IconRobot,
-  IconShieldCheck,
-  IconSubtask,
-  IconTrash,
-} from '@tabler/icons-react';
+import { IconPlus, IconRobot, IconTrash } from '@tabler/icons-react';
 import type {
   AgentMcpServer,
   AgentStep,
-  WorkflowTrigger,
   InputStep,
   WaitStep,
   WorkflowCallStep,
@@ -61,34 +41,20 @@ import type {
   WorkflowStepType,
 } from '@asterius/shared';
 import { api } from '../../lib/api';
-import { needsOf, STEP_TYPES, stepWarnings } from '../../lib/workflow';
-import { isFormLike, newFormTrigger, TriggerEditor, TRIGGER_TYPES, triggerSummary } from './TriggerEditor';
-import { Empty } from '../ui';
-import { AiDraft, JsonPreview } from '../AiAssistant';
+import { needsOf } from '../../lib/workflow';
 import { fieldProblems, fieldsToSchema, nameFromLabel, schemaToFields, type FieldDraft } from './fields';
 import { FieldsEditor, type FieldsMode } from './FieldsEditor';
-import { DryRunPanel, ExpressionStatus } from './ExpressionTools';
-import { WorkflowGraph } from '../WorkflowGraph';
+import { ExpressionStatus } from './ExpressionTools';
 import { JsonEditor, KeyValueEditor, MONO_INPUT, PluginFieldInput, SubjectsEditor, VariableChips } from './blocks';
 
 /**
- * The "Workflow" tab of the action builder: a canvas of nodes — the trigger (what starts the workflow: a form
- * submission) then the steps (integration calls, approvals, AI agents, transforms), added one by one with "+".
- * The selected node is edited on the right: settings, condition, dependencies, retries and timeout.
+ * Settings of the workflow steps, shown in the editor page's dialogs (pages/admin/WorkflowFlow.tsx): per type
+ * (integration, approval, AI agent, transform, wait, input, sub-workflow), then condition, dependencies, retries and
+ * timeout. Also the helpers to create a step and to list a workflow's problems before saving.
  */
 
 const SAMPLE_CONTEXT = { inputs: {}, entity: null, steps: {} };
 const STEP_ID = /^[A-Za-z_][A-Za-z0-9_]{0,40}$/;
-const TYPE_ICON = {
-  invoke: IconBolt,
-  approval: IconShieldCheck,
-  agent: IconRobot,
-  transform: IconCode,
-  wait: IconHourglass,
-  input: IconForms,
-  workflow: IconSubtask,
-} as const;
-
 /** Offline fallback; the real list (with prices) comes from /api/meta. */
 export const AGENT_MODELS = [{ value: 'claude-opus-5-5', label: 'Claude Opus 5.5', description: 'Default' }];
 const priceText = (m: { inputPrice?: number; outputPrice?: number }) =>
@@ -159,379 +125,70 @@ export function stepProblems(steps: WorkflowStep[], invokers: PluginInfo[]): str
   return out;
 }
 
-/** Selected node of the canvas: the trigger, or a step id. */
-type Selection = { kind: 'trigger' } | { kind: 'step'; id: string } | null;
-
-export function WorkflowEditor(props: {
-  trigger: WorkflowTrigger | null;
-  onTriggerChange: (t: WorkflowTrigger | null) => void;
-  /** The form fields of the trigger (edited as drafts; the builder turns them into `trigger.inputs`). */
-  fields: FieldDraft[];
-  onFieldsChange: (f: FieldDraft[]) => void;
+/** Settings of one step: name and id, the variables it can use, its type's settings, then condition, dependencies and retries. */
+export function StepSettings({
+  steps,
+  index,
+  invokers,
+  inputFields,
+  blueprint: triggerBlueprint,
+  onEntity,
+  warnings,
+  update,
+}: {
   steps: WorkflowStep[];
-  onChange: (steps: WorkflowStep[]) => void;
+  index: number;
+  invokers: PluginInfo[];
+  inputFields: FieldDraft[];
+  blueprint: string | null;
+  onEntity: boolean;
+  warnings: string[];
+  update: (patch: Partial<WorkflowStep>) => void;
 }) {
-  const { steps, onChange, trigger } = props;
-  const meta = useQuery({ queryKey: ['meta'], queryFn: api.meta, staleTime: Infinity });
-  const invokers = meta.data?.invokers ?? [];
-  const warnings = useMemo(() => stepWarnings(steps), [steps]);
-  const [selected, setSelected] = useState<Selection>(() => (trigger ? { kind: 'trigger' } : steps[0] ? { kind: 'step', id: steps[0].id } : null));
-  const index = selected?.kind === 'step' ? steps.findIndex((s) => s.id === selected.id) : -1;
-  const step = index >= 0 ? steps[index] : null;
-  const form = isFormLike(trigger) ? trigger : null;
-  const triggerBlueprint = trigger && 'blueprint' in trigger ? (trigger.blueprint ?? null) : null;
-  const onEntity = !!form && form.on !== 'create' && !!form.blueprint;
-  const selectStep = (id: string) => setSelected({ kind: 'step', id });
-
-  const update = (patch: Partial<WorkflowStep>) => {
-    if (!step) return;
-    const next = steps.map((s, i) => (i === index ? ({ ...s, ...patch } as WorkflowStep) : s));
-    // Renaming an id keeps the dependencies pointing at it.
-    if (patch.id && patch.id !== step.id) {
-      for (const s of next) if (s.needs) s.needs = s.needs.map((n) => (n === step.id ? patch.id! : n));
-      selectStep(patch.id);
-    }
-    onChange(next);
-  };
-  /** Insert a step at `at` (0 = right after the trigger). */
-  const insert = (type: WorkflowStepType, at: number) => {
-    const s = newStep(type, steps, invokers);
-    onChange([...steps.slice(0, at), s, ...steps.slice(at)]);
-    selectStep(s.id);
-  };
-  const remove = () => {
-    if (!step) return;
-    const next = steps.filter((_, i) => i !== index).map((s) => (s.needs ? { ...s, needs: s.needs.filter((n) => n !== step.id) } : s));
-    onChange(next);
-    const neighbour = next[Math.max(0, index - 1)];
-    setSelected(neighbour ? { kind: 'step', id: neighbour.id } : trigger ? { kind: 'trigger' } : null);
-  };
-  const move = (d: -1 | 1) => moveTo(index, index + d);
-  const [dragged, setDragged] = useState<number | null>(null);
-  const moveTo = (from: number, to: number) => {
-    if (from === to || to < 0 || to >= steps.length) return;
-    const next = [...steps];
-    const [item] = next.splice(from, 1);
-    next.splice(to, 0, item);
-    // A step may only depend on earlier steps: drop dependencies that would now point forward.
-    const ids = next.map((s) => s.id);
-    onChange(next.map((s, i) => (s.needs ? { ...s, needs: s.needs.filter((n) => ids.indexOf(n) < i) } : s)));
-  };
-  const addTrigger = () => {
-    props.onTriggerChange(newFormTrigger());
-    props.onFieldsChange([]);
-    setSelected({ kind: 'trigger' });
-  };
-  const removeTrigger = () =>
-    modals.openConfirmModal({
-      title: 'Remove the trigger?',
-      children: <Text fz="sm">Its form fields are removed too. Without a trigger, the workflow cannot be started.</Text>,
-      labels: { confirm: 'Remove', cancel: 'Keep' },
-      confirmProps: { color: 'red' },
-      onConfirm: () => {
-        props.onTriggerChange(null);
-        props.onFieldsChange([]);
-        setSelected(steps[0] ? { kind: 'step', id: steps[0].id } : null);
-      },
-    });
-
+  const step = steps[index]!;
   return (
-    <Grid gap="lg" align="flex-start">
-      <Grid.Col span={{ base: 12, md: 4 }}>
-        {steps.length === 0 && (
-          <Group mb="xs">
-            <AiDraft
-              label="Draft steps with AI"
-              title="Draft a workflow"
-              help="Describe what the workflow should do. The draft replaces the (empty) step list; review and adjust it before saving. Drafts never include write tools or credentials."
-              placeholder="When someone requests a database, have an AI review the request, ask the platform team to approve, then call our provisioning webhook."
-              run={(text) => api.aiDraftWorkflow(text)}
-              preview={(d) => <JsonPreview value={d.steps} />}
-              onDraft={(d) => {
-                onChange(d.steps);
-                setSelected(d.steps[0] ? { kind: 'step', id: d.steps[0].id } : null);
-              }}
-            />
-          </Group>
-        )}
-        <Stack gap={0} align="stretch" className="workflow-canvas" p="md" style={{ background: 'var(--surface)', borderRadius: 16 }}>
-          {trigger ? (
-            <CanvasNode
-              icon={TRIGGER_TYPES[trigger.type].icon}
-              color="brand"
-              kicker="Trigger"
-              title={TRIGGER_TYPES[trigger.type].label}
-              subtitle={triggerSummary(trigger)}
-              badges={[
-                ...(form && props.fields.length ? [`${props.fields.length} field${props.fields.length > 1 ? 's' : ''}`] : []),
-                ...(form?.approval.required ? ['approval'] : []),
-              ]}
-              active={selected?.kind === 'trigger'}
-              onClick={() => setSelected({ kind: 'trigger' })}
-            />
-          ) : (
-            <Menu position="bottom" width={320}>
-              <Menu.Target>
-                <UnstyledButton className="canvas-placeholder" aria-label="Add a trigger">
-                  <Group gap="xs" justify="center">
-                    <IconPlus size={16} />
-                    <Text fz="sm" fw={500}>
-                      Add a trigger
-                    </Text>
-                  </Group>
-                  <Text fz="xs" c="dimmed" ta="center">
-                    What starts the workflow
-                  </Text>
-                </UnstyledButton>
-              </Menu.Target>
-              <Menu.Dropdown>
-                <Menu.Item leftSection={<TRIGGER_TYPES.form.icon size={16} />} onClick={addTrigger}>
-                  <Text fz="sm" fw={500}>
-                    {TRIGGER_TYPES.form.label}
-                  </Text>
-                  <Text fz="xs" c="dimmed">
-                    {TRIGGER_TYPES.form.hint}
-                  </Text>
-                </Menu.Item>
-              </Menu.Dropdown>
-            </Menu>
-          )}
-
-          {steps.map((s, i) => {
-            const Icon = TYPE_ICON[s.type];
-            const needs = needsOf(steps, i);
-            const sequential = s.needs === undefined;
-            return (
-              <Stack
-                key={`${s.id}:${i}`}
-                gap={0}
-                draggable
-                onDragStart={() => setDragged(i)}
-                onDragOver={(e) => dragged !== null && e.preventDefault()}
-                onDrop={() => {
-                  if (dragged !== null) moveTo(dragged, i);
-                  setDragged(null);
-                }}
-                onDragEnd={() => setDragged(null)}
-                style={{ opacity: dragged === i ? 0.5 : 1 }}
-              >
-                <Connector onAdd={(t) => insert(t, i)} label={`Insert a step before ${s.name || s.id}`} />
-                <CanvasNode
-                  icon={Icon}
-                  color={STEP_TYPES[s.type].color}
-                  kicker={STEP_TYPES[s.type].label}
-                  title={s.name || s.id}
-                  subtitle={sequential ? undefined : needs.length ? `after ${needs.join(', ')}` : 'starts with the workflow (parallel)'}
-                  badges={[...(s.if ? ['if'] : []), ...(s.retries ? [`${s.retries} retries`] : []), ...(s.continueOnError ? ['may fail'] : [])]}
-                  active={selected?.kind === 'step' && selected.id === s.id}
-                  onClick={() => selectStep(s.id)}
-                />
-              </Stack>
-            );
-          })}
-          <Connector onAdd={(t) => insert(t, steps.length)} label="Add a step" last />
-        </Stack>
-      </Grid.Col>
-
-      <Grid.Col span={{ base: 12, md: 8 }}>
-        {steps.length > 1 && (
-          <Card padding="sm" shadow="none" withBorder mb="md" aria-label="Workflow graph">
-            <Text fz="xs" c="dimmed" mb={4}>
-              Execution graph: steps in the same column run in parallel
-            </Text>
-            <WorkflowGraph
-              steps={steps.map((s, i) => ({ id: s.id, name: s.name, type: s.type, needs: needsOf(steps, i), conditional: !!s.if }))}
-              selected={selected?.kind === 'step' ? selected.id : null}
-              onSelect={selectStep}
-            />
-          </Card>
-        )}
-        {selected?.kind === 'trigger' && trigger ? (
-          <Card padding="lg" shadow="none" withBorder>
-            <Group gap="xs" mb="md">
-              <Badge color="brand">Trigger</Badge>
-              <Text fz="sm" fw={500}>
-                {TRIGGER_TYPES[trigger.type].label}
-              </Text>
-            </Group>
-            <TriggerEditor
-              trigger={trigger}
-              onChange={props.onTriggerChange}
-              fields={props.fields}
-              onFieldsChange={props.onFieldsChange}
-              onRemove={removeTrigger}
-            />
-          </Card>
-        ) : step ? (
-          <Card padding="lg" shadow="none" withBorder key={`${step.id}:${index}`}>
-            <Group justify="space-between" mb="md">
-              <Group gap="xs">
-                <Badge color={STEP_TYPES[step.type].color}>{STEP_TYPES[step.type].label}</Badge>
-                <Text fz="xs" c="dimmed">
-                  Step {index + 1} of {steps.length}
-                </Text>
-              </Group>
-              <Group gap={2}>
-                <ActionIcon variant="subtle" color="gray" disabled={index === 0} onClick={() => move(-1)} aria-label="Move earlier">
-                  <IconArrowUp size={16} />
-                </ActionIcon>
-                <ActionIcon variant="subtle" color="gray" disabled={index === steps.length - 1} onClick={() => move(1)} aria-label="Move later">
-                  <IconArrowDown size={16} />
-                </ActionIcon>
-                <ActionIcon variant="subtle" color="red" onClick={remove} aria-label="Remove step">
-                  <IconTrash size={16} />
-                </ActionIcon>
-              </Group>
-            </Group>
-            <Stack gap="md">
-              <SimpleGrid cols={{ base: 1, sm: 2 }}>
-                <TextInput label="Name" value={step.name ?? ''} onChange={(e) => update({ name: e.currentTarget.value })} />
-                <TextInput
-                  label="Id"
-                  description={
-                    <>
-                      Later steps read <code>{`{{ steps.${step.id}.output }}`}</code>
-                    </>
-                  }
-                  value={step.id}
-                  error={!STEP_ID.test(step.id) ? 'Letters, digits and _' : steps.some((s, i) => i !== index && s.id === step.id) ? 'Already used' : undefined}
-                  onChange={(e) => update({ id: e.currentTarget.value })}
-                  styles={MONO_INPUT}
-                />
-              </SimpleGrid>
-              <Variables steps={steps} index={index} inputFields={form ? props.fields : []} blueprint={triggerBlueprint} onEntity={onEntity} />
-              {step.type === 'invoke' && <InvokeEditor step={step} invokers={invokers} onChange={update} />}
-              {step.type === 'approval' && <ApprovalEditor step={step} onEntity={onEntity} onChange={update} />}
-              {step.type === 'agent' && <AgentEditor step={step} onChange={update} />}
-              {step.type === 'transform' && <TransformEditor step={step} onChange={update} />}
-              {step.type === 'wait' && <WaitEditor step={step} onChange={update} />}
-              {step.type === 'input' && <InputEditor step={step} onChange={update} />}
-              {step.type === 'workflow' && <WorkflowCallEditor step={step} onChange={update} />}
-              {warnings
-                .filter((w) => w.startsWith(`Step "${step.name || step.id}"`))
-                .map((w) => (
-                  <Alert key={w} color="yellow" variant="light" title="Review the AI output before acting on it">
-                    {w}
-                  </Alert>
-                ))}
-              <FlowEditor steps={steps} index={index} onChange={update} />
-            </Stack>
-          </Card>
-        ) : (
-          <Empty title={trigger ? 'Add the first step' : 'Start with a trigger'}>
-            {trigger
-              ? 'Click + under the trigger to add what the workflow does: call an integration, ask for an approval, run an AI agent…'
-              : 'A workflow is a trigger followed by steps. Add a trigger (a form users submit), then add steps one by one.'}
-          </Empty>
-        )}
-        {steps.length > 0 && (
-          <Accordion variant="contained" radius="lg" mt="md">
-            <Accordion.Item value="dry-run">
-              <Accordion.Control>Test run · simulate with sample inputs</Accordion.Control>
-              <Accordion.Panel>
-                <DryRunPanel steps={steps} />
-              </Accordion.Panel>
-            </Accordion.Item>
-          </Accordion>
-        )}
-      </Grid.Col>
-    </Grid>
-  );
-}
-
-/** A node of the canvas (trigger or step). */
-function CanvasNode(props: {
-  icon: typeof IconBolt;
-  color: string;
-  kicker: string;
-  title: string;
-  subtitle?: string;
-  badges: string[];
-  active: boolean;
-  onClick: () => void;
-}) {
-  const Icon = props.icon;
-  return (
-    // A div, not a <button>: nodes stay selectable in read-only views (a disabled fieldset disables buttons).
-    <UnstyledButton
-      component="div"
-      role="button"
-      tabIndex={0}
-      onClick={props.onClick}
-      onKeyDown={(e: KeyboardEvent) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), props.onClick())}
-      aria-pressed={props.active}
-      className="canvas-node"
-      data-active={props.active || undefined}
-    >
-      <Group gap="sm" wrap="nowrap" align="flex-start">
-        <ThemeIcon size={30} variant="light" color={props.color}>
-          <Icon size={17} />
-        </ThemeIcon>
-        <Box style={{ minWidth: 0, flex: 1 }}>
-          <Text fz={11} c="dimmed" tt="uppercase" fw={600} lh={1.4}>
-            {props.kicker}
-          </Text>
-          <Text fz="sm" fw={500} truncate>
-            {props.title}
-          </Text>
-          {props.subtitle && (
-            <Text fz="xs" c="dimmed" truncate>
-              {props.subtitle}
-            </Text>
-          )}
-          {props.badges.length > 0 && (
-            <Group gap={4} mt={4}>
-              {props.badges.map((b) => (
-                <Badge key={b} size="xs" variant="light" color="gray">
-                  {b}
-                </Badge>
-              ))}
-            </Group>
-          )}
-        </Box>
-      </Group>
-    </UnstyledButton>
-  );
-}
-
-/** The link between two nodes, with a "+" to insert a step there (or at the end). */
-function Connector({ onAdd, label, last }: { onAdd: (t: WorkflowStepType) => void; label: string; last?: boolean }) {
-  return (
-    <Stack gap={0} align="center">
-      <Box w={2} h={12} style={{ background: 'var(--mantine-color-default-border)' }} />
-      <Menu position="right" width={300} withinPortal>
-        <Menu.Target>
-          {last ? (
-            <Button size="xs" variant="default" leftSection={<IconPlus size={14} />} aria-label={label}>
-              Add step
-            </Button>
-          ) : (
-            <Tooltip label={label} position="left">
-              <ActionIcon size="sm" radius="xl" variant="default" aria-label={label}>
-                <IconPlus size={12} />
-              </ActionIcon>
-            </Tooltip>
-          )}
-        </Menu.Target>
-        <Menu.Dropdown>
-          {(Object.keys(STEP_TYPES) as WorkflowStepType[]).map((t) => {
-            const Icon = TYPE_ICON[t];
-            return (
-              <Menu.Item key={t} leftSection={<Icon size={16} />} onClick={() => onAdd(t)}>
-                <Text fz="sm" fw={500}>
-                  {STEP_TYPES[t].label}
-                </Text>
-                <Text fz="xs" c="dimmed">
-                  {STEP_TYPES[t].hint}
-                </Text>
-              </Menu.Item>
-            );
-          })}
-        </Menu.Dropdown>
-      </Menu>
-      {!last && <Box w={2} h={12} style={{ background: 'var(--mantine-color-default-border)' }} />}
+    <Stack gap="md">
+      <SimpleGrid cols={{ base: 1, sm: 2 }}>
+        <TextInput label="Name" value={step.name ?? ''} onChange={(e) => update({ name: e.currentTarget.value })} />
+        <TextInput
+          label="Id"
+          description={
+            <>
+              Later steps read <code>{`{{ steps.${step.id}.output }}`}</code>
+            </>
+          }
+          value={step.id}
+          error={!STEP_ID.test(step.id) ? 'Letters, digits and _' : steps.some((s, i) => i !== index && s.id === step.id) ? 'Already used' : undefined}
+          onChange={(e) => update({ id: e.currentTarget.value })}
+          styles={MONO_INPUT}
+        />
+      </SimpleGrid>
+      <Variables steps={steps} index={index} inputFields={inputFields} blueprint={triggerBlueprint} onEntity={onEntity} />
+      {step.type === 'invoke' && <InvokeEditor step={step} invokers={invokers} onChange={update} />}
+      {step.type === 'approval' && <ApprovalEditor step={step} onEntity={onEntity} onChange={update} />}
+      {step.type === 'agent' && <AgentEditor step={step} onChange={update} />}
+      {step.type === 'transform' && <TransformEditor step={step} onChange={update} />}
+      {step.type === 'wait' && <WaitEditor step={step} onChange={update} />}
+      {step.type === 'input' && <InputEditor step={step} onChange={update} />}
+      {step.type === 'workflow' && <WorkflowCallEditor step={step} onChange={update} />}
+      {warnings
+        .filter((w) => w.startsWith(`Step "${step.name || step.id}"`))
+        .map((w) => (
+          <Alert key={w} color="yellow" variant="light" title="Review the AI output before acting on it">
+            {w}
+          </Alert>
+        ))}
+      <FlowEditor steps={steps} index={index} onChange={update} />
     </Stack>
   );
+}
+
+/** `patch` applied to the step at `index`; renaming its id keeps the dependencies pointing at it. */
+export function patchStep(steps: WorkflowStep[], index: number, patch: Partial<WorkflowStep>): WorkflowStep[] {
+  const old = steps[index]!;
+  const next = steps.map((s, i) => (i === index ? ({ ...s, ...patch } as WorkflowStep) : s));
+  if (patch.id && patch.id !== old.id) for (const s of next) if (s.needs) s.needs = s.needs.map((n) => (n === old.id ? patch.id! : n));
+  return next;
 }
 
 /** Variables available to the step at `index`, click to copy. */

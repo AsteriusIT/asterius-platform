@@ -43,11 +43,21 @@ h4,
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
   min-width: 0;
 }
+/* Flow views: the canvas takes the whole panel, which keeps its rounded frame. */
+.app-panel.app-panel-flush {
+  padding: 0;
+  overflow: hidden;
+  position: relative;
+  display: flex;
+}
 @media (max-width: 48em) {
   .app-panel {
     margin: 0 8px 8px;
     padding: var(--mantine-spacing-md);
     border-radius: 14px;
+  }
+  .app-panel.app-panel-flush {
+    padding: 0;
   }
 }
 .app-content {
@@ -318,4 +328,70 @@ h4,
     transition: none;
     transform: none;
   }
+}
+
+/* Workflow flow view (React Flow): a faint grid everywhere, stronger under each node. Positions are multiples of
+   the 24px grid, so the halo's lines meet the background's. */
+.workflow-flow {
+  --flow-grid-faint: color-mix(in srgb, var(--mantine-color-text) 5%, transparent);
+  --flow-grid-strong: color-mix(in srgb, var(--mantine-color-text) 16%, transparent);
+  border-radius: 16px;
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+}
+.workflow-flow.workflow-flow-bare {
+  border: 0;
+  border-radius: 0;
+}
+.workflow-flow .react-flow {
+  --xy-background-color: transparent;
+  --xy-edge-stroke-selected: var(--mantine-color-brand-6);
+}
+.workflow-flow .react-flow__controls {
+  box-shadow: none;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.workflow-flow .react-flow__node {
+  cursor: pointer;
+}
+.flow-node-halo {
+  position: absolute;
+  inset: -48px;
+  pointer-events: none;
+  z-index: -1;
+  background-image:
+    linear-gradient(to right, var(--flow-grid-strong) 1px, transparent 1px), linear-gradient(to bottom, var(--flow-grid-strong) 1px, transparent 1px);
+  background-size: 24px 24px;
+  mask-image: radial-gradient(closest-side, #000 45%, transparent);
+}
+.flow-node {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--mantine-color-body);
+  border: 1px solid var(--mantine-color-default-border);
+  transition: box-shadow 0.15s;
+}
+.flow-node[data-selected] {
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--mantine-color-brand-6) 18%, transparent);
+}
+.workflow-flow .react-flow__handle {
+  width: 8px;
+  height: 8px;
+  background: var(--mantine-color-body);
+  border: 1.5px solid var(--mantine-color-gray-5);
+}
+.flow-node-add {
+  position: absolute;
+  right: -34px;
+  top: 50%;
+  transform: translateY(-50%);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.react-flow__node:hover .flow-node-add,
+.flow-node-add[aria-expanded='true'] {
+  opacity: 1;
 }

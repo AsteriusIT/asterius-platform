@@ -60,6 +60,9 @@ import { initials } from './UserChip';
  * LibreChat-like shell: soft sidebar (brand, navigation, account at the bottom), white canvas, slim header. On desktop the
  * sidebar folds to icons only (remembered per browser; Ctrl/⌘+B); on mobile it is a drawer.
  */
+/** Pages drawn as a full-panel graph. */
+const FLOW_VIEW = /^\/(runs|admin\/actions)\/[^/]+(\/flow)?$/;
+
 export function Layout() {
   const [opened, { toggle, open, close }] = useDisclosure();
   const [touring, setTouring] = useState(false);
@@ -400,11 +403,18 @@ export function Layout() {
       </AppShell.Navbar>
 
       <AppShell.Main className="app-main" id="main-content" tabIndex={-1}>
-        <div className="app-panel">
-          <div className="app-content">
+        {/* Flow views (a run, the workflow editor) fill the panel: no padding, no width limit. */}
+        {FLOW_VIEW.test(location.pathname) ? (
+          <div className="app-panel app-panel-flush">
             <Outlet />
           </div>
-        </div>
+        ) : (
+          <div className="app-panel">
+            <div className="app-content">
+              <Outlet />
+            </div>
+          </div>
+        )}
       </AppShell.Main>
       <Tour steps={tourSteps({ name: user?.name.split(' ')[0] ?? '', isAdmin })} opened={touring} onClose={endTour} />
     </AppShell>

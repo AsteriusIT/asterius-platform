@@ -119,3 +119,82 @@ export function stepWarnings(steps: WorkflowStep[]): string[] {
   }
   return [...new Set(out)];
 }
+
+/** Colour family of a node in the flow view (runs and test results). */
+export type FlowTone = 'idle' | 'running' | 'pending' | 'success' | 'failure' | 'skipped';
+
+export function stepTone(status: StepStatus | undefined): FlowTone {
+  switch (status) {
+    case 'SUCCESS':
+      return 'success';
+    case 'FAILURE':
+      return 'failure';
+    case 'WAITING_APPROVAL':
+    case 'WAITING':
+      return 'pending';
+    case 'RUNNING':
+      return 'running';
+    case 'SKIPPED':
+    case 'CANCELLED':
+      return 'skipped';
+    default:
+      return 'idle';
+  }
+}
+
+/** Every step with its dependencies written out (`needs` omitted means "after the previous step"). */
+const explicit = (steps: WorkflowStep[]): WorkflowStep[] => steps.map((s, i) => ({ ...s, needs: needsOf(steps, i) }));
+
+/** Steps ordered so that each comes after what it needs (stable); null when the dependencies loop. */
+function topoSort(steps: WorkflowStep[]): WorkflowStep[] | null {
+  const byId = new Map(steps.map((s) => [s.id, s]));
+  const out: WorkflowStep[] = [];
+  const state = new Map<string, 'visiting' | 'done'>();
+  const visit = (s: WorkflowStep): boolean => {
+    const st = state.get(s.id);
+    if (st === 'done') return true;
+    if (st === 'visiting') return false;
+    state.set(s.id, 'visiting');
+    for (const d of s.needs ?? []) {
+      const dep = byId.get(d);
+      if (dep && !visit(dep)) return false;
+    }
+    state.set(s.id, 'done');
+    out.push(s);
+    return true;
+  };
+  for (const s of steps) if (!visit(s)) return null;
+  return out;
+}
+
+/**
+ * `target` also waits for `source`. Steps may only depend on earlier ones, so the list is reordered when needed;
+ * the dependencies are then written out on every step to keep the graph as drawn. Null: it would create a loop.
+ */
+export function connectSteps(steps: WorkflowStep[], source: string, target: string): WorkflowStep[] | null {
+  const si = steps.findIndex((s) => s.id === source);
+  const ti = steps.findIndex((s) => s.id === target);
+  if (si < 0 || ti < 0 || si === ti) return null;
+  if (needsOf(steps, ti).includes(source)) return steps;
+  if (si < ti) return steps.map((s, i) => (i === ti ? { ...s, needs: [...needsOf(steps, ti), source] } : s));
+  const linked = explicit(steps).map((s) => (s.id === target ? { ...s, needs: [...(s.needs ?? []), source] } : s));
+  return topoSort(linked);
+}
+
+/** `target` no longer waits for `source`. */
+export function disconnectSteps(steps: WorkflowStep[], source: string, target: string): WorkflowStep[] {
+  const ti = steps.findIndex((s) => s.id === target);
+  if (ti < 0) return steps;
+  const needs = needsOf(steps, ti);
+  if (!needs.includes(source)) return steps;
+  return steps.map((s, i) => (i === ti ? { ...s, needs: needs.filter((n) => n !== source) } : s));
+}
+
+/** Add `step` right after `after` (null: at the start, in parallel with the other first steps). */
+export function insertStepAfter(steps: WorkflowStep[], after: string | null, step: WorkflowStep): WorkflowStep[] {
+  if (!steps.length) return [step];
+  const last = steps[steps.length - 1]!;
+  if (after === last.id) return [...steps, step]; // plain sequence: no explicit dependency needed
+  // Appended at the end with explicit dependencies, so no existing step changes what it waits for.
+  return [...steps, { ...step, needs: after ? [after] : [] }];
+}

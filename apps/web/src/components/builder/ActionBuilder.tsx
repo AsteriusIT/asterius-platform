@@ -1,25 +1,21 @@
 import { useState } from 'react';
-import { Alert, Badge, Button, TagsInput, Modal, SimpleGrid, Stack, Switch, Tabs, Text, Textarea, TextInput } from '@mantine/core';
-import { useQuery } from '@tanstack/react-query';
-import { IconFlask, IconHistory, IconInfoCircle, IconSettings, IconSitemap } from '@tabler/icons-react';
+import { Modal, SimpleGrid, Stack, Text, Textarea, TextInput } from '@mantine/core';
+import { useNavigate } from 'react-router';
 import type { ActionTrigger, FormTrigger, InvokerConfig, ObjectSchema, PluginInfo, WorkflowStep, WorkflowTrigger } from '@asterius/shared';
-import { api } from '../../lib/api';
 import { IconPicker } from '../IconPicker';
-import { fieldProblems, fieldsToSchema, schemaToFields, type FieldDraft } from './fields';
+import { fieldProblems, type FieldDraft } from './fields';
 import { MONO_INPUT } from './blocks';
-import { stepProblems, WorkflowEditor } from './WorkflowEditor';
+import { stepProblems } from './WorkflowEditor';
 import { isFormLike } from './TriggerEditor';
-import { ActionHistory } from './ActionHistory';
-import { DryRunModal } from './DryRunModal';
-import { BuilderFooter, BuilderModal, CodePanels, CodeTabs, ManagedNotice, slugify, useCodeView, useSave } from './shell';
+import { BuilderFooter, slugify, useSave } from './shell';
 
 export { slugify };
 
 /**
- * Editor of a self-service workflow. A workflow is a trigger (today: a form submission) followed by steps.
- *  - Creating one only asks for the general settings; the workflow is then built node by node in the editor.
- *  - The builder tabs and the JSON / YAML tabs edit the same document, which is exactly what
- *    PUT /api/v1/actions/:id and the configuration files accept.
+ * A self-service workflow: a trigger (a form submission, an API call, a schedule…) followed by steps. This module
+ * holds the document helpers shared with the editor page (pages/admin/WorkflowFlow.tsx) and the "New workflow"
+ * dialog: creating one only asks for the general settings, the trigger and the steps are then built on the graph.
+ * The document is exactly what PUT /api/v1/actions/:id and the configuration files accept.
  */
 
 export interface ActionDoc {
@@ -32,8 +28,6 @@ export interface ActionDoc {
   enabled: boolean;
   [k: string]: unknown;
 }
-
-const formInputs = (t: WorkflowTrigger | null): ObjectSchema => (isFormLike(t) ? t.inputs : { properties: {} });
 
 const SLUG = /^[a-z][a-z0-9_-]{0,63}$/;
 const LEGACY_KEYS = ['blueprint', 'inputs', 'allowed', 'approval'];
@@ -104,34 +98,21 @@ type EditorProps = {
 };
 
 /**
- * New workflow: a small dialog with the general settings only, then the full editor on the created workflow.
- * Existing workflow: the full editor.
+ * New workflow: a small dialog with the general settings only; once created, the workflow opens in the editor page
+ * (/admin/actions/:id), where the trigger and the steps are built on the graph. Existing workflows open there directly.
  */
 export function ActionBuilder(props: EditorProps) {
-  const [created, setCreated] = useState<Record<string, unknown> | null>(null);
-  const close = () => {
-    setCreated(null);
-    props.onClose();
-  };
-  if (props.isNew && !created)
-    return (
-      <CreateAction value={props.value} onClose={close} onCreate={async (id, body) => setCreated((await props.onSave(id, body)) as Record<string, unknown>)} />
-    );
-  const value = created ? Object.fromEntries(Object.entries(created).filter(([k]) => k !== 'managed' && k !== 'allowedForMe')) : props.value;
-  const title = created ? `Edit ${String(value?.identifier)}` : `${props.readOnly ? 'View' : 'Edit'} ${String(value?.identifier)}`;
+  const navigate = useNavigate();
   return (
-    <BuilderModal opened={!!value} onClose={close} title={title}>
-      {value && (
-        <Builder
-          key={String(value.identifier)}
-          value={value}
-          readOnly={props.readOnly}
-          initialTab={created ? 'workflow' : undefined}
-          onSave={props.onSave}
-          onClose={close}
-        />
-      )}
-    </BuilderModal>
+    <CreateAction
+      value={props.value}
+      onClose={props.onClose}
+      onCreate={async (id, body) => {
+        await props.onSave(id, body);
+        props.onClose();
+        void navigate(`/admin/actions/${encodeURIComponent(id)}`);
+      }}
+    />
   );
 }
 
@@ -176,7 +157,7 @@ function CreateAction({
   );
 }
 
-function GeneralFields({
+export function GeneralFields({
   doc,
   isNew,
   onChange,
@@ -229,130 +210,5 @@ function GeneralFields({
       />
       <IconPicker value={doc.icon ?? null} onChange={(i) => onChange({ icon: i })} />
     </>
-  );
-}
-
-function Builder({
-  value,
-  readOnly,
-  initialTab,
-  onSave,
-  onClose,
-}: {
-  value: Record<string, unknown>;
-  readOnly?: boolean;
-  initialTab?: string;
-  onSave: (identifier: string, body: Record<string, unknown>) => Promise<unknown>;
-  onClose: () => void;
-}) {
-  const meta = useQuery({ queryKey: ['meta'], queryFn: api.meta, staleTime: Infinity });
-  const [doc, setDoc] = useState<ActionDoc>(() => toActionDoc(value));
-  const [fields, setFields] = useState<FieldDraft[]>(() => schemaToFields(formInputs(toActionDoc(value).trigger)));
-  const [tab, setTab] = useState<string | null>(initialTab ?? 'workflow');
-  const [testing, setTesting] = useState(false);
-  const [generation, setGeneration] = useState(0); // remount editors after a JSON/YAML replacement
-
-  const set = (patch: Partial<ActionDoc>) => setDoc((d) => ({ ...d, ...patch }));
-  const body = (): Record<string, unknown> => ({ ...doc, trigger: isFormLike(doc.trigger) ? { ...doc.trigger, inputs: fieldsToSchema(fields) } : doc.trigger });
-
-  const code = useCodeView({
-    body,
-    replace: (parsed) => {
-      const next = toActionDoc(parsed);
-      next.identifier = doc.identifier;
-      setDoc(next);
-      setFields(schemaToFields(formInputs(next.trigger)));
-      setGeneration((g) => g + 1);
-    },
-  });
-  const openTab = (t: string | null) => {
-    code.open(t);
-    setTab(t);
-  };
-  const saver = useSave(() => onSave(doc.identifier, body()), onClose);
-  const save = () => {
-    const found = docProblems(doc, fields, meta.data?.invokers ?? []);
-    if (code.error && (tab === 'json' || tab === 'yaml')) found.unshift(`${tab.toUpperCase()}: ${code.error}`);
-    void saver.save(found);
-  };
-  const missing = [...(doc.trigger ? [] : ['a trigger']), ...(doc.steps.length ? [] : ['a step'])];
-
-  return (
-    <Stack>
-      {readOnly && <ManagedNotice />}
-      <Tabs value={tab} onChange={openTab} keepMounted={false}>
-        <Tabs.List mb="md">
-          <Tabs.Tab
-            value="workflow"
-            leftSection={<IconSitemap size={16} />}
-            rightSection={doc.steps.length ? <Badge size="xs">{doc.steps.length}</Badge> : undefined}
-          >
-            Workflow
-          </Tabs.Tab>
-          <Tabs.Tab value="general" leftSection={<IconSettings size={16} />}>
-            General
-          </Tabs.Tab>
-          {typeof value.version === 'number' && !readOnly && (
-            <Tabs.Tab value="history" leftSection={<IconHistory size={16} />}>
-              History
-            </Tabs.Tab>
-          )}
-          <CodeTabs />
-          {
-            <Button ml="auto" size="xs" variant="light" leftSection={<IconFlask size={14} />} onClick={() => setTesting(true)}>
-              Test
-            </Button>
-          }
-        </Tabs.List>
-
-        <fieldset disabled={readOnly} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }} key={generation}>
-          <Tabs.Panel value="workflow">
-            {missing.length > 0 && !readOnly && (
-              <Alert color="gray" variant="light" icon={<IconInfoCircle size={18} />} mb="md">
-                Draft: add {missing.join(' and ')} so users can run it. You can save at any time.
-              </Alert>
-            )}
-            <WorkflowEditor
-              trigger={doc.trigger}
-              onTriggerChange={(trigger) => set({ trigger })}
-              fields={fields}
-              onFieldsChange={setFields}
-              steps={doc.steps}
-              onChange={(steps) => set({ steps })}
-            />
-          </Tabs.Panel>
-
-          <Tabs.Panel value="general">
-            <Stack gap="md">
-              <GeneralFields doc={doc} isNew={false} onChange={set} />
-              <TagsInput
-                label="Allowed secrets"
-                description="Secrets (NAME) and environment variables (env:NAME) this workflow may reference. Empty: any."
-                placeholder="DEPLOY_TOKEN"
-                value={(doc.secrets as string[] | undefined) ?? []}
-                onChange={(secrets) => set({ secrets: secrets.length ? secrets : undefined })}
-              />
-              <Switch
-                label="Enabled"
-                description="Disabled workflows are hidden from users"
-                checked={doc.enabled}
-                onChange={(e) => set({ enabled: e.currentTarget.checked })}
-              />
-            </Stack>
-          </Tabs.Panel>
-        </fieldset>
-
-        {typeof value.version === 'number' && (
-          <Tabs.Panel value="history">
-            <ActionHistory identifier={doc.identifier} current={value.version} onRestored={onClose} />
-          </Tabs.Panel>
-        )}
-
-        <CodePanels view={code} readOnly={readOnly} />
-      </Tabs>
-
-      {testing && <DryRunModal identifier={doc.identifier} body={body} onClose={() => setTesting(false)} />}
-      <BuilderFooter problems={saver.problems} readOnly={readOnly} saving={saver.saving} saveLabel="Save" onSave={save} onClose={onClose} />
-    </Stack>
   );
 }

@@ -36,6 +36,7 @@ const selfService = () => import('./pages/SelfService');
 const runs = () => import('./pages/Runs');
 const profile = () => import('./pages/Profile');
 const definitions = () => import('./pages/admin/Definitions');
+const workflowFlow = () => import('./pages/admin/WorkflowFlow');
 const access = () => import('./pages/admin/Access');
 const system = () => import('./pages/admin/System');
 const notificationsAdmin = () => import('./pages/admin/Notifications');
@@ -52,6 +53,12 @@ function RequireAuth() {
   // Signed in without an organization: create one or wait for an invitation.
   if (!user.organization && location.pathname !== '/welcome') return <Navigate to="/welcome" replace />;
   return <Outlet />;
+}
+
+/** Admin pages without the section tabs (the workflow editor). */
+function RequireAdminPage() {
+  const { isAdmin } = useAuth();
+  return isAdmin ? <Outlet /> : <Navigate to="/" replace />;
 }
 
 function RequireAdmin() {
@@ -96,6 +103,15 @@ const router = createBrowserRouter([
               { path: '/self-service', element: page(selfService, 'SelfService') },
               { path: '/runs', element: page(runs, 'Runs') },
               { path: '/runs/:id', element: page(runs, 'RunPage') },
+              { path: '/runs/:id/flow', element: page(runs, 'RunFlowPage') },
+              {
+                // The workflow editor fills the content panel: no admin section tabs.
+                element: <RequireAdminPage />,
+                children: [
+                  { path: '/admin/actions/:id', element: page(workflowFlow, 'WorkflowFlowPage') },
+                  { path: '/admin/actions/:id/flow', element: page(workflowFlow, 'WorkflowFlowRedirect') },
+                ],
+              },
               { path: '/approvals', element: page(runs, 'Approvals') },
               { path: '/profile', element: page(profile, 'Profile') },
               { path: '/orgs/new', element: page(organization, 'NewOrganization') },
