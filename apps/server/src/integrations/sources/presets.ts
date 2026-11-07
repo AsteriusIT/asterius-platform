@@ -151,6 +151,12 @@ export const PRESETS: Preset[] = [
         itemsPath: 'data',
         pagination: { type: 'next', nextUrl: 'links.next' },
       },
+      issue: {
+        path: '/rest/orgs/{orgId}/issues',
+        query: { version: '2024-06-21', limit: '100' },
+        itemsPath: 'data',
+        pagination: { type: 'next', nextUrl: 'links.next' },
+      },
     },
     example: {
       type: 'snyk',
