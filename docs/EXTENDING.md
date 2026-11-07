@@ -171,6 +171,16 @@ The scaffolder result has a stable shape, usable by later steps (`{{ steps.scaff
 
 `mode: pull-request` (default) pushes a branch to the existing repository `repo` and opens a PR/MR, and `mode: new-repository` creates the repository; both are implemented for `github`, `gitlab` and `azure-devops`. Re-runs are idempotent: an existing branch gets new commits on top and an open PR/MR for the same source and target is reused. Code lives in `apps/server/src/actions/invokers/scaffolder/`: `config.ts` (zod schema), `types.ts` (`ScaffoldPublisher`, `ScaffoldOutput`), one module per provider registered in `index.ts`.
 
+#### Authoring scaffolder templates
+
+The template is a directory of a repository (`templateRepo`, optionally `templatePath` and `templateRef`).
+
+- Placeholders `{{ name }}` and `{{ cookiecutter.name }}` (the `cookiecutter.` prefix is optional, spaces inside the braces are allowed) are replaced in **file paths and in text file contents**, with the values of `variables`. Variable names match `[A-Za-z_][A-Za-z0-9_]*`. A placeholder without a matching variable **fails the run** (no silent typos). There are no filters or conditionals.
+- Binary files (those containing a NUL byte) are copied as is.
+- Limits: at most 200 files, 512 KiB per file and 5 MiB in total.
+- `targetPath` (default `.`) is the directory in the target repository that receives the files; `..` is rejected, as is any rendered path with an empty or `..` segment.
+- A complete golden path (new GitHub repository from a template, then a `catalog` step registering the service with `{{ steps.create.output.repoUrl }}`) is the `scaffold-service-template` action in `examples/demo-config/self-service.yaml`.
+
 #### GitHub
 
 **GitHub `pull-request` re-runs are idempotent:** an existing branch gets new commits on top (it is only created when missing), files whose content is unchanged are skipped, and an open PR for `branch` -> `baseBranch` is reused (same `prUrl`/`number`) instead of opening a duplicate.
