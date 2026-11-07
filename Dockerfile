@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 # ---- build ----
-FROM node:24-bookworm-slim AS build
+FROM node:25-bookworm-slim AS build
 WORKDIR /src
 COPY package.json package-lock.json ./
 COPY apps/server/package.json apps/server/
@@ -13,7 +13,7 @@ RUN npm run build && npm prune --omit=dev --no-audit --no-fund
 
 # ---- runtime ----
 # Slim and non-root; works with a read-only root filesystem (only /tmp and DATA_DIR are writable when SQLite is used).
-FROM node:24-bookworm-slim
+FROM node:25-bookworm-slim
 ENV NODE_ENV=production \
     PORT=8080 \
     WEB_DIST_DIR=/app/apps/web/dist \
