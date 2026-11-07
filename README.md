@@ -103,6 +103,8 @@ See [docs/EXTENDING.md](docs/EXTENDING.md) for the API, the callback contract an
 claude mcp add --transport http acme https://platform.example.com/api/mcp --header "Authorization: Bearer ast_…"
 ```
 
+Remote clients (Claude.ai, ChatGPT connectors) sign in with OAuth 2.1 against the Keycloak realm: the server publishes RFC 9728 metadata at `/.well-known/oauth-protected-resource` and accepts the realm's access tokens; see [docs/MCP.md](docs/MCP.md).
+
 `whoami` and `list_approvals` show the token's organization and what waits for a decision; approving requests is deliberately not exposed to assistants.
 
 ## Deploying on Kubernetes

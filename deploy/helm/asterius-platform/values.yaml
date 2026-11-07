@@ -143,6 +143,13 @@ keycloak:
       cert-manager.io/cluster-issuer: letsencrypt
     tlsSecretName: asterius-keycloak-tls
 
+# ---------- MCP OAuth 2.1 (remote MCP clients) ----------
+# The Keycloak realm (else OIDC_ISSUER) is the advertised authorization server; see docs/MCP.md.
+mcp:
+  oauthIssuers: [] # extra issuers whose access tokens are accepted on /api/mcp
+  oauthAudiences: [] # accepted `aud` besides <publicUrl>/api/mcp (e.g. the connector client id)
+  oauthScopes: "" # default: openid profile email
+
 # ---------- configuration as code ----------
 # Files mounted at /etc/asterius/config (blueprints, actions, integrations, webhooks, teams).
 config:

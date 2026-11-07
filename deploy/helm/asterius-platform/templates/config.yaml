@@ -56,6 +56,15 @@ data:
   KEYCLOAK_INTERNAL_URL: {{ $v.keycloak.internalUrl | quote }}
   {{- end }}
   {{- end }}
+  {{- with $v.mcp.oauthIssuers }}
+  MCP_OAUTH_ISSUERS: {{ join "," . | quote }}
+  {{- end }}
+  {{- with $v.mcp.oauthAudiences }}
+  MCP_OAUTH_AUDIENCES: {{ join "," . | quote }}
+  {{- end }}
+  {{- with $v.mcp.oauthScopes }}
+  MCP_OAUTH_SCOPES: {{ . | quote }}
+  {{- end }}
   {{- with $v.auth.entra.tenantId }}
   ENTRA_TENANT_ID: {{ . | quote }}
   {{- end }}

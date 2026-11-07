@@ -634,6 +634,14 @@
         }
       }
     },
+    "mcp": {
+      "type": "object",
+      "properties": {
+        "oauthIssuers": { "type": "array", "items": { "type": "string" } },
+        "oauthAudiences": { "type": "array", "items": { "type": "string" } },
+        "oauthScopes": { "type": "string" }
+      }
+    },
     "keycloak": {
       "type": "object",
       "properties": {
