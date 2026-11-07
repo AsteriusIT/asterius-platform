@@ -6,7 +6,7 @@
 |---|---|
 | `apps/server/src/app.ts` | Fastify app: security headers (CSP, HSTS), rate limiting, raw-body JSON parser (webhook signatures), routes, static UI. |
 | `apps/server/src/index.ts` | Process entry: role (`all` / `api` / `worker`), config loader, workers, graceful shutdown. |
-| `apps/server/src/db.ts` | PostgreSQL (production) or SQLite (development) behind one driver; numbered migrations under an advisory lock. |
+| `apps/server/src/db.ts` | PostgreSQL (production) or SQLite (development) behind one driver; baseline schema (`schema.ts`) plus numbered migrations under an advisory lock. |
 | `apps/server/src/schemas.ts` | zod schemas of every configurable resource, shared by the API and the configuration files. |
 | `apps/server/src/config-loader.ts` | Configuration as code: reads `CONFIG_DIR`, applies it every minute when it changes, prunes removed resources, exports the current state as YAML. |
 | `apps/server/src/catalog/` | Blueprints, entities (Ajv validation, relations index, search), JSON Schema helpers. |
@@ -48,8 +48,7 @@ organization) and an optional platform `superadmin` flag.
   webhooks, secrets, scorecards, dashboards, action versions, tombstones, AI budgets…); records keyed by an id carry an
   `org_id` column (runs, tokens, audit, entity history, AI usage and reviews, inbox notifications); notification
   settings and the config-as-code status are one row per organization. Model prices, rate limits and login counters
-  are platform-wide. Migration 35 (`orgs/migrations.ts`) detects each table's shape, so fresh installs, single-tenant
-  installs and the first multi-tenant build all converge to the same schema.
+  are platform-wide. The whole schema is created by the baseline migration (`apps/server/src/schema.ts`).
 - **Tenant boundaries.** `${env:NAME}` references (pod environment), the SQL source's `sqlite` driver (local files)
   and, unless listed otherwise, the platform's Kubernetes credentials (`KUBERNETES_ORGS`) and its own cloud identity
   (`PLATFORM_IDENTITY_ORGS`: external secret managers, auth blocks without credentials) are reserved to the default
@@ -170,7 +169,9 @@ walks relations transitively (dependencies, or what depends on the entity for im
 
 ## Database migrations
 
-Migrations (`MIGRATIONS` in `db.ts`) are numbered, additive and each runs in its own transaction together with its `schema_migrations` row. By default every pod applies pending ones at startup under an advisory lock. Because rolling updates run old and new pods side by side, write them **expand/contract**:
+The schema history was flattened on 2026-11-07, before the first production release: migration 1 (`baseline schema`, `apps/server/src/schema.ts`) creates the final schema in one step and there is no upgrade path from earlier development databases. From now on append migrations (2, 3…) to `MIGRATIONS` in `db.ts` and never edit the released baseline.
+
+Migrations are numbered, additive and each runs in its own transaction together with its `schema_migrations` row. By default every pod applies pending ones at startup under an advisory lock. Because rolling updates run old and new pods side by side, write them **expand/contract**:
 
 1. *Expand* (release N): add nullable columns, new tables and indexes only; code reads and writes both old and new shapes. Never rename, drop or tighten a column in the same release that stops using it.
 2. *Migrate data* in the background or in the same additive migration if small.
