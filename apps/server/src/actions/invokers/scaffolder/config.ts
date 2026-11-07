@@ -29,26 +29,21 @@ export const scaffoldConfigSchema = z.looseObject({
   apiUrl: optionalString,
   /** GitLab base URL (also read as the GitHub API URL when `apiUrl` is not set). */
   baseUrl: optionalString,
-  /** new-repository: description, visibility (github: private|internal|public, default private), topics, default branch = `baseBranch`. */
+  /** new-repository: description (Azure DevOps: commit message suffix / PR body), visibility (default private), topics (github). */
   description: optionalString,
-  visibility: optionalString,
+  visibility: z.enum(['private', 'internal', 'public']).optional(),
   topics: z.union([z.array(z.string()), z.string()]).optional(),
+  /** new-repository: branch that receives the initial commit (github: `baseBranch`; default main). */
+  defaultBranch: optionalString,
   /** github new-repository: team slug (organisation repositories) granted `teamPermission` (default push) on the new repository. */
   team: optionalString,
   teamPermission: optionalString,
   /** github new-repository: `org` or `user`; detected from the token owner when not set. */
   ownerType: optionalString,
-  /** github new-repository: push onto a repository that already exists and is not empty (empty ones are always filled). */
-  reuseExisting: z.union([z.boolean(), z.string()]).optional(),
-  /** azure-devops */
-  organization: optionalString,
-  project: optionalString,
-  /** new-repository: branch that receives the initial commit (default main). */
-  defaultBranch: optionalString,
-  /** Repository / pull request description. */
-  description: optionalString,
-  /** new-repository: push into an existing non-empty repository instead of failing. */
+  /** new-repository: push into an existing non-empty repository instead of failing (empty ones are always filled). */
   reuseExisting: z.union([z.boolean(), z.enum(['true', 'false']).transform((v) => v === 'true')]).optional(),
+  /** gitlab new-repository: group / sub-group path that owns the project (default: the part of `repo` before the last `/`). */
+  namespace: optionalString,
   /** azure-devops: reviewer ids (array or comma separated). */
   reviewers: z.union([z.array(z.string()), z.string()]).optional(),
 });

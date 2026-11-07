@@ -1,4 +1,4 @@
-import { http } from '../../../lib/http.js';
+import { http, UpstreamError } from '../../../lib/http.js';
 import { guardedDownload } from '../../../lib/netguard.js';
 import { str } from '../../types.js';
 import type { ScaffoldConfig } from './config.js';
@@ -35,31 +35,141 @@ async function readTemplate(c: ScaffoldConfig): Promise<TemplateFile[]> {
   return out;
 }
 
-/** mode: pull-request — one commit on a new branch from the base branch, then a merge request. */
+/** GET that maps a 404 to null. */
+async function find<T>(url: string, c: ScaffoldConfig): Promise<T | null> {
+  try {
+    return (await http<T>(url, { headers: headers(c) })).data;
+  } catch (e) {
+    if (e instanceof UpstreamError && e.status === 404) return null;
+    throw e;
+  }
+}
+
+/** Paths of the files present on `ref` (so re-runs update them instead of failing on "already exists"). */
+async function existingPaths(c: ScaffoldConfig, project: string, ref: string): Promise<Set<string>> {
+  const out = new Set<string>();
+  for (let page = 1; page <= 50; page++) {
+    const tree = await find<Array<{ path: string; type: string }>>(
+      `${api(c)}/projects/${project}/repository/tree?recursive=true&per_page=100&page=${page}&ref=${encodeURIComponent(ref)}`,
+      c,
+    );
+    if (!tree) break; // empty repository or unknown ref
+    for (const e of tree) if (e.type === 'blob') out.add(e.path);
+    if (tree.length < 100) break;
+  }
+  return out;
+}
+
+const actions = (files: PublishContext['files'], existing: Set<string>) =>
+  files.map((f) => ({ action: existing.has(f.path) ? 'update' : 'create', file_path: f.path, content: f.content, encoding: 'base64' }));
+
+/**
+ * mode: pull-request — one commit on the branch, then a merge request. Re-runs: an existing branch gets the commit
+ * on top of it, an open MR for the same source/target branches is reused.
+ */
 async function mergeRequest({ config: c, files, branch, title, body }: PublishContext): Promise<PublishResult> {
   const project = encodeURIComponent(c.repo);
   const base = str(c.baseBranch || 'main');
+  const branchExists = !!(await find(`${api(c)}/projects/${project}/repository/branches/${encodeURIComponent(branch)}`, c));
+  const existing = branchExists ? await existingPaths(c, project, branch) : new Set<string>();
   const commit = await http<{ id?: string }>(`${api(c)}/projects/${project}/repository/commits`, {
     method: 'POST',
     headers: headers(c),
     body: {
       branch,
-      start_branch: base,
+      ...(branchExists ? {} : { start_branch: base }),
       commit_message: title,
-      actions: files.map((f) => ({ action: 'create', file_path: f.path, content: f.content, encoding: 'base64' })),
+      actions: actions(files, existing),
     },
   });
-  const mr = await http<{ web_url: string; iid: number; sha?: string }>(`${api(c)}/projects/${project}/merge_requests`, {
+  const open = await http<Array<{ web_url: string; iid: number; sha?: string }>>(
+    `${api(c)}/projects/${project}/merge_requests?state=opened&source_branch=${encodeURIComponent(branch)}&target_branch=${encodeURIComponent(base)}`,
+    { headers: headers(c) },
+  );
+  const mr = open.data[0]
+    ? open.data[0]
+    : (
+        await http<{ web_url: string; iid: number; sha?: string }>(`${api(c)}/projects/${project}/merge_requests`, {
+          method: 'POST',
+          headers: headers(c),
+          body: { source_branch: branch, target_branch: base, title, description: body, remove_source_branch: true },
+        })
+      ).data;
+  return {
+    repoUrl: mr.web_url.replace(/\/(-\/)?merge_requests\/\d+$/, ''),
+    prUrl: mr.web_url,
+    number: mr.iid,
+    branch,
+    commit: commit.data.id ?? mr.sha ?? '',
+    provider: 'gitlab',
+    files: files.map((f) => f.path),
+  };
+}
+
+interface GitlabProject {
+  id: number;
+  web_url: string;
+  default_branch?: string | null;
+  empty_repo?: boolean;
+}
+
+/**
+ * mode: new-repository — create the project in its namespace and push the files as the initial commit.
+ * `repo` is the project path ("group/sub/name", or just "name" with `namespace`). An existing project is only
+ * used when it is empty or `reuseExisting: true` (then the files are committed on top of its default branch).
+ */
+async function newProject({ config: c, files, title }: PublishContext): Promise<PublishResult> {
+  const segments = c.repo.split('/').filter(Boolean);
+  const path = segments.pop()!;
+  const namespace = (c.namespace ? c.namespace.split('/').filter(Boolean) : segments).join('/');
+  const full = [namespace, path].filter(Boolean).join('/');
+  const wanted = c.defaultBranch || c.baseBranch || 'main';
+  let project = await find<GitlabProject>(`${api(c)}/projects/${encodeURIComponent(full)}`, c);
+  let branch = wanted;
+  let existing = new Set<string>();
+  if (project) {
+    const empty = project.empty_repo ?? !project.default_branch;
+    if (!empty && !c.reuseExisting) {
+      throw new Error(`gitlab: project ${full} already exists and is not empty (set reuseExisting: true to commit into it)`);
+    }
+    if (!empty) {
+      branch = project.default_branch || wanted;
+      existing = await existingPaths(c, String(project.id), branch);
+    }
+  } else {
+    let namespaceId: number | undefined;
+    if (namespace) {
+      const ns = await find<{ id: number }>(`${api(c)}/namespaces/${encodeURIComponent(namespace)}`, c);
+      if (!ns) throw new Error(`gitlab: namespace ${namespace} not found`);
+      namespaceId = ns.id;
+    }
+    project = (
+      await http<GitlabProject>(`${api(c)}/projects`, {
+        method: 'POST',
+        headers: headers(c),
+        body: {
+          name: path,
+          path,
+          ...(namespaceId ? { namespace_id: namespaceId } : {}),
+          description: c.description,
+          visibility: c.visibility ?? 'private',
+          default_branch: wanted,
+          initialize_with_readme: false,
+        },
+      })
+    ).data;
+  }
+  const commit = await http<{ id?: string }>(`${api(c)}/projects/${project.id}/repository/commits`, {
     method: 'POST',
     headers: headers(c),
-    body: { source_branch: branch, target_branch: base, title, description: body, remove_source_branch: true },
+    body: { branch, commit_message: title, actions: actions(files, existing) },
   });
   return {
-    repoUrl: mr.data.web_url.replace(/\/(-\/)?merge_requests\/\d+$/, ''),
-    prUrl: mr.data.web_url,
-    number: mr.data.iid,
+    repoUrl: project.web_url,
+    prUrl: null,
+    number: null,
     branch,
-    commit: commit.data.id ?? mr.data.sha ?? '',
+    commit: commit.data.id ?? '',
     provider: 'gitlab',
     files: files.map((f) => f.path),
   };
@@ -67,10 +177,11 @@ async function mergeRequest({ config: c, files, branch, title, body }: PublishCo
 
 export const gitlabPublisher: ScaffoldPublisher = {
   provider: 'gitlab',
-  modes: ['pull-request'],
+  modes: ['pull-request', 'new-repository'],
   readTemplate,
   async publish(ctx) {
     if (ctx.config.mode === 'pull-request') return mergeRequest(ctx);
+    if (ctx.config.mode === 'new-repository') return newProject(ctx);
     throw unsupportedMode('gitlab', ctx.config.mode);
   },
 };

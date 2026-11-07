@@ -51,10 +51,11 @@ export const scaffolderInvoker: Invoker = {
       { key: 'teamPermission', label: 'Team permission', kind: 'select', options: ['pull', 'triage', 'push', 'maintain', 'admin'], advanced: true },
       { key: 'reuseExisting', label: 'Reuse a non-empty existing repository (new-repository)', kind: 'boolean', advanced: true },
       { key: 'token', label: 'Token', kind: 'secret', required: true },
+      { key: 'namespace', label: 'GitLab group / namespace (new-repository)', kind: 'text', advanced: true, placeholder: 'my-group/sub' },
+      { key: 'defaultBranch', label: 'Default branch (new-repository)', kind: 'text', advanced: true, placeholder: 'main' },
       { key: 'baseUrl', label: 'API URL (GitHub Enterprise / GitLab)', kind: 'text', advanced: true },
       { key: 'organization', label: 'Organization URL (Azure DevOps)', kind: 'text', placeholder: 'https://dev.azure.com/my-org' },
       { key: 'project', label: 'Project (Azure DevOps)', kind: 'text' },
-      { key: 'defaultBranch', label: 'Default branch (new-repository)', kind: 'text', placeholder: 'main', advanced: true },
       { key: 'reviewers', label: 'Reviewer ids (Azure DevOps, comma separated)', kind: 'text', advanced: true },
     ],
     example: {

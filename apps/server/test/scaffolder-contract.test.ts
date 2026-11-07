@@ -46,15 +46,6 @@ describe('scaffolder config schema', () => {
   it('its info.example is valid', () => expect(() => inv.validate(inv.info.example as Record<string, unknown>)).not.toThrow());
 });
 
-describe('scaffolder modes and providers not implemented yet', () => {
-  const inv = getInvoker('scaffolder');
-  it.each([
-    [{ provider: 'gitlab', mode: 'new-repository' }, /not supported yet for provider gitlab/],
-  ])('%j fails clearly before any network call', async (extra, re) => {
-    await expect(inv.start({ ctx, config: { ...base, ...extra }, log })).rejects.toThrow(re);
-  });
-});
-
 describe('scaffolder output contract', () => {
   it('github: repoUrl, prUrl, branch, commit, provider, files (+ legacy pullRequest, number)', async () => {
     const srv = await fakeServer((m, url, send) => {
@@ -88,6 +79,7 @@ describe('scaffolder output contract', () => {
       if (url.includes('/projects/org%2Ftpl/repository/tree')) return send([{ path: 'a.txt', type: 'blob' }]);
       if (url.includes('/repository/files/a.txt/raw')) return send('x');
       if (url.endsWith('/repository/commits')) return send({ id: 'abc123' }, 201);
+      if (_m === 'GET' && url.includes('/merge_requests?')) return send([]);
       if (url.endsWith('/merge_requests')) return send({ web_url: 'https://gl/org/new/-/merge_requests/3', iid: 3 }, 201);
       send({}, 404);
     });
