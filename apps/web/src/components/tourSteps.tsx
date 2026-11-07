@@ -58,8 +58,9 @@ export function tourSteps(opts: { name: string; isAdmin: boolean }): TourStep[] 
             title: 'Administration',
             body: (
               <>
-                Define blueprints, actions, integrations and webhooks: in YAML here, or as code in the configuration repository (<Code>CONFIG_DIR</Code>).
-                Secrets are stored encrypted and referenced as <Code>{'${secret:NAME}'}</Code>.
+                Five categories (catalog model, automation, access, governance, settings), each with tabs. Define blueprints, actions, integrations and
+                webhooks: in YAML here, or as code in the configuration repository (<Code>CONFIG_DIR</Code>). Secrets are stored encrypted and referenced as{' '}
+                <Code>{'${secret:NAME}'}</Code>.
               </>
             ),
           } satisfies TourStep,
