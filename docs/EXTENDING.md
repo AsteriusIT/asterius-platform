@@ -192,6 +192,7 @@ All endpoints take `Authorization: Bearer <token>`. Personal tokens come from th
 | `GET /api/v1/deleted-entities` · `POST …/entities/:id/restore` · `DELETE /api/v1/deleted-entities/:bp/:id` | tombstones (admin) |
 | `GET …/entities/:id/scorecards` · `GET /api/v1/scorecards/:id/summary` | scorecard results of an entity, distribution and trend |
 | `POST /api/v1/blueprints/:bp/impact` · `…/migrate` · `GET …/validation` | check a proposed blueprint against its entities, migrate (rename / default / remove), last background report (admin) |
+| `GET /api/v1/policies` · `PUT\|DELETE /api/v1/policies/:id` | policy gate definitions (admin) |
 | `GET /api/v1/dashboards/resolve?blueprint=` · `GET …/dashboards/:id/data` | the dashboard to show and its widget data |
 | `GET /api/v1/actions` · `POST /api/v1/actions/:id/runs` `{ entity?, inputs }` | trigger actions from scripts |
 | `GET /api/v1/runs?mine=true&status=…` · `GET /api/v1/runs/:id` | runs with logs and approvals |
@@ -202,7 +203,7 @@ Entity identifiers may contain `/`, `:` and `@` (third-party ids); URL-encode th
 
 ## Catalog governance
 
-All of these are declared in the configuration files like the other resources (`scorecards:`, `dashboards:`), or in the admin UI.
+All of these are declared in the configuration files like the other resources (`scorecards:`, `policies:`, `dashboards:`), or in the admin UI.
 
 **Scorecards.** Rules are JSONata over the entity (`properties`, `relations`, `computed`, `team`, `related.<relation>[]` for the entities it points to, `incoming.<blueprint.relation>[]` for those pointing to it). Levels are ordered; an entity reaches a level when it passes the rules of that level and the levels below. Results are recomputed on every entity write and hourly, level changes emit `scorecard.changed`, and workflows can read `entity.scorecards.<id>.level` / `.rank` in `if` conditions and templates.
 
@@ -215,6 +216,18 @@ scorecards:
     rules:
       - { identifier: has_owner, title: Has an owner, level: Bronze, expression: team != null }
       - { identifier: has_docs, title: Has docs, level: Silver, expression: properties.docs != null }
+```
+
+**Policies** (`policies:`, admin UI *Policies*). A policy is a JSONata guard evaluated before a run is queued (`target: run`, filter with `match.actions`) or before an entity is created, updated or deleted through the API or the catalog invoker (`target: entity`, filter with `match.blueprints` and `match.operations`). The context is `{ inputs, entity, previous, principal, action, blueprint, operation }` (`entity` is what would be stored, `previous` the stored entity; `principal` has `id`, `email`, `name`, `role`, `roles`, `teams`). The expression must evaluate to exactly `true` to allow; any other result, and any evaluation error, denies (fail closed) with `403` `{ error, policy, message }` and a `policy.denied` audit entry. `message` may embed `{{ expression }}` over the same context. Disabled policies are ignored. Integration syncs, configuration seeding and cascading deletes of referrers are not gated. Policies are per organization; those declared in configuration files are managed (read-only through the API).
+
+```yaml
+policies:
+  - identifier: service-needs-owner
+    title: Services need an owner team
+    target: entity
+    match: { blueprints: [service], operations: [create, update] }
+    expression: entity.team != null
+    message: "{{ entity.identifier }} must have an owner team"
 ```
 
 **Computed properties** (`computed:` in a blueprint). `calculated` is a JSONata expression evaluated on read; `mirror` copies a property (or `title`, `team`) of the related entity; `aggregation` is `count`, `sum`, `min` or `max` over the entities pointing to this one through `blueprint.relation`, with an optional JSONata `filter`. Mirrors and aggregations are materialised when either side is written, so they work in `filter.<name>=` queries. Values appear under `entity.computed`.

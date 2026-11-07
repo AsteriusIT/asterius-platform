@@ -181,6 +181,38 @@ export const scorecardDef = z
   });
 export type ScorecardDef = z.infer<typeof scorecardDef>;
 
+/**
+ * Policy gate: a JSONata expression evaluated before a run is queued (`target: run`) or an entity is created, updated
+ * or deleted through the API or the catalog invoker (`target: entity`). The expression must evaluate to `true` to allow;
+ * anything else, and any evaluation error, denies. The context is `{ inputs, entity, previous, principal, action, blueprint, operation }`.
+ */
+export const policyDef = z.object({
+  identifier: slug,
+  title: z.string().min(1).max(100),
+  description: z.string().max(2000).default(''),
+  enabled: z.boolean().default(true),
+  target: z.enum(['run', 'entity']),
+  /** Optional filters; an empty/missing filter matches everything. */
+  match: z
+    .object({
+      /** `target: run`: action identifiers. */
+      actions: z.array(slug).max(100).optional(),
+      /** `target: entity`: blueprint identifiers. */
+      blueprints: z.array(slug).max(100).optional(),
+      /** `target: entity`: operations. */
+      operations: z
+        .array(z.enum(['create', 'update', 'delete']))
+        .max(3)
+        .optional(),
+    })
+    .default({}),
+  /** JSONata: true allows, anything else denies. */
+  expression: z.string().min(1).max(4000),
+  /** Deny message; may embed `{{ expression }}` over the same context. */
+  message: z.string().max(1000).default('Denied by policy'),
+});
+export type PolicyDef = z.infer<typeof policyDef>;
+
 /** Data migrations offered when a blueprint changes: applied to the properties of its existing entities. */
 export const entityMigration = z.discriminatedUnion('type', [
   z.object({ type: z.literal('rename'), from: fieldName, to: fieldName }),
@@ -710,6 +742,7 @@ export const configFile = z.object({
   integrations: z.array(integrationDef).default([]),
   webhooks: z.array(webhookDef).default([]),
   scorecards: z.array(scorecardDef).default([]),
+  policies: z.array(policyDef).default([]),
   dashboards: z.array(dashboardDef).default([]),
   entities: z.array(seedEntity).default([]),
 });

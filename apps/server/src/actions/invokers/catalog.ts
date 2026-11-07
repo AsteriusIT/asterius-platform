@@ -1,7 +1,8 @@
 import { config as platform } from '../../config.js';
 import { all } from '../../db.js';
 import { orgId } from '../../orgs/context.js';
-import { deleteEntity, upsertEntity } from '../../catalog/entities.js';
+import { deleteEntity, findEntity, upsertEntity } from '../../catalog/entities.js';
+import { enforceEntityDelete, enforceEntityWrite } from '../../policies/policies.js';
 import { requireFields, str, type Invoker } from '../types.js';
 
 /**
@@ -44,12 +45,19 @@ export const catalogInvoker: Invoker = {
     const blueprint = str(config.blueprint);
     const identifier = str(config.identifier);
     const actor = { id: ctx.trigger.user.id, email: ctx.trigger.user.email };
+    const principal = ctx.trigger.user;
+    const gateDelete = async (bp: string, id: string) => {
+      const existing = await findEntity(bp, id);
+      if (existing) await enforceEntityDelete({ principal, blueprint: bp, existing }, actor);
+    };
     if (config.operation === 'delete') {
       const deleted = config.cascade ? await dependentsOf(blueprint, identifier) : [];
       for (const d of deleted) {
+        await gateDelete(d.blueprint, d.identifier);
         await deleteEntity(d.blueprint, d.identifier, actor);
         await log(`Deleted ${d.blueprint}/${d.identifier} (points to ${blueprint}/${identifier})`);
       }
+      await gateDelete(blueprint, identifier);
       await deleteEntity(blueprint, identifier, actor);
       await log(`Deleted ${blueprint}/${identifier}`);
       return { status: 'SUCCESS', result: { deleted: [...deleted, { blueprint, identifier }] } };
@@ -57,7 +65,12 @@ export const catalogInvoker: Invoker = {
     const { entity, created } = await upsertEntity(
       blueprint,
       { identifier, title: config.title, team: config.team || undefined, properties: config.properties ?? {}, relations: config.relations ?? {} },
-      { source: 'action', actor, merge: !!config.merge },
+      {
+        source: 'action',
+        actor,
+        merge: !!config.merge,
+        authorize: (i, existing) => enforceEntityWrite({ principal, blueprint, input: i, existing, merge: !!config.merge }, actor),
+      },
     );
     await log(`${created ? 'Created' : 'Updated'} ${blueprint}/${identifier}`);
     return {

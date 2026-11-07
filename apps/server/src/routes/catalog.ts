@@ -46,6 +46,7 @@ import {
 import { countPendingApprovals, listRuns } from '../actions/runs.js';
 import { blueprintDef, entityInput, entityQueryBody, SORT_RE, type EntityInput } from '../schemas.js';
 import type { Entity } from '@asterius/shared';
+import { enforceEntityDelete, enforceEntityWrite } from '../policies/policies.js';
 import { bpParam, entityParam, idParam, page } from './util.js';
 
 /**
@@ -323,6 +324,7 @@ export async function catalogRoutes(app: FastifyInstance) {
         source: req.principal.provider === 'service' ? 'api' : 'ui',
         actor: actorOf(req.principal),
         op: 'revert',
+        authorize: (i, existing) => enforceEntityWrite({ principal: req.principal, blueprint: bp, input: i, existing }),
       },
     );
     await audit(actorOf(req.principal), 'entity.reverted', `${bp}/${id}`, { toVersion: version });
@@ -351,7 +353,10 @@ export async function catalogRoutes(app: FastifyInstance) {
       source: req.principal.provider === 'service' ? 'api' : 'ui',
       actor: actorOf(req.principal),
       createOnly: true,
-      authorize: (i, existing) => assertCanWrite(req.principal, bp, existing, i.team ?? null),
+      authorize: async (i, existing) => {
+        await assertCanWrite(req.principal, bp, existing, i.team ?? null);
+        await enforceEntityWrite({ principal: req.principal, blueprint: bp, input: i, existing });
+      },
     });
     await audit(actorOf(req.principal), 'entity.created', `${bp}/${entity.identifier}`);
     return reply.code(201).header('etag', etag(entity)).send(entity);
@@ -367,7 +372,10 @@ export async function catalogRoutes(app: FastifyInstance) {
         actor: actorOf(req.principal),
         merge: method === 'patch',
         ifMatch: ifMatchOf(req.headers['if-match']),
-        authorize: (i, existing) => assertCanWrite(req.principal, bp, existing, i.team),
+        authorize: async (i, existing) => {
+          await assertCanWrite(req.principal, bp, existing, i.team);
+          await enforceEntityWrite({ principal: req.principal, blueprint: bp, input: i, existing, merge: method === 'patch' });
+        },
       });
       if (changed) await audit(actorOf(req.principal), created ? 'entity.created' : 'entity.updated', `${bp}/${id}`);
       return reply.header('etag', etag(entity)).send(entity);
@@ -377,6 +385,7 @@ export async function catalogRoutes(app: FastifyInstance) {
     const { bp, id } = entityParam.parse(req.params);
     const existing = await getEntity(bp, id);
     assertCan(req.principal, await getBlueprintCached(bp), 'delete', existing.team);
+    await enforceEntityDelete({ principal: req.principal, blueprint: bp, existing });
     await deleteEntity(bp, id, actorOf(req.principal));
     await audit(actorOf(req.principal), 'entity.deleted', `${bp}/${id}`);
     return { ok: true };
@@ -395,7 +404,10 @@ export async function catalogRoutes(app: FastifyInstance) {
       source: 'api',
       actor: actorOf(req.principal),
       merge: body.merge,
-      authorize: (i: EntityInput, existing) => assertCanWrite(req.principal, bp, existing, i.team),
+      authorize: async (i: EntityInput, existing) => {
+        await assertCanWrite(req.principal, bp, existing, i.team);
+        await enforceEntityWrite({ principal: req.principal, blueprint: bp, input: i, existing, merge: body.merge });
+      },
     });
     for (const [index, r] of outcomes.entries()) {
       if (!r.ok) result.errors.push({ index, error: r.error });

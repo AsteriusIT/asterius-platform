@@ -111,6 +111,7 @@ const router = createBrowserRouter([
                   { path: 'integrations', element: page(definitions, 'IntegrationsAdmin') },
                   { path: 'dashboards', element: page(definitions, 'DashboardsAdmin') },
                   { path: 'scorecards', element: page(definitions, 'ScorecardsAdmin') },
+                  { path: 'policies', element: page(definitions, 'PoliciesAdmin') },
                   { path: 'webhooks', element: page(definitions, 'WebhooksAdmin') },
                   { path: 'teams', element: page(access, 'TeamsAdmin') },
                   { path: 'users', element: page(access, 'UsersAdmin') },

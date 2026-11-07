@@ -7,7 +7,8 @@ import { audit } from '../audit.js';
 import { maskText } from '../lib/mask.js';
 import { actorOf, automationPrincipal, isAdmin, matchesSubjects, principalOf, type Principal, type UserRow } from '../auth/users.js';
 import { notify } from '../inbox.js';
-import { getEntity } from '../catalog/entities.js';
+import { findEntity, getEntity } from '../catalog/entities.js';
+import { enforcePolicies } from '../policies/policies.js';
 import { compact, validate } from '../catalog/validation.js';
 import { canTrigger, getAction } from './actions.js';
 import { assertCan } from '../auth/access.js';
@@ -475,6 +476,19 @@ interface NewRun {
 
 async function insertRun(n: NewRun): Promise<{ id: string; replay?: false } | { replay: true }> {
   const { p, action } = n;
+  // Policy gate: before anything is stored or queued.
+  await enforcePolicies(
+    'run',
+    {
+      principal: p,
+      action: { identifier: action.identifier, title: action.title },
+      blueprint: n.blueprint,
+      operation: 'run',
+      inputs: n.inputs,
+      entity: n.entity ? await findEntity(n.blueprint!, n.entity) : null,
+    },
+    actorOf(p),
+  );
   const id = newId();
   const t = now();
   const status: RunStatus = n.approval.required ? 'PENDING_APPROVAL' : 'QUEUED';

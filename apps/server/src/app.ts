@@ -18,6 +18,7 @@ import { catalogRoutes } from './routes/catalog.js';
 import { actionRoutes } from './routes/actions.js';
 import { integrationRoutes } from './routes/integrations.js';
 import { adminRoutes } from './routes/admin.js';
+import { policyRoutes } from './routes/policies.js';
 import { orgRoutes } from './routes/orgs.js';
 import { migrateLiteralWebhookSecrets } from './webhooks/webhooks.js';
 import { openRequestContext } from './orgs/context.js';
@@ -98,7 +99,13 @@ export async function buildApp(opts: AppOptions = {}): Promise<FastifyInstance> 
   app.setErrorHandler((err, req, reply) => {
     if (err instanceof ZodError)
       return reply.code(400).send({ error: err.issues.map((i) => `${i.path.join('.') || 'body'}: ${i.message}`).join('; '), issues: err.issues });
-    if (err instanceof HttpError) return reply.code(err.statusCode).send({ error: err.message });
+    if (err instanceof HttpError) {
+      const d = err.details as { policy?: string; message?: string } | undefined;
+      // A policy denial names the policy (and its message) so clients can show why.
+      return reply
+        .code(err.statusCode)
+        .send(err.statusCode === 403 && d?.policy ? { error: err.message, policy: d.policy, message: d.message } : { error: err.message });
+    }
     const status = (err as { statusCode?: number }).statusCode ?? 500;
     if (status >= 500) req.log.error({ err }, 'request failed');
     return reply.code(status).send({ error: status >= 500 ? 'Internal error' : (err as Error).message });
@@ -148,6 +155,7 @@ export async function buildApp(opts: AppOptions = {}): Promise<FastifyInstance> 
   await app.register(
     async (v1) => {
       await v1.register(catalogRoutes);
+      await v1.register(policyRoutes);
       await v1.register(actionRoutes);
       await v1.register(integrationRoutes);
       await v1.register(notificationRoutes);
