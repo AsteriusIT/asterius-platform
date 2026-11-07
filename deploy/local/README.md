@@ -28,6 +28,11 @@ TLS certificates come from the cluster's `local-ca` ClusterIssuer (cert-manager)
 | asterius-platform | asterius-platform | API (HPA, PDB) and worker Deployments, CNPG PostgreSQL (2 instances), Keycloak and its CNPG database, migration Job, Ingress, NetworkPolicy, RBAC, ServiceMonitor, PrometheusRule, Grafana dashboard |
 | asterius-jobs | (empty) | Target namespace of the Kubernetes Job invoker |
 
+The platform's configuration is the ConfigMap `asterius-platform-config-files`: the repository's `config/` plus the
+Grafana integration of `examples/grafana/platform/` (blueprints and integrations for Grafana folders, dashboards,
+data sources, alert rules and alert notifications). The script also provisions the Grafana side; see
+[examples/grafana/README.md](../../examples/grafana/README.md).
+
 ## Secrets and the `.env` file
 
 ```
@@ -40,6 +45,7 @@ TLS certificates come from the cluster's `local-ca` ClusterIssuer (cert-manager)
 | `secret/asterius-platform/keycloak` | asterius-platform/asterius-platform-keycloak, keycloak-db-credentials | Keycloak database owner, admin and platform client secret |
 | `secret/observability/grafana` | observability/grafana-admin | Grafana admin |
 | `secret/apps/demo` | (none) | sample for `${vault:secret/apps/demo#token}` in actions |
+| `secret/apps/grafana` | (none) | Grafana service account token and webhook token, read by the Grafana integrations as `${vault:…}` |
 
 - **Not every `.env` key is copied.** Keys the chart already sets in its ConfigMap (`PUBLIC_URL`, `AUTH_PROVIDERS`,
   `KEYCLOAK_URL`…) and local-only ones (`KUBECONFIG_PATH`, `DATABASE_URL`, `KEYCLOAK_CLIENT_SECRET`) are skipped,

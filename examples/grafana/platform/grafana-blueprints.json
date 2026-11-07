@@ -1,0 +1,106 @@
+{
+  "blueprints": [
+    {
+      "identifier": "grafana-folder",
+      "title": "Grafana folder",
+      "icon": "folder",
+      "description": "Folders of the Grafana instance (ingested by the grafana integration).",
+      "schema": {
+        "properties": {
+          "url": { "type": "string", "title": "Open in Grafana", "format": "url" }
+        }
+      },
+      "relations": {
+        "parent": { "title": "Parent folder", "target": "grafana-folder", "inverseTitle": "Subfolders" }
+      }
+    },
+    {
+      "identifier": "grafana-dashboard",
+      "title": "Grafana dashboard",
+      "icon": "grafana",
+      "description": "Dashboards of the Grafana instance (ingested by the grafana integration).",
+      "schema": {
+        "properties": {
+          "url": { "type": "string", "title": "Open in Grafana", "format": "url" },
+          "tags": { "type": "array", "title": "Tags", "items": { "type": "string" } }
+        },
+        "order": ["url", "tags"]
+      },
+      "relations": {
+        "folder": { "title": "Folder", "target": "grafana-folder", "inverseTitle": "Dashboards" }
+      }
+    },
+    {
+      "identifier": "grafana-datasource",
+      "title": "Grafana data source",
+      "icon": "database",
+      "description": "Data sources configured in Grafana (ingested by the grafana-datasources integration).",
+      "schema": {
+        "properties": {
+          "type": { "type": "string", "title": "Type" },
+          "url": { "type": "string", "title": "Endpoint" },
+          "isDefault": { "type": "boolean", "title": "Default" }
+        },
+        "order": ["type", "url", "isDefault"]
+      }
+    },
+    {
+      "identifier": "grafana-alert-rule",
+      "title": "Grafana alert rule",
+      "icon": "bell",
+      "description": "Grafana-managed alert rules (ingested by the grafana-alert-rules integration).",
+      "schema": {
+        "properties": {
+          "severity": {
+            "type": "string",
+            "title": "Severity",
+            "enumColors": { "critical": "red", "warning": "orange", "info": "blue" }
+          },
+          "group": { "type": "string", "title": "Rule group" },
+          "summary": { "type": "string", "title": "Summary" },
+          "pendingFor": { "type": "string", "title": "Pending period" },
+          "paused": { "type": "boolean", "title": "Paused" },
+          "labels": { "type": "object", "title": "Labels" },
+          "url": { "type": "string", "title": "Open in Grafana", "format": "url" }
+        },
+        "order": ["severity", "summary", "group", "pendingFor", "paused", "url", "labels"]
+      },
+      "relations": {
+        "folder": { "title": "Folder", "target": "grafana-folder", "inverseTitle": "Alert rules" },
+        "dashboard": { "title": "Dashboard", "target": "grafana-dashboard", "inverseTitle": "Alert rules" }
+      }
+    },
+    {
+      "identifier": "grafana-alert",
+      "title": "Grafana alert",
+      "icon": "alert-triangle",
+      "description": "Alert instances notified by Grafana (contact point asterius-platform → inbound webhook grafana-alerts).",
+      "schema": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "enum": ["firing", "resolved"],
+            "enumColors": { "firing": "red", "resolved": "green" }
+          },
+          "severity": {
+            "type": "string",
+            "title": "Severity",
+            "enumColors": { "critical": "red", "warning": "orange", "info": "blue" }
+          },
+          "summary": { "type": "string", "title": "Summary" },
+          "startsAt": { "type": "string", "title": "Started", "format": "date-time" },
+          "endsAt": { "type": "string", "title": "Resolved", "format": "date-time" },
+          "url": { "type": "string", "title": "Open in Grafana", "format": "url" },
+          "silenceUrl": { "type": "string", "title": "Silence", "format": "url" },
+          "labels": { "type": "object", "title": "Labels" }
+        },
+        "order": ["status", "severity", "summary", "startsAt", "endsAt", "url", "silenceUrl", "labels"]
+      },
+      "relations": {
+        "rule": { "title": "Alert rule", "target": "grafana-alert-rule", "inverseTitle": "Alerts" },
+        "dashboard": { "title": "Dashboard", "target": "grafana-dashboard", "inverseTitle": "Alerts" }
+      }
+    }
+  ]
+}

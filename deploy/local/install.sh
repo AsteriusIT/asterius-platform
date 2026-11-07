@@ -144,6 +144,46 @@ done
 k -n observability wait externalsecret/grafana-admin --for=condition=Ready --timeout=120s
 k -n "$NS" wait cluster.postgresql.cnpg.io/keycloak-db --for=condition=Ready --timeout=300s
 
+log "Grafana integration (service account, alert rules, contact point → platform webhook)"
+# Grafana side from examples/grafana/grafana/*.json; the platform side (blueprints, integrations) is in the
+# configuration ConfigMap below. Tokens live in OpenBao (secret/apps/grafana), read by the platform as ${vault:…}.
+k -n observability rollout status deploy/kps-grafana --timeout=300s
+GDIR="$ROOT/examples/grafana"
+GRAFANA="https://platform-grafana.k8s.orb.local"
+GAUTH="admin:$(k -n observability get secret grafana-admin -o jsonpath='{.data.admin-password}' | base64 -d)"
+g() { local m="$1" p="$2"; shift 2; curl -fsS -u "$GAUTH" -H 'content-type: application/json' -H 'X-Disable-Provenance: true' -X "$m" "$GRAFANA$p" "$@"; }
+gstatus() { curl -s -o /dev/null -w '%{http_code}' -u "$GAUTH" "$GRAFANA$1"; }
+
+grafana_secrets="$(kv_get apps/grafana)"
+token="$(jq -r '.token // empty' <<<"$grafana_secrets")"
+# A stored token is reused while Grafana still accepts it.
+if [[ -z "$token" || "$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $token" "$GRAFANA/api/search?limit=1")" != 200 ]]; then
+  sa="$(g GET '/api/serviceaccounts/search?query=asterius-platform' | jq -r '.serviceAccounts[] | select(.name=="asterius-platform") | .id' | head -1)"
+  [[ -n "$sa" ]] || sa="$(g POST /api/serviceaccounts --data @"$GDIR/grafana/service-account.json" | jq -r .id)"
+  token="$(g POST "/api/serviceaccounts/$sa/tokens" --data "$(jq -nc --arg n "asterius-platform-$(date +%Y%m%d%H%M%S)" '{name:$n}')" | jq -r .key)"
+fi
+webhook_token="$(jq -r '.webhookToken // empty' <<<"$grafana_secrets")"; [[ -n "$webhook_token" ]] || webhook_token="$(rand)"
+jq -nc --arg t "$token" --arg w "$webhook_token" '{token:$t, webhookToken:$w}' | kv_put apps/grafana
+
+[[ "$(gstatus /api/folders/asterius-platform)" == 200 ]] || g POST /api/folders --data @"$GDIR/grafana/folder.json" >/dev/null
+jq -c '.[]' "$GDIR/grafana/alert-rules.json" | while IFS= read -r rule; do
+  uid="$(jq -r .uid <<<"$rule")"
+  if [[ "$(gstatus "/api/v1/provisioning/alert-rules/$uid")" == 200 ]]; then g PUT "/api/v1/provisioning/alert-rules/$uid" --data "$rule" >/dev/null
+  else g POST /api/v1/provisioning/alert-rules --data "$rule" >/dev/null; fi
+done
+contact="$(jq -c --arg t "$webhook_token" '.settings.authorization_credentials = $t' "$GDIR/grafana/contact-point.json")"
+if g GET /api/v1/provisioning/contact-points | jq -e '.[] | select(.uid=="asterius-platform")' >/dev/null; then
+  g PUT /api/v1/provisioning/contact-points/asterius-platform --data "$contact" >/dev/null
+else g POST /api/v1/provisioning/contact-points --data "$contact" >/dev/null; fi
+# Replaces the notification policy tree of this (dedicated) Grafana: every alert goes to the platform.
+g PUT /api/v1/provisioning/policies --data @"$GDIR/grafana/notification-policy.json" >/dev/null
+k apply -f "$HERE/manifests/grafana-integration.yaml" >/dev/null
+
+log "Platform configuration (config/ + examples/grafana/platform)"
+k -n "$NS" create configmap asterius-platform-config-files \
+  $(for f in "$ROOT"/config/*.yaml "$GDIR"/platform/*.json; do printf -- '--from-file=%s ' "$f"; done) \
+  --dry-run=client -o yaml | k apply -f - >/dev/null
+
 log "Asterius Platform"
 # Non-secret values of .env that map to chart values.
 sets=()

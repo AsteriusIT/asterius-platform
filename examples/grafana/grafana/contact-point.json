@@ -1,0 +1,12 @@
+{
+  "uid": "asterius-platform",
+  "name": "asterius-platform",
+  "type": "webhook",
+  "settings": {
+    "url": "http://asterius-platform.asterius-platform.svc/api/v1/ingest/default/grafana-alerts",
+    "httpMethod": "POST",
+    "authorization_scheme": "Bearer",
+    "authorization_credentials": "${WEBHOOK_TOKEN}"
+  },
+  "disableResolveMessage": false
+}

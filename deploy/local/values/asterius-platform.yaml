@@ -46,7 +46,8 @@ keycloak:
     exposeAdmin: true # admin console at https://platform-id.k8s.orb.local/admin/
 
 config:
-  useImageDefaults: true # demo blueprints, actions and integrations baked in the image
+  # The repository's config/ plus examples/grafana/platform/*.json, built by install.sh (re-read every minute).
+  existingConfigMap: asterius-platform-config-files
 
 migrations:
   job:
