@@ -12,23 +12,8 @@ import {
   IconBox,
   IconBrackets,
   IconBrain,
-  IconBrandAws,
-  IconBrandAzure,
-  IconBrandDocker,
-  IconBrandGithub,
-  IconBrandGitlab,
-  IconBrandGolang,
   IconBrandGoogle,
   IconBrandJavascript,
-  IconBrandNodejs,
-  IconBrandOpenai,
-  IconBrandPython,
-  IconBrandReact,
-  IconBrandSlack,
-  IconBrandTeams,
-  IconBrandTerraform,
-  IconBrandTypescript,
-  IconBrandVercel,
   IconBriefcase,
   IconBucket,
   IconBug,
@@ -104,7 +89,6 @@ import {
   IconStack,
   IconStack2,
   IconStar,
-  IconSteeringWheel,
   IconTag,
   IconTerminal2,
   IconTicket,
@@ -120,10 +104,11 @@ import {
   IconWorld,
   type Icon,
 } from '@tabler/icons-react';
+import { VENDOR_ICON_GROUPS, type VendorIcon } from './vendorIcons.generated';
 
 /**
- * Icons that blueprints and actions may name in configuration (`icon: rocket`): Tabler names without the `Icon`
- * prefix, kebab-case. An icon can also be a custom image: an https:// URL or an uploaded data:image/… URI.
+ * Icons that blueprints and actions may name in configuration: official service logos (`icon: azure-devops`,
+ * `kubernetes`…) and generic Tabler icons (`icon: rocket`: Tabler names without the `Icon` prefix, kebab-case). An icon can also be a custom image: an https:// URL or an uploaded data:image/… URI.
  * Unknown names fall back to a box.
  */
 export const ICON_GROUPS: { label: string; icons: Record<string, Icon> }[] = [
@@ -171,29 +156,6 @@ export const ICON_GROUPS: { label: string; icons: Record<string, Icon> }[] = [
       globe: IconGlobe,
       'device-desktop': IconDeviceDesktop,
       'device-mobile': IconDeviceMobile,
-    },
-  },
-  {
-    label: 'Brands',
-    icons: {
-      'brand-azure': IconBrandAzure,
-      'brand-aws': IconBrandAws,
-      'brand-google': IconBrandGoogle,
-      'brand-kubernetes': IconSteeringWheel, // the Kubernetes helm wheel (no brand icon in Tabler)
-      'brand-docker': IconBrandDocker,
-      'brand-terraform': IconBrandTerraform,
-      'brand-github': IconBrandGithub,
-      'brand-gitlab': IconBrandGitlab,
-      'brand-vercel': IconBrandVercel,
-      'brand-python': IconBrandPython,
-      'brand-typescript': IconBrandTypescript,
-      'brand-javascript': IconBrandJavascript,
-      'brand-nodejs': IconBrandNodejs,
-      'brand-golang': IconBrandGolang,
-      'brand-react': IconBrandReact,
-      'brand-slack': IconBrandSlack,
-      'brand-teams': IconBrandTeams,
-      'brand-openai': IconBrandOpenai,
     },
   },
   {
@@ -283,14 +245,78 @@ export const ICON_GROUPS: { label: string; icons: Record<string, Icon> }[] = [
   },
 ];
 
-const ICONS: Record<string, Icon> = Object.assign({}, ...ICON_GROUPS.map((g) => g.icons));
+const ICONS: Record<string, Icon> = Object.assign(
+  { 'brand-google': IconBrandGoogle, 'brand-javascript': IconBrandJavascript },
+  ...ICON_GROUPS.map((g) => g.icons),
+);
 
-export const ICON_NAMES = Object.keys(ICONS);
+/** Official service logos (generated from Iconify sets, see scripts/gen-vendor-icons.mjs). */
+const VENDOR: Record<string, VendorIcon & { url: string }> = Object.fromEntries(
+  VENDOR_ICON_GROUPS.flatMap((g) => g.icons).map((i) => [i.name, { ...i, url: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(i.svg)}` }]),
+);
+
+/** Earlier `brand-*` names (Tabler glyphs) now show the vendor's own logo. */
+const ALIASES: Record<string, string> = {
+  'brand-azure': 'azure',
+  'brand-aws': 'aws',
+  'brand-kubernetes': 'kubernetes',
+  'brand-docker': 'docker',
+  'brand-terraform': 'terraform',
+  'brand-github': 'github',
+  'brand-gitlab': 'gitlab',
+  'brand-vercel': 'vercel',
+  'brand-python': 'python',
+  'brand-typescript': 'typescript',
+  'brand-nodejs': 'nodejs',
+  'brand-golang': 'go',
+  'brand-react': 'react',
+  'brand-slack': 'slack',
+  'brand-teams': 'microsoft-teams',
+  'brand-openai': 'openai',
+};
+
+/** Picker sections: service logos first, then the generic icons. */
+export const PICKER_GROUPS: { label: string; icons: { name: string; title: string }[] }[] = [
+  ...VENDOR_ICON_GROUPS.map((g) => ({ label: g.group, icons: g.icons.map((i) => ({ name: i.name, title: i.title })) })),
+  ...ICON_GROUPS.map((g) => ({ label: g.label, icons: Object.keys(g.icons).map((n) => ({ name: n, title: n })) })),
+];
+
+export const ICON_NAMES = [...Object.keys(VENDOR), ...Object.keys(ICONS)];
+
+/** Display name of an icon value (picker, tooltips). */
+export const iconTitle = (name: string) => VENDOR[ALIASES[name] ?? name]?.title ?? name;
 
 /** A custom image icon (URL or uploaded data URI) rather than a built-in icon name. */
 export const isImageIcon = (v: string | null | undefined): v is string => !!v && /^(https:\/\/|\/|data:image\/)/.test(v);
 
 export function EntityIcon({ name, size = 18 }: { name?: string | null; size?: number }) {
+  const vendor = name ? VENDOR[ALIASES[name] ?? name] : undefined;
+  if (vendor)
+    return vendor.mono ? (
+      // Black-only logos take the text color, so they stay visible in dark mode.
+      <span
+        role="img"
+        aria-hidden
+        style={{
+          width: size,
+          height: size,
+          flexShrink: 0,
+          display: 'block',
+          backgroundColor: 'currentColor',
+          mask: `url("${vendor.url}") center / contain no-repeat`,
+          WebkitMask: `url("${vendor.url}") center / contain no-repeat`,
+        }}
+      />
+    ) : (
+      <img
+        src={vendor.url}
+        width={size}
+        height={size}
+        alt=""
+        className={vendor.invert ? 'vendor-invert-dark' : undefined}
+        style={{ objectFit: 'contain', flexShrink: 0, display: 'block' }}
+      />
+    );
   if (isImageIcon(name))
     return <img src={name} width={size} height={size} alt="" style={{ objectFit: 'contain', borderRadius: 4, flexShrink: 0, display: 'block' }} />;
   const C = (name && ICONS[name]) || IconBox;

@@ -17,6 +17,8 @@ export default defineConfig({
           icons: ['@tabler/icons-react'],
           markdown: ['react-markdown', 'remark-gfm'],
           yaml: ['yaml'],
+          // Service logos (~190 KB of SVG): cached separately from app code.
+          'vendor-icons': ['./src/components/vendorIcons.generated.ts'],
         },
       },
     },

@@ -18,7 +18,7 @@ import {
   UnstyledButton,
 } from '@mantine/core';
 import { IconChevronDown, IconPhoto, IconSearch, IconUpload } from '@tabler/icons-react';
-import { EntityIcon, ICON_GROUPS, isImageIcon } from './icons';
+import { EntityIcon, iconTitle, isImageIcon, PICKER_GROUPS } from './icons';
 
 /** Uploaded icons are stored inline (data URI) in the definition: keep them small. */
 export const MAX_ICON_BYTES = 48 * 1024;
@@ -36,7 +36,7 @@ export function readIconFile(file: File): Promise<string> {
   });
 }
 
-const label = (v: string | null) => (!v ? 'Default' : v.startsWith('data:') ? 'Uploaded image' : isImageIcon(v) ? 'Image URL' : v);
+const label = (v: string | null) => (!v ? 'Default' : v.startsWith('data:') ? 'Uploaded image' : isImageIcon(v) ? 'Image URL' : iconTitle(v));
 
 /**
  * Icon field of blueprints and actions: pick a built-in icon, or use a custom image (https URL or upload).
@@ -64,11 +64,13 @@ export function IconPicker({
     setError(null);
   };
   const s = search.trim().toLowerCase();
-  const groups = ICON_GROUPS.map((g) => ({ ...g, names: Object.keys(g.icons).filter((n) => !s || n.includes(s)) })).filter((g) => g.names.length);
+  const groups = PICKER_GROUPS.map((g) => ({ ...g, icons: g.icons.filter((i) => !s || i.name.includes(s) || i.title.toLowerCase().includes(s)) })).filter(
+    (g) => g.icons.length,
+  );
 
   return (
     <Input.Wrapper label={fieldLabel} description={description}>
-      <Popover opened={opened} onChange={setOpened} position="bottom-start" width={360} shadow="lg" trapFocus>
+      <Popover opened={opened} onChange={setOpened} position="bottom-start" width={380} shadow="lg" trapFocus>
         <Popover.Target>
           <Group gap={6} wrap="nowrap">
             <UnstyledButton
@@ -106,7 +108,7 @@ export function IconPicker({
             <Tabs.Panel value="icons">
               <TextInput
                 size="xs"
-                placeholder="Search icons"
+                placeholder="Search icons and services"
                 leftSection={<IconSearch size={14} />}
                 value={search}
                 onChange={(e) => setSearch(e.currentTarget.value)}
@@ -121,14 +123,14 @@ export function IconPicker({
                         {g.label}
                       </Text>
                       <SimpleGrid cols={8} spacing={4} verticalSpacing={4}>
-                        {g.names.map((n) => (
-                          <Tooltip key={n} label={n} openDelay={400}>
+                        {g.icons.map(({ name: n, title }) => (
+                          <Tooltip key={n} label={title} openDelay={400}>
                             <ActionIcon
                               variant={value === n ? 'light' : 'subtle'}
                               color={value === n ? 'brand' : 'gray'}
                               size="lg"
                               onClick={() => pick(n)}
-                              aria-label={n}
+                              aria-label={title}
                             >
                               <EntityIcon name={n} size={18} />
                             </ActionIcon>

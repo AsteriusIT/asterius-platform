@@ -18,7 +18,7 @@ export function useBrand() {
 
 export function BrandLogo({ size = 28 }: { size?: number }) {
   const { logo } = useBrand();
-  return <img src={logo} width={size} height={size} alt="" style={{ objectFit: 'contain', borderRadius: size / 4, flexShrink: 0, display: 'block' }} />;
+  return <img src={logo} width={size} height={size} alt="" style={{ objectFit: 'contain', flexShrink: 0, display: 'block' }} />;
 }
 
 /** Logo + wordmark: the first word of the name is emphasised ("Asterius" Platform). */

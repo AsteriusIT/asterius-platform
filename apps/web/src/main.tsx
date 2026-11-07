@@ -79,6 +79,7 @@ const router = createBrowserRouter([
             children: [
               { path: '/', element: page(home, 'Home') },
               { path: '/search', element: page(catalog, 'Search') },
+              { path: '/catalog', element: page(catalog, 'CatalogHome') },
               { path: '/catalog/:bp', element: page(catalog, 'CatalogList') },
               { path: '/catalog/:bp/:id', element: page(entity, 'EntityPage') },
               { path: '/self-service', element: page(selfService, 'SelfService') },

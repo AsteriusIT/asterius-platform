@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import type { PluginInfo } from '@asterius/shared';
 import { TeamBuilder } from '../src/components/builder/SimpleBuilders';
-import { EntityIcon, isImageIcon } from '../src/components/icons';
+import { EntityIcon, ICON_NAMES, iconTitle, isImageIcon } from '../src/components/icons';
 import { readIconFile } from '../src/components/IconPicker';
 import { renderUi } from './render';
 
@@ -48,6 +48,16 @@ describe('icons', () => {
     expect(isImageIcon('rocket')).toBe(false);
     const { container } = render(<EntityIcon name="https://x.example/a.png" />);
     expect(container.querySelector('img')?.getAttribute('src')).toBe('https://x.example/a.png');
+  });
+
+  it('shows official service logos, also for the earlier brand-* names', () => {
+    const logo = (name: string) => render(<EntityIcon name={name} />).container.firstElementChild as HTMLElement;
+    expect(logo('azure-devops').tagName).toBe('IMG');
+    expect(logo('azure-devops').getAttribute('src')).toMatch(/^data:image\/svg\+xml/);
+    expect(logo('brand-kubernetes').getAttribute('src')).toBe(logo('kubernetes').getAttribute('src'));
+    expect(logo('github').tagName).toBe('SPAN'); // black logo: painted with the text color
+    expect(iconTitle('brand-azure')).toBe('Microsoft Azure');
+    for (const n of ['kubernetes', 'helm', 'argo-cd', 'terraform', 'prometheus', 'postgresql']) expect(ICON_NAMES).toContain(n);
   });
 
   it('rejects uploads that are not small images', async () => {

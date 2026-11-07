@@ -18,8 +18,8 @@ export function tourSteps(opts: { name: string; isAdmin: boolean }): TourStep[] 
       title: 'The software catalog',
       body: (
         <>
-          Services, systems, environments, repositories… each kind has its own page. Entities show their owner team, properties, relations and the actions you
-          can run on them. Much of it is kept up to date automatically from GitHub, Azure DevOps or Kubernetes.
+          Services, systems, environments, repositories… the catalog page lists every kind, and each kind has its own page. Entities show their owner team,
+          properties, relations and the actions you can run on them. Much of it is kept up to date automatically from GitHub, Azure DevOps or Kubernetes.
         </>
       ),
     },

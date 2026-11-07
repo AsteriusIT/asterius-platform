@@ -15,6 +15,7 @@ import { ActionRunModal } from '../components/ActionRunModal';
 import { EntityHistory } from '../components/EntityHistory';
 import { DataTable } from '../components/DataTable';
 import { EntityEditor } from '../components/EntityEditor';
+import { CodeBlock } from '../components/CodeEditor';
 import { EntityIcon } from '../components/icons';
 import { RelationGraph } from '../components/RelationGraph';
 import { Empty, LevelBadge, Mono, PageHeader, QueryView, StatusBadge, TimeAgo } from '../components/ui';
@@ -82,7 +83,7 @@ function EntityView({ bp, e }: { bp: Blueprint; e: Entity }) {
   return (
     <Stack>
       <PageHeader
-        crumbs={[{ label: bp.title, to: `/catalog/${bp.identifier}` }, { label: e.identifier }]}
+        crumbs={[{ label: 'Catalog', to: '/catalog' }, { label: bp.title, to: `/catalog/${bp.identifier}` }, { label: e.identifier }]}
         title={e.title}
         icon={bp.icon}
         refresh={[related, actions, runs, { refetch: () => qc.refetchQueries({ queryKey: ['entity', bp.identifier, e.identifier] }) }]}
@@ -285,7 +286,7 @@ function EntityView({ bp, e }: { bp: Blueprint; e: Entity }) {
 
         <Tabs.Panel value="json">
           <Card>
-            <pre style={{ margin: 0, fontSize: 12, overflowX: 'auto' }}>{JSON.stringify(e, null, 2)}</pre>
+            <CodeBlock code={JSON.stringify(e, null, 2)} />
           </Card>
         </Tabs.Panel>
       </Tabs>

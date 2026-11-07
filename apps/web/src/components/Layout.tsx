@@ -12,18 +12,20 @@ import {
   Menu,
   NavLink,
   ScrollArea,
+  Stack,
   Text,
   TextInput,
   Tooltip,
   UnstyledButton,
   useMantineColorScheme,
 } from '@mantine/core';
-import { useDisclosure, useMediaQuery } from '@mantine/hooks';
+import { useDisclosure, useHotkeys, useLocalStorage, useMediaQuery } from '@mantine/hooks';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router';
 import {
   IconActivity,
   IconBolt,
+  IconCategory2,
   IconChecklist,
   IconDots,
   IconBell,
@@ -33,6 +35,8 @@ import {
   IconTrashX,
   IconHome,
   IconKey,
+  IconLayoutSidebarLeftCollapse,
+  IconLayoutSidebarLeftExpand,
   IconLock,
   IconLogout,
   IconMoon,
@@ -57,7 +61,6 @@ import { tourSteps } from './tourSteps';
 import { useT } from '../lib/i18n';
 import { CommandPalette } from './CommandPalette';
 import { NotificationCenter } from './NotificationCenter';
-import { EntityIcon } from './icons';
 import { BrandLogo, BrandMark } from './Brand';
 
 const initials = (name = '') =>
@@ -68,7 +71,10 @@ const initials = (name = '') =>
     .slice(0, 2)
     .toUpperCase();
 
-/** LibreChat-like shell: soft sidebar (brand, navigation, account at the bottom), white canvas, slim header. */
+/**
+ * LibreChat-like shell: soft sidebar (brand, navigation, account at the bottom), white canvas, slim header. On desktop the
+ * sidebar folds to icons only (remembered per browser; Ctrl/⌘+B); on mobile it is a drawer.
+ */
 export function Layout() {
   const [opened, { toggle, open, close }] = useDisclosure();
   const [touring, setTouring] = useState(false);
@@ -87,24 +93,32 @@ export function Layout() {
     void qc.refetchQueries({ type: 'active' }).finally(() => setRefreshing(false));
   };
   const blueprints = useQuery({ queryKey: ['blueprints'], queryFn: api.blueprints, staleTime: 30_000 });
+  const entityTotal = blueprints.data?.reduce((n, b) => n + (b.entityCount ?? 0), 0);
+  const [collapsed, setCollapsed] = useLocalStorage({ key: 'asterius.nav-collapsed', defaultValue: false, getInitialValueInEffect: false });
+  const mini = collapsed && !isMobile;
+  const toggleMini = () => setCollapsed((c) => !c);
+  useHotkeys([['mod+B', toggleMini]]);
   const approvals = useQuery({ queryKey: ['approvals'], queryFn: api.approvals, refetchInterval: 30_000 });
 
   const active = (to: string) => (to === '/' ? location.pathname === '/' : location.pathname === to || location.pathname.startsWith(`${to}/`));
   const link = (to: string, label: string, icon: React.ReactNode, right?: React.ReactNode, tour?: string) => (
-    <NavLink
-      key={to}
-      data-tour={tour}
-      className="nav-link"
-      component={Link}
-      to={to}
-      label={label}
-      leftSection={icon}
-      rightSection={right}
-      active={active(to)}
-      onClick={close}
-    />
+    <Tooltip key={to} label={label} position="right" disabled={!mini} openDelay={0}>
+      <NavLink
+        data-tour={tour}
+        className="nav-link"
+        component={Link}
+        to={to}
+        label={mini ? undefined : label}
+        aria-label={label}
+        leftSection={icon}
+        rightSection={mini ? undefined : right}
+        active={active(to)}
+        onClick={close}
+      />
+    </Tooltip>
   );
-  const section = (label: string) => <div className="nav-section">{label}</div>;
+  // Folded sidebar: section titles become a thin separator.
+  const section = (label: string) => (mini ? <div className="nav-section-rule" aria-hidden /> : <div className="nav-section">{label}</div>);
 
   // Onboarding: start the tour on a user's first visit (completion is stored server-side, across devices).
   useEffect(() => {
@@ -127,7 +141,7 @@ export function Layout() {
   };
 
   return (
-    <AppShell layout="alt" header={{ height: 60 }} navbar={{ width: 264, breakpoint: 'sm', collapsed: { mobile: !opened } }} padding="xl">
+    <AppShell layout="alt" header={{ height: 60 }} navbar={{ width: mini ? 68 : 264, breakpoint: 'sm', collapsed: { mobile: !opened } }} padding={0}>
       <a
         href="#main-content"
         style={{ position: 'absolute', left: -9999, top: 0, zIndex: 1000, background: 'var(--mantine-color-body)', padding: 8 }}
@@ -207,30 +221,48 @@ export function Layout() {
         </Group>
       </AppShell.Header>
 
-      <AppShell.Navbar className="app-navbar" p="sm">
-        <AppShell.Section>
-          <UnstyledButton component={Link} to="/" onClick={close} px={10} py={6} visibleFrom="sm" display="block" aria-label="Home">
-            <BrandMark />
-          </UnstyledButton>
+      <AppShell.Navbar className="app-navbar" p="sm" data-mini={mini || undefined}>
+        <AppShell.Section visibleFrom="sm">
+          {mini ? (
+            <Stack gap={6} align="center">
+              <UnstyledButton component={Link} to="/" py={6} aria-label="Home">
+                <BrandLogo size={28} />
+              </UnstyledButton>
+              <Tooltip label="Expand sidebar (Ctrl/⌘+B)" position="right">
+                <ActionIcon variant="subtle" color="gray" size="lg" onClick={toggleMini} aria-label="Expand sidebar">
+                  <IconLayoutSidebarLeftExpand size={19} stroke={1.6} />
+                </ActionIcon>
+              </Tooltip>
+            </Stack>
+          ) : (
+            <Group justify="space-between" wrap="nowrap" gap={4}>
+              <UnstyledButton component={Link} to="/" onClick={close} px={10} py={6} display="block" aria-label="Home" style={{ minWidth: 0 }}>
+                <BrandMark />
+              </UnstyledButton>
+              <Tooltip label="Collapse sidebar (Ctrl/⌘+B)">
+                <ActionIcon variant="subtle" color="gray" size="lg" onClick={toggleMini} aria-label="Collapse sidebar">
+                  <IconLayoutSidebarLeftCollapse size={19} stroke={1.6} />
+                </ActionIcon>
+              </Tooltip>
+            </Group>
+          )}
         </AppShell.Section>
 
         <AppShell.Section grow component={ScrollArea} mt="sm" mx={-4} px={4}>
           {link('/', 'Home', <IconHome size={18} stroke={1.6} />)}
           {link('/self-service', 'Self-service', <IconRocket size={18} stroke={1.6} />, undefined, 'self-service')}
 
-          <div data-tour="catalog">
-            {section('Catalog')}
-            {blueprints.data?.map((b) =>
-              link(
-                `/catalog/${b.identifier}`,
-                b.title,
-                <EntityIcon name={b.icon} />,
-                <Text fz="xs" c="var(--text-3)">
-                  {b.entityCount}
-                </Text>,
-              ),
-            )}
-          </div>
+          {link(
+            '/catalog',
+            'Catalog',
+            <IconCategory2 size={18} stroke={1.6} />,
+            entityTotal !== undefined ? (
+              <Text fz="xs" c="var(--text-3)">
+                {entityTotal}
+              </Text>
+            ) : undefined,
+            'catalog',
+          )}
 
           {isAdmin && (
             <div data-tour="admin">
@@ -258,19 +290,21 @@ export function Layout() {
           <Menu position="top-start" width={248}>
             <Menu.Target>
               <UnstyledButton className="nav-link" w="100%" display="block" aria-label="Account" data-tour="account">
-                <Group gap={10} wrap="nowrap">
+                <Group gap={10} wrap="nowrap" justify={mini ? 'center' : undefined}>
                   <Avatar radius="xl" size={30} variant="light">
                     {initials(user?.name)}
                   </Avatar>
-                  <Box style={{ flex: 1, minWidth: 0 }}>
-                    <Text fz={14} fw={500} truncate>
-                      {user?.name}
-                    </Text>
-                    <Text fz={12} c="var(--text-3)" truncate>
-                      {user?.email}
-                    </Text>
-                  </Box>
-                  <IconDots size={16} color="var(--text-3)" />
+                  {!mini && (
+                    <Box style={{ flex: 1, minWidth: 0 }}>
+                      <Text fz={14} fw={500} truncate>
+                        {user?.name}
+                      </Text>
+                      <Text fz={12} c="var(--text-3)" truncate>
+                        {user?.email}
+                      </Text>
+                    </Box>
+                  )}
+                  {!mini && <IconDots size={16} color="var(--text-3)" />}
                 </Group>
               </UnstyledButton>
             </Menu.Target>
@@ -302,8 +336,10 @@ export function Layout() {
       </AppShell.Navbar>
 
       <AppShell.Main className="app-main" id="main-content" tabIndex={-1}>
-        <div className="app-content">
-          <Outlet />
+        <div className="app-panel">
+          <div className="app-content">
+            <Outlet />
+          </div>
         </div>
       </AppShell.Main>
       <Tour steps={tourSteps({ name: user?.name.split(' ')[0] ?? '', isAdmin })} opened={touring} onClose={endTour} />

@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Badge, Button, Group, Menu, Select, Stack, Text, TextInput } from '@mantine/core';
+import { Badge, Button, Card, Group, Menu, Select, SimpleGrid, Stack, Text, TextInput, ThemeIcon, UnstyledButton } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { useDebouncedValue } from '@mantine/hooks';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useNavigate, useParams, useSearchParams } from 'react-router';
-import { IconBolt, IconDownload, IconPlus, IconSearch } from '@tabler/icons-react';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
+import { IconBolt, IconDownload, IconPlus, IconSearch, IconSettings } from '@tabler/icons-react';
 import type { Action, Blueprint, Entity } from '@asterius/shared';
 import { api } from '../lib/api';
 import { formOf, isRunnable } from '../lib/permissions';
@@ -37,7 +37,8 @@ import { EntityEditor } from '../components/EntityEditor';
 import { AskCatalog } from '../components/AiAssistant';
 import { ActionRunModal } from '../components/ActionRunModal';
 import { EntityActionsMenu } from '../components/EntityActionsMenu';
-import { LevelBadge, Markdown, PageHeader, QueryView, TimeAgo } from '../components/ui';
+import { Empty, LevelBadge, Markdown, PageHeader, QueryView, TimeAgo } from '../components/ui';
+import { EntityIcon } from '../components/icons';
 
 const PAGE = 25;
 
@@ -232,6 +233,7 @@ function CatalogTable({ bp }: { bp: Blueprint }) {
   return (
     <Stack>
       <PageHeader
+        crumbs={[{ label: 'Catalog', to: '/catalog' }, { label: bp.title }]}
         title={bp.title}
         icon={bp.icon}
         refresh={entities}
@@ -264,6 +266,7 @@ function CatalogTable({ bp }: { bp: Blueprint }) {
       <AskCatalog />
       <Group>
         <TextInput
+          className="search-input"
           placeholder={`Search ${bp.title.toLowerCase()}`}
           leftSection={<IconSearch size={16} />}
           value={search}
@@ -391,6 +394,79 @@ export function Search() {
           { key: 'u', label: 'Updated', render: (e) => <TimeAgo at={e.updatedAt} /> },
         ]}
       />
+    </Stack>
+  );
+}
+
+/** All kinds of the catalog (blueprints) as cards: the entry point of the catalog from the navigation. */
+export function CatalogHome() {
+  const { isAdmin } = useAuth();
+  const blueprints = useQuery({ queryKey: ['blueprints'], queryFn: api.blueprints, staleTime: 30_000 });
+  const [filter, setFilter] = useState('');
+  return (
+    <Stack>
+      <PageHeader
+        title="Catalog"
+        description="Everything the organization builds and runs, by kind. Open a kind to browse, filter and act on its entities."
+        refresh={blueprints}
+        actions={
+          isAdmin && (
+            <Button component={Link} to="/admin/blueprints" variant="default" leftSection={<IconSettings size={16} />}>
+              Manage kinds
+            </Button>
+          )
+        }
+      />
+      <TextInput
+        className="search-input"
+        placeholder="Filter kinds"
+        leftSection={<IconSearch size={16} />}
+        value={filter}
+        onChange={(e) => setFilter(e.currentTarget.value)}
+        maw={360}
+      />
+      <QueryView q={blueprints}>
+        {(list) => {
+          const f = filter.trim().toLowerCase();
+          const visible = list
+            .filter((b) => !f || `${b.title} ${b.identifier} ${b.description}`.toLowerCase().includes(f))
+            .sort((a, b) => a.title.localeCompare(b.title));
+          if (!visible.length) return <Empty title={list.length ? `No kind matches “${filter}”` : 'The catalog is empty'} />;
+          return (
+            <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }}>
+              {visible.map((b) => (
+                <UnstyledButton key={b.identifier} component={Link} to={`/catalog/${b.identifier}`} aria-label={b.title}>
+                  <Card className="hover-card" h="100%">
+                    <Group justify="space-between" align="flex-start" wrap="nowrap">
+                      <Group gap="sm" wrap="nowrap" style={{ minWidth: 0 }}>
+                        <ThemeIcon variant="light" size={40}>
+                          <EntityIcon name={b.icon} size={22} />
+                        </ThemeIcon>
+                        <div style={{ minWidth: 0 }}>
+                          <Text fw={600} truncate>
+                            {b.title}
+                          </Text>
+                          <Text fz="xs" c="dimmed" ff="monospace" truncate>
+                            {b.identifier}
+                          </Text>
+                        </div>
+                      </Group>
+                      <Text fz={24} fw={700} lh={1} style={{ flexShrink: 0 }}>
+                        {b.entityCount ?? 0}
+                      </Text>
+                    </Group>
+                    {b.description && (
+                      <Text fz="sm" c="dimmed" mt="sm" lineClamp={2}>
+                        {b.description.replace(/[#*_`>[\]]/g, '')}
+                      </Text>
+                    )}
+                  </Card>
+                </UnstyledButton>
+              ))}
+            </SimpleGrid>
+          );
+        }}
+      </QueryView>
     </Stack>
   );
 }

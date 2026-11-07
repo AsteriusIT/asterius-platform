@@ -12,7 +12,7 @@ export default tseslint.config(
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
     },
   },
-  { files: ['apps/server/**/*.ts', 'loadtest/*.mts', '*.mjs'], languageOptions: { globals: globals.node } },
+  { files: ['apps/server/**/*.ts', 'loadtest/*.mts', '*.mjs', 'apps/web/scripts/**/*.mjs'], languageOptions: { globals: globals.node } },
   // k6 scripts run in the k6 runtime (not Node): its globals and ES modules.
   {
     files: ['loadtest/k6/**/*.js'],
