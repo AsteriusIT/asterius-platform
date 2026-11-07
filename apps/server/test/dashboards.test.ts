@@ -29,6 +29,7 @@ beforeAll(async () => {
     levels: [{ name: 'Bronze' }],
     rules: [{ identifier: 'has_team', title: 'Has a team', level: 'Bronze', expression: 'team != null' }],
   });
+  await admin.post('/api/v1/scorecards/q/evaluate', {}); // the evaluation on save is fire-and-forget: wait for it
 });
 afterAll(() => app.close());
 
