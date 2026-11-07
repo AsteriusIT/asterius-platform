@@ -389,6 +389,10 @@ export type Integration = {
     items?: string;
     delete?: string;
     merge?: boolean;
+    prune?: {
+      relation: string;
+      value: string;
+    };
     entity: {
       blueprint: string;
       identifier: string;
@@ -860,6 +864,10 @@ export type ConfigFile = {
       items?: string;
       delete?: string;
       merge?: boolean;
+      prune?: {
+        relation: string;
+        value: string;
+      };
       entity: {
         blueprint: string;
         identifier: string;
@@ -1172,6 +1180,10 @@ export type IntegrationView = {
     items?: string;
     delete?: string;
     merge: boolean;
+    prune?: {
+      relation: string;
+      value: string;
+    };
     entity: {
       blueprint: string;
       identifier: string;

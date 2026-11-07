@@ -1946,6 +1946,24 @@
                   "default": false,
                   "type": "boolean"
                 },
+                "prune": {
+                  "type": "object",
+                  "properties": {
+                    "relation": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 100
+                    },
+                    "value": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "relation",
+                    "value"
+                  ]
+                },
                 "entity": {
                   "type": "object",
                   "properties": {
@@ -4308,6 +4326,24 @@
                         "default": false,
                         "type": "boolean"
                       },
+                      "prune": {
+                        "type": "object",
+                        "properties": {
+                          "relation": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 100
+                          },
+                          "value": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": [
+                          "relation",
+                          "value"
+                        ]
+                      },
                       "entity": {
                         "type": "object",
                         "properties": {
@@ -5882,6 +5918,25 @@
                 "merge": {
                   "default": false,
                   "type": "boolean"
+                },
+                "prune": {
+                  "type": "object",
+                  "properties": {
+                    "relation": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 100
+                    },
+                    "value": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "relation",
+                    "value"
+                  ],
+                  "additionalProperties": false
                 },
                 "entity": {
                   "type": "object",
