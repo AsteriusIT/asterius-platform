@@ -31,7 +31,14 @@ function asRelation(v: unknown): RelationValue {
   return String(v);
 }
 
-export async function mapItem(m: MappingDef, item: unknown, bindings: Bindings = {}): Promise<{ mapped: Mapped[]; skipped: number }> {
+/** What a delivery is the complete set of (see `MappingDef.prune`). */
+export interface PruneScope {
+  blueprint: string;
+  relation: string;
+  target: string;
+}
+
+export async function mapItem(m: MappingDef, item: unknown, bindings: Bindings = {}): Promise<{ mapped: Mapped[]; skipped: number; prune?: PruneScope }> {
   if (m.filter && !(await evaluate(m.filter, item, bindings))) return { mapped: [], skipped: 1 };
   let elements: { data: unknown; b: Bindings }[] = [{ data: item, b: bindings }];
   if (m.items) {
@@ -65,7 +72,12 @@ export async function mapItem(m: MappingDef, item: unknown, bindings: Bindings =
       delete: m.delete ? !!(await evaluate(m.delete, data, b)) : false,
     });
   }
-  return { mapped, skipped };
+  let prune: PruneScope | undefined;
+  if (m.prune) {
+    const target = asString(await evaluate(m.prune.value, item, bindings));
+    if (target) prune = { blueprint: m.entity.blueprint, relation: m.prune.relation, target };
+  }
+  return { mapped, skipped, prune };
 }
 
 /** Validate every expression of a mapping (on save). */
@@ -74,6 +86,7 @@ export function checkMapping(m: MappingDef) {
     m.filter,
     m.items,
     m.delete,
+    m.prune?.value,
     m.entity.identifier,
     m.entity.title,
     m.entity.team,

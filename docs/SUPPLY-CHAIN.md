@@ -14,8 +14,8 @@ configuration: the blueprints, the ingestion mappings and the scorecard live in
 
 Both point to the owning `service`, so a service page lists its vulnerabilities and components as incoming
 relations, and scorecards read them through `incoming."vulnerability.service"` and `incoming."sbom-component.service"`.
-The `sbom-component.vulnerabilities` relation is optional: fill it from a mapping (for example a CycloneDX `vulnerabilities[]`
-section) or a workflow when you want to link a component to the vulnerabilities that affect it.
+The `sbom-component.vulnerabilities` relation is optional. The CycloneDX mapping fills it from the document's `vulnerabilities[]`
+section (see below); you can also fill it from another mapping or a workflow.
 
 ## Ingestion
 
@@ -47,8 +47,29 @@ curl -X POST "$PLATFORM_URL/api/v1/ingest/<org>/sbom" \
   -H "X-Asterius-Token: $INGEST_TOKEN" -H 'content-type: application/json' -d @bom.json
 ```
 
-A webhook cannot tell which components disappeared, so removed dependencies stay until deleted (or until a workflow
-prunes components not seen recently).
+**CycloneDX vulnerabilities.** When the document has a `vulnerabilities[]` section (for example from `grype`, `trivy` or
+`cdxgen`), the `sbom` integration also upserts one `vulnerability` per entry and links the components it affects:
+
+| Property / relation | CycloneDX field |
+| --- | --- |
+| identifier | `<service>:<id>` (Snyk uses `<snyk project id>:<issue key>`, so the two sources never write the same entity) |
+| `severity` | `ratings[0].severity` lower-cased (`critical`, `high`, `medium`, `low`; anything else, such as `info`, becomes `low`) |
+| `status` | `analysis.state`: `resolved*` is `fixed`, `false_positive` / `not_affected` is `ignored`, else `open` |
+| `cve` | `id` when it starts with `CVE-` |
+| `package`, `version` | the component whose `bom-ref` is `affects[0].ref` |
+| `url` | `advisories[0].url`, else `source.url` |
+| `service` | `metadata.component.name` |
+| `sbom-component.vulnerabilities` | the vulnerabilities whose `affects[].ref` contains the component's `bom-ref` |
+
+`firstSeen` is not set (CycloneDX has no such field), so the Gold rule does not count these vulnerabilities as stale. If the same
+issue is also reported by Snyk it appears twice (two identifiers); scope Snyk and the SBOM to different services or ignore one source
+in the scorecard rule if that matters.
+
+**Pruning.** Each delivery is the complete component set of one service, so both mappings carry
+`prune: { relation: service, value: metadata.component.name }` (see "Pruning webhook deliveries" in
+[EXTENDING.md](EXTENDING.md)): components and vulnerabilities of that service created by the `sbom` integration that are absent
+from the latest document are deleted. Entities of other services, of other integrations (Snyk) and entities created by hand are
+never touched. A document without `vulnerabilities[]` therefore removes the service's previously ingested SBOM vulnerabilities.
 
 ## Scorecard
 
