@@ -1,3 +1,4 @@
+import { azureDevopsPublisher } from './azure-devops.js';
 import { githubPublisher } from './github.js';
 import { gitlabPublisher } from './gitlab.js';
 import { unsupportedMode } from './render.js';
@@ -11,6 +12,7 @@ import type { ScaffoldPublisher } from './types.js';
 const publishers: Partial<Record<ScaffoldConfig['provider'], ScaffoldPublisher>> = {
   github: githubPublisher,
   gitlab: gitlabPublisher,
+  'azure-devops': azureDevopsPublisher,
 };
 
 export function getPublisher(config: ScaffoldConfig): ScaffoldPublisher {

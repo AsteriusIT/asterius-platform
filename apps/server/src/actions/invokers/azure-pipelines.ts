@@ -1,14 +1,11 @@
 import { emitJobLog, type LogFn } from '../../lib/ci-logs.js';
 import { http } from '../../lib/http.js';
+import { adoAuth, adoBase } from './ado.js';
 import { requireFields, str, stringValues, type InvokeResult, type Invoker } from '../types.js';
 
 /** Azure DevOps Pipelines: queue a run (Pipelines REST API 7.1) and follow it. */
-const base = (c: Record<string, unknown>) => `${str(c.organization).replace(/\/$/, '')}/${encodeURIComponent(str(c.project))}`;
-const auth = (c: Record<string, unknown>) => {
-  const t = str(c.token);
-  // A PAT (Basic) or an Entra access token for a service principal / managed identity (Bearer).
-  return { authorization: t.startsWith('Bearer ') ? t : `Basic ${Buffer.from(`:${t}`).toString('base64')}` };
-};
+const base = adoBase;
+const auth = adoAuth;
 
 interface PipelineRun {
   id: number;
