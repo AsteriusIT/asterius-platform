@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Asterius Platform on the local OrbStack Kubernetes cluster, with its ecosystem:
-#   metrics-server, kube-prometheus-stack (Prometheus + Grafana), OpenBao, External Secrets Operator,
-#   and the platform chart with every component enabled (CNPG, Keycloak, ingress/TLS, HPA, PDB, NetworkPolicy,
+#   metrics-server, kube-prometheus-stack (Prometheus + Grafana), OpenBao, External Secrets Operator, SonarQube, Nexus,
+#   and the platform chart with every component enabled (CNPG, Keycloak, ingress/TLS, NetworkPolicy, one replica each,
 #   RBAC, migration Job, ServiceMonitor, PrometheusRule, Grafana dashboard).
 # Secrets flow: .env + generated values → OpenBao KV → External Secrets → Kubernetes Secrets → pods.
 # Idempotent: re-run after changing .env, the chart or the image. Usage: deploy/local/install.sh [--build]
@@ -26,7 +26,7 @@ if [[ "${1:-}" == "--build" ]] || ! docker image inspect asterius-platform:local
 fi
 
 log "Namespaces"
-for ns in observability openbao external-secrets "$NS" asterius-jobs; do
+for ns in observability openbao external-secrets sonarqube nexus "$NS" asterius-jobs; do
   k create namespace "$ns" --dry-run=client -o yaml | k apply -f - >/dev/null
 done
 
@@ -35,9 +35,10 @@ helm repo add metrics-server https://kubernetes-sigs.github.io/metrics-server >/
 helm repo add prometheus-community https://prometheus-community.github.io/helm-charts >/dev/null 2>&1 || true
 helm repo add openbao https://openbao.github.io/openbao-helm >/dev/null 2>&1 || true
 helm repo add external-secrets https://charts.external-secrets.io >/dev/null 2>&1 || true
+helm repo add sonarqube https://SonarSource.github.io/helm-chart-sonarqube >/dev/null 2>&1 || true
 helm repo update >/dev/null
 
-log "metrics-server (HPA)"
+log "metrics-server"
 h upgrade --install metrics-server metrics-server/metrics-server -n kube-system -f "$HERE/values/metrics-server.yaml" --wait
 
 log "kube-prometheus-stack (Prometheus Operator, Prometheus, Alertmanager, Grafana)"
@@ -78,6 +79,8 @@ baoq write auth/kubernetes/config kubernetes_host=https://kubernetes.default.svc
 
 printf 'path "secret/data/asterius-platform/*" { capabilities = ["read"] }\n' | bao policy write eso-asterius-platform - >/dev/null
 printf 'path "secret/data/observability/*" { capabilities = ["read"] }\n' | bao policy write eso-observability - >/dev/null
+printf 'path "secret/data/sonarqube/*" { capabilities = ["read"] }\n' | bao policy write eso-sonarqube - >/dev/null
+printf 'path "secret/data/nexus/*" { capabilities = ["read"] }\n' | bao policy write eso-nexus - >/dev/null
 # The platform itself resolves ${vault:secret/apps/...#key} references of actions and integrations.
 printf 'path "secret/data/apps/*" { capabilities = ["read"] }\n' | bao policy write asterius-platform - >/dev/null
 
@@ -85,6 +88,10 @@ baoq write auth/kubernetes/role/eso-asterius-platform bound_service_account_name
   bound_service_account_namespaces="$NS" token_policies=eso-asterius-platform token_ttl=15m >/dev/null
 baoq write auth/kubernetes/role/eso-observability bound_service_account_names=openbao-reader \
   bound_service_account_namespaces=observability token_policies=eso-observability token_ttl=15m >/dev/null
+baoq write auth/kubernetes/role/eso-sonarqube bound_service_account_names=openbao-reader \
+  bound_service_account_namespaces=sonarqube token_policies=eso-sonarqube token_ttl=15m >/dev/null
+baoq write auth/kubernetes/role/eso-nexus bound_service_account_names=openbao-reader \
+  bound_service_account_namespaces=nexus token_policies=eso-nexus token_ttl=15m >/dev/null
 baoq write auth/kubernetes/role/asterius-platform bound_service_account_names=asterius-platform-api,asterius-platform-worker \
   bound_service_account_namespaces="$NS" token_policies=asterius-platform token_ttl=1h >/dev/null
 
@@ -132,17 +139,34 @@ jq -nc --argjson cur "$current" --arg db "$(rand)" --arg adm "$(rand)" --arg cs 
 current="$(kv_get observability/grafana)"
 jq -nc --argjson cur "$current" --arg p "$(rand)" '{"admin-user":"admin","admin-password":$p} + $cur' | kv_put observability/grafana
 
+# SonarQube: the admin password must have 12+ characters with upper and lower case, a digit and a special character.
+current="$(kv_get sonarqube/server)"
+jq -nc --argjson cur "$current" --arg db "$(rand)" --arg mp "$(rand)" --arg adm "Aa1-$(rand 16)" \
+  '{DB_USERNAME:"sonarqube", DB_PASSWORD:$db, MONITORING_PASSCODE:$mp, ADMIN_PASSWORD:$adm} + $cur' | kv_put sonarqube/server
+
+# Nexus: initial admin password (first start only) and the password of the platform's read-only user.
+current="$(kv_get nexus/server)"
+jq -nc --argjson cur "$current" --arg adm "$(rand)" '{ADMIN_PASSWORD:$adm} + $cur' | kv_put nexus/server
+current="$(kv_get apps/nexus)"
+jq -nc --argjson cur "$current" --arg p "$(rand)" '{password:$p} + $cur' | kv_put apps/nexus
+
 # Sample secret for ${vault:secret/apps/demo#token} in actions.
 [[ "$(kv_get apps/demo)" != '{}' ]] || jq -nc --arg t "$(rand)" '{token:$t}' | kv_put apps/demo
 
 log "External Secrets Operator"
 h upgrade --install external-secrets external-secrets/external-secrets -n external-secrets -f "$HERE/values/external-secrets.yaml" --wait
-k apply -f "$HERE/manifests/observability-secrets.yaml" -f "$HERE/manifests/platform-secrets.yaml"
+k apply -f "$HERE/manifests/observability-secrets.yaml" -f "$HERE/manifests/platform-secrets.yaml" -f "$HERE/manifests/sonarqube.yaml" -f "$HERE/manifests/nexus.yaml"
 for es in asterius-platform-secrets asterius-platform-keycloak keycloak-db-credentials; do
   k -n "$NS" wait externalsecret/$es --for=condition=Ready --timeout=120s
 done
 k -n observability wait externalsecret/grafana-admin --for=condition=Ready --timeout=120s
 k -n "$NS" wait cluster.postgresql.cnpg.io/keycloak-db --for=condition=Ready --timeout=300s
+k -n nexus wait externalsecret/nexus-secrets --for=condition=Ready --timeout=120s
+for es in sonarqube-secrets sonarqube-db-credentials; do k -n sonarqube wait externalsecret/$es --for=condition=Ready --timeout=120s; done
+k -n sonarqube wait cluster.postgresql.cnpg.io/sonarqube-db --for=condition=Ready --timeout=300s
+
+log "SonarQube Community Build"
+h upgrade --install sonarqube sonarqube/sonarqube -n sonarqube -f "$HERE/values/sonarqube.yaml" --wait --timeout 15m
 
 log "Grafana integration (service account, alert rules, contact point → platform webhook)"
 # Grafana side from examples/grafana/grafana/*.json; the platform side (blueprints, integrations) is in the
@@ -179,9 +203,75 @@ else g POST /api/v1/provisioning/contact-points --data "$contact" >/dev/null; fi
 g PUT /api/v1/provisioning/policies --data @"$GDIR/grafana/notification-policy.json" >/dev/null
 k apply -f "$HERE/manifests/grafana-integration.yaml" >/dev/null
 
-log "Platform configuration (config/ + examples/grafana/platform)"
+log "SonarQube integration (admin password, platform user and token, analysis webhook → platform)"
+# Platform side: examples/sonarqube/platform/*.json in the configuration ConfigMap below. The token and the webhook
+# secret live in OpenBao (secret/apps/sonarqube), read by the platform as ${vault:…}.
+SDIR="$ROOT/examples/sonarqube"
+SONAR="https://sonarqube.k8s.orb.local"
+SONAR_ADMIN="$(jq -r .ADMIN_PASSWORD <<<"$(kv_get sonarqube/server)")"
+sstatus() { curl -s -o /dev/null -w '%{http_code}' -u "$1" "$SONAR/api/system/info"; }
+until [[ "$(curl -s "$SONAR/api/system/status" | jq -r .status 2>/dev/null)" == UP ]]; do sleep 5; done
+# First start: admin/admin, replaced by the password of OpenBao.
+if [[ "$(sstatus "admin:$SONAR_ADMIN")" != 200 ]]; then
+  curl -fsS -u admin:admin -X POST "$SONAR/api/users/change_password" \
+    --data-urlencode login=admin --data-urlencode previousPassword=admin --data-urlencode "password=$SONAR_ADMIN"
+fi
+s() { local m="$1" p="$2"; shift 2; curl -fsS -u "admin:$SONAR_ADMIN" -X "$m" "$SONAR$p" "$@"; }
+
+sonar_secrets="$(kv_get apps/sonarqube)"
+token="$(jq -r '.token // empty' <<<"$sonar_secrets")"
+# A stored token is reused while SonarQube still accepts it.
+if [[ -z "$token" || "$(curl -s -u "$token:" "$SONAR/api/authentication/validate" | jq -r .valid)" != true ]]; then
+  if [[ "$(s GET '/api/v2/users-management/users?q=asterius-platform' | jq '[.users[] | select(.login=="asterius-platform")] | length')" == 0 ]]; then
+    # Local user without a usable password: it only signs in with its token (Browse through the sonar-users group).
+    s POST /api/v2/users-management/users -H 'content-type: application/json' \
+      --data "$(jq -nc --arg p "Aa1-$(rand 24)" '{login:"asterius-platform", name:"Asterius Platform", password:$p, local:true}')" >/dev/null
+  fi
+  token="$(s POST /api/user_tokens/generate --data-urlencode login=asterius-platform \
+    --data-urlencode "name=asterius-platform-$(date +%Y%m%d%H%M%S)" | jq -r .token)"
+fi
+webhook_secret="$(jq -r '.webhookSecret // empty' <<<"$sonar_secrets")"; [[ -n "$webhook_secret" ]] || webhook_secret="$(rand)"
+jq -nc --arg t "$token" --arg w "$webhook_secret" '{token:$t, webhookSecret:$w}' | kv_put apps/sonarqube
+
+# Global webhook: every analysis is sent to the platform, signed with X-Sonar-Webhook-HMAC-SHA256.
+hook_url="http://asterius-platform.asterius-platform.svc/api/v1/ingest/default/sonarqube-analyses"
+hook="$(s GET /api/webhooks/list | jq -r '.webhooks[] | select(.name=="asterius-platform") | .key' | head -1)"
+if [[ -n "$hook" ]]; then
+  s POST /api/webhooks/update --data-urlencode "webhook=$hook" --data-urlencode name=asterius-platform \
+    --data-urlencode "url=$hook_url" --data-urlencode "secret=$webhook_secret" >/dev/null
+else
+  s POST /api/webhooks/create --data-urlencode name=asterius-platform \
+    --data-urlencode "url=$hook_url" --data-urlencode "secret=$webhook_secret" >/dev/null
+fi
+
+log "Nexus Repository integration (EULA, read-only role and user for the platform)"
+# Platform side: examples/nexus/platform/*.json in the configuration ConfigMap below; the user's password lives in
+# OpenBao (secret/apps/nexus), read by the platform as ${vault:…}.
+NDIR="$ROOT/examples/nexus"
+NEXUS="https://nexus.k8s.orb.local"
+k -n nexus rollout status statefulset/nexus --timeout=600s
+NAUTH="admin:$(jq -r .ADMIN_PASSWORD <<<"$(kv_get nexus/server)")"
+n() { local m="$1" p="$2"; shift 2; curl -fsS -u "$NAUTH" -H 'content-type: application/json' -X "$m" "$NEXUS/service/rest$p" "$@"; }
+until [[ "$(curl -s -o /dev/null -w '%{http_code}' "$NEXUS/service/rest/v1/status/writable")" == 200 ]]; do sleep 5; done
+# Community Edition asks to accept its EULA before use; the local trial accepts it on the operator's behalf.
+eula="$(n GET /v1/system/eula)"
+[[ "$(jq -r .accepted <<<"$eula")" == true ]] || n POST /v1/system/eula --data "$(jq -c '.accepted = true' <<<"$eula")" >/dev/null
+role="$(jq -nc '{id:"asterius-platform-read", name:"asterius-platform-read", description:"Asterius Platform: browse and search every repository",
+  privileges:["nx-repository-view-*-*-browse","nx-repository-view-*-*-read","nx-search-read"], roles:[]}')"
+if [[ "$(curl -s -o /dev/null -w '%{http_code}' -u "$NAUTH" "$NEXUS/service/rest/v1/security/roles/asterius-platform-read")" == 200 ]]; then
+  n PUT /v1/security/roles/asterius-platform-read --data "$role" >/dev/null
+else n POST /v1/security/roles --data "$role" >/dev/null; fi
+nexus_password="$(jq -r .password <<<"$(kv_get apps/nexus)")"
+if [[ "$(n GET '/v1/security/users?userId=asterius-platform' | jq '[.[] | select(.userId=="asterius-platform")] | length')" == 0 ]]; then
+  n POST /v1/security/users --data "$(jq -nc --arg p "$nexus_password" '{userId:"asterius-platform", firstName:"Asterius", lastName:"Platform",
+    emailAddress:"asterius-platform@localhost", password:$p, status:"active", roles:["asterius-platform-read"]}')" >/dev/null
+else
+  n PUT /v1/security/users/asterius-platform/change-password -H 'content-type: text/plain' --data "$nexus_password" >/dev/null
+fi
+
+log "Platform configuration (config/ + examples/{grafana,sonarqube,nexus}/platform)"
 k -n "$NS" create configmap asterius-platform-config-files \
-  $(for f in "$ROOT"/config/*.yaml "$GDIR"/platform/*.json; do printf -- '--from-file=%s ' "$f"; done) \
+  $(for f in "$ROOT"/config/*.yaml "$GDIR"/platform/*.json "$SDIR"/platform/*.json "$NDIR"/platform/*.json; do printf -- '--from-file=%s ' "$f"; done) \
   --dry-run=client -o yaml | k apply -f - >/dev/null
 
 log "Asterius Platform"
@@ -204,8 +294,12 @@ Platform   https://platform.k8s.orb.local   (first admin: sign up with a local a
 Keycloak   https://platform-id.k8s.orb.local
 Grafana    https://platform-grafana.k8s.orb.local   (dashboard "Asterius Platform")
 OpenBao    https://openbao.k8s.orb.local   (UI, token: root token below)
+SonarQube  https://sonarqube.k8s.orb.local   (user admin, password below)
+Nexus      https://nexus.k8s.orb.local   (user admin, password below)
 
 BOOTSTRAP_TOKEN  kubectl -n $NS get secret asterius-platform-secrets -o jsonpath='{.data.BOOTSTRAP_TOKEN}' | base64 -d
 Grafana admin    kubectl -n observability get secret grafana-admin -o jsonpath='{.data.admin-password}' | base64 -d
 OpenBao root     kubectl -n openbao get secret openbao-init -o jsonpath='{.data.root-token}' | base64 -d
+SonarQube admin  kubectl -n sonarqube get secret sonarqube-secrets -o jsonpath='{.data.ADMIN_PASSWORD}' | base64 -d
+Nexus admin      kubectl -n nexus get secret nexus-secrets -o jsonpath='{.data.ADMIN_PASSWORD}' | base64 -d
 EOF

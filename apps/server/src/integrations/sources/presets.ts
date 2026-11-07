@@ -162,6 +162,27 @@ export const PRESETS: Preset[] = [
     },
   },
   {
+    type: 'nexus',
+    title: 'Sonatype Nexus Repository',
+    description: 'Repositories and components (every repository, or the one of `repository`).',
+    required: ['baseUrl', 'user', 'password'],
+    headers: (c) => ({ authorization: basic(str(c.user), str(c.password)) }),
+    kinds: {
+      repository: { path: '/service/rest/v1/repositories' },
+      component: {
+        path: '/service/rest/v1/search',
+        query: { repository: '{repository|}' },
+        itemsPath: 'items',
+        pagination: { type: 'cursor', param: 'continuationToken', cursorPath: 'continuationToken' },
+      },
+    },
+    example: {
+      type: 'nexus',
+      config: { baseUrl: 'https://nexus.example.com', user: 'asterius-platform', password: '${secret:NEXUS_PASSWORD}' },
+      mappings: [{ kind: 'repository', entity: { blueprint: 'artifact-repository', identifier: 'name', properties: { format: 'format', url: 'url' } } }],
+    },
+  },
+  {
     type: 'snyk',
     title: 'Snyk',
     description: 'Projects of an organization.',
@@ -339,7 +360,11 @@ export function buildRequest(preset: Preset, kind: string, config: Record<string
   if (!k) throw new Error(`${preset.type}: unknown kind "${kind}" (available: ${Object.keys(preset.kinds).join(', ')})`);
   const base = str(config.baseUrl || preset.baseUrl).replace(/\/$/, '');
   const url = new URL(`${base}${fill(k.path, Object.fromEntries(Object.entries(config).map(([n, v]) => [n, encodeURIComponent(str(v))])))}`);
-  for (const [name, value] of Object.entries(k.query ?? {})) url.searchParams.set(name, fill(value, config));
+  // A parameter whose template resolves to nothing (`{repository|}` unset) is left out rather than sent empty.
+  for (const [name, value] of Object.entries(k.query ?? {})) {
+    const v = fill(value, config);
+    if (v !== '') url.searchParams.set(name, v);
+  }
   return {
     url: url.toString(),
     headers: { ...preset.headers(config), ...((config.headers as Record<string, string>) ?? {}) },

@@ -39,6 +39,7 @@ const SOURCE_LOOK: Record<string, { icon: string; group: string }> = {
   'git-descriptors': { icon: 'git-branch', group: G.scm },
   argocd: { icon: 'argo-cd', group: G.cicd },
   'terraform-cloud-workspaces': { icon: 'terraform', group: G.cicd },
+  nexus: { icon: 'package', group: G.cicd },
   pagerduty: { icon: 'pagerduty', group: G.inc },
   opsgenie: { icon: 'bell', group: G.inc },
   grafana: { icon: 'grafana', group: G.inc },

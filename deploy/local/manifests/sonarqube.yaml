@@ -1,0 +1,91 @@
+# Namespace sonarqube: OpenBao → External Secrets → Kubernetes Secrets for the SonarQube chart, and its database
+# (CloudNativePG) whose owner credentials also come from OpenBao (secret/sonarqube/server).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: openbao-reader # Kubernetes auth role eso-sonarqube
+  namespace: sonarqube
+---
+apiVersion: external-secrets.io/v1
+kind: SecretStore
+metadata:
+  name: openbao
+  namespace: sonarqube
+spec:
+  provider:
+    vault:
+      server: http://openbao.openbao.svc:8200
+      path: secret
+      version: v2
+      auth:
+        kubernetes:
+          mountPath: kubernetes
+          role: eso-sonarqube
+          serviceAccountRef: { name: openbao-reader }
+---
+# DB_USERNAME, DB_PASSWORD (chart jdbcOverwrite), MONITORING_PASSCODE (probes, PodMonitor), ADMIN_PASSWORD.
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: sonarqube-secrets
+  namespace: sonarqube
+spec:
+  refreshInterval: 1m
+  secretStoreRef: { kind: SecretStore, name: openbao }
+  target: { name: sonarqube-secrets, creationPolicy: Owner }
+  dataFrom:
+    - extract: { key: sonarqube/server }
+---
+# Owner of the SonarQube database, in the basic-auth shape CloudNativePG expects.
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: sonarqube-db-credentials
+  namespace: sonarqube
+spec:
+  refreshInterval: 1m
+  secretStoreRef: { kind: SecretStore, name: openbao }
+  target:
+    name: sonarqube-db-credentials
+    creationPolicy: Owner
+    template:
+      type: kubernetes.io/basic-auth
+      data:
+        username: "{{ .DB_USERNAME }}"
+        password: "{{ .DB_PASSWORD }}"
+  dataFrom:
+    - extract: { key: sonarqube/server }
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: sonarqube-db
+  namespace: sonarqube
+spec:
+  instances: 1
+  storage: { size: 2Gi }
+  bootstrap:
+    initdb:
+      database: sonarqube
+      owner: sonarqube
+      secret: { name: sonarqube-db-credentials }
+  monitoring:
+    enablePodMonitor: true
+---
+# SonarQube delivers analysis webhooks to the platform's inbound webhook (integration sonarqube-analyses).
+# The chart's NetworkPolicy only lets the ingress controller and Prometheus reach the API pods.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sonarqube-to-platform-webhook
+  namespace: asterius-platform
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: asterius-platform
+      app.kubernetes.io/component: api
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: sonarqube } }
+      ports: [{ port: 8080, protocol: TCP }]

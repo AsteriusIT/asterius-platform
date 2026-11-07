@@ -9,17 +9,18 @@ image:
 
 publicUrl: https://platform.k8s.orb.local
 
+# One replica of everything locally (no HPA, so the chart renders no PodDisruptionBudget either).
 api:
-  replicas: 2
-  autoscaling: { enabled: true, minReplicas: 2, maxReplicas: 4, targetCPUUtilizationPercentage: 70 }
+  replicas: 1
+  autoscaling: { enabled: false }
 worker:
-  replicas: 2
+  replicas: 1
   concurrency: 4
 
 database:
   cnpg:
     enabled: true
-    instances: 2
+    instances: 1
     storage: 2Gi
 
 # ExternalSecret asterius-platform-secrets (OpenBao secret/asterius-platform/env): SECRETS_KEY, METRICS_TOKEN,

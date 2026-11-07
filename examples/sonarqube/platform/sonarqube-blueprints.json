@@ -1,0 +1,128 @@
+{
+  "blueprints": [
+    {
+      "identifier": "sonarqube-project",
+      "title": "SonarQube project",
+      "icon": "sonarqube",
+      "description": "Projects of the SonarQube instance (sonarqube integration); quality gate and last analysis from the sonarqube-analyses webhook.",
+      "schema": {
+        "properties": {
+          "qualityGate": {
+            "type": "string",
+            "title": "Quality gate",
+            "enum": ["OK", "WARN", "ERROR", "NONE"],
+            "enumColors": {
+              "OK": "green",
+              "WARN": "orange",
+              "ERROR": "red",
+              "NONE": "gray"
+            }
+          },
+          "lastAnalysis": {
+            "type": "string",
+            "title": "Last analysis",
+            "format": "date-time"
+          },
+          "revision": {
+            "type": "string",
+            "title": "Analysed revision"
+          },
+          "url": {
+            "type": "string",
+            "title": "Open in SonarQube",
+            "format": "url"
+          }
+        },
+        "order": ["qualityGate", "lastAnalysis", "revision", "url"]
+      }
+    },
+    {
+      "identifier": "sonarqube-quality-gate",
+      "title": "SonarQube quality gate",
+      "icon": "shield-check",
+      "description": "Quality gates defined in SonarQube (sonarqube integration).",
+      "schema": {
+        "properties": {
+          "isDefault": {
+            "type": "boolean",
+            "title": "Default"
+          },
+          "isBuiltIn": {
+            "type": "boolean",
+            "title": "Built-in"
+          },
+          "url": {
+            "type": "string",
+            "title": "Open in SonarQube",
+            "format": "url"
+          }
+        },
+        "order": ["isDefault", "isBuiltIn", "url"]
+      }
+    },
+    {
+      "identifier": "sonarqube-analysis",
+      "title": "SonarQube analysis",
+      "icon": "activity",
+      "description": "Analyses notified by SonarQube (global webhook asterius-platform → inbound webhook sonarqube-analyses).",
+      "schema": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Background task",
+            "enum": ["SUCCESS", "FAILED", "CANCELED"],
+            "enumColors": {
+              "SUCCESS": "green",
+              "FAILED": "red",
+              "CANCELED": "gray"
+            }
+          },
+          "qualityGate": {
+            "type": "string",
+            "title": "Quality gate",
+            "enum": ["OK", "WARN", "ERROR", "NONE"],
+            "enumColors": {
+              "OK": "green",
+              "WARN": "orange",
+              "ERROR": "red",
+              "NONE": "gray"
+            }
+          },
+          "failedConditions": {
+            "type": "array",
+            "title": "Failed conditions",
+            "items": {
+              "type": "string"
+            }
+          },
+          "branch": {
+            "type": "string",
+            "title": "Branch"
+          },
+          "revision": {
+            "type": "string",
+            "title": "Revision"
+          },
+          "analysedAt": {
+            "type": "string",
+            "title": "Analysed",
+            "format": "date-time"
+          },
+          "url": {
+            "type": "string",
+            "title": "Open in SonarQube",
+            "format": "url"
+          }
+        },
+        "order": ["qualityGate", "failedConditions", "status", "branch", "revision", "analysedAt", "url"]
+      },
+      "relations": {
+        "project": {
+          "title": "Project",
+          "target": "sonarqube-project",
+          "inverseTitle": "Analyses"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,56 @@
+# SonarQube Community Build (namespace sonarqube), database on CloudNativePG (manifests/sonarqube.yaml).
+# Secrets (database password, monitoring passcode) come from OpenBao secret/sonarqube/server through External Secrets.
+# The admin password, the platform's token and the analysis webhook are set by install.sh through the API.
+community:
+  enabled: true
+  buildNumber: "26.11.0.134175" # latest Community Build; the chart's default lags behind
+
+jdbcOverwrite:
+  enabled: true
+  jdbcUrl: jdbc:postgresql://sonarqube-db-rw:5432/sonarqube
+  jdbcUsername: sonarqube
+  jdbcSecretName: sonarqube-secrets
+  jdbcSecretPasswordKey: DB_PASSWORD
+
+monitoringPasscodeSecretName: sonarqube-secrets
+monitoringPasscodeSecretKey: MONITORING_PASSCODE
+
+# Sized for a laptop (the chart asks for 4 GB): small heaps for the web, compute engine and search processes.
+env:
+  - { name: SONAR_WEB_JAVAOPTS, value: "-Xmx384m -Xms128m" }
+  - { name: SONAR_CE_JAVAOPTS, value: "-Xmx512m -Xms128m" }
+  - { name: SONAR_SEARCH_JAVAOPTS, value: "-Xmx512m -Xms512m" }
+resources:
+  requests: { cpu: 200m, memory: 1536Mi }
+  limits: { cpu: "2", memory: 3Gi }
+
+# Links in webhook payloads (project.url) and notifications.
+sonarProperties:
+  sonar.core.serverBaseURL: https://sonarqube.k8s.orb.local
+  # The analysis webhook calls the platform's in-cluster Service: without this, SonarQube rejects private addresses.
+  sonar.validateWebhooks: "false"
+
+# Keeps the Elasticsearch indexes across restarts (no full reindex at every start).
+persistence:
+  enabled: true
+  size: 2Gi
+
+ingress:
+  enabled: true
+  ingressClassName: traefik
+  annotations:
+    cert-manager.io/cluster-issuer: local-ca
+  hosts:
+    - name: sonarqube.k8s.orb.local
+      path: /
+      pathType: Prefix
+  tls:
+    - secretName: sonarqube-tls
+      hosts: [sonarqube.k8s.orb.local]
+
+prometheusMonitoring:
+  podMonitor:
+    enabled: true
+
+tests:
+  enabled: false

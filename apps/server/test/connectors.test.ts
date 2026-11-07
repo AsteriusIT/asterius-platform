@@ -78,4 +78,20 @@ describe('connector presets', () => {
     expect(jira.seen[0]!.headers.authorization).toMatch(/^Basic /);
     await jira.close();
   });
+  it('Nexus: basic auth, continuationToken paging, repository filter only when set', async () => {
+    const s = await api((req) => {
+      const q = new URL(req.url ?? '', 'http://x').searchParams;
+      if (req.url?.startsWith('/service/rest/v1/repositories')) return [{ name: 'maven-releases', format: 'maven2' }];
+      return q.get('continuationToken') ? { items: [{ id: 'c2' }], continuationToken: null } : { items: [{ id: 'c1' }], continuationToken: 'next' };
+    });
+    const config = { baseUrl: s.url, user: 'asterius', password: 'pw' };
+    expect(await collect('nexus', 'repository', config)).toEqual([{ name: 'maven-releases', format: 'maven2' }]);
+    expect(await collect('nexus', 'component', config)).toEqual([{ id: 'c1' }, { id: 'c2' }]);
+    expect(s.seen[0]!.headers.authorization).toBe(`Basic ${Buffer.from('asterius:pw').toString('base64')}`);
+    expect(s.seen[1]!.url).toBe('/service/rest/v1/search'); // no empty repository= parameter
+    expect(s.seen[2]!.url).toContain('continuationToken=next');
+    await collect('nexus', 'component', { ...config, repository: 'npm-proxy' });
+    expect(s.seen[4]!.url).toContain('repository=npm-proxy');
+    await s.close();
+  });
 });
