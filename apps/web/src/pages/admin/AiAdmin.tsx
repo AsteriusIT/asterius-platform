@@ -196,6 +196,9 @@ export function AiAdmin() {
         <Text fw={600} mb="xs">
           Prices ($ per million tokens)
         </Text>
+        <Text fz="sm" c="dimmed" mb="xs">
+          Prices are platform-wide; only super admins can change them.
+        </Text>
         <DataTable
           rows={prices.data}
           loading={prices.isPending}

@@ -237,8 +237,26 @@ export function ConfigAdmin() {
       <QueryView q={info}>
         {(i) => (
           <>
-            <Text fz="sm">
-              Directory: <Code>{i.dir}</Code>
+            <Text fz="sm" data-testid="config-source">
+              {i.source?.type === 'git' ? (
+                <>
+                  Git: <Code>{i.source.url}</Code> (ref <Code>{i.source.branch}</Code>
+                  {i.source.path ? (
+                    <>
+                      , path <Code>{i.source.path}</Code>
+                    </>
+                  ) : null}
+                  )
+                </>
+              ) : i.dir ? (
+                <>
+                  Directory: <Code>{i.dir}</Code>
+                </>
+              ) : (
+                <>
+                  Source: <Code>none</Code> (this organization has no configuration source)
+                </>
+              )}
             </Text>
             <Card>
               <Group gap="xl">
