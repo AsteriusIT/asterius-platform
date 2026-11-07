@@ -51,12 +51,30 @@ export function readConfigDir(dir = config.CONFIG_DIR, opts: { platform?: boolea
   const empty: ConfigFile = configFile.parse({});
   if (!fs.existsSync(dir)) return { files: [], hash: '', data: empty };
   const orgsDir = path.join(dir, 'orgs');
+  const root = fs.realpathSync(dir);
   const files = fs
     .readdirSync(dir, { recursive: true, withFileTypes: true })
-    .filter((f) => f.isFile() && /\.(ya?ml|json)$/i.test(f.name) && !f.name.startsWith('.'))
+    .filter((f) => (f.isFile() || f.isSymbolicLink()) && /\.(ya?ml|json)$/i.test(f.name))
     .map((f) => path.join(f.parentPath, f.name))
+    // Hidden files and directories are skipped: .git, and the ..data / ..<timestamp> directories of Kubernetes
+    // ConfigMap and Secret volumes, which hold a second copy of every file.
+    .filter((f) =>
+      path
+        .relative(dir, f)
+        .split(path.sep)
+        .every((s) => !s.startsWith('.')),
+    )
     .filter((f) => !opts.platform || !(f === orgsDir || f.startsWith(`${orgsDir}${path.sep}`)))
-    .filter((f) => !f.split(path.sep).includes('.git'))
+    // Symlinks are followed to regular files inside the directory only (ConfigMap volumes are symlinks into
+    // ..data); an organization's repository cannot point the loader at a file elsewhere on the server.
+    .filter((f) => {
+      try {
+        const real = fs.realpathSync(f);
+        return real.startsWith(`${root}${path.sep}`) && fs.statSync(real).isFile();
+      } catch {
+        return false; // dangling link
+      }
+    })
     .sort();
   if (files.length > MAX_FILES) throw new Error(`too many configuration files (${files.length}, max ${MAX_FILES})`);
   const hash = createHash('sha256');
