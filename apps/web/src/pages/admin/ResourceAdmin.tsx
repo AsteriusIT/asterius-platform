@@ -8,6 +8,7 @@ import { errorText } from '../../lib/api';
 import { notifyError } from '../../lib/queryClient';
 import { DataTable, type Column } from '../../components/DataTable';
 import { ManagedBadge, PageHeader } from '../../components/ui';
+import { TemplatePicker, type PickerItem } from '../../components/TemplatePicker';
 import { ResourceEditor } from '../../components/ResourceEditor';
 import type { EditorProps } from '../../components/builder/FormBuilder';
 
@@ -28,7 +29,9 @@ export function ResourceAdmin<T extends Resource>(props: {
   queryKey: string;
   list: () => Promise<T[]>;
   columns: Column<T>[];
-  templates: { label: string; value: Record<string, unknown> }[];
+  templates: (PickerItem & { value: Record<string, unknown> })[];
+  /** How "New" offers several templates: a menu, or a modal of cards. Default: modal when templates carry icons or there are more than 6. */
+  picker?: 'menu' | 'modal';
   /** Editable document of an existing resource (strip computed fields). */
   toEditable: (item: T) => Record<string, unknown> | Promise<Record<string, unknown>>;
   save: (id: string, body: Record<string, unknown>) => Promise<unknown>;
@@ -43,6 +46,7 @@ export function ResourceAdmin<T extends Resource>(props: {
 }) {
   const qc = useQueryClient();
   const q = useQuery({ queryKey: [props.queryKey], queryFn: props.list });
+  const [picking, setPicking] = useState(false);
   const [editing, setEditing] = useState<{ value: Record<string, unknown>; isNew: boolean; readOnly: boolean } | null>(null);
 
   const onSave = async (id: string, body: Record<string, unknown>) => {
@@ -120,8 +124,13 @@ export function ResourceAdmin<T extends Resource>(props: {
     },
   ];
 
+  const mode = props.picker ?? (props.templates.some((t) => t.icon) || props.templates.length > 6 ? 'modal' : 'menu');
   const newButton =
-    props.templates.length > 1 ? (
+    props.templates.length > 1 && mode === 'modal' ? (
+      <Button leftSection={<IconPlus size={16} />} onClick={() => setPicking(true)}>
+        New
+      </Button>
+    ) : props.templates.length > 1 ? (
       <Menu position="bottom-end">
         <Menu.Target>
           <Button leftSection={<IconPlus size={16} />} rightSection={<IconChevronDown size={14} />}>
@@ -149,6 +158,16 @@ export function ResourceAdmin<T extends Resource>(props: {
     <Stack>
       <PageHeader title={props.title} description={props.description} actions={newButton} refresh={q} />
       {props.children}
+      <TemplatePicker
+        opened={picking}
+        title={`New ${props.title.replace(/s$/, '').toLowerCase()}`}
+        items={props.templates}
+        onClose={() => setPicking(false)}
+        onPick={(t) => {
+          setPicking(false);
+          setEditing({ value: t.value, isNew: true, readOnly: false });
+        }}
+      />
       <DataTable
         rows={q.data}
         loading={q.isPending}
