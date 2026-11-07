@@ -70,9 +70,23 @@ blueprints:
         version: { type: string, title: Version }
         url: { type: string, title: URL, format: url }
         deployedAt: { type: string, title: Deployed at, format: date-time }
+        mergedAt: { type: string, title: Change merged at, format: date-time }
     relations:
       service: { title: Service, target: service }
       environment: { title: Environment, target: environment }
+
+  - identifier: incident
+    title: Incident
+    icon: alert-triangle
+    description: Incidents from PagerDuty (preset `incident` kind); feeds the time to restore of the delivery insights.
+    schema:
+      properties:
+        status: { type: string, title: Status, enumColors: { triggered: red, acknowledged: orange, resolved: green } }
+        createdAt: { type: string, title: Created, format: date-time }
+        resolvedAt: { type: string, title: Resolved, format: date-time }
+        url: { type: string, title: URL, format: url }
+    relations:
+      service: { title: Service, target: service }
 
   - identifier: database
     title: Database

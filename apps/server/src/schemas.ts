@@ -191,8 +191,46 @@ export const entityMigration = z.discriminatedUnion('type', [
 ]);
 export type EntityMigration = z.infer<typeof entityMigration>;
 
+/**
+ * DORA insights: which entities/runs are deployments and incidents, over which window. The defaults match the Argo CD
+ * preset (blueprint `deployment`) and the PagerDuty preset (blueprint `incident`).
+ */
+const propName = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,63}$/);
+export const insightsConfig = z.object({
+  /** Window in days, ending now. */
+  days: z.number().int().min(1).max(365).default(30),
+  /** Only deployments/incidents of this team (owner team of the entity, or of the run's target). */
+  team: slug.optional(),
+  /** Only this service: the deployment's `serviceRelation` target, or the run's target entity. */
+  service: z.string().max(200).optional(),
+  deployments: z
+    .object({
+      blueprint: slug.default('deployment'),
+      /** Property holding the deploy time (falls back to the entity creation time). */
+      timeProperty: propName.default('deployedAt'),
+      statusProperty: propName.default('status'),
+      successValues: z.array(z.string()).default(['success', 'succeeded', 'healthy', 'synced']),
+      failureValues: z.array(z.string()).default(['failure', 'failed', 'error', 'degraded']),
+      /** Property holding when the change was merged, for the lead time. */
+      mergedProperty: propName.default('mergedAt'),
+      serviceRelation: propName.default('service'),
+    })
+    .prefault({}),
+  /** Actions whose runs are deployments: successful runs count as deployments, failed runs as failed deployments. */
+  deploymentActions: z.array(slug).max(20).default([]),
+  incidents: z
+    .object({
+      blueprint: slug.default('incident'),
+      createdProperty: propName.default('createdAt'),
+      resolvedProperty: propName.default('resolvedAt'),
+      serviceRelation: propName.default('service'),
+    })
+    .prefault({}),
+});
+export type InsightsConfig = z.infer<typeof insightsConfig>;
+
 const widgetBase = { title: z.string().max(100).optional(), width: z.number().int().min(1).max(12).default(6) };
-const filterMap = z.record(fieldName, z.string()).default({});
+const filterMap = z.record(fieldName, z.string()).prefault({});
 
 /** Widgets of a dashboard; the server computes their data for the viewer. */
 export const dashboardWidget = z.discriminatedUnion('type', [
@@ -228,6 +266,7 @@ export const dashboardWidget = z.discriminatedUnion('type', [
     columns: z.array(z.string()).max(8).default([]),
     limit: z.number().int().min(1).max(50).default(10),
   }),
+  z.object({ ...widgetBase, type: z.literal('insights'), ...insightsConfig.shape }),
   z.object({ ...widgetBase, type: z.literal('markdown'), content: z.string().max(10_000) }),
 ]);
 export type DashboardWidgetDef = z.infer<typeof dashboardWidget>;

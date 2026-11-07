@@ -232,6 +232,7 @@ All endpoints take `Authorization: Bearer <token>`. Personal tokens come from th
 | `GET /api/v1/deleted-entities` · `POST …/entities/:id/restore` · `DELETE /api/v1/deleted-entities/:bp/:id` | tombstones (admin) |
 | `GET …/entities/:id/scorecards` · `GET /api/v1/scorecards/:id/summary` | scorecard results of an entity, distribution and trend |
 | `POST /api/v1/blueprints/:bp/impact` · `…/migrate` · `GET …/validation` | check a proposed blueprint against its entities, migrate (rename / default / remove), last background report (admin) |
+| `GET /api/v1/insights?days=&team=&service=` | the DORA metrics of the organization, as the caller may read them |
 | `GET /api/v1/dashboards/resolve?blueprint=` · `GET …/dashboards/:id/data` | the dashboard to show and its widget data |
 | `GET /api/v1/actions` · `POST /api/v1/actions/:id/runs` `{ entity?, inputs }` | trigger actions from scripts |
 | `GET /api/v1/runs?mine=true&status=…` · `GET /api/v1/runs/:id` | runs with logs and approvals |
@@ -263,7 +264,13 @@ scorecards:
 
 **Supply chain.** Vulnerability and SBOM blueprints, Snyk and CycloneDX mappings and a security scorecard are described in [SUPPLY-CHAIN.md](SUPPLY-CHAIN.md).
 
-**Dashboards.** Widgets: `count` (optionally `groupBy` a property, `team` or `source`), `scorecard`, `runs`, `approvals`, `table` (a saved view), `markdown`. A dashboard with `default: true` is the home page; with `team:` it is the home page of that team; with `blueprint:` it appears on that blueprint's catalog page.
+**Dashboards.** Widgets: `count` (optionally `groupBy` a property, `team` or `source`), `scorecard`, `runs`, `approvals`, `table` (a saved view), `insights` (DORA metrics, below), `markdown`. A dashboard with `default: true` is the home page; with `team:` it is the home page of that team; with `blueprint:` it appears on that blueprint's catalog page.
+
+**Delivery insights (DORA).** The `insights` widget shows the four DORA metrics over `days` (default 30) as stat tiles with their band (elite / high / medium / low); the same numbers are served by `GET /api/v1/insights`, scoped to the organization and to the blueprints the caller may read. Optional `team` / `service` filters. Sources, all configurable:
+- *Deployment frequency* and *change failure rate*: entities of `deployments.blueprint` (default `deployment`, e.g. the Argo CD preset, whose example mapping sets `deployedAt` and `status` from the last sync operation) with `timeProperty` (default `deployedAt`) in the window and a `statusProperty` (default `status`) matching `successValues` (`success`, `succeeded`, `healthy`, `synced`) or `failureValues` (`failure`, `failed`, `error`, `degraded`); other states are ignored. `deploymentActions` adds the runs of those actions (SUCCESS = deployment, FAILURE = failed deployment).
+- *Lead time for changes*: median of `deployedAt - mergedAt` (`deployments.mergedProperty`, default `mergedAt`) over successful deployments carrying it.
+- *Time to restore*: median of `resolvedAt - createdAt` of `incidents.blueprint` (default `incident`; the PagerDuty preset has an `incident` kind, see its example mapping) for incidents created in the window.
+A metric with no data is `null` (shown as a dash), never NaN. Bands: frequency daily / weekly / monthly; lead time and restore time under a day (restore: an hour) / a week / a month (restore: a day / a week); failure rate up to 5 / 10 / 15 %.
 
 ## Ephemeral entities (expiry)
 
