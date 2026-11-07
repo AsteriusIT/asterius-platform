@@ -35,7 +35,7 @@
         "pkce.code.challenge.method": "S256",
         "post.logout.redirect.uris": "${ASTERIUS_PUBLIC_URL}/login"
       },
-      "defaultClientScopes": ["basic", "web-origins", "acr", "profile", "roles", "email"],
+      "defaultClientScopes": ["basic", "web-origins", "acr", "profile", "roles", "email", "kc-admin-api"],
       "optionalClientScopes": ["organization", "offline_access"]
     }
   ],

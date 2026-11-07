@@ -125,7 +125,7 @@ keycloak:
   clientId: asterius-platform
   # Deployed by the chart: public host (ingress), image, database.
   host: "" # e.g. id.example.com
-  image: quay.io/keycloak/keycloak:26.8.0
+  image: quay.io/keycloak/keycloak:26.8.2
   replicas: 1
   # Secret with KC_DB_USERNAME, KC_DB_PASSWORD, KC_BOOTSTRAP_ADMIN_USERNAME, KC_BOOTSTRAP_ADMIN_PASSWORD and
   # ASTERIUS_CLIENT_SECRET (the platform client). Empty: the chart creates one (passwords generated once, kept).

@@ -5,7 +5,7 @@
 # Data lives in the container (start-dev, H2): `down -v` resets it. Production: the Helm chart (keycloak.enabled).
 services:
   keycloak:
-    image: quay.io/keycloak/keycloak:26.8.0
+    image: quay.io/keycloak/keycloak:26.8.2
     command: ['start-dev', '--import-realm']
     environment:
       KC_BOOTSTRAP_ADMIN_USERNAME: admin
