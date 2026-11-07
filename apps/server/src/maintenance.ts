@@ -8,6 +8,7 @@ import { metrics } from './metrics.js';
 import { purgeNotifications } from './inbox.js';
 import { purgeExpiredTombstones } from './catalog/entities.js';
 import { purgeVersions } from './catalog/history.js';
+import { expireAllOrganizations } from './catalog/expiry.js';
 import { evaluateEverything, purgeScorecardHistory } from './catalog/scorecards.js';
 
 /** Rows deleted per statement: small enough to keep locks short on a busy Postgres (runs cascade to logs and steps). */
@@ -97,12 +98,18 @@ export function startMaintenance(log: FastifyBaseLogger) {
   const stats = () => refreshBlueprintStats().catch((err) => log.error({ err }, 'blueprint stats refresh failed'));
   setTimeout(tick, 30_000).unref();
   setTimeout(stats, 5_000).unref();
+  // Entity expiry is claim-based (see catalog/expiry.ts): every replica may run it, each expiry is announced once.
+  const expiry = () => expireAllOrganizations().catch((err) => log.error({ err }, 'entity expiry failed'));
+  setTimeout(expiry, 20_000).unref();
+  const expiryTimer = setInterval(expiry, 300_000);
+  expiryTimer.unref();
   const timer = setInterval(tick, 3600_000);
   const statsTimer = setInterval(stats, 60_000);
   timer.unref();
   statsTimer.unref();
   return () => {
     clearInterval(timer);
+    clearInterval(expiryTimer);
     clearInterval(statsTimer);
   };
 }

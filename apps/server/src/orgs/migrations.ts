@@ -542,6 +542,22 @@ export const ORG_MIGRATIONS: Migration[] = [
     name: 'sessions: identity provider ID token (single sign-out)',
     up: (d) => addColumn(d, 'sessions', 'id_token', 'TEXT'),
   },
+  {
+    id: 37,
+    name: 'entity expiry: blueprint ttl_property, emitted expiry per entity',
+    up: async (d) => {
+      await addColumn(d, 'blueprints', 'ttl_property', 'TEXT');
+      await d.exec(`CREATE TABLE IF NOT EXISTS entity_expiry (
+        org_id TEXT NOT NULL,
+        blueprint TEXT NOT NULL,
+        identifier TEXT NOT NULL,
+        expires TEXT NOT NULL,
+        emitted_at TEXT NOT NULL,
+        PRIMARY KEY (org_id, blueprint, identifier),
+        FOREIGN KEY (org_id, blueprint, identifier) REFERENCES entities(org_id, blueprint, identifier) ON DELETE CASCADE
+      )`);
+    },
+  },
 ];
 
 /**

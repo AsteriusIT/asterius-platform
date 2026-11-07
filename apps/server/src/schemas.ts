@@ -136,6 +136,8 @@ export const blueprintDef = z.object({
     .default({}),
   computed: z.record(fieldName, computedDef).default({}),
   permissions: blueprintPermissions.optional(),
+  /** Name of a date / date-time property (e.g. expiresAt): once it is in the past the maintenance pass emits `entity.expired`. */
+  ttlProperty: fieldName.nullish(),
 });
 export type BlueprintDef = z.infer<typeof blueprintDef>;
 
@@ -432,7 +434,7 @@ export const scheduleTrigger = z.object({
   timezone: z.string().min(1).max(64).default('UTC'),
   inputs: templateInputs,
 });
-export const EVENT_TRIGGERS = ['entity.created', 'entity.updated', 'entity.deleted', 'scorecard.changed', 'run.finished'] as const;
+export const EVENT_TRIGGERS = ['entity.created', 'entity.updated', 'entity.deleted', 'entity.expired', 'scorecard.changed', 'run.finished'] as const;
 export const eventTrigger = z.object({
   type: z.literal('event'),
   event: z.enum(EVENT_TRIGGERS),
@@ -611,6 +613,7 @@ export const WEBHOOK_EVENTS = [
   'entity.created',
   'entity.updated',
   'entity.deleted',
+  'entity.expired',
   'run.created',
   'run.updated',
   'approval.requested',

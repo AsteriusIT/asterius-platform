@@ -16,6 +16,7 @@ export type EventType =
   | 'entity.created'
   | 'entity.updated'
   | 'entity.deleted'
+  | 'entity.expired'
   | 'run.created'
   | 'run.updated'
   | 'approval.requested'

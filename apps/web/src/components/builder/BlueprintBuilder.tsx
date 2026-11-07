@@ -27,6 +27,7 @@ export interface BlueprintDoc {
   schema: ObjectSchema;
   relations: Record<string, BlueprintRelation>;
   permissions?: BlueprintPermissions;
+  ttlProperty?: string | null;
   [k: string]: unknown;
 }
 
@@ -155,9 +156,17 @@ function Builder({
   const set = (patch: Partial<BlueprintDoc>) => setDoc((d) => ({ ...d, ...patch }));
   const body = (): Record<string, unknown> => {
     const { entityCount: _count, ...rest } = doc as BlueprintDoc & { entityCount?: unknown };
-    const { permissions, ...others } = rest;
+    const { permissions, ttlProperty, ...others } = rest;
     const cleaned = cleanPermissions(permissions);
-    return { ...others, schema: fieldsToSchema(fields), relations: draftsToRelations(relations), ...(cleaned ? { permissions: cleaned } : {}) };
+    // Only a property that still is a date can be the expiry.
+    const ttl = ttlProperty && fields.some((f) => f.name === ttlProperty && (f.type === 'date' || f.type === 'datetime')) ? ttlProperty : null;
+    return {
+      ...others,
+      ...(ttl ? { ttlProperty: ttl } : {}),
+      schema: fieldsToSchema(fields),
+      relations: draftsToRelations(relations),
+      ...(cleaned ? { permissions: cleaned } : {}),
+    };
   };
   const applyDoc = (parsed: Record<string, unknown>) => {
     const next = toBlueprintDoc(parsed);
@@ -290,6 +299,15 @@ function Builder({
               />
               <SimpleGrid cols={{ base: 1, sm: 2 }}>
                 <IconPicker value={doc.icon} onChange={(i) => set({ icon: i })} description="Shown in the navigation and on entity pages" />
+                <Select
+                  label="Expiry property"
+                  description="Ephemeral entities: once this date has passed, an entity.expired event fires (webhooks, workflow triggers)"
+                  placeholder="None"
+                  clearable
+                  data={fields.filter((f) => f.name && (f.type === 'date' || f.type === 'datetime')).map((f) => ({ value: f.name, label: f.label || f.name }))}
+                  value={doc.ttlProperty ?? null}
+                  onChange={(v) => set({ ttlProperty: v })}
+                />
               </SimpleGrid>
             </Stack>
           </Tabs.Panel>
