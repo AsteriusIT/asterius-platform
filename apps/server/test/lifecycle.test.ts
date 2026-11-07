@@ -9,7 +9,7 @@ import { addLog } from '../src/actions/runs.js';
 import { registerInvoker } from '../src/actions/invokers/index.js';
 import { config } from '../src/config.js';
 import * as events from '../src/events.js';
-import { all, migrate, one, sqliteDriver } from '../src/db.js';
+import { all, migrate, one, sqliteDriver, tx } from '../src/db.js';
 import { beat, registerLoop } from '../src/health.js';
 
 /**
@@ -213,7 +213,10 @@ describe('bounded run logs (ap-na0.10)', () => {
     const cap = config.RUN_LOG_MAX_LINES;
     try {
       config.RUN_LOG_MAX_LINES = 5000;
-      for (let i = 0; i < 1200; i++) await addLog(id, `line ${i}`);
+      // One transaction instead of 1200 autocommit round trips: same rows, no dependence on disk/CPU speed.
+      await tx(async (d) => {
+        for (let i = 0; i < 1200; i++) await addLog(id, `line ${i}`, 'info', null, d);
+      });
     } finally {
       config.RUN_LOG_MAX_LINES = cap;
     }
