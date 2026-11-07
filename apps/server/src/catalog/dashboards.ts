@@ -8,6 +8,7 @@ import { countEntities, searchEntities } from './entities.js';
 import { getScorecard, scorecardSummary } from './scorecards.js';
 import { getBlueprintCached } from './blueprints.js';
 import { visibleBlueprints } from '../auth/access.js';
+import { computeInsights } from './insights.js';
 import { orgId } from '../orgs/context.js';
 
 /**
@@ -124,6 +125,10 @@ async function widgetData(w: DashboardWidget, p: Principal): Promise<WidgetData>
         viewer: p,
       });
       return { type: 'table', blueprint: w.blueprint, items: r.items, total: r.total ?? r.items.length };
+    }
+    case 'insights': {
+      const { type: _t, title: _ti, width: _w, ...cfg } = w;
+      return { type: 'insights', ...(await computeInsights(cfg, p)) };
     }
     case 'markdown':
       return { type: 'markdown' };

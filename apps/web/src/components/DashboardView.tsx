@@ -1,7 +1,7 @@
-import { Anchor, Card, Grid, Group, Progress, Stack, Text, Title } from '@mantine/core';
+import { Anchor, Badge, Card, Grid, Group, Progress, SimpleGrid, Stack, Text, Title } from '@mantine/core';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router';
-import type { Dashboard, DashboardWidget, WidgetData } from '@asterius/shared';
+import type { Dashboard, DashboardWidget, DoraBand, WidgetData } from '@asterius/shared';
 import { api } from '../lib/api';
 import { DataTable } from './DataTable';
 import { PropertyValue } from './PropertyValue';
@@ -56,6 +56,8 @@ function WidgetBody({ widget, data }: { widget: DashboardWidget; data: WidgetDat
     case 'runs':
     case 'approvals':
       return <RunsList data={data} />;
+    case 'insights':
+      return <Insights data={data} />;
     case 'table':
       return <EntityTable widget={widget as Extract<DashboardWidget, { type: 'table' }>} data={data} />;
     default:
@@ -183,5 +185,53 @@ function EntityTable({ widget, data }: { widget: Extract<DashboardWidget, { type
         </Anchor>
       )}
     </>
+  );
+}
+
+const BAND_COLORS: Record<DoraBand, string> = { elite: 'teal', high: 'green', medium: 'yellow', low: 'red' };
+
+const fmtDuration = (hours: number) => (hours < 1 ? `${Math.round(hours * 60)} min` : hours < 48 ? `${+hours.toFixed(1)} h` : `${+(hours / 24).toFixed(1)} d`);
+
+function Stat({ label, value, hint, band }: { label: string; value: string; hint: string; band: DoraBand | null }) {
+  return (
+    <Card withBorder padding="sm" data-testid={`dora-${label}`}>
+      <Text fz="xs" c="dimmed">
+        {label}
+      </Text>
+      <Text fz={26} fw={700}>
+        {value}
+      </Text>
+      <Group justify="space-between" gap="xs">
+        <Text fz="xs" c="dimmed">
+          {hint}
+        </Text>
+        {band && (
+          <Badge color={BAND_COLORS[band]} variant="light">
+            {band}
+          </Badge>
+        )}
+      </Group>
+    </Card>
+  );
+}
+
+/** The four DORA metrics as stat tiles; a metric without data shows an em dash. */
+function Insights({ data }: { data: Data<'insights'> }) {
+  const f = data.deploymentFrequency;
+  const l = data.leadTime;
+  const c = data.changeFailureRate;
+  const m = data.mttr;
+  return (
+    <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }}>
+      <Stat
+        label="Deployment frequency"
+        value={f.value === null ? '—' : f.value >= 1 ? `${+f.value.toFixed(1)} / day` : `${+(f.value * 7).toFixed(1)} / week`}
+        hint={`${f.count} in ${data.days} days`}
+        band={f.band}
+      />
+      <Stat label="Lead time for changes" value={l.value === null ? '—' : fmtDuration(l.value)} hint={`${l.samples} changes`} band={l.band} />
+      <Stat label="Change failure rate" value={c.value === null ? '—' : `${+(c.value * 100).toFixed(1)} %`} hint={`${c.failed} of ${c.total}`} band={c.band} />
+      <Stat label="Time to restore" value={m.value === null ? '—' : fmtDuration(m.value)} hint={`${m.incidents} incidents`} band={m.band} />
+    </SimpleGrid>
   );
 }

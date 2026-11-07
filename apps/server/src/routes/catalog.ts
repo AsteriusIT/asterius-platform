@@ -30,6 +30,7 @@ import { entityGraph, MAX_DEPTH, MAX_NODES } from '../catalog/graph.js';
 import { parseFilterParams } from '../catalog/query.js';
 import { nextPageHeaders } from '../lib/cursor.js';
 import { badRequest, forbidden, notFound } from '../lib/errors.js';
+import { computeInsights } from '../catalog/insights.js';
 import { dashboardData, deleteDashboard, getDashboard, listDashboards, resolveDashboard, upsertDashboard } from '../catalog/dashboards.js';
 import { getVersion, listVersions } from '../catalog/history.js';
 import { checkEntities, getReport, migrateEntities, migrationList } from '../catalog/impact.js';
@@ -44,7 +45,7 @@ import {
   upsertScorecard,
 } from '../catalog/scorecards.js';
 import { countPendingApprovals, listRuns } from '../actions/runs.js';
-import { blueprintDef, entityInput, entityQueryBody, SORT_RE, type EntityInput } from '../schemas.js';
+import { blueprintDef, entityInput, entityQueryBody, insightsConfig, slug, SORT_RE, type EntityInput } from '../schemas.js';
 import type { Entity } from '@asterius/shared';
 import { bpParam, entityParam, idParam, page } from './util.js';
 
@@ -135,6 +136,30 @@ export async function catalogRoutes(app: FastifyInstance) {
   });
 
   // ---- dashboards ----
+  /** DORA metrics with the default sources; blueprints and deployment actions (comma separated) can be overridden. */
+  app.get('/insights', async (req) => {
+    const q = z
+      .object({
+        days: z.coerce.number().int().min(1).max(365).optional(),
+        team: slug.optional(),
+        service: z.string().max(200).optional(),
+        deploymentBlueprint: slug.optional(),
+        incidentBlueprint: slug.optional(),
+        deploymentActions: z.string().max(1000).optional(),
+      })
+      .parse(req.query);
+    return computeInsights(
+      insightsConfig.parse({
+        days: q.days,
+        team: q.team,
+        service: q.service,
+        deployments: { blueprint: q.deploymentBlueprint },
+        incidents: { blueprint: q.incidentBlueprint },
+        deploymentActions: q.deploymentActions?.split(',').filter(Boolean),
+      }),
+      req.principal,
+    );
+  });
   app.get('/dashboards', async () => listDashboards());
   app.get('/dashboards/resolve', async (req) => {
     const { blueprint } = z.object({ blueprint: z.string().optional() }).parse(req.query);

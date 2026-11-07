@@ -1,0 +1,16 @@
+dashboards:
+  # Shown on the catalog page of the Deployment blueprint: the four DORA metrics over the last 30 days.
+  # Deployments come from the `deployment` blueprint (Argo CD preset / CI events) and from successful or failed runs of the
+  # listed actions; incidents from the `incident` blueprint (PagerDuty preset). Add `team:` or `service:` to filter.
+  - identifier: delivery
+    title: Delivery insights
+    description: DORA metrics - deployment frequency, lead time for changes, change failure rate and time to restore.
+    blueprint: deployment
+    widgets:
+      - type: insights
+        title: DORA metrics (30 days)
+        width: 12
+        days: 30
+        deploymentActions: [deploy-service]
+        deployments: { blueprint: deployment, timeProperty: deployedAt, mergedProperty: mergedAt }
+        incidents: { blueprint: incident }

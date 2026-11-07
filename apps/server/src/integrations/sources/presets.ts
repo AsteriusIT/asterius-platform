@@ -51,7 +51,15 @@ export const PRESETS: Preset[] = [
           entity: {
             blueprint: 'deployment',
             identifier: 'metadata.name',
-            properties: { health: 'status.health.status', sync: 'status.sync.status', repo: 'spec.source.repoURL', namespace: 'spec.destination.namespace' },
+            properties: {
+              health: 'status.health.status',
+              sync: 'status.sync.status',
+              repo: 'spec.source.repoURL',
+              namespace: 'spec.destination.namespace',
+              // DORA insights: finish time of the last sync operation and its phase (Succeeded / Failed).
+              deployedAt: 'status.operationState.finishedAt',
+              status: 'status.operationState.phase',
+            },
           },
         },
       ],
@@ -67,6 +75,12 @@ export const PRESETS: Preset[] = [
     kinds: {
       service: { path: '/services', query: { limit: '100' }, itemsPath: 'services', pagination: { type: 'offset', param: 'offset', pageSize: 100 } },
       team: { path: '/teams', query: { limit: '100' }, itemsPath: 'teams', pagination: { type: 'offset', param: 'offset', pageSize: 100 } },
+      incident: {
+        path: '/incidents',
+        query: { limit: '100', 'statuses[]': 'resolved' },
+        itemsPath: 'incidents',
+        pagination: { type: 'offset', param: 'offset', pageSize: 100 },
+      },
       oncall: { path: '/oncalls', query: { limit: '100' }, itemsPath: 'oncalls', pagination: { type: 'offset', param: 'offset', pageSize: 100 } },
     },
     example: {
@@ -74,6 +88,16 @@ export const PRESETS: Preset[] = [
       config: { token: '${secret:PAGERDUTY_TOKEN}' },
       mappings: [
         { kind: 'service', entity: { blueprint: 'service', identifier: '$lowercase(name)', properties: { pagerdutyUrl: 'html_url', status: 'status' } } },
+        // DORA insights (MTTR): incident created / resolved times.
+        {
+          kind: 'incident',
+          entity: {
+            blueprint: 'incident',
+            identifier: "incident_number & ''",
+            title: 'title',
+            properties: { createdAt: 'created_at', resolvedAt: 'resolved_at', status: 'status', url: 'html_url' },
+          },
+        },
       ],
     },
   },

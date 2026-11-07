@@ -292,7 +292,7 @@ export function DashboardsAdmin() {
   return (
     <ResourceAdmin<Dashboard>
       title="Dashboards"
-      description="Widgets (counts, scorecard levels, runs, approvals, saved tables, markdown) shown on the home page, per team, or on a blueprint's page."
+      description="Widgets (counts, scorecard levels, runs, approvals, saved tables, DORA insights, markdown) shown on the home page, per team, or on a blueprint's page."
       queryKey="dashboards"
       list={api.dashboards}
       columns={[

@@ -1043,6 +1043,36 @@ interface WidgetBase {
   width: number;
 }
 
+export interface InsightsConfig {
+  days: number;
+  team?: string;
+  service?: string;
+  deployments: {
+    blueprint: string;
+    timeProperty: string;
+    statusProperty: string;
+    successValues: string[];
+    failureValues: string[];
+    mergedProperty: string;
+    serviceRelation: string;
+  };
+  deploymentActions: string[];
+  incidents: { blueprint: string; createdProperty: string; resolvedProperty: string; serviceRelation: string };
+}
+
+export type DoraBand = 'elite' | 'high' | 'medium' | 'low';
+
+/** The four DORA metrics; a metric without data is `value: null` (never NaN) and has no band. */
+export interface Insights {
+  days: number;
+  since: string;
+  until: string;
+  deploymentFrequency: { value: number | null; unit: 'per_day'; count: number; band: DoraBand | null };
+  leadTime: { value: number | null; unit: 'hours'; samples: number; band: DoraBand | null };
+  changeFailureRate: { value: number | null; unit: 'ratio'; failed: number; total: number; band: DoraBand | null };
+  mttr: { value: number | null; unit: 'hours'; incidents: number; band: DoraBand | null };
+}
+
 export type DashboardWidget =
   | (WidgetBase & { type: 'count'; blueprint: string; filters: Record<string, string>; groupBy?: string })
   | (WidgetBase & { type: 'scorecard'; scorecard: string })
@@ -1057,6 +1087,7 @@ export type DashboardWidget =
       columns: string[];
       limit: number;
     })
+  | (WidgetBase & { type: 'insights' } & InsightsConfig)
   | (WidgetBase & { type: 'markdown'; content: string });
 
 export interface Dashboard {
@@ -1078,4 +1109,5 @@ export type WidgetData =
   | { type: 'runs'; items: Run[]; total: number }
   | { type: 'approvals'; items: Run[]; total: number }
   | { type: 'table'; blueprint: string; items: Entity[]; total: number }
+  | ({ type: 'insights' } & Insights)
   | { type: 'markdown' };
