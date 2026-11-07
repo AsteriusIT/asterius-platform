@@ -1,0 +1,28 @@
+{
+	email {$ACME_EMAIL}
+}
+
+{$APP_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy platform:8080
+}
+
+{$AUTH_DOMAIN} {
+	encode zstd gzip
+	# People only need /realms and /resources. The admin console stays off the internet unless KEYCLOAK_EXPOSE_ADMIN=true
+	# (an SSH tunnel does not help: Keycloak redirects to its public hostname). Turn it on only while you need it.
+	@public path /realms/* /resources/*
+	handle @public {
+		reverse_proxy keycloak:8080
+	}
+	@admin {
+		path /admin/*
+		expression {$KEYCLOAK_EXPOSE_ADMIN} == true
+	}
+	handle @admin {
+		reverse_proxy keycloak:8080
+	}
+	handle {
+		respond 404
+	}
+}

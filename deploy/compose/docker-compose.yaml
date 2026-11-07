@@ -1,0 +1,140 @@
+# Single-VM production deployment (one 4 GB VPS, e.g. Hetzner Cloud x86): platform + PostgreSQL + Keycloak + Caddy (TLS).
+# See README.md in this directory. Quick start:
+#   cp .env.example .env   # fill in domains and secrets
+#   docker compose up -d
+# Memory budget (~2 GB used): Postgres ~300 MB, Keycloak ~800 MB (heap capped), platform ~400 MB, Caddy ~30 MB.
+
+name: asterius
+
+x-logging: &logging
+  driver: json-file
+  options: { max-size: 10m, max-file: '3' }
+
+services:
+  caddy:
+    image: caddy:2.11.9-alpine
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '443:443'
+      - '443:443/udp'
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:?set APP_DOMAIN in .env}
+      AUTH_DOMAIN: ${AUTH_DOMAIN:?set AUTH_DOMAIN in .env}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env}
+      KEYCLOAK_EXPOSE_ADMIN: ${KEYCLOAK_EXPOSE_ADMIN:-false}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on: [platform, keycloak]
+    mem_limit: 128m
+    logging: *logging
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: platform
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: platform
+      KEYCLOAK_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?set KEYCLOAK_DB_PASSWORD in .env}
+    command:
+      - postgres
+      - -c
+      - shared_buffers=128MB
+      - -c
+      - effective_cache_size=512MB
+      - -c
+      - work_mem=4MB
+      - -c
+      - max_connections=100
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U platform -d platform']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    shm_size: 128m
+    mem_limit: 512m
+    logging: *logging
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.8.2
+    restart: unless-stopped
+    command: ['start', '--import-realm']
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD}
+      KC_HOSTNAME: https://${AUTH_DOMAIN}
+      KC_HTTP_ENABLED: 'true'
+      KC_PROXY_HEADERS: xforwarded
+      KC_HEALTH_ENABLED: 'true'
+      KC_CACHE: local # single instance: no cluster discovery
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?set KEYCLOAK_ADMIN_PASSWORD in .env}
+      # Left unset, the JVM sizes its heap from the VM's RAM, not the container limit.
+      JAVA_OPTS_KC_HEAP: -Xms256m -Xmx512m -XX:MaxMetaspaceSize=256m
+      # Read by the realm import (deploy/keycloak/realm-asterius.json): client secret and redirect URIs.
+      ASTERIUS_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:?set KEYCLOAK_CLIENT_SECRET in .env}
+      ASTERIUS_PUBLIC_URL: https://${APP_DOMAIN}
+    volumes:
+      # Imported once, when the realm does not exist yet; later changes are made in Keycloak.
+      - ../keycloak/realm-asterius.json:/opt/keycloak/data/import/realm-asterius.json:ro
+    depends_on:
+      postgres: { condition: service_healthy }
+    healthcheck:
+      # The image has no curl/wget: plain HTTP over bash's /dev/tcp against the management port.
+      test:
+        - CMD-SHELL
+        - >-
+          exec 3<>/dev/tcp/127.0.0.1/9000 &&
+          printf 'GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 &&
+          grep -q '200 OK' <&3
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 120s
+    mem_limit: 1g
+    logging: *logging
+
+  platform:
+    image: ${PLATFORM_IMAGE:-ghcr.io/asteriusit/asterius-platform:latest}
+    restart: unless-stopped
+    environment:
+      PUBLIC_URL: https://${APP_DOMAIN}
+      PLATFORM_ROLE: all
+      DATABASE_URL: postgres://platform:${POSTGRES_PASSWORD}@postgres:5432/platform
+      SECRETS_KEY: ${SECRETS_KEY:?set SECRETS_KEY in .env (openssl rand -base64 32)}
+      AUTH_PROVIDERS: ${AUTH_PROVIDERS:-keycloak}
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
+      KEYCLOAK_URL: https://${AUTH_DOMAIN}
+      KEYCLOAK_INTERNAL_URL: http://keycloak:8080 # back channel (token, admin API) without leaving the VM
+      KEYCLOAK_REALM: asterius
+      KEYCLOAK_CLIENT_ID: asterius-platform
+      KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      NODE_OPTIONS: --enable-source-maps --max-old-space-size=512
+    depends_on:
+      postgres: { condition: service_healthy }
+      keycloak: { condition: service_healthy }
+    read_only: true
+    tmpfs: [/tmp]
+    healthcheck:
+      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:8080/readyz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    mem_limit: 768m
+    logging: *logging
+
+volumes:
+  postgres-data:
+  caddy-data:
+  caddy-config:
