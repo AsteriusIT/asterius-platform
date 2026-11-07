@@ -20,6 +20,45 @@ import { formOf } from '../../lib/permissions';
 import { triggerBadge, workflowSummary } from '../../lib/workflow';
 import { BlueprintBuilder } from '../../components/builder/BlueprintBuilder';
 
+const G = {
+  scm: 'Source control',
+  cicd: 'CI/CD & deployment',
+  inc: 'Incidents & observability',
+  sec: 'Security & quality',
+  cloud: 'Cloud & cluster',
+  id: 'Identity & ITSM',
+  gen: 'Generic',
+};
+/** Vendor logo (components/icons names) and category of each source type; unknown types fall back to a generic icon. */
+const SOURCE_LOOK: Record<string, { icon: string; group: string }> = {
+  github: { icon: 'github', group: G.scm },
+  gitlab: { icon: 'gitlab', group: G.scm },
+  'azure-devops': { icon: 'azure-devops', group: G.scm },
+  'git-descriptors': { icon: 'git-branch', group: G.scm },
+  argocd: { icon: 'argo-cd', group: G.cicd },
+  'terraform-cloud-workspaces': { icon: 'terraform', group: G.cicd },
+  pagerduty: { icon: 'pagerduty', group: G.inc },
+  opsgenie: { icon: 'bell', group: G.inc },
+  grafana: { icon: 'grafana', group: G.inc },
+  datadog: { icon: 'datadog', group: G.inc },
+  snyk: { icon: 'bug', group: G.sec },
+  sonarqube: { icon: 'sonarqube', group: G.sec },
+  kubernetes: { icon: 'kubernetes', group: G.cloud },
+  'aws-resources': { icon: 'aws', group: G.cloud },
+  'azure-resource-graph': { icon: 'azure', group: G.cloud },
+  'gcp-assets': { icon: 'google-cloud', group: G.cloud },
+  jira: { icon: 'jira', group: G.id },
+  servicenow: { icon: 'servicenow', group: G.id },
+  okta: { icon: 'okta', group: G.id },
+  'entra-directory': { icon: 'azure', group: G.id },
+  http: { icon: 'globe', group: G.gen },
+  graphql: { icon: 'globe', group: G.gen },
+  sql: { icon: 'database', group: G.gen },
+  external: { icon: 'plug', group: G.gen },
+  webhook: { icon: 'bolt', group: G.gen },
+};
+const sourceLook = (type: string) => SOURCE_LOOK[type] ?? { icon: 'plug', group: G.gen };
+
 const meta = () => ({ queryKey: ['meta'], queryFn: api.meta, staleTime: Infinity });
 
 export function BlueprintsAdmin() {
@@ -158,6 +197,10 @@ export function IntegrationsAdmin() {
       onRowClick={setDetail}
       templates={(m.data?.sources ?? []).map((s) => ({
         label: s.title,
+        description: s.description,
+        ...sourceLook(s.type),
+        badge: s.type === 'webhook' ? 'webhook' : 'pull',
+        keywords: [s.type],
         value: {
           identifier: '',
           title: '',
