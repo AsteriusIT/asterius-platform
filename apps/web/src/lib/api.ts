@@ -53,7 +53,9 @@ export interface SimulationResult {
 }
 
 export interface ConfigInfo {
-  dir: string;
+  /** Directory of the files; null for Git or 'none' sources. */
+  dir: string | null;
+  source?: ConfigSource;
   managed: Record<string, number>;
   status: { lastCheckedAt: string | null; lastAppliedAt: string | null; hash: string | null; files: number; error: string | null };
 }

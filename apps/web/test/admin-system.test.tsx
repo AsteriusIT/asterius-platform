@@ -43,6 +43,24 @@ describe('ConfigAdmin', () => {
   });
 });
 
+describe('ConfigAdmin source', () => {
+  const base = { managed: {}, status: { lastCheckedAt: null, lastAppliedAt: null, hash: null, files: 0, error: null } };
+  it('shows the Git repository when there is no directory', async () => {
+    vi.spyOn(api, 'configInfo').mockResolvedValue({
+      ...base,
+      dir: null,
+      source: { type: 'git', url: 'https://example.com/cfg.git', branch: 'main', path: 'conf', token: null },
+    });
+    renderUi(<ConfigAdmin />);
+    expect((await screen.findByTestId('config-source')).textContent).toContain('https://example.com/cfg.git');
+  });
+  it('says so when the organization has no source', async () => {
+    vi.spyOn(api, 'configInfo').mockResolvedValue({ ...base, dir: null, source: { type: 'none' } });
+    renderUi(<ConfigAdmin />);
+    expect((await screen.findByTestId('config-source')).textContent).toContain('none');
+  });
+});
+
 describe('DeliveriesAdmin', () => {
   it('redelivers the selected failures', async () => {
     vi.spyOn(api, 'allDeliveries').mockResolvedValue([
