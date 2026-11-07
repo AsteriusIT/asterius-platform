@@ -35,7 +35,7 @@ const { startAiScheduler } = await import('./ai/review.js');
  * Workers still listen for /healthz, /readyz and /metrics.
  */
 // reloadConfig is only called by HTTP requests, after the loader exists.
-const app = await buildApp({ reloadConfig: () => loader.reload() });
+const app = await buildApp({ reloadConfig: (org) => loader.reload(org) });
 await loadPlugins(app.log); // before the configuration: it may use plugin types
 const loader = await startConfigLoader(app.log);
 

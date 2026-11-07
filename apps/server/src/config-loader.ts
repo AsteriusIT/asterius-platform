@@ -5,7 +5,11 @@ import type { FastifyBaseLogger } from 'fastify';
 import { parseAllDocuments, stringify } from 'yaml';
 import { config } from './config.js';
 import { all, now, one, run, tryAdvisoryLock } from './db.js';
-import { configFile, type ConfigFile } from './schemas.js';
+import { configFile, type ConfigFile, type OrgDecl } from './schemas.js';
+import type { ConfigSyncStatus } from '@asterius/shared';
+import { DEFAULT_ORG, orgId, withOrg } from './orgs/context.js';
+import { addMember, createOrg, findOrg, listOrgRows, patchSettings, settingsOf, updateOrg, type OrgRow } from './orgs/orgs.js';
+import { pullGitSource } from './orgs/git-source.js';
 import { errorMessage } from './lib/errors.js';
 import { audit, SYSTEM } from './audit.js';
 import { deleteTeam, listTeams, upsertTeam } from './auth/teams.js';
@@ -18,11 +22,14 @@ import { deleteDashboard, listDashboards, upsertDashboard } from './catalog/dash
 import { deleteWebhook, getWebhook, listWebhooks, upsertWebhook } from './webhooks/webhooks.js';
 
 /**
- * Configuration as code. Every *.yaml / *.yml / *.json file of CONFIG_DIR (in production a ConfigMap or a
- * git-sync volume) may declare `teams`, `blueprints`, `actions`, `integrations`, `webhooks` and seed `entities`.
+ * Configuration as code, per organization. Files (*.yaml / *.yml / *.json) declare `teams`, `blueprints`, `actions`,
+ * `integrations`, `webhooks`, `scorecards`, `dashboards` and seed `entities` of one organization:
+ *   CONFIG_DIR/*                 the default organization, plus `organizations:` (platform-level declarations)
+ *   CONFIG_DIR/orgs/<slug>/**    organization <slug> (a ConfigMap or git-sync volume per tenant)
+ *   a Git repository             set by the organization's admins (Settings → Configuration as code)
  * Declared resources are "managed": read-only in the UI/API, updated when the files change, and deleted when
  * removed from the files. Resources created in the UI live alongside them.
- * Files are re-read every minute; a change is applied by one replica at a time.
+ * Sources are re-read every minute; a change is applied by one replica at a time.
  */
 
 const LOCK_KEY = 726202;
@@ -33,14 +40,24 @@ export interface LoadedConfig {
   data: ConfigFile;
 }
 
-export function readConfigDir(dir = config.CONFIG_DIR): LoadedConfig {
+const MAX_FILES = 500;
+
+/**
+ * Read the configuration files under `dir`. `platform`: the CONFIG_DIR root (may declare organizations; the per-org
+ * directories under orgs/ are skipped). Otherwise an organization's own files (no `organizations:` allowed).
+ */
+export function readConfigDir(dir = config.CONFIG_DIR, opts: { platform?: boolean } = { platform: true }): LoadedConfig {
   const empty: ConfigFile = configFile.parse({});
   if (!fs.existsSync(dir)) return { files: [], hash: '', data: empty };
+  const orgsDir = path.join(dir, 'orgs');
   const files = fs
     .readdirSync(dir, { recursive: true, withFileTypes: true })
     .filter((f) => f.isFile() && /\.(ya?ml|json)$/i.test(f.name) && !f.name.startsWith('.'))
     .map((f) => path.join(f.parentPath, f.name))
+    .filter((f) => !opts.platform || !(f === orgsDir || f.startsWith(`${orgsDir}${path.sep}`)))
+    .filter((f) => !f.split(path.sep).includes('.git'))
     .sort();
+  if (files.length > MAX_FILES) throw new Error(`too many configuration files (${files.length}, max ${MAX_FILES})`);
   const hash = createHash('sha256');
   const merged: ConfigFile = empty;
   const seen = new Map<string, string>();
@@ -55,7 +72,9 @@ export function readConfigDir(dir = config.CONFIG_DIR): LoadedConfig {
       if (raw == null) continue;
       const parsed = configFile.safeParse(raw);
       if (!parsed.success) throw new Error(`${file}: ${parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')}`);
-      for (const kind of ['teams', 'blueprints', 'actions', 'integrations', 'webhooks'] as const)
+      if (!opts.platform && parsed.data.organizations.length) throw new Error(`${file}: organizations can only be declared in the platform configuration`);
+      merged.organizations.push(...parsed.data.organizations);
+      for (const kind of ['teams', 'blueprints', 'actions', 'integrations', 'webhooks', 'scorecards', 'dashboards'] as const)
         for (const item of parsed.data[kind]) {
           const key = `${kind}/${item.identifier}`;
           if (seen.has(key)) throw new Error(`${kind} "${item.identifier}" is declared twice (${seen.get(key)} and ${file})`);
@@ -177,7 +196,7 @@ export async function applyConfig(loaded: LoadedConfig, log: FastifyBaseLogger):
   const declared = new Set(data.blueprints.map((b) => b.identifier));
   let removed = (await listBlueprints()).filter((b) => b.managed && !declared.has(b.identifier)).map((b) => b.identifier);
   for (const id of removed)
-    for (const e of await all<{ identifier: string }>("SELECT identifier FROM entities WHERE blueprint = ? AND source = 'config'", id))
+    for (const e of await all<{ identifier: string }>("SELECT identifier FROM entities WHERE org_id = ? AND blueprint = ? AND source = 'config'", orgId(), id))
       await deleteEntity(id, e.identifier).catch((err) =>
         log.warn({ component: 'config', blueprint: id, identifier: e.identifier, err }, 'seeded entity cannot be removed'),
       );
@@ -206,13 +225,40 @@ export async function applyConfig(loaded: LoadedConfig, log: FastifyBaseLogger):
   return errs;
 }
 
-let lastHash: string | undefined;
-let failedAttempts = 0;
+// ---------- status (per organization) ----------
 const MAX_RETRIES = 5;
+/** Per replica: last content applied per organization (the advisory lock serializes applies across replicas). */
+const lastHash = new Map<string, string>();
+const failedAttempts = new Map<string, number>();
+const lastGitPull = new Map<string, number>();
+const GIT_PULL_MS = 120_000;
+
+const sourceOf = (o: OrgRow) => settingsOf(o).configSource ?? { type: o.id === DEFAULT_ORG ? ('directory' as const) : ('none' as const) };
+
+/** Directory holding an organization's files on this replica (directory sources): CONFIG_DIR or CONFIG_DIR/orgs/<slug>. */
+function orgDir(o: OrgRow): string | null {
+  if (sourceOf(o).type !== 'directory') return null;
+  return o.id === DEFAULT_ORG ? config.CONFIG_DIR : path.join(config.CONFIG_DIR, 'orgs', o.slug);
+}
+
+/** The configuration declared for an organization now: its directory, its Git repository (pulled), or nothing. */
+async function loadOrgSource(o: OrgRow): Promise<LoadedConfig> {
+  const src = sourceOf(o);
+  if (src.type === 'git') {
+    const { dir } = await withOrg(o.id, () => pullGitSource(o.id, src));
+    return readConfigDir(dir, { platform: false });
+  }
+  const dir = orgDir(o);
+  return dir ? readConfigDir(dir, { platform: o.id === DEFAULT_ORG }) : { files: [], hash: '', data: configFile.parse({}) };
+}
+
+const currentOrgRow = async () => (await findOrg(orgId()))!;
 
 export interface ConfigStatus {
-  dir: string;
-  /** Hash of the files on disk now (this replica). */
+  source: 'directory' | 'git' | 'none';
+  /** Directory of the files (directory sources). */
+  dir: string | null;
+  /** Hash of the files on disk now (this replica, directory sources). */
   currentHash: string | null;
   /** Hash last applied by any replica, when, and the errors it ended with. */
   appliedHash: string | null;
@@ -224,35 +270,38 @@ export interface ConfigStatus {
   inSync: boolean;
 }
 
-let readError: string | null = null;
-
+/** Configuration-as-code status of the current organization. */
 export async function configStatus(): Promise<ConfigStatus> {
+  const org = await currentOrgRow();
+  const dir = orgDir(org);
   let currentHash: string | null = null;
-  try {
-    currentHash = readConfigDir().hash;
-    readError = null;
-  } catch (err) {
-    readError = errorMessage(err);
-  }
-  const row = await one<{ hash: string; files: string; errors: string; applied_at: string }>('SELECT * FROM config_status WHERE id = 1');
+  let readError: string | null = null;
+  if (dir)
+    try {
+      currentHash = readConfigDir(dir, { platform: org.id === DEFAULT_ORG }).hash;
+    } catch (err) {
+      readError = errorMessage(err);
+    }
+  const row = await one<{ hash: string; files: string; errors: string; applied_at: string }>('SELECT * FROM config_status WHERE org_id = ?', org.id);
   const errors: string[] = row ? JSON.parse(row.errors) : [];
   return {
-    dir: config.CONFIG_DIR,
+    source: sourceOf(org).type,
+    dir,
     currentHash,
     appliedHash: row?.hash ?? null,
     appliedAt: row?.applied_at ?? null,
     files: row ? JSON.parse(row.files) : [],
     errors,
     readError,
-    inSync: !readError && !errors.length && (row?.hash ?? '') === (currentHash ?? ''),
+    inSync: !readError && !errors.length && (!dir || (row?.hash ?? '') === (currentHash ?? '')),
   };
 }
 
-async function recordStatus(loaded: LoadedConfig, errors: string[]) {
-  const files = JSON.stringify(loaded.files.map((f) => path.relative(config.CONFIG_DIR, f)));
+async function recordStatus(org: string, loaded: LoadedConfig, errors: string[], base: string | null) {
+  const files = JSON.stringify(loaded.files.map((f) => (base ? path.relative(base, f) : path.basename(f))));
   const vals = [loaded.hash, files, JSON.stringify(errors.slice(0, 100)), now()];
-  const { changes } = await run('UPDATE config_status SET hash = ?, files = ?, errors = ?, applied_at = ? WHERE id = 1', ...vals);
-  if (!changes) await run('INSERT INTO config_status (hash, files, errors, applied_at, id) VALUES (?, ?, ?, ?, 1)', ...vals);
+  const { changes } = await run('UPDATE config_status SET hash = ?, files = ?, errors = ?, applied_at = ? WHERE org_id = ?', ...vals, org);
+  if (!changes) await run('INSERT INTO config_status (hash, files, errors, applied_at, org_id) VALUES (?, ?, ?, ?, ?)', ...vals, org);
 }
 
 type PlanAction = 'create' | 'update' | 'delete' | 'unchanged';
@@ -264,8 +313,9 @@ export interface PlanItem {
   changes?: string[];
 }
 
-/** What applying the files would do, without doing it: compares declared resources with the stored ones. */
-export async function planConfig(loaded: LoadedConfig = readConfigDir()): Promise<PlanItem[]> {
+/** What applying the current organization's files would do, without doing it: declared vs stored resources. */
+export async function planConfig(loaded?: LoadedConfig): Promise<PlanItem[]> {
+  loaded ??= await loadOrgSource(await currentOrgRow());
   const out: PlanItem[] = [];
   // Actions are stored normalised (legacy `invoker` becomes `steps`/`trigger`): those fields cannot be compared textually.
   const plan = (kind: string, declared: Array<{ identifier: string }>, existing: Array<{ identifier: string; managed: boolean }>, ignore: string[] = []) => {
@@ -291,16 +341,19 @@ export async function planConfig(loaded: LoadedConfig = readConfigDir()): Promis
   plan('action', d.actions, await listActions(), ['trigger', 'steps', 'invoker']);
   plan('integration', d.integrations, await listIntegrations());
   plan('webhook', d.webhooks, await listWebhooks());
+  plan('scorecard', d.scorecards, await listScorecards());
+  plan('dashboard', d.dashboards, await listDashboards());
   return out;
 }
 
 const KINDS = ['teams', 'blueprints', 'actions', 'integrations', 'webhooks', 'scorecards', 'dashboards'] as const;
 
-/** What a reload would change: declared vs currently managed identifiers. Nothing is applied. */
+/** What a reload of the current organization would change: declared vs currently managed identifiers. Nothing is applied. */
 export async function configDiff() {
+  const org = await currentOrgRow();
   let loaded: LoadedConfig;
   try {
-    loaded = readConfigDir();
+    loaded = await loadOrgSource(org);
   } catch (err) {
     return { error: errorMessage(err), kinds: {} as Record<string, { added: string[]; removed: string[]; kept: string[] }> };
   }
@@ -323,12 +376,12 @@ export async function configDiff() {
       kept: [...declared].filter((d) => managed.has(d)),
     };
   }
-  return { error: null, pending: loaded.hash !== lastHash, kinds };
+  return { error: null, pending: loaded.hash !== lastHash.get(org.id), kinds };
 }
 
 /**
- * Import resources from an exported YAML: validates every document, then (unless `dryRun`) creates or updates them as
- * regular, editable resources (not managed). Returns counts per kind.
+ * Import resources from an exported YAML into the current organization: validates every document, then (unless
+ * `dryRun`) creates or updates them as regular, editable resources (not managed). Returns counts per kind.
  */
 export async function importConfig(text: string, dryRun: boolean): Promise<Record<string, number>> {
   const merged: ConfigFile = configFile.parse({});
@@ -338,6 +391,7 @@ export async function importConfig(text: string, dryRun: boolean): Promise<Recor
     if (raw == null) continue;
     const parsed = configFile.safeParse(raw);
     if (!parsed.success) throw new Error(parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; '));
+    if (parsed.data.organizations.length) throw new Error('organizations can only be declared in the platform configuration');
     for (const k of KINDS) (merged[k] as unknown[]).push(...parsed.data[k]);
   }
   const counts = Object.fromEntries(KINDS.map((k) => [k, merged[k].length]));
@@ -353,49 +407,145 @@ export async function importConfig(text: string, dryRun: boolean): Promise<Recor
   return counts;
 }
 
-/** Load once at startup, then watch for changes (ConfigMap updates, git-sync). */
-export async function startConfigLoader(log: FastifyBaseLogger) {
-  const check = async () => {
-    let loaded: LoadedConfig;
-    try {
-      loaded = readConfigDir();
-      readError = null;
-    } catch (err) {
-      readError = errorMessage(err);
-      log.error({ component: 'config', err }, 'config unreadable, keeping the current configuration');
-      return;
-    }
-    if (loaded.hash === lastHash) return;
-    // Try once: when another replica is applying, skip and look again at the next tick.
-    const value = await tryAdvisoryLock(LOCK_KEY, async () => {
-      const row = await one<{ hash: string; errors: string }>('SELECT hash, errors FROM config_status WHERE id = 1');
-      if (row?.hash === loaded.hash && !JSON.parse(row.errors).length) return 'already-applied' as const; // another replica did it
-      if (row?.hash === loaded.hash && failedAttempts >= MAX_RETRIES) return 'gave-up' as const;
+// ---------- sources and scheduling ----------
+
+async function setStatus(orgIdValue: string, status: ConfigSyncStatus) {
+  await patchSettings(orgIdValue, { configStatus: status }).catch(() => undefined);
+}
+
+/**
+ * Apply one organization's files when they changed. Non-blocking across replicas: when another replica holds the
+ * lock, skip and look again at the next tick. A content that keeps failing is retried MAX_RETRIES times.
+ */
+async function applyOrgConfig(org: OrgRow, loaded: LoadedConfig, log: FastifyBaseLogger, label: string, revision: string | null = null) {
+  if (loaded.hash === lastHash.get(org.id)) return;
+  const outcome = await tryAdvisoryLock(LOCK_KEY, () =>
+    withOrg(org.id, async () => {
+      const row = await one<{ hash: string; errors: string }>('SELECT hash, errors FROM config_status WHERE org_id = ?', org.id);
+      if (row?.hash === loaded.hash && !JSON.parse(row.errors).length) return { state: 'already-applied' as const, errors: [] as string[] };
+      if (row?.hash === loaded.hash && (failedAttempts.get(org.id) ?? 0) >= MAX_RETRIES)
+        return { state: 'gave-up' as const, errors: JSON.parse(row.errors) as string[] };
       const errors = await applyConfig(loaded, log);
-      await recordStatus(loaded, errors);
-      failedAttempts = errors.length ? failedAttempts + 1 : 0;
-      return errors.length ? ('errors' as const) : ('applied' as const);
-    });
-    if (value === undefined) return;
-    if (value === 'applied' || value === 'already-applied' || value === 'gave-up') lastHash = loaded.hash;
-    if (value === 'applied' && loaded.files.length) {
-      log.info({ component: 'config', files: loaded.files.length, dir: config.CONFIG_DIR }, 'config applied');
-      await audit(SYSTEM, 'config.applied', config.CONFIG_DIR, {
-        files: loaded.files.map((f) => path.relative(config.CONFIG_DIR, f)),
-        hash: loaded.hash.slice(0, 12),
-      });
+      await recordStatus(org.id, loaded, errors, orgDir(org));
+      failedAttempts.set(org.id, errors.length ? (failedAttempts.get(org.id) ?? 0) + 1 : 0);
+      return { state: errors.length ? ('errors' as const) : ('applied' as const), errors };
+    }),
+  );
+  if (outcome === undefined) return;
+  if (outcome.state !== 'errors') lastHash.set(org.id, loaded.hash);
+  if (outcome.state === 'applied' && loaded.files.length) {
+    log.info({ component: 'config', org: org.slug, files: loaded.files.length, source: label }, 'config applied');
+    await audit(SYSTEM, 'config.applied', label, { files: loaded.files.length, hash: loaded.hash.slice(0, 12), revision }, org.id);
+  }
+  if (outcome.state === 'errors')
+    log.warn({ component: 'config', org: org.slug }, `config applied with errors, retrying (${failedAttempts.get(org.id)}/${MAX_RETRIES})`);
+  await setStatus(org.id, {
+    at: new Date().toISOString(),
+    ok: !outcome.errors.length,
+    revision,
+    files: loaded.files.length,
+    error: outcome.errors.length ? outcome.errors.slice(0, 3).join('; ').slice(0, 500) : null,
+  });
+}
+
+/** Organizations declared in the platform files: created or updated (never deleted), admins added once they exist. */
+async function applyOrganizations(decls: OrgDecl[], log: FastifyBaseLogger) {
+  for (const d of decls) {
+    try {
+      const existing = await findOrg(d.slug);
+      const org = existing
+        ? await updateOrg(existing.id, { name: d.name, domains: d.domains }, { managed: true })
+        : await createOrg({ slug: d.slug, name: d.name, domains: d.domains }, { managed: true });
+      if (!existing) log.info({ component: 'config', org: d.slug }, 'organization created');
+      for (const email of d.admins) {
+        const u = await one<{ id: string }>("SELECT id FROM users WHERE email = ? AND provider != 'service' ORDER BY created_at LIMIT 1", email);
+        if (u && (await addMember(org.id, u.id, 'admin', 'config'))) log.info({ component: 'config', org: d.slug, email }, 'organization admin added');
+      }
+    } catch (err) {
+      log.error({ component: 'config', org: d.slug, err }, 'organization declaration rejected');
     }
-    if (value === 'errors') log.warn(`config: applied with errors, retrying (${failedAttempts}/${MAX_RETRIES})`);
-  };
-  await check();
-  const timer = setInterval(() => check().catch((err) => log.error({ component: 'config', err }, 'config reload failed')), 60_000);
+  }
+}
+
+/** Organization sub-directories of CONFIG_DIR/orgs (slugs). */
+function orgDirectories(): string[] {
+  const dir = path.join(config.CONFIG_DIR, 'orgs');
+  if (!fs.existsSync(dir)) return [];
+  return fs
+    .readdirSync(dir, { withFileTypes: true })
+    .filter((e) => e.isDirectory() && !e.name.startsWith('.'))
+    .map((e) => e.name);
+}
+
+/** One pass over every source: platform files, per-organization directories, organization Git repositories. */
+export async function checkAllConfig(log: FastifyBaseLogger, opts: { force?: string } = {}) {
+  if (opts.force) {
+    lastHash.delete(opts.force);
+    lastGitPull.delete(opts.force);
+    failedAttempts.delete(opts.force);
+  }
+  const failed = async (org: string, err: unknown) =>
+    setStatus(org, { at: new Date().toISOString(), ok: false, revision: null, files: 0, error: errorMessage(err).slice(0, 500) });
+
+  // 1. Platform files: organizations, then the default organization's resources.
+  let platform: LoadedConfig | undefined;
+  try {
+    platform = readConfigDir(config.CONFIG_DIR, { platform: true });
+  } catch (err) {
+    log.error({ component: 'config', err }, 'config unreadable, keeping the current configuration');
+    await failed(DEFAULT_ORG, err);
+  }
+  if (platform) await applyOrganizations(platform.data.organizations, log);
+  const defaultOrg = await findOrg(DEFAULT_ORG);
+  if (platform && defaultOrg && sourceOf(defaultOrg).type === 'directory') await applyOrgConfig(defaultOrg, platform, log, config.CONFIG_DIR);
+
+  // 2. CONFIG_DIR/orgs/<slug>: organizations whose configuration is mounted next to the platform's.
+  for (const slugName of orgDirectories()) {
+    try {
+      let org = await findOrg(slugName);
+      if (!org) {
+        org = await createOrg({ slug: slugName, name: slugName }, { managed: true });
+        log.info({ component: 'config', org: slugName }, 'organization created from its configuration directory');
+      }
+      const src = sourceOf(org);
+      if (src.type === 'git') {
+        log.warn({ component: 'config', org: slugName }, `pulls its configuration from Git; ignoring CONFIG_DIR/orgs/${slugName}`);
+        continue;
+      }
+      if (src.type === 'none') await patchSettings(org.id, { configSource: { type: 'directory' } });
+      const dir = path.join(config.CONFIG_DIR, 'orgs', slugName);
+      await applyOrgConfig(org, readConfigDir(dir, { platform: false }), log, dir);
+    } catch (err) {
+      log.error({ component: 'config', org: slugName, err }, 'organization configuration unreadable, keeping its current configuration');
+      const org = await findOrg(slugName);
+      if (org) await failed(org.id, err);
+    }
+  }
+
+  // 3. Organization Git repositories (pulled every 2 minutes, or on demand).
+  for (const org of await listOrgRows()) {
+    const src = sourceOf(org);
+    if (src.type !== 'git') continue;
+    if ((lastGitPull.get(org.id) ?? 0) > Date.now() - GIT_PULL_MS) continue;
+    lastGitPull.set(org.id, Date.now());
+    try {
+      const { dir, revision } = await withOrg(org.id, () => pullGitSource(org.id, src));
+      await applyOrgConfig(org, readConfigDir(dir, { platform: false }), log, `${src.url}#${src.branch}`, revision.slice(0, 12));
+    } catch (err) {
+      log.warn({ component: 'config', org: org.slug, err }, 'Git configuration source failed');
+      await failed(org.id, err);
+    }
+  }
+}
+
+/** Load once at startup, then watch every source (ConfigMap updates, git-sync, organization repositories). */
+export async function startConfigLoader(log: FastifyBaseLogger) {
+  await checkAllConfig(log).catch((err) => log.error({ component: 'config', err }, 'config load failed'));
+  const timer = setInterval(() => checkAllConfig(log).catch((err) => log.error({ component: 'config', err }, 'config reload failed')), 60_000);
   timer.unref();
   return {
-    reload: async () => {
-      lastHash = undefined;
-      failedAttempts = 0;
-      await check();
-    },
+    /** Re-read now (one organization, or all of them). */
+    reload: async (org?: string) => checkAllConfig(log, { force: org }),
     stop: () => clearInterval(timer),
   };
 }
@@ -433,13 +583,14 @@ export async function exportConfig(): Promise<string> {
 /** Counts shown on the admin page. */
 export async function managedCounts() {
   const rows = await all<{ k: string; n: number }>(
-    `SELECT 'blueprints' AS k, count(*) AS n FROM blueprints WHERE managed = 1
-     UNION ALL SELECT 'actions', count(*) FROM actions WHERE managed = 1
-     UNION ALL SELECT 'integrations', count(*) FROM integrations WHERE managed = 1
-     UNION ALL SELECT 'webhooks', count(*) FROM webhooks WHERE managed = 1
-     UNION ALL SELECT 'scorecards', count(*) FROM scorecards WHERE managed = 1
-     UNION ALL SELECT 'dashboards', count(*) FROM dashboards WHERE managed = 1
-     UNION ALL SELECT 'teams', count(*) FROM teams WHERE managed = 1`,
+    `SELECT 'blueprints' AS k, count(*) AS n FROM blueprints WHERE managed = 1 AND org_id = ?
+     UNION ALL SELECT 'actions', count(*) FROM actions WHERE managed = 1 AND org_id = ?
+     UNION ALL SELECT 'integrations', count(*) FROM integrations WHERE managed = 1 AND org_id = ?
+     UNION ALL SELECT 'webhooks', count(*) FROM webhooks WHERE managed = 1 AND org_id = ?
+     UNION ALL SELECT 'scorecards', count(*) FROM scorecards WHERE managed = 1 AND org_id = ?
+     UNION ALL SELECT 'dashboards', count(*) FROM dashboards WHERE managed = 1 AND org_id = ?
+     UNION ALL SELECT 'teams', count(*) FROM teams WHERE managed = 1 AND org_id = ?`,
+    ...Array(7).fill(orgId()),
   );
   return Object.fromEntries(rows.map((r) => [r.k, Number(r.n)]));
 }

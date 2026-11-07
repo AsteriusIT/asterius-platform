@@ -53,9 +53,12 @@ describe('SECRETS_KEYS ring', () => {
     await load({ SECRETS_KEYS: 'k1:tooshort' }).catch((e: Error) => expect(e.message).not.toContain('tooshort'));
   });
 
+  // `load` resets the module registry: enter the organization through the freshly loaded context module.
+  const inOrg = async <T>(fn: () => Promise<T>) => (await import('../src/orgs/context.js')).withOrg('default', fn);
+
   it('re-encrypts stored secrets with the newest key', async () => {
     const m1 = await load({ SECRETS_KEYS: `k1:${A}` });
-    await m1.setSecret('DB_PASSWORD', 'p@ss', '', null);
+    await inOrg(() => m1.setSecret('DB_PASSWORD', 'p@ss', '', null));
     const m2 = await load({ SECRETS_KEYS: `k2:${B},k1:${A}` });
     const dbm = await import('../src/db.js');
     const before = await dbm.one<{ value_enc: string }>('SELECT value_enc FROM secrets WHERE name = ?', 'DB_PASSWORD');
@@ -63,7 +66,7 @@ describe('SECRETS_KEYS ring', () => {
     expect(await m2.reencryptSecrets()).toMatchObject({ total: 1, reencrypted: 1, failed: [] });
     expect((await m2.reencryptSecrets()).reencrypted).toBe(0);
     const m3 = await load({ SECRETS_KEYS: `k2:${B}` }); // k1 retired
-    expect(await m3.resolveValue('${secret:DB_PASSWORD}')).toBe('p@ss');
+    expect(await inOrg(() => m3.resolveValue('${secret:DB_PASSWORD}'))).toBe('p@ss');
   });
 });
 

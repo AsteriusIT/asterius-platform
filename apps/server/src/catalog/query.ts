@@ -2,6 +2,7 @@ import type { EntityQueryBody, FilterOp, PropertyFilter, RelationFilter } from '
 import { dialect, one, likeEscape, type SqlValue } from '../db.js';
 import { badRequest } from '../lib/errors.js';
 import { searchTerms } from './search.js';
+import { orgId } from '../orgs/context.js';
 
 /**
  * Entity query compiler, shared by GET /entities (query string), POST /entities/query (JSON body), the agent
@@ -134,7 +135,7 @@ function relationClause(r: RelationFilter, params: SqlValue[]): string {
   const targets = Array.isArray(r.target) ? r.target : [r.target];
   if (!targets.length || targets.length > MAX_IN) throw badRequest(`Relation filter "${r.relation}" takes 1 to ${MAX_IN} targets`);
   params.push(r.relation, ...targets);
-  return `EXISTS (SELECT 1 FROM entity_relations r WHERE r.blueprint = entities.blueprint AND r.identifier = entities.identifier AND r.relation = ? AND r.target_identifier IN (${targets.map(() => '?').join(',')}))`;
+  return `EXISTS (SELECT 1 FROM entity_relations r WHERE r.org_id = entities.org_id AND r.blueprint = entities.blueprint AND r.identifier = entities.identifier AND r.relation = ? AND r.target_identifier IN (${targets.map(() => '?').join(',')}))`;
 }
 
 // ---------- Postgres search capabilities ----------
@@ -169,8 +170,9 @@ const KEYSETS: Record<'title' | 'updated' | 'identifier', string[]> = {
 };
 
 export async function compileEntityQuery(q: EntityQueryBody): Promise<Compiled> {
-  const where: string[] = [];
-  const params: SqlValue[] = [];
+  // Always the current organization (and first: every entity index starts with org_id).
+  const where: string[] = ['org_id = ?'];
+  const params: SqlValue[] = [orgId()];
   if (q.blueprint) {
     where.push('blueprint = ?');
     params.push(q.blueprint);

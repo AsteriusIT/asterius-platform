@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { client, fakeServer, register, testApp, type Api } from './helpers.js';
+import { inDefaultOrg } from './helpers.js';
 import { runSync } from '../src/integrations/sync.js';
 import { nextCron, parseCron } from '../src/lib/cron.js';
 
@@ -34,16 +35,17 @@ const def = (extra: Record<string, unknown> = {}) => ({
 });
 
 describe('sync status model', () => {
-  it('reports partial runs with structured item errors and the last success time', async () => {
-    expect((await admin.put('/api/v1/integrations/s1', def())).status).toBe(200);
-    const r = (await runSync('s1', 'manual'))!;
-    expect(r.status).toBe('partial');
-    expect(r.stats).toMatchObject({ upserted: 1, failed: 1 });
-    expect(r.errors).toEqual([expect.objectContaining({ mapping: 'item', key: 'svc/bad' })]);
-    const got = (await admin.get('/api/v1/integrations/s1')).data;
-    expect(got.lastSync.errors).toHaveLength(1);
-    expect(got.lastSuccessAt).toBeNull();
-  });
+  it('reports partial runs with structured item errors and the last success time', () =>
+    inDefaultOrg(async () => {
+      expect((await admin.put('/api/v1/integrations/s1', def())).status).toBe(200);
+      const r = (await runSync('s1', 'manual'))!;
+      expect(r.status).toBe('partial');
+      expect(r.stats).toMatchObject({ upserted: 1, failed: 1 });
+      expect(r.errors).toEqual([expect.objectContaining({ mapping: 'item', key: 'svc/bad' })]);
+      const got = (await admin.get('/api/v1/integrations/s1')).data;
+      expect(got.lastSync.errors).toHaveLength(1);
+      expect(got.lastSuccessAt).toBeNull();
+    }));
 
   it('tests the connection without writing and reports failures per kind', async () => {
     const ok = await admin.post('/api/v1/integrations/s1/test', {});

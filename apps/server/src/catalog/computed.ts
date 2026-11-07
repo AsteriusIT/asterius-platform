@@ -3,6 +3,7 @@ import { all, json, one, run } from '../db.js';
 import { evaluate } from '../lib/expr.js';
 import { errorMessage } from '../lib/errors.js';
 import { findEntity, relationIds, searchEntities, toEntity } from './entities.js';
+import { orgId } from '../orgs/context.js';
 
 /**
  * Computed properties of blueprints (`computed` in the blueprint):
@@ -28,16 +29,20 @@ interface Index {
   calculated: Map<string, [string, Calculated][]>;
 }
 
-let cache: { at: number; index: Index } | undefined;
+/** Per organization. */
+const cache = new Map<string, { at: number; index: Index }>();
 export const invalidateComputed = () => {
-  cache = undefined;
+  cache.clear();
 };
 
 async function index(): Promise<Index> {
-  if (cache && Date.now() - cache.at < 5_000) return cache.index;
+  const org = orgId();
+  const hit = cache.get(org);
+  if (hit && Date.now() - hit.at < 5_000) return hit.index;
   const idx: Index = { holders: new Map(), mirrorSources: new Map(), aggregationSources: new Map(), calculated: new Map() };
   const rows = await all<{ identifier: string; relations: string; computed: string }>(
-    "SELECT identifier, relations, computed FROM blueprints WHERE computed != '{}'",
+    "SELECT identifier, relations, computed FROM blueprints WHERE org_id = ? AND computed != '{}'",
+    org,
   );
   for (const r of rows) {
     const relations = json<Record<string, { target: string }>>(r.relations, {});
@@ -61,7 +66,7 @@ async function index(): Promise<Index> {
       }
     }
   }
-  cache = { at: Date.now(), index: idx };
+  cache.set(org, { at: Date.now(), index: idx });
   return idx;
 }
 
@@ -75,7 +80,8 @@ const MAX_SOURCES = 10_000;
 async function aggregate(e: Entity, def: Aggregation): Promise<number | null> {
   if (def.function === 'count' && !def.filter) {
     const r = await one<{ n: number }>(
-      'SELECT count(*) AS n FROM entity_relations WHERE blueprint = ? AND relation = ? AND target_blueprint = ? AND target_identifier = ?',
+      'SELECT count(*) AS n FROM entity_relations WHERE org_id = ? AND blueprint = ? AND relation = ? AND target_blueprint = ? AND target_identifier = ?',
+      orgId(),
       def.blueprint,
       def.relation,
       e.blueprint,
@@ -84,8 +90,9 @@ async function aggregate(e: Entity, def: Aggregation): Promise<number | null> {
     return Number(r?.n ?? 0);
   }
   const rows = await all<Parameters<typeof toEntity>[0]>(
-    `SELECT e.* FROM entity_relations r JOIN entities e ON e.blueprint = r.blueprint AND e.identifier = r.identifier
-     WHERE r.blueprint = ? AND r.relation = ? AND r.target_blueprint = ? AND r.target_identifier = ? LIMIT ${MAX_SOURCES}`,
+    `SELECT e.* FROM entity_relations r JOIN entities e ON e.org_id = r.org_id AND e.blueprint = r.blueprint AND e.identifier = r.identifier
+     WHERE r.org_id = ? AND r.blueprint = ? AND r.relation = ? AND r.target_blueprint = ? AND r.target_identifier = ? LIMIT ${MAX_SOURCES}`,
+    orgId(),
     def.blueprint,
     def.relation,
     e.blueprint,
@@ -122,7 +129,8 @@ async function mirrorValue(e: Entity, def: Mirror, targetBlueprint: string): Pro
   const ids = relationIds(e.relations[def.relation]);
   if (!ids.length) return undefined;
   const rows = await all<Parameters<typeof toEntity>[0]>(
-    `SELECT * FROM entities WHERE blueprint = ? AND identifier IN (${ids.map(() => '?').join(',')})`,
+    `SELECT * FROM entities WHERE org_id = ? AND blueprint = ? AND identifier IN (${ids.map(() => '?').join(',')})`,
+    orgId(),
     targetBlueprint,
     ...ids,
   );
@@ -160,7 +168,7 @@ export async function recomputeEntity(blueprint: string, identifier: string): Pr
     Object.fromEntries(Object.entries(e.computed ?? {}).filter(([k]) => holder.mirrors.some((m) => m[0] === k) || holder.aggregations.some((a) => a[0] === k))),
   );
   if (next === current) return false;
-  await run('UPDATE entities SET computed = ? WHERE blueprint = ? AND identifier = ?', next, blueprint, identifier);
+  await run('UPDATE entities SET computed = ? WHERE org_id = ? AND blueprint = ? AND identifier = ?', next, orgId(), blueprint, identifier);
   return true;
 }
 
@@ -185,7 +193,8 @@ export async function refreshAfterWrite(
     const mirrors = idx.mirrorSources.get(blueprint);
     if (mirrors?.length) {
       const refs = await all<{ blueprint: string; identifier: string; relation: string }>(
-        `SELECT blueprint, identifier, relation FROM entity_relations WHERE target_blueprint = ? AND target_identifier = ? LIMIT ${MAX_SOURCES}`,
+        `SELECT blueprint, identifier, relation FROM entity_relations WHERE org_id = ? AND target_blueprint = ? AND target_identifier = ? LIMIT ${MAX_SOURCES}`,
+        orgId(),
         blueprint,
         identifier,
       );

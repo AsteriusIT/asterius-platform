@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { audit } from '../audit.js';
 import { actorOf } from '../auth/users.js';
@@ -21,6 +21,8 @@ import { mappingDef } from '../schemas.js';
 import { render } from '../lib/expr.js';
 import { resolveRef } from '../secrets.js';
 import { idParam } from './util.js';
+import { DEFAULT_ORG, withOrg } from '../orgs/context.js';
+import { findOrg } from '../orgs/orgs.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -28,9 +30,65 @@ declare module 'fastify' {
   }
 }
 
+const ingestLimit = { config: { rateLimit: { max: 600, timeWindow: '1 minute' } } };
+
+/**
+ * Inbound webhook of an organization's integration: /ingest/<organization>/<integration>, and the older
+ * /ingest/<integration> for the default organization. Callers are anonymous: unknown organizations are a plain 404.
+ */
+async function ingestRoute(req: FastifyRequest, reply: FastifyReply, orgKey: string, id: string) {
+  const found = await findOrg(orgKey);
+  if (!found) return reply.code(404).send({ error: 'not found' });
+  return withOrg(found.id, async () => {
+    const r = await getIntegrationRow(id).catch(() => undefined);
+    const source = r ? getSource(r.type) : undefined;
+    if (!r || !source || (!source.push && !source.pushScope)) return reply.code(404).send({ error: 'not found' });
+    if (!bool(r.enabled)) return reply.code(409).send({ error: 'integration disabled' });
+    let cfg: Record<string, unknown>;
+    try {
+      cfg = await renderConfig(r);
+    } catch (err) {
+      req.log.warn({ err, org: found.slug, integration: id }, 'webhook integration misconfigured');
+      return reply.code(503).send({ error: 'Service unavailable' }); // details stay in the logs: callers are anonymous
+    }
+    const contentType = String(req.headers['content-type'] ?? 'application/json');
+    const raw = req.rawBody ?? (typeof req.body === 'string' ? req.body : JSON.stringify(req.body ?? null));
+    // Pull sources refreshed by a provider webhook authenticate with `pushSecret` / `pushPreset`.
+    const auth = source.push ? cfg : { secret: cfg.pushSecret, preset: cfg.pushPreset, signatureHeader: cfg.pushSignatureHeader };
+    if (!source.push && !cfg.pushSecret) return reply.code(404).send({ error: 'not found' });
+    if (!verifyWebhook(auth, req.headers, raw)) return reply.code(401).send({ error: 'invalid signature or token' });
+    // Replay protection: a delivery id (GitHub, GitLab) is processed once within the dedupe window.
+    const deliveryId = deliveryIdOf(req.headers);
+    if (deliveryId && !(await recordDelivery(id, deliveryId)))
+      return { duplicate: true, queued: false, upserted: 0, deleted: 0, skipped: 0, failed: 0, errors: [] };
+    const headers = Object.fromEntries(
+      Object.entries(req.headers).filter(([k]) => !['authorization', 'cookie', 'x-asterius-token', 'x-gitlab-token'].includes(k)),
+    );
+    let body: unknown;
+    try {
+      body = decodeBody(contentType, raw);
+    } catch {
+      return reply.code(400).send({ error: 'payload cannot be decoded for its content type' });
+    }
+    if (!source.push) {
+      const scope = source.pushScope!(body, req.headers);
+      if (!scope) return reply.code(202).send({ queued: false, ignored: true });
+      await requestSync(id, undefined, scope);
+      return reply.code(202).send({ queued: true, scope });
+    }
+    // Slack's endpoint verification handshake.
+    if (cfg.preset === 'slack' && (body as { type?: string } | null)?.type === 'url_verification')
+      return { challenge: (body as { challenge?: string }).challenge };
+    if (Array.isArray(body) && body.length > MAX_ITEMS_PER_EVENT) return reply.code(413).send({ error: `at most ${MAX_ITEMS_PER_EVENT} items per request` });
+    if (cfg.sync === true) return ingest(r, body, headers);
+    const eventId = await enqueueInbound(id, headers, contentType, raw);
+    return reply.code(202).send({ queued: true, id: eventId });
+  });
+}
+
 export async function integrationRoutes(app: FastifyInstance) {
   /**
-   * Inbound webhook ingestion (third parties → catalog). Authenticated by the integration's secret:
+   * Inbound webhook ingestion (third parties → catalog), per organization (see ingestRoute). Authenticated by the integration's secret:
    * `X-Asterius-Token` / `Authorization: Bearer`, or an HMAC signature header (e.g. GitHub's X-Hub-Signature-256).
    */
   await app.register(async (hooks) => {
@@ -44,52 +102,11 @@ export async function integrationRoutes(app: FastifyInstance) {
       req.rawBody = body as string;
       done(null, body);
     });
-    hooks.post('/ingest/:id', { config: { rateLimit: { max: 600, timeWindow: '1 minute' } } }, async (req, reply) => {
-      const { id } = idParam.parse(req.params);
-      const r = await getIntegrationRow(id).catch(() => undefined);
-      const source = r ? getSource(r.type) : undefined;
-      if (!r || !source || (!source.push && !source.pushScope)) return reply.code(404).send({ error: 'not found' });
-      if (!bool(r.enabled)) return reply.code(409).send({ error: 'integration disabled' });
-      let cfg: Record<string, unknown>;
-      try {
-        cfg = await renderConfig(r);
-      } catch (err) {
-        req.log.warn({ err, integration: id }, 'webhook integration misconfigured');
-        return reply.code(503).send({ error: 'Service unavailable' }); // details stay in the logs: callers are anonymous
-      }
-      const contentType = String(req.headers['content-type'] ?? 'application/json');
-      const raw = req.rawBody ?? (typeof req.body === 'string' ? req.body : JSON.stringify(req.body ?? null));
-      // Pull sources refreshed by a provider webhook authenticate with `pushSecret` / `pushPreset`.
-      const auth = source.push ? cfg : { secret: cfg.pushSecret, preset: cfg.pushPreset, signatureHeader: cfg.pushSignatureHeader };
-      if (!source.push && !cfg.pushSecret) return reply.code(404).send({ error: 'not found' });
-      if (!verifyWebhook(auth, req.headers, raw)) return reply.code(401).send({ error: 'invalid signature or token' });
-      // Replay protection: a delivery id (GitHub, GitLab) is processed once within the dedupe window.
-      const deliveryId = deliveryIdOf(req.headers);
-      if (deliveryId && !(await recordDelivery(id, deliveryId)))
-        return { duplicate: true, queued: false, upserted: 0, deleted: 0, skipped: 0, failed: 0, errors: [] };
-      const headers = Object.fromEntries(
-        Object.entries(req.headers).filter(([k]) => !['authorization', 'cookie', 'x-asterius-token', 'x-gitlab-token'].includes(k)),
-      );
-      let body: unknown;
-      try {
-        body = decodeBody(contentType, raw);
-      } catch {
-        return reply.code(400).send({ error: 'payload cannot be decoded for its content type' });
-      }
-      if (!source.push) {
-        const scope = source.pushScope!(body, req.headers);
-        if (!scope) return reply.code(202).send({ queued: false, ignored: true });
-        await requestSync(id, undefined, scope);
-        return reply.code(202).send({ queued: true, scope });
-      }
-      // Slack's endpoint verification handshake.
-      if (cfg.preset === 'slack' && (body as { type?: string } | null)?.type === 'url_verification')
-        return { challenge: (body as { challenge?: string }).challenge };
-      if (Array.isArray(body) && body.length > MAX_ITEMS_PER_EVENT) return reply.code(413).send({ error: `at most ${MAX_ITEMS_PER_EVENT} items per request` });
-      if (cfg.sync === true) return ingest(r, body, headers);
-      const eventId = await enqueueInbound(id, headers, contentType, raw);
-      return reply.code(202).send({ queued: true, id: eventId });
+    hooks.post('/ingest/:org/:id', ingestLimit, async (req, reply) => {
+      const { org, id } = z.object({ org: z.string().min(1).max(64), id: z.string().min(1).max(200) }).parse(req.params);
+      return ingestRoute(req, reply, org, id);
     });
+    hooks.post('/ingest/:id', ingestLimit, async (req, reply) => ingestRoute(req, reply, DEFAULT_ORG, idParam.parse(req.params).id));
   });
 
   await app.register(async (admin) => {

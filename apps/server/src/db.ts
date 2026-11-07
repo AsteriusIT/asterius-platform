@@ -7,6 +7,7 @@ import { config, paths } from './config.js';
 import { entitySearchText } from './catalog/search.js';
 import { CATALOG_MIGRATIONS } from './catalog/migrations.js';
 import { AI_MIGRATIONS } from './ai/migrations.js';
+import { ORG_MIGRATIONS, renumberLegacyOrgMigrations } from './orgs/migrations.js';
 import { componentLogger } from './logger.js';
 import { dbSpan } from './tracing.js';
 
@@ -326,10 +327,23 @@ CREATE TABLE audit_log (
 CREATE INDEX audit_at ON audit_log(at);
 `;
 
+const parseObject = (v: string | null): Record<string, unknown> => {
+  try {
+    return (v && JSON.parse(v)) || {};
+  } catch {
+    return {};
+  }
+};
+
 export interface Migration {
   id: number;
   name: string;
   up: (d: Driver) => Promise<void>;
+  /**
+   * SQLite: run with foreign keys off (table rebuilds; a DROP TABLE would otherwise cascade to the children) and
+   * check them before committing. The pragma is a no-op inside a transaction, so it is set around it.
+   */
+  sqliteForeignKeysOff?: boolean;
 }
 
 export const MIGRATIONS: Migration[] = [
@@ -456,7 +470,8 @@ export const MIGRATIONS: Migration[] = [
         if (!rows.length) break;
         for (const r of rows)
           await d.query('UPDATE entities SET search = ? WHERE blueprint = ? AND identifier = ?', [
-            entitySearchText(r.identifier, r.title, json(r.properties, {})),
+            // `json` is declared further down this module: not initialized yet while migrating on open.
+            entitySearchText(r.identifier, r.title, parseObject(r.properties)),
             r.blueprint,
             r.identifier,
           ]);
@@ -706,6 +721,7 @@ export const MIGRATIONS: Migration[] = [
         );
       `),
   },
+  ...ORG_MIGRATIONS,
 ];
 
 /**
@@ -715,17 +731,26 @@ export const MIGRATIONS: Migration[] = [
  */
 export async function migrate(d: Driver, migrations = MIGRATIONS) {
   await d.exec('CREATE TABLE IF NOT EXISTS schema_migrations (id INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)');
+  await renumberLegacyOrgMigrations(d);
   const done = new Set((await d.query<{ id: number }>('SELECT id FROM schema_migrations')).rows.map((r) => Number(r.id)));
   for (const m of migrations) {
     if (done.has(m.id)) continue;
+    const fkOff = !!m.sqliteForeignKeysOff && d.dialect === 'sqlite';
+    if (fkOff) await d.exec('PRAGMA foreign_keys = OFF');
     await d.exec('BEGIN');
     try {
       await m.up(d);
+      if (fkOff) {
+        const broken = (await d.query('PRAGMA foreign_key_check')).rows;
+        if (broken.length) throw new Error(`migration ${m.id}: foreign key check failed: ${JSON.stringify(broken.slice(0, 3))}`);
+      }
       await d.query('INSERT INTO schema_migrations (id, name, applied_at) VALUES (?, ?, ?)', [m.id, m.name, new Date().toISOString()]);
       await d.exec('COMMIT');
     } catch (err) {
       await d.exec('ROLLBACK').catch(() => undefined);
       throw err;
+    } finally {
+      if (fkOff) await d.exec('PRAGMA foreign_keys = ON');
     }
   }
 }

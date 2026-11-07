@@ -11,13 +11,18 @@ export async function testApp() {
 
 export type Api = ReturnType<typeof client>;
 
-/** Small JSON client over fastify.inject. */
-export function client(app: FastifyInstance, token?: string) {
+/** Small JSON client over fastify.inject; `org` sets X-Asterius-Org (the organization a session works in). */
+export function client(app: FastifyInstance, token?: string, org?: string) {
   const call = async (method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE', url: string, body?: unknown, headers: Record<string, string> = {}) => {
     const res = await app.inject({
       method,
       url,
-      headers: { ...(token ? { authorization: `Bearer ${token}` } : {}), ...(body !== undefined ? { 'content-type': 'application/json' } : {}), ...headers },
+      headers: {
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+        ...(org ? { 'x-asterius-org': org } : {}),
+        ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
+        ...headers,
+      },
       payload: body === undefined ? undefined : JSON.stringify(body),
     });
     const data = res.body ? (res.headers['content-type']?.includes('json') ? res.json() : res.body) : undefined;
@@ -127,3 +132,12 @@ export const silentLog = {
   },
   level: 'silent',
 } as never;
+
+/**
+ * Run test code that calls platform internals directly (syncs, run engine, secrets…) in the default organization, as
+ * the workers do for the organization of what they process. HTTP requests made inside open their own context.
+ */
+export async function inDefaultOrg<T>(fn: () => Promise<T>): Promise<T> {
+  const { DEFAULT_ORG, withOrg } = await import('../src/orgs/context.js');
+  return withOrg(DEFAULT_ORG, fn);
+}

@@ -13,6 +13,7 @@ import { SECRET_REF, webhookDef, type WebhookDef } from '../schemas.js';
 import { metrics } from '../metrics.js';
 import { beat, registerLoop } from '../health.js';
 import { withSpan } from '../tracing.js';
+import { orgId, withOrg } from '../orgs/context.js';
 
 /**
  * Outbound webhooks: notify other systems of catalog changes and runs (Teams/Slack relays, CMDB, audit sinks…).
@@ -51,11 +52,11 @@ const toWebhook = (r: Row): Webhook => ({
 });
 
 export async function listWebhooks(): Promise<Webhook[]> {
-  return (await all<Row>('SELECT * FROM webhooks ORDER BY title')).map(toWebhook);
+  return (await all<Row>('SELECT * FROM webhooks WHERE org_id = ? ORDER BY title', orgId())).map(toWebhook);
 }
 
 export async function getWebhook(id: string) {
-  const r = await one<Row>('SELECT * FROM webhooks WHERE identifier = ?', id);
+  const r = await one<Row>('SELECT * FROM webhooks WHERE org_id = ? AND identifier = ?', orgId(), id);
   if (!r) throw notFound(`Webhook ${id}`);
   // Defence in depth: only ever expose a reference, never a literal value.
   const ref = (v: string | null) => (v && SECRET_REF.test(v.trim()) ? v : null);
@@ -64,7 +65,8 @@ export async function getWebhook(id: string) {
 
 export async function upsertWebhook(input: unknown, opts: { managed?: boolean } = {}) {
   const def: WebhookDef = webhookDef.parse(input);
-  const existing = await one<Row>('SELECT * FROM webhooks WHERE identifier = ?', def.identifier);
+  const org = orgId();
+  const existing = await one<Row>('SELECT * FROM webhooks WHERE org_id = ? AND identifier = ?', org, def.identifier);
   if (existing && bool(existing.managed) && !opts.managed) throw managedError('Webhook', def.identifier);
   for (const [what, expr] of [
     ['filter', def.filter],
@@ -96,32 +98,35 @@ export async function upsertWebhook(input: unknown, opts: { managed?: boolean } 
   ];
   if (existing)
     await run(
-      'UPDATE webhooks SET title = ?, url = ?, events = ?, blueprints = ?, secret = ?, secondary_secret = ?, headers = ?, filter = ?, transform = ?, enabled = ?, managed = ?, updated_at = ? WHERE identifier = ?',
+      'UPDATE webhooks SET title = ?, url = ?, events = ?, blueprints = ?, secret = ?, secondary_secret = ?, headers = ?, filter = ?, transform = ?, enabled = ?, managed = ?, updated_at = ? WHERE org_id = ? AND identifier = ?',
       ...vals,
       t,
+      org,
       def.identifier,
     );
   else
     await run(
-      'INSERT INTO webhooks (title, url, events, blueprints, secret, secondary_secret, headers, filter, transform, enabled, managed, created_at, updated_at, identifier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO webhooks (title, url, events, blueprints, secret, secondary_secret, headers, filter, transform, enabled, managed, created_at, updated_at, org_id, identifier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       ...vals,
       t,
       t,
+      org,
       def.identifier,
     );
   await invalidateWebhookCache();
-  return { webhook: toWebhook((await one<Row>('SELECT * FROM webhooks WHERE identifier = ?', def.identifier))!), created: !existing };
+  return { webhook: toWebhook((await one<Row>('SELECT * FROM webhooks WHERE org_id = ? AND identifier = ?', org, def.identifier))!), created: !existing };
 }
 
 export async function deleteWebhook(id: string, opts: { managed?: boolean } = {}) {
   const w = await getWebhook(id);
   if (w.managed && !opts.managed) throw managedError('Webhook', id);
-  await run('DELETE FROM webhooks WHERE identifier = ?', id);
+  await run('DELETE FROM webhooks WHERE org_id = ? AND identifier = ?', orgId(), id);
   await invalidateWebhookCache();
 }
 
 interface DeliveryRow {
   id: string;
+  org_id: string;
   webhook: string;
   event: string;
   payload: string;
@@ -154,8 +159,8 @@ export async function listDeliveries(q: {
   offset?: number;
 }): Promise<{ deliveries: Delivery[]; nextCursor?: string }> {
   const limit = q.limit ?? 50;
-  const where: string[] = [];
-  const args: (string | number)[] = [];
+  const where: string[] = ['org_id = ?'];
+  const args: (string | number)[] = [orgId()];
   if (q.webhook) {
     where.push('webhook = ?');
     args.push(q.webhook);
@@ -169,7 +174,7 @@ export async function listDeliveries(q: {
     args.push(...decodeCursor(q.cursor, { s: 'deliveries', d: 'desc', n: 2 }));
   }
   const rows = await all<DeliveryRow>(
-    `SELECT * FROM deliveries ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
+    `SELECT * FROM deliveries WHERE ${where.join(' AND ')} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
     ...args,
     limit + 1,
     q.cursor ? 0 : (q.offset ?? 0),
@@ -184,7 +189,12 @@ export async function listDeliveries(q: {
 }
 
 export async function redeliver(id: string) {
-  const { changes } = await run("UPDATE deliveries SET status = 'pending', attempts = 0, next_attempt_at = ?, locked_until = NULL WHERE id = ?", now(), id);
+  const { changes } = await run(
+    "UPDATE deliveries SET status = 'pending', attempts = 0, next_attempt_at = ?, locked_until = NULL WHERE id = ? AND org_id = ?",
+    now(),
+    id,
+    orgId(),
+  );
   if (!changes) throw notFound('Delivery');
 }
 
@@ -204,8 +214,9 @@ export function signPayload(payload: string, secrets: (string | undefined)[], at
 export async function redeliverMany(ids: string[]): Promise<number> {
   if (!ids.length) return 0;
   const { changes } = await run(
-    `UPDATE deliveries SET status = 'pending', attempts = 0, next_attempt_at = ?, locked_until = NULL WHERE id IN (${ids.map(() => '?').join(',')})`,
+    `UPDATE deliveries SET status = 'pending', attempts = 0, next_attempt_at = ?, locked_until = NULL WHERE org_id = ? AND id IN (${ids.map(() => '?').join(',')})`,
     now(),
+    orgId(),
     ...ids,
   );
   return Number(changes);
@@ -214,8 +225,9 @@ export async function redeliverMany(ids: string[]): Promise<number> {
 /** Requeue every failed delivery (optionally of one webhook). Returns how many. */
 export async function redeliverFailed(webhook?: string): Promise<number> {
   const { changes } = await run(
-    `UPDATE deliveries SET status = 'pending', attempts = 0, next_attempt_at = ?, locked_until = NULL WHERE status = 'failed'${webhook ? ' AND webhook = ?' : ''}`,
+    `UPDATE deliveries SET status = 'pending', attempts = 0, next_attempt_at = ?, locked_until = NULL WHERE org_id = ? AND status = 'failed'${webhook ? ' AND webhook = ?' : ''}`,
     now(),
+    orgId(),
     ...(webhook ? [webhook] : []),
   );
   return Number(changes);
@@ -226,7 +238,7 @@ const MAX_ATTEMPTS = 8;
 const backoffMs = (attempt: number) => Math.min(6 * 3600_000, 30_000 * 2 ** (attempt - 1)); // 30 s … 6 h
 
 async function deliver(d: DeliveryRow) {
-  const w = await one<Row>('SELECT * FROM webhooks WHERE identifier = ?', d.webhook);
+  const w = await one<Row>('SELECT * FROM webhooks WHERE org_id = ? AND identifier = ?', d.org_id, d.webhook);
   if (!w || !bool(w.enabled)) {
     await run("UPDATE deliveries SET status = 'failed', last_error = ?, locked_until = NULL WHERE id = ?", 'webhook disabled or deleted', d.id);
     return;
@@ -289,7 +301,7 @@ export function startDeliveryWorker(log: FastifyBaseLogger) {
             d.id,
             now(),
           );
-          if (changes) await deliver(d);
+          if (changes) await withOrg(d.org_id, () => deliver(d)); // secrets resolve in the webhook's organization
         }),
       );
       metrics.loopTick('deliveries');
@@ -314,12 +326,14 @@ export function startDeliveryWorker(log: FastifyBaseLogger) {
  * the row as a `${secret:NAME}` reference. Idempotent; runs at startup.
  */
 export async function migrateLiteralWebhookSecrets() {
-  const rows = await all<{ identifier: string; secret: string }>("SELECT identifier, secret FROM webhooks WHERE secret IS NOT NULL AND secret <> ''");
+  const rows = await all<{ org_id: string; identifier: string; secret: string }>(
+    "SELECT org_id, identifier, secret FROM webhooks WHERE secret IS NOT NULL AND secret <> ''",
+  );
   for (const r of rows) {
     if (SECRET_REF.test(r.secret.trim())) continue;
     const name = `webhook-${r.identifier}-signing`.slice(0, 100);
-    await setSecret(name, r.secret, `Signing secret of webhook ${r.identifier} (migrated from a plaintext value)`, null);
-    await run('UPDATE webhooks SET secret = ? WHERE identifier = ?', `\${secret:${name}}`, r.identifier);
+    await withOrg(r.org_id, () => setSecret(name, r.secret, `Signing secret of webhook ${r.identifier} (migrated from a plaintext value)`, null));
+    await run('UPDATE webhooks SET secret = ? WHERE org_id = ? AND identifier = ?', `\${secret:${name}}`, r.org_id, r.identifier);
   }
   if (rows.length) invalidateWebhookCache();
 }
@@ -335,8 +349,9 @@ export async function queueTestDelivery(webhook: string) {
     data: { message: 'Test delivery from Asterius' },
   });
   await run(
-    "INSERT INTO deliveries (id, webhook, event, payload, status, next_attempt_at, created_at) VALUES (?, ?, ?, ?, 'pending', ?, ?)",
+    "INSERT INTO deliveries (id, org_id, webhook, event, payload, status, next_attempt_at, created_at) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)",
     newId(),
+    orgId(),
     webhook,
     'webhook.test',
     payload,

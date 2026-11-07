@@ -8,6 +8,7 @@ import { countEntities, searchEntities } from './entities.js';
 import { getScorecard, scorecardSummary } from './scorecards.js';
 import { getBlueprintCached } from './blueprints.js';
 import { visibleBlueprints } from '../auth/access.js';
+import { orgId } from '../orgs/context.js';
 
 /**
  * Dashboards: a set of widgets (entity counts, scorecard levels, recent runs, pending approvals, saved table
@@ -38,32 +39,35 @@ const toDashboard = (r: Row): Dashboard => ({
 });
 
 export async function listDashboards(): Promise<Dashboard[]> {
-  return (await all<Row>('SELECT * FROM dashboards ORDER BY title')).map(toDashboard);
+  return (await all<Row>('SELECT * FROM dashboards WHERE org_id = ? ORDER BY title', orgId())).map(toDashboard);
 }
 
 export async function getDashboard(id: string): Promise<Dashboard> {
-  const r = await one<Row>('SELECT * FROM dashboards WHERE identifier = ?', id);
+  const r = await one<Row>('SELECT * FROM dashboards WHERE org_id = ? AND identifier = ?', orgId(), id);
   if (!r) throw notFound(`Dashboard ${id}`);
   return toDashboard(r);
 }
 
 export async function upsertDashboard(input: unknown, opts: { managed?: boolean } = {}) {
   const def: DashboardDef = dashboardDef.parse(input);
-  const existing = await one<Row>('SELECT * FROM dashboards WHERE identifier = ?', def.identifier);
+  const org = orgId();
+  const existing = await one<Row>('SELECT * FROM dashboards WHERE org_id = ? AND identifier = ?', org, def.identifier);
   if (existing && bool(existing.managed) && !opts.managed) throw managedError('Dashboard', def.identifier);
   const t = now();
   const vals = [def.title, def.description, def.team ?? null, def.blueprint ?? null, def.default ? 1 : 0, JSON.stringify(def.widgets), opts.managed ? 1 : 0, t];
   if (existing)
     await run(
-      'UPDATE dashboards SET title = ?, description = ?, team = ?, blueprint = ?, is_default = ?, widgets = ?, managed = ?, updated_at = ? WHERE identifier = ?',
+      'UPDATE dashboards SET title = ?, description = ?, team = ?, blueprint = ?, is_default = ?, widgets = ?, managed = ?, updated_at = ? WHERE org_id = ? AND identifier = ?',
       ...vals,
+      org,
       def.identifier,
     );
   else
     await run(
-      'INSERT INTO dashboards (title, description, team, blueprint, is_default, widgets, managed, updated_at, created_at, identifier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO dashboards (title, description, team, blueprint, is_default, widgets, managed, updated_at, created_at, org_id, identifier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       ...vals,
       t,
+      org,
       def.identifier,
     );
   return { dashboard: await getDashboard(def.identifier), created: !existing };
@@ -72,7 +76,7 @@ export async function upsertDashboard(input: unknown, opts: { managed?: boolean 
 export async function deleteDashboard(id: string, opts: { managed?: boolean } = {}) {
   const d = await getDashboard(id);
   if (d.managed && !opts.managed) throw managedError('Dashboard', id);
-  await run('DELETE FROM dashboards WHERE identifier = ?', id);
+  await run('DELETE FROM dashboards WHERE org_id = ? AND identifier = ?', orgId(), id);
 }
 
 /**

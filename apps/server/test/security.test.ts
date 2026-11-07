@@ -13,6 +13,8 @@ import { redact, redactDeep } from '../src/lib/expr.js';
 import { signPayload } from '../src/webhooks/webhooks.js';
 import { createHmac } from 'node:crypto';
 import { exportConfig } from '../src/config-loader.js';
+import { DEFAULT_ORG, withOrg } from '../src/orgs/context.js';
+import { membership } from '../src/orgs/orgs.js';
 
 let app: FastifyInstance;
 let admin: Api;
@@ -61,7 +63,7 @@ describe('webhook signing secrets', () => {
     await migrateLiteralWebhookSecrets();
     expect((await admin.get('/api/v1/webhooks/legacy')).data.secret).toBe('${secret:webhook-legacy-signing}');
     expect(await one('SELECT name FROM secrets WHERE name = ?', 'webhook-legacy-signing')).toBeTruthy();
-    expect(await exportConfig()).not.toContain('old-literal');
+    expect(await withOrg(DEFAULT_ORG, () => exportConfig())).not.toContain('old-literal');
   });
 });
 
@@ -92,11 +94,13 @@ describe('entra roles', () => {
   it('demotes users removed from the admin group, keeps hand-set roles', async () => {
     config.ENTRA_ADMIN_GROUPS.push('g-admin');
     const u = { externalId: 't:1', email: 'e1@example.com', name: 'E1' };
-    expect((await upsertEntraUser({ ...u, groups: ['g-admin'] })).role).toBe('admin');
-    expect((await upsertEntraUser({ ...u, groups: [] })).role).toBe('member');
+    // Direct Entra sign-in serves the default organization: the role is the membership's there.
+    const role = async (groups: string[]) => (await membership(DEFAULT_ORG, (await upsertEntraUser({ ...u, groups })).id))?.role;
+    expect(await role(['g-admin'])).toBe('admin');
+    expect(await role([])).toBe('member');
     const row = await upsertEntraUser({ ...u, groups: [] });
-    await updateUser(row.id, { role: 'admin' }); // set by hand by an admin: survives the next sign-in
-    expect((await upsertEntraUser({ ...u, groups: [] })).role).toBe('admin');
+    await withOrg(DEFAULT_ORG, () => updateUser(row.id, { role: 'admin' })); // set by hand by an admin: survives the next sign-in
+    expect(await role([])).toBe('admin');
   });
 });
 
@@ -144,7 +148,7 @@ describe('outbound SSRF guard', () => {
       mappings: [{ kind: 'item', entity: { blueprint: 'app', identifier: 'code', title: 'code' } }],
     });
     const { runSync } = await import('../src/integrations/sync.js');
-    const out = await runSync('evil', 'manual');
+    const out = await withOrg(DEFAULT_ORG, () => runSync('evil', 'manual'));
     expect(JSON.stringify(out)).toMatch(/another origin/);
     await a.close();
   });

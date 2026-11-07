@@ -89,6 +89,22 @@ To plug in a **custom service**, use one of three paths:
 
 See [docs/EXTENDING.md](docs/EXTENDING.md) for the API, the callback contract and the plugin interfaces.
 
+## Organizations, sign-in and AI assistants
+
+**Organizations (tenants).** Everything (catalog and its history, scorecards, dashboards, workflows and their versions, runs, integrations, webhooks, secrets, notifications, AI budgets and usage, audit log, API tokens) belongs to an organization. People belong to several organizations with a role in each (admin or member) and switch from the sidebar. Platform super-admins (`ADMIN_EMAILS`, the bootstrap account) see every organization under *Platform → All organizations*. Existing installs are migrated into the `default` organization. A new account belongs to no organization: it lands on *Create your organization*, unless it was invited or came in through an organization's SSO. Anyone signed in can create an organization (`ORG_CREATION=superadmin` restricts it); `AUTO_JOIN_DEFAULT_ORG=true` restores the single-tenant behaviour (everyone joins the default organization). Inbound webhooks and workflow webhook triggers carry the organization in their URL (`/api/v1/ingest/<org>/<integration>`, `/api/v1/hooks/<org>/<action>`; without it: the default organization). The platform's own Kubernetes access and cloud identity (external secret managers, `auth` blocks without credentials) are reserved to the organizations listed in `KUBERNETES_ORGS` and `PLATFORM_IDENTITY_ORGS` (default: the default organization). Platform-wide sign-in providers (Entra ID, generic OIDC, GitHub, SAML) serve the default organization; SCIM tokens provision the organization they were created in.
+
+**Registration, login and SSO per organization: Keycloak.** With `AUTH_PROVIDERS=keycloak` (and `KEYCLOAK_URL`), Keycloak handles registration, password reset, MFA and passkeys. Each platform organization is a Keycloak *Organization*. Organization admins connect their own identity provider (Entra ID, Okta, Google, any OIDC or SAML) and invite people from *Organization → Single sign-on / Members*: the platform drives Keycloak's admin API. Email domains must be verified with a DNS TXT record before they route sign-ins or let people join, so no organization can claim someone else's domain. Typing an email on the sign-in page goes straight to the identity provider connected for its domain (no Keycloak page): people who come through an organization's identity provider with an email of its verified domains become members on their first sign-in (and are mirrored in the Keycloak Organization), nobody manages members in Keycloak. Registering with a password, even with a matching email, joins nothing. Locally: `docker compose -f deploy/keycloak/docker-compose.yaml up -d` (realm `asterius` imported from [deploy/keycloak/realm-asterius.json](deploy/keycloak/realm-asterius.json)). In Kubernetes: `keycloak.enabled=true` in the chart, or `keycloak.url` for an existing Keycloak. Local accounts and the direct Entra integration (default organization) remain available.
+
+**Configuration as code per organization.** The default organization reads `CONFIG_DIR`; another organization reads `CONFIG_DIR/orgs/<slug>/` (mounted by the operators) or **its own Git repository** (https, read-only token kept as an organization secret, pulled every 2 minutes). Organizations can also be declared in the platform files (`organizations: [{ slug, name, domains, admins }]`).
+
+**MCP server.** `POST /api/mcp` (also `/api/v1/mcp`, Streamable HTTP) lets AI assistants search the catalog, read entities, start self-service actions and follow runs, with the permissions of the token's owner in the token's organization:
+
+```bash
+claude mcp add --transport http acme https://platform.example.com/api/mcp --header "Authorization: Bearer ast_…"
+```
+
+`whoami` and `list_approvals` show the token's organization and what waits for a decision; approving requests is deliberately not exposed to assistants.
+
 ## Deploying on Kubernetes
 
 ```bash

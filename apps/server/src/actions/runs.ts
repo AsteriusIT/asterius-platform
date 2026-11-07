@@ -30,6 +30,8 @@ import {
   type StepRow,
 } from './steps.js';
 import { decodeCursor, encodeCursor } from '../lib/cursor.js';
+import { findOrg, orgRef } from '../orgs/orgs.js';
+import { orgId, withOrg } from '../orgs/context.js';
 
 /**
  * Run lifecycle:
@@ -43,6 +45,7 @@ export const FINAL: RunStatus[] = ['SUCCESS', 'FAILURE', 'REJECTED', 'CANCELLED'
 
 export interface RunRow {
   id: string;
+  org_id: string;
   action: string;
   action_title: string;
   blueprint: string | null;
@@ -136,7 +139,7 @@ export function canApprove(p: Principal, r: RunRow, approvals: RunApproval[]) {
 const canCancel = (p: Principal, r: RunRow) => !FINAL.includes(r.status) && (isAdmin(p) || r.triggered_by === p.id);
 
 export async function getRunRow(id: string) {
-  const r = await one<RunRow>(`${SELECT} WHERE r.id = ?`, id);
+  const r = await one<RunRow>(`${SELECT} WHERE r.id = ? AND r.org_id = ?`, id, orgId());
   if (!r) throw notFound('Run');
   return r;
 }
@@ -242,14 +245,15 @@ export interface RunQuery {
 /** Ids of non-final-or-not runs the principal is entitled to approve (policy checked in code, SQL only pre-selects). */
 async function approverRunIds(p: Principal): Promise<string[]> {
   const rows = await all<RunRow>(
-    `${SELECT} WHERE r.approval LIKE '%"required":true%' OR r.steps LIKE '%"type":"approval"%' ORDER BY r.created_at DESC LIMIT 2000`,
+    `${SELECT} WHERE r.org_id = ? AND (r.approval LIKE '%"required":true%' OR r.steps LIKE '%"type":"approval"%') ORDER BY r.created_at DESC LIMIT 2000`,
+    orgId(),
   );
   return rows.filter((r) => approverOf(p, r)).map((r) => r.id);
 }
 
 export async function listRuns(q: RunQuery, p: Principal): Promise<RunPage> {
-  const where: string[] = [];
-  const params: SqlValue[] = [];
+  const where: string[] = ['r.org_id = ?'];
+  const params: SqlValue[] = [orgId()];
   if (!isAdmin(p)) {
     // Viewer policy (see canViewRun): requester, owning team, deciders, approvers.
     const ors = [
@@ -324,9 +328,10 @@ export async function pendingApprovals(
   let scanned = 0;
   for (;;) {
     const rows = await all<RunRow>(
-      `${SELECT} WHERE (r.status = 'PENDING_APPROVAL' AND NOT EXISTS (SELECT 1 FROM run_approvals a WHERE a.run_id = r.id AND a.user_id = ?)
+      `${SELECT} WHERE r.org_id = ? AND (r.status = 'PENDING_APPROVAL' AND NOT EXISTS (SELECT 1 FROM run_approvals a WHERE a.run_id = r.id AND a.user_id = ?)
           OR r.status = 'IN_PROGRESS' AND EXISTS (SELECT 1 FROM run_steps s WHERE s.run_id = r.id AND s.status IN ('WAITING_APPROVAL', 'WAITING')))
         ${after ? 'AND (r.created_at, r.id) > (?, ?)' : ''} ORDER BY r.created_at, r.id LIMIT ?`,
+      orgId(),
       p.id,
       ...(after ?? []),
       APPROVAL_SCAN,
@@ -418,8 +423,14 @@ async function notifyRun(r: RunRow) {
   const approvals = (await approvalsOf([r.id])).get(r.id) ?? [];
   const stepApprovals = await stepApprovalsOf([r.id]);
   const defs = stepDefs(r);
-  for (const u of await all<UserRow>("SELECT * FROM users WHERE active = 1 AND provider != 'service'")) {
-    const p = await principalOf(u);
+  // Members of the run's organization (the context of the run).
+  const org = await currentOrgRef();
+  const members = await all<UserRow>(
+    "SELECT u.* FROM users u JOIN memberships m ON m.user_id = u.id WHERE m.org_id = ? AND u.active = 1 AND u.provider != 'service'",
+    org.id,
+  );
+  for (const u of members) {
+    const p = await principalOf(u, org);
     if (wantsApproval && canApprove(p, r, approvals))
       await notify(u.id, {
         kind: 'approval.requested',
@@ -468,9 +479,10 @@ async function insertRun(n: NewRun): Promise<{ id: string; replay?: false } | { 
   const t = now();
   const status: RunStatus = n.approval.required ? 'PENDING_APPROVAL' : 'QUEUED';
   const inserted = await run(
-    `INSERT INTO runs (id, action, action_title, blueprint, entity, inputs, status, invoker, steps, approval, triggered_by, team, trigger_type, trigger_info, parent_run_id, parent_step_id, action_version, allowed_secrets, created_at, updated_at, idempotency_key)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
+    `INSERT INTO runs (id, org_id, action, action_title, blueprint, entity, inputs, status, invoker, steps, approval, triggered_by, team, trigger_type, trigger_info, parent_run_id, parent_step_id, action_version, allowed_secrets, created_at, updated_at, idempotency_key)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
     id,
+    orgId(),
     action.identifier,
     action.title,
     n.blueprint,
@@ -734,3 +746,17 @@ export async function updateRun(runId: string, u: RunUpdate): Promise<boolean> {
 }
 
 export const runUrl = (id: string) => `${config.PUBLIC_URL}/runs/${id}`;
+
+const currentOrgRef = async () => orgRef((await findOrg(orgId()))!);
+
+/** Organization of a run, outside any organization context (callbacks from pipelines, workers). */
+export async function runOrg(id: string): Promise<string | undefined> {
+  return (await one<{ org_id: string }>('SELECT org_id FROM runs WHERE id = ?', id))?.org_id;
+}
+
+/** Run `fn` in the organization of a run (workers, callbacks). */
+export async function inRunOrg<T>(runId: string, fn: () => Promise<T>): Promise<T> {
+  const org = await runOrg(runId);
+  if (!org) throw notFound('Run');
+  return withOrg(org, fn);
+}

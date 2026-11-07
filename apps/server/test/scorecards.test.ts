@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { client, register, testApp, waitFor, type Api } from './helpers.js';
+import { inDefaultOrg } from './helpers.js';
 
 let app: FastifyInstance;
 let admin: Api;
@@ -61,16 +62,17 @@ describe('scorecards', () => {
     expect(events.every((e) => e.event === 'scorecard.changed')).toBe(true);
   });
 
-  it('exposes table levels, summary and the level to workflow contexts', async () => {
-    const lv = await admin.get('/api/v1/blueprints/svc/scorecard-levels?ids=core-api,web');
-    expect(lv.data).toEqual({ pr: { 'core-api': 'Silver', web: 'Gold' } });
-    const sum = await admin.get('/api/v1/scorecards/pr/summary?days=3');
-    expect(sum.data.distribution).toMatchObject({ Silver: 1, Gold: 1, Bronze: 0, none: 0 });
-    expect(sum.data.trend).toHaveLength(3);
-    expect(sum.data.trend[2].distribution).toMatchObject({ Silver: 1, Gold: 1 });
-    const { scorecardLevels } = await import('../src/catalog/scorecards.js');
-    expect((await scorecardLevels('svc', 'web')).pr).toMatchObject({ level: 'Gold', rank: 3 });
-  });
+  it('exposes table levels, summary and the level to workflow contexts', () =>
+    inDefaultOrg(async () => {
+      const lv = await admin.get('/api/v1/blueprints/svc/scorecard-levels?ids=core-api,web');
+      expect(lv.data).toEqual({ pr: { 'core-api': 'Silver', web: 'Gold' } });
+      const sum = await admin.get('/api/v1/scorecards/pr/summary?days=3');
+      expect(sum.data.distribution).toMatchObject({ Silver: 1, Gold: 1, Bronze: 0, none: 0 });
+      expect(sum.data.trend).toHaveLength(3);
+      expect(sum.data.trend[2].distribution).toMatchObject({ Silver: 1, Gold: 1 });
+      const { scorecardLevels } = await import('../src/catalog/scorecards.js');
+      expect((await scorecardLevels('svc', 'web')).pr).toMatchObject({ level: 'Gold', rank: 3 });
+    }));
 
   it('re-evaluates every entity when the scorecard changes', async () => {
     const changed = { ...card, rules: [card.rules[0], { ...card.rules[1], expression: 'properties.url = "https://x.test"' }, card.rules[2]] };

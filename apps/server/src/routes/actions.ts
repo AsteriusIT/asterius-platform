@@ -9,6 +9,9 @@ import { nextPageHeaders } from '../lib/cursor.js';
 import { addLog, cancelRun, decide, getRun, getRunLogs, getRunRow, listRuns, pendingApprovals, runLogsAfter, triggerRun } from '../actions/runs.js';
 import { workflowStep } from '../schemas.js';
 import { previewExpression, simulateWorkflow } from '../actions/simulate.js';
+import { runOrg } from '../actions/runs.js';
+import { DEFAULT_ORG, enterOrg, withOrg } from '../orgs/context.js';
+import { findOrg } from '../orgs/orgs.js';
 import { cancelSteps, decideStep, runningInvokeStep, updateStep } from '../actions/engine.js';
 import { dryRun } from '../actions/dryrun.js';
 import { diffVersions, getVersion, listVersions } from '../actions/versions.js';
@@ -16,7 +19,7 @@ import { rerun, resume, retryStep } from '../actions/recovery.js';
 import { deliverEvent, submitInput } from '../actions/waiting.js';
 import { receiveWebhook } from '../actions/triggers.js';
 import { checkRunToken, checkStepToken } from '../secrets.js';
-import { conflict, forbidden } from '../lib/errors.js';
+import { conflict, forbidden, notFound } from '../lib/errors.js';
 import { entityParam, idParam, page } from './util.js';
 
 const RUN_STATUSES = ['PENDING_APPROVAL', 'QUEUED', 'IN_PROGRESS', 'SUCCESS', 'FAILURE', 'REJECTED', 'CANCELLED'] as const;
@@ -38,11 +41,14 @@ export async function actionRoutes(app: FastifyInstance) {
   // ---- callback API (external systems): step token, legacy run token, or an admin API token ----
   const stepParams = z.object({ id: z.string().min(1).max(200), step: z.string().min(1).max(64) });
 
+  /** Callbacks work in the run's organization: its step token, or an admin token of that organization. */
   async function authorizeCallback(req: FastifyRequest, runId: string, stepId?: string) {
+    const org = await runOrg(runId);
+    if (!org) throw notFound('Run');
     const token = bearer(req);
-    if (stepId ? checkStepToken(runId, stepId, token) : checkRunToken(runId, token)) return;
+    if (stepId ? checkStepToken(runId, stepId, token) : checkRunToken(runId, token)) return enterOrg(org);
     const p = await authenticate(req);
-    if (!p || !isAdmin(p)) throw forbidden('Use the callback token of the step (run.callback.token) or an admin API token');
+    if (!p || !isAdmin(p) || p.org?.id !== org) throw forbidden('Use the callback token of the step (run.callback.token) or an admin API token');
   }
 
   const parseLogs = (body: unknown) => {
@@ -109,12 +115,24 @@ export async function actionRoutes(app: FastifyInstance) {
     return { ok: true };
   });
 
-  /** Inbound webhook trigger: starts the workflow named in the URL. Authenticated by the trigger's secret (token or HMAC). */
-  app.post('/hooks/:id', { config: { rateLimit: { max: 600, timeWindow: '1 minute' } } }, async (req, reply) => {
-    const { id } = idParam.parse(req.params);
-    const out = await receiveWebhook(id, { headers: req.headers, rawBody: req.rawBody ?? JSON.stringify(req.body ?? null), body: req.body, query: req.query });
-    return reply.code(202).send(out);
+  /**
+   * Inbound webhook trigger: starts the workflow named in the URL, in the organization named before it
+   * (`/hooks/<organization>/<action>`; `/hooks/<action>`: the default organization). Authenticated by the trigger's
+   * secret (token or HMAC).
+   */
+  const hook = async (req: FastifyRequest, orgKey: string, id: string) => {
+    const org = await findOrg(orgKey);
+    if (!org) throw notFound('Webhook trigger');
+    return withOrg(org.id, () =>
+      receiveWebhook(id, { headers: req.headers, rawBody: req.rawBody ?? JSON.stringify(req.body ?? null), body: req.body, query: req.query }),
+    );
+  };
+  const hookLimit = { config: { rateLimit: { max: 600, timeWindow: '1 minute' } } };
+  app.post('/hooks/:org/:id', hookLimit, async (req, reply) => {
+    const { org, id } = z.object({ org: z.string().min(1).max(64), id: z.string().min(1).max(64) }).parse(req.params);
+    return reply.code(202).send(await hook(req, org, id));
   });
+  app.post('/hooks/:id', hookLimit, async (req, reply) => reply.code(202).send(await hook(req, DEFAULT_ORG, idParam.parse(req.params).id)));
 
   // ---- everything below: signed-in users ----
   await app.register(async (scoped) => {

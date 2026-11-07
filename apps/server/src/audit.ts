@@ -6,6 +6,7 @@ import { metrics } from './metrics.js';
 import { componentLogger } from './logger.js';
 import type { AuditEntry } from '@asterius/shared';
 import { decodeCursor, encodeCursor } from './lib/cursor.js';
+import { maybeOrgId, orgId } from './orgs/context.js';
 
 /**
  * Append-only audit log of changes and decisions: who, what, on which target.
@@ -14,6 +15,8 @@ import { decodeCursor, encodeCursor } from './lib/cursor.js';
  *  - AUDIT_HASH_CHAIN=true links entries (each hash covers the previous one; HMAC-keyed with AUDIT_CHAIN_KEY when set),
  *    so edits, deletions in the middle or reordering are detected by `verifyAuditChain`.
  *  - Entries can be exported (CSV / NDJSON) and streamed to a SIEM (audit-stream.ts).
+ *  - Entries belong to the organization of the context (null: platform-level, e.g. sign-ins and organization
+ *    management); listings and exports are per organization. The chain is platform-wide (super-admins verify it).
  */
 
 export interface Actor {
@@ -26,7 +29,7 @@ const log = componentLogger('audit');
 export const SYSTEM: Actor = { id: null, email: 'system' };
 
 const CHAIN_LOCK = 726210;
-const retryQueue: { actor: Actor; action: string; target: string | null; detail: Record<string, unknown> }[] = [];
+const retryQueue: { actor: Actor; action: string; target: string | null; detail: Record<string, unknown>; org: string | null }[] = [];
 
 export const chainHash = (p: {
   prev: string;
@@ -43,13 +46,14 @@ export const chainHash = (p: {
   return config.AUDIT_CHAIN_KEY ? createHmac('sha256', config.AUDIT_CHAIN_KEY).update(data).digest('hex') : createHash('sha256').update(data).digest('hex');
 };
 
-async function insert(actor: Actor, action: string, target: string | null, detail: Record<string, unknown>) {
+async function insert(actor: Actor, action: string, target: string | null, detail: Record<string, unknown>, org: string | null) {
   const id = newId();
   const text = JSON.stringify(detail);
   if (!config.AUDIT_HASH_CHAIN) {
     await run(
-      'INSERT INTO audit_log (id, at, action, actor_id, actor_email, target, detail) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO audit_log (id, org_id, at, action, actor_id, actor_email, target, detail) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
       id,
+      org,
       now(),
       action,
       actor.id,
@@ -70,21 +74,21 @@ async function insert(actor: Actor, action: string, target: string | null, detai
     const at = now();
     const hash = chainHash({ prev, seq, id, at, action, actorId: actor.id, actorEmail: actor.email, target, detail: text });
     await d.query(
-      'INSERT INTO audit_log (id, at, action, actor_id, actor_email, target, detail, chain_seq, prev_hash, hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [id, at, action, actor.id, actor.email, target, text, seq, prev, hash],
+      'INSERT INTO audit_log (id, org_id, at, action, actor_id, actor_email, target, detail, chain_seq, prev_hash, hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [id, org, at, action, actor.id, actor.email, target, text, seq, prev, hash],
     );
   });
 }
 
-export async function audit(actor: Actor, action: string, target: string | null, detail: Record<string, unknown> = {}) {
+export async function audit(actor: Actor, action: string, target: string | null, detail: Record<string, unknown> = {}, org = maybeOrgId()) {
   try {
-    await insert(actor, action, target, detail);
+    await insert(actor, action, target, detail, org);
     // Entries that failed earlier are retried as soon as the database accepts writes again.
-    for (let e = retryQueue.shift(); e; e = retryQueue.shift()) await insert(e.actor, e.action, e.target, e.detail);
+    for (let e = retryQueue.shift(); e; e = retryQueue.shift()) await insert(e.actor, e.action, e.target, e.detail, e.org);
   } catch (err) {
     metrics.auditFailure();
     log.error({ err, action, target }, 'audit write failed'); // never break the action itself
-    if (retryQueue.length < 1000) retryQueue.push({ actor, action, target, detail });
+    if (retryQueue.length < 1000) retryQueue.push({ actor, action, target, detail, org });
   }
 }
 
@@ -100,6 +104,8 @@ interface Row {
 const toEntry = (r: Row): AuditEntry => ({ id: r.id, at: r.at, action: r.action, actorEmail: r.actor_email, target: r.target, detail: json(r.detail, {}) });
 
 export interface AuditQuery {
+  /** Also platform-level entries (sign-ins, organization management): super-admins. */
+  platform?: boolean;
   search?: string;
   /** Exact action, or a prefix ending in `*` (`token.*`). */
   action?: string;
@@ -109,9 +115,10 @@ export interface AuditQuery {
   to?: string;
 }
 
+/** Entries of the current organization matching the query. */
 function filter(q: AuditQuery) {
-  const where: string[] = [];
-  const params: SqlValue[] = [];
+  const where: string[] = [q.platform ? '(org_id = ? OR org_id IS NULL)' : 'org_id = ?'];
+  const params: SqlValue[] = [orgId()];
   const like = (s: string) => `%${likeEscape(s)}%`;
   if (q.search) {
     where.push("(action LIKE ? ESCAPE '\\' OR target LIKE ? ESCAPE '\\' OR actor_email LIKE ? ESCAPE '\\')");
@@ -142,14 +149,14 @@ function filter(q: AuditQuery) {
     where.push('at <= ?');
     params.push(q.to);
   }
-  return { w: where.length ? `WHERE ${where.join(' AND ')}` : '', params };
+  return { w: `WHERE ${where.join(' AND ')}`, params };
 }
 
 export async function listAudit(q: AuditQuery & { limit: number; offset: number; cursor?: string }): Promise<{ entries: AuditEntry[]; nextCursor?: string }> {
   const { w, params } = filter(q);
   let where = w;
   if (q.cursor) {
-    where = `${w ? `${w} AND` : 'WHERE'} (at, id) < (?, ?)`;
+    where = `${w} AND (at, id) < (?, ?)`;
     params.push(...decodeCursor(q.cursor, { s: 'audit', d: 'desc', n: 2 }));
   }
   const rows = await all<Row>(
@@ -172,7 +179,7 @@ export async function auditFacets(q: AuditQuery = {}) {
     ...params,
   );
   const actors = await all<{ actor_email: string; n: number }>(
-    `SELECT actor_email, count(*) AS n FROM audit_log ${w ? `${w} AND` : 'WHERE'} actor_email IS NOT NULL GROUP BY actor_email ORDER BY n DESC LIMIT 100`,
+    `SELECT actor_email, count(*) AS n FROM audit_log ${w} AND actor_email IS NOT NULL GROUP BY actor_email ORDER BY n DESC LIMIT 100`,
     ...params,
   );
   return { actions: actions.map((a) => ({ value: a.action, count: Number(a.n) })), actors: actors.map((a) => ({ value: a.actor_email, count: Number(a.n) })) };

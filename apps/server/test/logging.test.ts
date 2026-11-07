@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { client, fakeServer, register, testApp, type Api } from './helpers.js';
+import { inDefaultOrg } from './helpers.js';
 import { maskText } from '../src/lib/mask.js';
 import { runSync } from '../src/integrations/sync.js';
 import { traceFields } from '../src/tracing.js';
@@ -32,21 +33,22 @@ describe('stored sync logs', () => {
     await app.close();
   });
 
-  it('never stores secret values in sync_runs.logs', async () => {
-    await admin.put('/api/v1/secrets/LEAKY', { value: 'zq-very-secret-42' });
-    await admin.put('/api/v1/blueprints/thing', { title: 'Thing', schema: { properties: {} } });
-    const saved = await admin.put('/api/v1/integrations/leaky', {
-      title: 'Leaky',
-      type: 'http',
-      intervalMinutes: 0,
-      config: { url: `${api.url}/items?k=\${secret:LEAKY}`, itemsPath: 'data' },
-      mappings: [{ kind: 'item', entity: { blueprint: 'thing', identifier: 'id', title: 'id' } }],
-    });
-    expect(saved.status, JSON.stringify(saved.data)).toBe(200);
-    const res = (await runSync('leaky', 'manual'))!;
-    expect(res.status).toBe('failure');
-    expect(res.logs.join('\n')).toContain('FAILED');
-    expect(res.logs.join('\n')).not.toContain('zq-very-secret-42');
-    expect(api.received.some((r) => r.url.includes('zq-very-secret-42'))).toBe(true); // the secret was really used
-  });
+  it('never stores secret values in sync_runs.logs', () =>
+    inDefaultOrg(async () => {
+      await admin.put('/api/v1/secrets/LEAKY', { value: 'zq-very-secret-42' });
+      await admin.put('/api/v1/blueprints/thing', { title: 'Thing', schema: { properties: {} } });
+      const saved = await admin.put('/api/v1/integrations/leaky', {
+        title: 'Leaky',
+        type: 'http',
+        intervalMinutes: 0,
+        config: { url: `${api.url}/items?k=\${secret:LEAKY}`, itemsPath: 'data' },
+        mappings: [{ kind: 'item', entity: { blueprint: 'thing', identifier: 'id', title: 'id' } }],
+      });
+      expect(saved.status, JSON.stringify(saved.data)).toBe(200);
+      const res = (await runSync('leaky', 'manual'))!;
+      expect(res.status).toBe('failure');
+      expect(res.logs.join('\n')).toContain('FAILED');
+      expect(res.logs.join('\n')).not.toContain('zq-very-secret-42');
+      expect(api.received.some((r) => r.url.includes('zq-very-secret-42'))).toBe(true); // the secret was really used
+    }));
 });

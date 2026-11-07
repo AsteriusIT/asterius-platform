@@ -1,3 +1,4 @@
+import { inDefaultOrg } from './helpers.js';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -52,12 +53,13 @@ describe('sql source (sqlite driver)', () => {
     return out;
   };
 
-  it('reads all rows, with and without keyset paging', async () => {
-    const base = { driver: 'sqlite', url: file, queries: { application: 'SELECT code, name FROM apps' } };
-    expect(await collect(base)).toHaveLength(7);
-    const paged = await collect({ ...base, keyset: { column: 'code', pageSize: 3 } });
-    expect(paged.map((r) => r.code)).toEqual(['a1', 'a2', 'a3', 'a4', 'a5', 'a6', 'a7']);
-  });
+  it('reads all rows, with and without keyset paging', () =>
+    inDefaultOrg(async () => {
+      const base = { driver: 'sqlite', url: file, queries: { application: 'SELECT code, name FROM apps' } };
+      expect(await collect(base)).toHaveLength(7);
+      const paged = await collect({ ...base, keyset: { column: 'code', pageSize: 3 } });
+      expect(paged.map((r) => r.code)).toEqual(['a1', 'a2', 'a3', 'a4', 'a5', 'a6', 'a7']);
+    }));
 
   it('validates the configuration', () => {
     expect(() => sqlSource.validate({ driver: 'oracle', url: 'x', query: 'SELECT 1' })).toThrow(/driver/);

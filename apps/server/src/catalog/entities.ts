@@ -17,6 +17,7 @@ import { canonicalJson, entitySearchText } from './search.js';
 import type { Actor } from '../audit.js';
 import { can, readFilter } from '../auth/access.js';
 import type { Principal } from '../auth/users.js';
+import { orgId } from '../orgs/context.js';
 
 interface Row {
   blueprint: string;
@@ -49,13 +50,13 @@ export const toEntity = (r: Row): Entity => ({
 });
 
 export async function getEntity(blueprint: string, identifier: string): Promise<Entity> {
-  const r = await one<Row>(`SELECT ${COLS} FROM entities WHERE blueprint = ? AND identifier = ?`, blueprint, identifier);
+  const r = await one<Row>(`SELECT ${COLS} FROM entities WHERE org_id = ? AND blueprint = ? AND identifier = ?`, orgId(), blueprint, identifier);
   if (!r) throw notFound(`Entity ${blueprint}/${identifier}`);
   return (await withCalculated([toEntity(r)]))[0];
 }
 
 export async function findEntity(blueprint: string, identifier: string): Promise<Entity | undefined> {
-  const r = await one<Row>(`SELECT ${COLS} FROM entities WHERE blueprint = ? AND identifier = ?`, blueprint, identifier);
+  const r = await one<Row>(`SELECT ${COLS} FROM entities WHERE org_id = ? AND blueprint = ? AND identifier = ?`, orgId(), blueprint, identifier);
   return r && toEntity(r);
 }
 
@@ -121,7 +122,12 @@ export async function related(blueprint: string, identifier: string, viewer?: Pr
   for (const [name, rel] of Object.entries(bp.relations)) {
     const ids = relationIds(e.relations[name]);
     if (!ids.length) continue;
-    const rows = await all<Row>(`SELECT ${COLS} FROM entities WHERE blueprint = ? AND identifier IN (${ids.map(() => '?').join(',')})`, rel.target, ...ids);
+    const rows = await all<Row>(
+      `SELECT ${COLS} FROM entities WHERE org_id = ? AND blueprint = ? AND identifier IN (${ids.map(() => '?').join(',')})`,
+      orgId(),
+      rel.target,
+      ...ids,
+    );
     // Keep dangling references visible (targets not ingested yet).
     const found = new Map(rows.map((r) => [r.identifier, toEntity(r)]));
     outgoing[name] = ids.map(
@@ -145,8 +151,9 @@ export async function related(blueprint: string, identifier: string, viewer?: Pr
   const refs = await all<Row & { relation: string }>(
     `SELECT ${COLS.split(', ')
       .map((c) => `e.${c}`)
-      .join(', ')}, r.relation FROM entity_relations r JOIN entities e ON e.blueprint = r.blueprint AND e.identifier = r.identifier
-     WHERE r.target_blueprint = ? AND r.target_identifier = ? ORDER BY e.title LIMIT 500`,
+      .join(', ')}, r.relation FROM entity_relations r JOIN entities e ON e.org_id = r.org_id AND e.blueprint = r.blueprint AND e.identifier = r.identifier
+     WHERE r.org_id = ? AND r.target_blueprint = ? AND r.target_identifier = ? ORDER BY e.title LIMIT 500`,
+    orgId(),
     blueprint,
     identifier,
   );
@@ -195,7 +202,8 @@ async function checkRelations(bp: Blueprint, relations: Record<string, RelationV
       if (!rel.requireExisting) continue;
       const ids = relationIds(value);
       const found = await all<{ identifier: string }>(
-        `SELECT identifier FROM entities WHERE blueprint = ? AND identifier IN (${ids.map(() => '?').join(',')})`,
+        `SELECT identifier FROM entities WHERE org_id = ? AND blueprint = ? AND identifier IN (${ids.map(() => '?').join(',')})`,
+        orgId(),
         rel.target,
         ...ids,
       );
@@ -210,9 +218,11 @@ onConfigChange(() => teamCache.clear());
 async function assertTeam(team: string | null) {
   if (!team) return;
   await syncCaches(); // a team deleted on another replica must stop validating
-  if (teamCache.get(team)) return;
-  if (!(await one('SELECT identifier FROM teams WHERE identifier = ?', team))) throw badRequest(`Team "${team}" does not exist`);
-  teamCache.set(team, true);
+  const org = orgId();
+  const key = `${org}/${team}`;
+  if (teamCache.get(key)) return;
+  if (!(await one('SELECT identifier FROM teams WHERE org_id = ? AND identifier = ?', org, team))) throw badRequest(`Team "${team}" does not exist`);
+  teamCache.set(key, true);
 }
 
 export interface UpsertOpts {
@@ -307,25 +317,26 @@ export async function upsertEntity(blueprint: string, raw: unknown, opts: Upsert
     const outbox = await prepareEvents([
       { type: existing ? 'entity.updated' : 'entity.created', blueprint, data: { entity, before: existing ?? null }, actor: opts.actor },
     ]);
+    const org = orgId();
     const written = await tx(async (d) => {
       const search = entitySearchText(input.identifier, p.title, p.properties);
       const vals = [p.title, p.team, JSON.stringify(p.properties), JSON.stringify(p.relations), opts.source, search, t];
       if (existing) {
         const r = await d.query(
-          'UPDATE entities SET title = ?, team = ?, properties = ?, relations = ?, source = ?, search = ?, updated_at = ?, version = version + 1 WHERE blueprint = ? AND identifier = ? AND version = ?',
-          [...vals, blueprint, input.identifier, existing.version],
+          'UPDATE entities SET title = ?, team = ?, properties = ?, relations = ?, source = ?, search = ?, updated_at = ?, version = version + 1 WHERE org_id = ? AND blueprint = ? AND identifier = ? AND version = ?',
+          [...vals, org, blueprint, input.identifier, existing.version],
         );
         if (!r.changes) return false;
       } else {
         const r = await d.query(
-          'INSERT INTO entities (title, team, properties, relations, source, search, updated_at, created_at, blueprint, identifier, version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1) ON CONFLICT (blueprint, identifier) DO NOTHING',
-          [...vals, t, blueprint, input.identifier],
+          'INSERT INTO entities (title, team, properties, relations, source, search, updated_at, created_at, org_id, blueprint, identifier, version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1) ON CONFLICT (org_id, blueprint, identifier) DO NOTHING',
+          [...vals, t, org, blueprint, input.identifier],
         );
         if (!r.changes) return false;
       }
-      await d.query('DELETE FROM entity_relations WHERE blueprint = ? AND identifier = ?', [blueprint, input.identifier]);
+      await d.query('DELETE FROM entity_relations WHERE org_id = ? AND blueprint = ? AND identifier = ?', [org, blueprint, input.identifier]);
       await insertRelations(d, bp, [{ identifier: input.identifier, relations: p.relations }]);
-      if (!existing) await d.query('DELETE FROM entity_tombstones WHERE blueprint = ? AND identifier = ?', [blueprint, input.identifier]);
+      if (!existing) await d.query('DELETE FROM entity_tombstones WHERE org_id = ? AND blueprint = ? AND identifier = ?', [org, blueprint, input.identifier]);
       await recordVersion(d, {
         blueprint,
         entity: input.identifier,
@@ -355,14 +366,15 @@ export async function upsertEntity(blueprint: string, raw: unknown, opts: Upsert
 
 const REL_CHUNK = 200;
 async function insertRelations(d: Driver, bp: Blueprint, items: { identifier: string; relations: Record<string, RelationValue> }[]) {
+  const org = orgId();
   const rows: SqlValue[][] = [];
   for (const it of items)
     for (const [name, value] of Object.entries(it.relations))
-      for (const target of relationIds(value)) rows.push([bp.identifier, it.identifier, name, bp.relations[name]!.target, target]);
+      for (const target of relationIds(value)) rows.push([org, bp.identifier, it.identifier, name, bp.relations[name]!.target, target]);
   for (let i = 0; i < rows.length; i += REL_CHUNK) {
     const chunk = rows.slice(i, i + REL_CHUNK);
     await d.query(
-      `INSERT INTO entity_relations (blueprint, identifier, relation, target_blueprint, target_identifier) VALUES ${chunk.map(() => '(?, ?, ?, ?, ?)').join(', ')} ON CONFLICT DO NOTHING`,
+      `INSERT INTO entity_relations (org_id, blueprint, identifier, relation, target_blueprint, target_identifier) VALUES ${chunk.map(() => '(?, ?, ?, ?, ?, ?)').join(', ')} ON CONFLICT DO NOTHING`,
       chunk.flat(),
     );
   }
@@ -412,12 +424,17 @@ async function writeChunk(
   fail: (i: number, err: unknown) => void,
 ) {
   const blueprint = bp.identifier;
+  const org = orgId();
   const ids = chunk.map((c) => c.input.identifier);
   const stored = new Map(
-    (await all<Row>(`SELECT ${COLS} FROM entities WHERE blueprint = ? AND identifier IN (${ids.map(() => '?').join(',')})`, blueprint, ...ids)).map((r) => [
-      r.identifier,
-      toEntity(r),
-    ]),
+    (
+      await all<Row>(
+        `SELECT ${COLS} FROM entities WHERE org_id = ? AND blueprint = ? AND identifier IN (${ids.map(() => '?').join(',')})`,
+        org,
+        blueprint,
+        ...ids,
+      )
+    ).map((r) => [r.identifier, toEntity(r)]),
   );
   const toWrite: { i: number; p: Prepared; entity: Entity }[] = [];
   const t = now();
@@ -451,11 +468,12 @@ async function writeChunk(
     const outbox = await prepareEvents(events);
     await tx(async (d) => {
       await d.query(
-        `INSERT INTO entities (blueprint, identifier, title, team, properties, relations, source, search, version, created_at, updated_at)
-         VALUES ${toWrite.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)').join(', ')}
-         ON CONFLICT (blueprint, identifier) DO UPDATE SET title = excluded.title, team = excluded.team, properties = excluded.properties,
+        `INSERT INTO entities (org_id, blueprint, identifier, title, team, properties, relations, source, search, version, created_at, updated_at)
+         VALUES ${toWrite.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)').join(', ')}
+         ON CONFLICT (org_id, blueprint, identifier) DO UPDATE SET title = excluded.title, team = excluded.team, properties = excluded.properties,
            relations = excluded.relations, source = excluded.source, search = excluded.search, updated_at = excluded.updated_at, version = entities.version + 1`,
         toWrite.flatMap(({ p, entity }) => [
+          org,
           blueprint,
           p.input.identifier,
           p.title,
@@ -470,7 +488,11 @@ async function writeChunk(
       );
       const replaced = toWrite.filter(({ p }) => p.existing).map(({ p }) => p.input.identifier);
       if (replaced.length)
-        await d.query(`DELETE FROM entity_relations WHERE blueprint = ? AND identifier IN (${replaced.map(() => '?').join(',')})`, [blueprint, ...replaced]);
+        await d.query(`DELETE FROM entity_relations WHERE org_id = ? AND blueprint = ? AND identifier IN (${replaced.map(() => '?').join(',')})`, [
+          org,
+          blueprint,
+          ...replaced,
+        ]);
       await insertRelations(
         d,
         bp,
@@ -478,7 +500,11 @@ async function writeChunk(
       );
       const created = toWrite.filter(({ p }) => !p.existing).map(({ p }) => p.input.identifier);
       if (created.length)
-        await d.query(`DELETE FROM entity_tombstones WHERE blueprint = ? AND identifier IN (${created.map(() => '?').join(',')})`, [blueprint, ...created]);
+        await d.query(`DELETE FROM entity_tombstones WHERE org_id = ? AND blueprint = ? AND identifier IN (${created.map(() => '?').join(',')})`, [
+          org,
+          blueprint,
+          ...created,
+        ]);
       for (const { p, entity } of toWrite)
         await recordVersion(d, {
           blueprint,
@@ -512,7 +538,8 @@ interface Referrer {
 
 const referrersOf = (blueprint: string, identifier: string) =>
   all<Referrer>(
-    'SELECT DISTINCT blueprint, identifier, relation FROM entity_relations WHERE target_blueprint = ? AND target_identifier = ? AND NOT (blueprint = ? AND identifier = ?)',
+    'SELECT DISTINCT blueprint, identifier, relation FROM entity_relations WHERE org_id = ? AND target_blueprint = ? AND target_identifier = ? AND NOT (blueprint = ? AND identifier = ?)',
+    orgId(),
     blueprint,
     identifier,
     blueprint,
@@ -578,13 +605,15 @@ async function deleteOne(entity: Entity, actor?: Actor) {
   const { blueprint, identifier } = entity;
   // The delete and its outbox event commit together (see events.ts).
   const outbox = await prepareEvents([{ type: 'entity.deleted', blueprint, data: { entity }, actor }]);
+  const org = orgId();
   await tx(async (d) => {
-    await d.query('DELETE FROM entities WHERE blueprint = ? AND identifier = ?', [blueprint, identifier]);
+    await d.query('DELETE FROM entities WHERE org_id = ? AND blueprint = ? AND identifier = ?', [org, blueprint, identifier]);
     if (config.TOMBSTONE_DAYS > 0)
       await d.query(
-        `INSERT INTO entity_tombstones (blueprint, identifier, snapshot, deleted_by, deleted_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)
-         ON CONFLICT (blueprint, identifier) DO UPDATE SET snapshot = excluded.snapshot, deleted_by = excluded.deleted_by, deleted_at = excluded.deleted_at, expires_at = excluded.expires_at`,
+        `INSERT INTO entity_tombstones (org_id, blueprint, identifier, snapshot, deleted_by, deleted_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (org_id, blueprint, identifier) DO UPDATE SET snapshot = excluded.snapshot, deleted_by = excluded.deleted_by, deleted_at = excluded.deleted_at, expires_at = excluded.expires_at`,
         [
+          org,
           blueprint,
           identifier,
           JSON.stringify({ ...snapshotOf(entity), source: entity.source }),
@@ -646,8 +675,8 @@ const toTombstone = (r: TombstoneRow): Tombstone => {
 };
 
 export async function listTombstones(q: { blueprint?: string; limit: number; offset: number }): Promise<{ items: Tombstone[]; total: number }> {
-  const w = q.blueprint ? 'WHERE blueprint = ?' : '';
-  const p: SqlValue[] = q.blueprint ? [q.blueprint] : [];
+  const w = q.blueprint ? 'WHERE org_id = ? AND blueprint = ?' : 'WHERE org_id = ?';
+  const p: SqlValue[] = q.blueprint ? [orgId(), q.blueprint] : [orgId()];
   const rows = await all<TombstoneRow>(`SELECT * FROM entity_tombstones ${w} ORDER BY deleted_at DESC LIMIT ? OFFSET ?`, ...p, q.limit, q.offset);
   const total = await one<{ n: number }>(`SELECT count(*) AS n FROM entity_tombstones ${w}`, ...p);
   return { items: rows.map(toTombstone), total: Number(total?.n ?? 0) };
@@ -655,7 +684,7 @@ export async function listTombstones(q: { blueprint?: string; limit: number; off
 
 /** Put a deleted entity back (with the state it had when it was deleted). */
 export async function restoreEntity(blueprint: string, identifier: string, actor?: Actor): Promise<Entity> {
-  const r = await one<TombstoneRow>('SELECT * FROM entity_tombstones WHERE blueprint = ? AND identifier = ?', blueprint, identifier);
+  const r = await one<TombstoneRow>('SELECT * FROM entity_tombstones WHERE org_id = ? AND blueprint = ? AND identifier = ?', orgId(), blueprint, identifier);
   if (!r) throw notFound(`Deleted entity ${blueprint}/${identifier}`);
   const snap = json<{ title: string; team: string | null; properties: Record<string, unknown>; relations: Record<string, string | string[]>; source?: string }>(
     r.snapshot,
@@ -672,11 +701,11 @@ export async function restoreEntity(blueprint: string, identifier: string, actor
 }
 
 export async function purgeTombstone(blueprint: string, identifier: string) {
-  if (!(await run('DELETE FROM entity_tombstones WHERE blueprint = ? AND identifier = ?', blueprint, identifier)).changes)
+  if (!(await run('DELETE FROM entity_tombstones WHERE org_id = ? AND blueprint = ? AND identifier = ?', orgId(), blueprint, identifier)).changes)
     throw notFound(`Deleted entity ${blueprint}/${identifier}`);
 }
 
-/** Maintenance: tombstones past their period are gone for good. */
+/** Maintenance (every organization): tombstones past their period are gone for good. */
 export const purgeExpiredTombstones = () => run('DELETE FROM entity_tombstones WHERE expires_at < ?', now());
 
 const PROP = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
@@ -686,8 +715,8 @@ const computedText = (prop: string) => (dialect === 'postgres' ? `(computed::jso
 
 /** Number of entities of a blueprint (exact-match filters on properties), or their distribution by `groupBy`. */
 export async function countEntities(blueprint: string, filters: Record<string, string> = {}, groupBy?: string, viewer?: Principal) {
-  const where = ['blueprint = ?'];
-  const params: SqlValue[] = [blueprint];
+  const where = ['org_id = ?', 'blueprint = ?'];
+  const params: SqlValue[] = [orgId(), blueprint];
   const vf = viewer ? await readFilter(viewer) : undefined; // blueprints with a read rule: only what the viewer may see
   if (vf) {
     where.push(vf.sql);

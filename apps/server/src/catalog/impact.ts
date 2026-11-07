@@ -11,6 +11,7 @@ import { searchEntities } from './entities.js';
 import { evaluateEntity } from './scorecards.js';
 import { validator } from './validation.js';
 import { z } from 'zod';
+import { orgId } from '../orgs/context.js';
 
 /**
  * Blueprint change impact. Editing a blueprint does not touch its entities, so a new required property leaves
@@ -104,7 +105,7 @@ interface ReportRow {
 }
 
 export async function getReport(blueprint: string): Promise<ValidationReport | null> {
-  const r = await one<ReportRow>('SELECT * FROM blueprint_validation WHERE blueprint = ?', blueprint);
+  const r = await one<ReportRow>('SELECT * FROM blueprint_validation WHERE org_id = ? AND blueprint = ?', orgId(), blueprint);
   if (!r) return null;
   return {
     blueprint,
@@ -121,8 +122,9 @@ export async function getReport(blueprint: string): Promise<ValidationReport | n
 export async function validateStored(blueprint: string): Promise<ValidationReport | null> {
   const started = now();
   await run(
-    `INSERT INTO blueprint_validation (blueprint, status, started_at) VALUES (?, 'running', ?)
-     ON CONFLICT (blueprint) DO UPDATE SET status = 'running', started_at = excluded.started_at, finished_at = NULL`,
+    `INSERT INTO blueprint_validation (org_id, blueprint, status, started_at) VALUES (?, ?, 'running', ?)
+     ON CONFLICT (org_id, blueprint) DO UPDATE SET status = 'running', started_at = excluded.started_at, finished_at = NULL`,
+    orgId(),
     blueprint,
     started,
   );
@@ -130,15 +132,16 @@ export async function validateStored(blueprint: string): Promise<ValidationRepor
     const bp = await getBlueprint(blueprint);
     const r = await checkEntities(blueprint, bp);
     await run(
-      "UPDATE blueprint_validation SET status = 'done', total = ?, invalid = ?, samples = ?, finished_at = ? WHERE blueprint = ?",
+      "UPDATE blueprint_validation SET status = 'done', total = ?, invalid = ?, samples = ?, finished_at = ? WHERE org_id = ? AND blueprint = ?",
       r.total,
       r.invalid,
       JSON.stringify(r.samples),
       now(),
+      orgId(),
       blueprint,
     );
   } catch (err) {
-    await run('DELETE FROM blueprint_validation WHERE blueprint = ?', blueprint);
+    await run('DELETE FROM blueprint_validation WHERE org_id = ? AND blueprint = ?', orgId(), blueprint);
     console.error(`[impact] ${blueprint}: ${errorMessage(err)}`);
   }
   return getReport(blueprint);
@@ -161,9 +164,10 @@ export async function migrateEntities(blueprint: string, migrations: EntityMigra
       if (JSON.stringify(properties) === JSON.stringify(e.properties)) continue;
       const t = now();
       await tx(async (d) => {
-        await d.query('UPDATE entities SET properties = ?, updated_at = ? WHERE blueprint = ? AND identifier = ?', [
+        await d.query('UPDATE entities SET properties = ?, updated_at = ? WHERE org_id = ? AND blueprint = ? AND identifier = ?', [
           JSON.stringify(properties),
           t,
+          orgId(),
           blueprint,
           e.identifier,
         ]);

@@ -17,7 +17,7 @@ import { metrics } from '../metrics.js';
 import { withSpan } from '../tracing.js';
 import { getInvoker } from './invokers/index.js';
 import type { InvokeEnv, InvokeResult, RunContext } from './types.js';
-import { addLog, emitRun, getRunRow, runUrl, updateRun, type RunRow } from './runs.js';
+import { addLog, emitRun, getRunRow, inRunOrg, runUrl, updateRun, type RunRow } from './runs.js';
 import { canApproveStep, isTerminal, loadSteps, stepApprovalsOf, stepDefs, type StepRow } from './steps.js';
 import { needsOf, type Step } from './workflow.js';
 import { runAgent, StepError, wrapUntrusted } from './agent.js';
@@ -738,7 +738,7 @@ export async function claimRuns(worker: string, limit: number, spawn: (fn: () =>
      WHERE status = 'QUEUED' AND id IN (SELECT id FROM picked) RETURNING id`,
     [limit, worker, t, t],
   );
-  for (const { id } of rows) spawn(() => initRun(id));
+  for (const { id } of rows) spawn(() => inRunOrg(id, () => initRun(id)));
   return rows.length;
 }
 
@@ -756,7 +756,7 @@ export async function claimSteps(worker: string, slots: number, spawn: (fn: () =
      WHERE status = 'QUEUED' AND (run_id, step_id) IN (SELECT run_id, step_id FROM picked) RETURNING *`,
     [t, slots, worker, later(LEASES.agent), later(LEASES.transform), later(LEASES.invoke), t],
   );
-  for (const s of rows) spawn(() => executeStep(s.run_id, s.step_id, { worker, attempt: Number(s.attempt) }));
+  for (const s of rows) spawn(() => inRunOrg(s.run_id, () => executeStep(s.run_id, s.step_id, { worker, attempt: Number(s.attempt) })));
   return rows.length;
 }
 
@@ -771,7 +771,7 @@ export async function claimPolls(slots: number, spawn: (fn: () => Promise<void>)
      WHERE status = 'RUNNING' AND next_at IS NOT NULL AND (run_id, step_id) IN (SELECT run_id, step_id FROM picked) RETURNING run_id, step_id`,
     [now(), slots, later(5 * 60_000)],
   );
-  for (const s of rows) spawn(() => pollStep(s.run_id, s.step_id));
+  for (const s of rows) spawn(() => inRunOrg(s.run_id, () => pollStep(s.run_id, s.step_id)));
   return rows.length;
 }
 
@@ -811,7 +811,8 @@ const BATCH = 100;
 export async function stepHousekeeping(log: FastifyBaseLogger) {
   await tryAdvisoryLock(HOUSEKEEPING_LOCK, async () => {
     const t = now();
-    const guard = (what: string, fn: () => Promise<unknown>) => fn().catch((err) => log.error({ err }, what));
+    // Every action runs in the organization of its run (the scans themselves span organizations).
+    const guard = (what: string, runId: string, fn: () => Promise<unknown>) => inRunOrg(runId, fn).catch((err) => log.error({ err, runId }, what));
     // A worker died (or lost its database) while executing a step: invokers may have called the external system →
     // failed, not retried. The fencing token keeps a step that was re-claimed meanwhile untouched.
     for (const s of await all<StepRow>(
@@ -819,7 +820,7 @@ export async function stepHousekeeping(log: FastifyBaseLogger) {
       t,
       BATCH,
     ))
-      await guard('step recovery', () =>
+      await guard('step recovery', s.run_id, () =>
         failStep(
           s.run_id,
           s.step_id,
@@ -835,7 +836,7 @@ export async function stepHousekeeping(log: FastifyBaseLogger) {
       t,
       BATCH,
     ))
-      await guard('step timeout', async () => {
+      await guard('step timeout', s.run_id, async () => {
         const won = await complete(s.run_id, s.step_id, ['RUNNING', 'WAITING_APPROVAL', 'QUEUED', 'WAITING'], {
           status: 'FAILURE',
           statusLabel: s.status === 'WAITING_APPROVAL' ? 'Approval expired' : 'Timed out',
@@ -850,7 +851,7 @@ export async function stepHousekeeping(log: FastifyBaseLogger) {
       t,
       BATCH,
     ))
-      await guard('run deadline', async () => {
+      await guard('run deadline', r.id, async () => {
         const { changes } = await exec(
           "UPDATE runs SET cancel_requested = 1, updated_at = ? WHERE id = ? AND status = 'IN_PROGRESS' AND cancel_requested = 0",
           t,
@@ -865,7 +866,7 @@ export async function stepHousekeeping(log: FastifyBaseLogger) {
       later(-60_000),
       BATCH,
     ))
-      await guard('cancel recovery', () =>
+      await guard('cancel recovery', r.id, () =>
         r.deadline_at && r.deadline_at < t
           ? terminateRun(r.id, 'FAILURE', 'Timed out', `The run exceeded its time limit (RUN_TIMEOUT_HOURS=${config.RUN_TIMEOUT_HOURS}) and was stopped`)
           : terminateRun(r.id, 'CANCELLED', null, 'Cancellation completed'),
@@ -879,7 +880,7 @@ export async function stepHousekeeping(log: FastifyBaseLogger) {
       later(-60_000),
       BATCH,
     ))
-      await guard('run recovery', () => (Number(r.n) === 0 ? initRun(r.id) : advance(r.id)));
+      await guard('run recovery', r.id, () => (Number(r.n) === 0 ? initRun(r.id) : advance(r.id)));
   });
 }
 

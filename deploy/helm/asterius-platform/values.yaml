@@ -89,7 +89,7 @@ secrets:
 
 # ---------- sign-in ----------
 auth:
-  providers: entra # local | entra | local,entra
+  providers: entra # local | entra | keycloak, comma-separated (keycloak: see the keycloak section)
   allowRegistration: false
   adminEmails: [] # bootstrap admins (alternatively put a one-time BOOTSTRAP_TOKEN in the Secret: the first account registered with it becomes admin)
   sessionDays: 7
@@ -100,6 +100,48 @@ auth:
     # Re-sync roles/teams of signed-in users every N minutes (0: at sign-in only). Needs the Graph application
     # permission GroupMember.Read.All on the app registration (also resolves the >200 groups overage).
     resyncMinutes: 60
+
+# ---------- organizations (tenants) ----------
+organizations:
+  # Who creates organizations: "everyone" (self-service sign-up) or "superadmin" (platform operators only).
+  creation: everyone
+  # New accounts join the default organization (single-tenant behaviour). Off: a new account belongs to no
+  # organization until it creates one, is invited, or signs in through an organization's SSO.
+  autoJoinDefault: false
+  # Organizations allowed to use the platform's own Kubernetes access (source, Job and Tekton invokers).
+  kubernetesOrgs: [default]
+  # Organizations allowed to use the platform's own cloud identity: external secret managers (vault, awssm, azkv,
+  # gcpsm, k8s references) and auth blocks without credentials (Azure workload identity, GCP metadata, AWS IRSA).
+  platformIdentityOrgs: [default]
+
+# ---------- Keycloak: registration, login, per-organization SSO ----------
+# auth.providers must include "keycloak". Either deploy Keycloak with the chart (enabled) or use an existing one (url).
+keycloak:
+  enabled: false
+  # Existing Keycloak (enabled: false): its public URL, and the in-cluster URL when it differs.
+  url: ""
+  internalUrl: ""
+  realm: asterius
+  clientId: asterius-platform
+  # Deployed by the chart: public host (ingress), image, database.
+  host: "" # e.g. id.example.com
+  image: quay.io/keycloak/keycloak:26.8.0
+  replicas: 1
+  # Secret with KC_DB_USERNAME, KC_DB_PASSWORD, KC_BOOTSTRAP_ADMIN_USERNAME, KC_BOOTSTRAP_ADMIN_PASSWORD and
+  # ASTERIUS_CLIENT_SECRET (the platform client). Empty: the chart creates one (passwords generated once, kept).
+  existingSecret: ""
+  database:
+    url: "" # jdbc:postgresql://postgres:5432/keycloak
+    username: keycloak # chart-managed Secret only
+    password: "" # chart-managed Secret only
+  resources:
+    requests: { cpu: 250m, memory: 768Mi }
+    limits: { memory: 1536Mi }
+  ingress:
+    className: nginx
+    annotations:
+      cert-manager.io/cluster-issuer: letsencrypt
+    tlsSecretName: asterius-keycloak-tls
 
 # ---------- configuration as code ----------
 # Files mounted at /etc/asterius/config (blueprints, actions, integrations, webhooks, teams).

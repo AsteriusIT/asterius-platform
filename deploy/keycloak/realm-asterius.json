@@ -1,0 +1,60 @@
+{
+  "realm": "asterius",
+  "displayName": "Asterius Platform",
+  "enabled": true,
+  "organizationsEnabled": true,
+  "registrationAllowed": true,
+  "registrationEmailAsUsername": true,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "rememberMe": true,
+  "verifyEmail": false,
+  "bruteForceProtected": true,
+  "permanentLockout": false,
+  "failureFactor": 10,
+  "sslRequired": "external",
+  "passwordPolicy": "length(10) and notUsername and notEmail",
+  "clients": [
+    {
+      "clientId": "asterius-platform",
+      "name": "Asterius Platform",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "${ASTERIUS_CLIENT_SECRET}",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "frontchannelLogout": true,
+      "redirectUris": ["${ASTERIUS_PUBLIC_URL}/api/auth/keycloak/callback"],
+      "webOrigins": ["${ASTERIUS_PUBLIC_URL}"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "${ASTERIUS_PUBLIC_URL}/login"
+      },
+      "defaultClientScopes": ["basic", "web-origins", "acr", "profile", "roles", "email"],
+      "optionalClientScopes": ["organization", "offline_access"]
+    }
+  ],
+  "users": [
+    {
+      "username": "service-account-asterius-platform",
+      "enabled": true,
+      "serviceAccountClientId": "asterius-platform",
+      "clientRoles": {
+        "realm-management": [
+          "manage-realm",
+          "view-realm",
+          "manage-users",
+          "view-users",
+          "query-users",
+          "manage-identity-providers",
+          "view-identity-providers"
+        ]
+      }
+    }
+  ]
+}

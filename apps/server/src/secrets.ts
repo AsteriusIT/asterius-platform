@@ -6,12 +6,16 @@ import { badRequest, notFound } from './lib/errors.js';
 import { MIN_SECRET_LENGTH, type RefResolver } from './lib/expr.js';
 import type { SecretInfo } from '@asterius/shared';
 import { providerOf, resolveExternal } from './secret-providers/index.js';
+import { DEFAULT_ORG, orgId } from './orgs/context.js';
+import { assertPlatformIdentityAllowed } from './orgs/orgs.js';
 
 /**
  * Secrets used by invokers, integrations and webhooks are never stored in their configuration. Configurations hold
  * references, resolved at execution time:
  *   ${secret:NAME}  a secret stored encrypted (AES-256-GCM) in the database, managed by admins in the UI/API;
  *   ${env:NAME}     an environment variable of the platform pods (e.g. from a Kubernetes Secret / External Secrets).
+ *                   Pod environment is shared by every tenant: only the default organization may reference it.
+ * Secrets belong to an organization and only resolve in it.
  * Platform settings (DATABASE_URL, SECRETS_KEY, …) can never be referenced.
  */
 
@@ -106,16 +110,23 @@ export const keyIdOf = (stored: string) => (stored.startsWith('v2:') ? stored.sp
  * the platform serves traffic (each row is updated only if it was not changed meanwhile).
  */
 export async function reencryptSecrets(): Promise<{ total: number; reencrypted: number; failed: string[] }> {
-  const rows = await all<{ name: string; value_enc: string }>('SELECT name, value_enc FROM secrets');
+  // Every organization's secrets: the key ring is the platform's.
+  const rows = await all<{ org_id: string; name: string; value_enc: string }>('SELECT org_id, name, value_enc FROM secrets');
   let reencrypted = 0;
   const failed: string[] = [];
   for (const r of rows) {
     if (keyIdOf(r.value_enc) === current.id) continue;
     try {
-      const { changes } = await run('UPDATE secrets SET value_enc = ? WHERE name = ? AND value_enc = ?', encrypt(decrypt(r.value_enc)), r.name, r.value_enc);
+      const { changes } = await run(
+        'UPDATE secrets SET value_enc = ? WHERE org_id = ? AND name = ? AND value_enc = ?',
+        encrypt(decrypt(r.value_enc)),
+        r.org_id,
+        r.name,
+        r.value_enc,
+      );
       reencrypted += changes;
     } catch {
-      failed.push(r.name);
+      failed.push(`${r.org_id}/${r.name}`);
     }
   }
   return { total: rows.length, reencrypted, failed };
@@ -124,7 +135,10 @@ export async function reencryptSecrets(): Promise<{ total: number; reencrypted: 
 export const SECRET_NAME = /^[A-Za-z0-9_.-]{1,100}$/;
 
 export async function listSecrets(): Promise<SecretInfo[]> {
-  const rows = await all<{ name: string; description: string; updated_at: string }>('SELECT name, description, updated_at FROM secrets ORDER BY name');
+  const rows = await all<{ name: string; description: string; updated_at: string }>(
+    'SELECT name, description, updated_at FROM secrets WHERE org_id = ? ORDER BY name',
+    orgId(),
+  );
   return rows.map((r) => ({ name: r.name, description: r.description, updatedAt: r.updated_at }));
 }
 
@@ -137,28 +151,51 @@ export const shortSecretWarning = (value: string) =>
 export async function setSecret(name: string, value: string, description: string, userId: string | null) {
   if (!SECRET_NAME.test(name)) throw badRequest('Secret names may contain letters, digits, _ . - (max 100)');
   const enc = encrypt(value);
-  const existing = await one('SELECT name FROM secrets WHERE name = ?', name);
+  const org = orgId();
+  const existing = await one('SELECT name FROM secrets WHERE org_id = ? AND name = ?', org, name);
   if (existing)
-    await run('UPDATE secrets SET value_enc = ?, description = ?, updated_by = ?, updated_at = ? WHERE name = ?', enc, description, userId, now(), name);
-  else await run('INSERT INTO secrets (name, value_enc, description, updated_by, updated_at) VALUES (?, ?, ?, ?, ?)', name, enc, description, userId, now());
+    await run(
+      'UPDATE secrets SET value_enc = ?, description = ?, updated_by = ?, updated_at = ? WHERE org_id = ? AND name = ?',
+      enc,
+      description,
+      userId,
+      now(),
+      org,
+      name,
+    );
+  else
+    await run(
+      'INSERT INTO secrets (org_id, name, value_enc, description, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+      org,
+      name,
+      enc,
+      description,
+      userId,
+      now(),
+    );
 }
 
 export async function deleteSecret(name: string) {
-  const { changes } = await run('DELETE FROM secrets WHERE name = ?', name);
+  const { changes } = await run('DELETE FROM secrets WHERE org_id = ? AND name = ?', orgId(), name);
   if (!changes) throw notFound(`Secret ${name}`);
 }
 
 const PLATFORM_SETTINGS = new Set(Object.keys(config));
 
 export const resolveRef: RefResolver = async (kind, name) => {
-  if (providerOf(kind)) return resolveExternal(kind, name);
+  if (providerOf(kind)) {
+    await assertPlatformIdentityAllowed(orgId(), `\${${kind}:…} (external secret manager)`);
+    return resolveExternal(kind, name);
+  }
   if (kind === 'env') {
+    if (orgId() !== DEFAULT_ORG)
+      throw new Error(`\${env:${name}}: environment references are reserved to the default organization; store the value as a secret`);
     if (PLATFORM_SETTINGS.has(name)) throw new Error(`\${env:${name}} is a platform setting and cannot be referenced`);
     const v = process.env[name];
     if (v === undefined) throw new Error(`Environment variable ${name} is not set`);
     return v;
   }
-  const row = await one<{ value_enc: string }>('SELECT value_enc FROM secrets WHERE name = ?', name);
+  const row = await one<{ value_enc: string }>('SELECT value_enc FROM secrets WHERE org_id = ? AND name = ?', orgId(), name);
   if (!row) throw new Error(`Secret ${name} is not defined (Admin → Secrets)`);
   return decrypt(row.value_enc);
 };
@@ -184,6 +221,13 @@ const callbackRing: Buffer[] = config.CALLBACK_KEYS
   : [derivedCallbackKey()];
 if (!callbackRing.length) throw new Error('CALLBACK_KEYS is empty');
 const mac = (key: Buffer, msg: string) => `astrun_${createHmac('sha256', key).update(msg).digest('base64url')}`;
+
+/** Value of the DNS TXT record proving an organization controls an email domain (stable, nothing stored). */
+const domainKey = createHmac('sha256', legacyKey ?? current.key)
+  .update('domain-verification-v1')
+  .digest();
+export const domainToken = (org: string, domain: string) =>
+  createHmac('sha256', domainKey).update(`${org}:${domain.toLowerCase()}`).digest('base64url').slice(0, 32);
 export const runToken = (runId: string) => mac(callbackRing[0]!, runId);
 /** Workflow steps get their own token: a pipeline can only report on the step that started it. */
 export const stepToken = (runId: string, stepId: string) => mac(callbackRing[0]!, `${runId}:${stepId}`);

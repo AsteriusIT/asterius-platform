@@ -18,8 +18,14 @@ import type {
   HomeSummary,
   Integration,
   InvalidEntity,
+  Member,
   Meta,
+  Organization,
+  OrgMembership,
   PublicUser,
+  SsoProvider,
+  SsoProviderInput,
+  ConfigSource,
   RelatedEntities,
   Run,
   RunPage,
@@ -108,10 +114,31 @@ export const setCsrf = (t: string | undefined) => {
   if (t) csrf = t;
 };
 
+/** The organization the UI works in (slug), sent as X-Asterius-Org. The server falls back to the last one used. */
+const ORG_KEY = 'asterius.org';
+export const orgStore = {
+  get: () => {
+    try {
+      return localStorage.getItem(ORG_KEY);
+    } catch {
+      return null;
+    }
+  },
+  set: (slug: string | null) => {
+    try {
+      if (slug) localStorage.setItem(ORG_KEY, slug);
+      else localStorage.removeItem(ORG_KEY);
+    } catch {
+      /* private mode */
+    }
+  },
+};
+
 export class ApiError extends Error {
   constructor(
     public status: number,
     message: string,
+    public code?: string,
   ) {
     super(message);
   }
@@ -122,15 +149,17 @@ export const setUnauthorizedHandler = (fn: () => void) => {
   onUnauthorized = fn;
 };
 
-export async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+export async function request<T>(method: string, path: string, body?: unknown, retried = false): Promise<T> {
   const token = tokenStore.get();
   const viaCookie = token === COOKIE_SESSION;
+  const org = orgStore.get();
   const res = await fetch(path, {
     method,
     credentials: 'same-origin',
     headers: {
       ...(token && !viaCookie ? { authorization: `Bearer ${token}` } : {}),
       ...(viaCookie && csrf ? { 'x-csrf-token': csrf } : {}),
+      ...(org ? { 'x-asterius-org': org } : {}),
       ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
     },
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -138,7 +167,13 @@ export async function request<T>(method: string, path: string, body?: unknown): 
   if (res.status === 401 && !path.startsWith('/api/auth/login')) onUnauthorized();
   const text = await res.text();
   const data = text && (res.headers.get('content-type') ?? '').includes('json') ? JSON.parse(text) : text;
-  if (!res.ok) throw new ApiError(res.status, (data as { error?: string })?.error ?? `${res.status} ${res.statusText}`);
+  const err = data as { error?: string; code?: string };
+  // Removed from the remembered organization (or it was deleted): forget it and let the server pick another.
+  if (res.status === 403 && org && !retried && /member of this organization/.test(err?.error ?? '')) {
+    orgStore.set(null);
+    return request<T>(method, path, body, true);
+  }
+  if (!res.ok) throw new ApiError(res.status, err?.error ?? `${res.status} ${res.statusText}`, err?.code);
   return data as T;
 }
 
@@ -174,7 +209,7 @@ export const api = {
       password,
       ...(bootstrapToken ? { bootstrapToken } : {}),
     }).then((r) => (setCsrf(r.csrfToken), r)),
-  logout: () => request('POST', '/api/auth/logout'),
+  logout: () => request<{ ok: true; redirect?: string }>('POST', '/api/auth/logout'),
   me: () => request<PublicUser & { csrfToken?: string }>('GET', '/api/auth/me').then((u) => (setCsrf(u.csrfToken), u)),
   setTourCompleted: (completed: boolean) => request<PublicUser>('PUT', '/api/auth/me/tour', { completed }),
 
@@ -356,6 +391,25 @@ export const api = {
     ),
   configPlan: () => request<Array<{ kind: string; identifier: string; action: string; changes?: string[] }>>('GET', v1('/config/plan')),
   configReload: () => request('POST', v1('/config/reload'), {}),
+  // organizations
+  myOrgs: () => request<OrgMembership[]>('GET', '/api/orgs'),
+  allOrgs: () => request<Organization[]>('GET', '/api/orgs?all=true'),
+  createOrg: (body: { slug: string; name: string; domains?: string[] }) => request<Organization>('POST', '/api/orgs', body),
+  deleteOrgById: (id: string) => request<{ ok: true }>('DELETE', `/api/orgs/${enc(id)}`),
+  org: () => request<Organization>('GET', v1('/org')),
+  updateOrg: (patch: { name?: string; domains?: string[] }) => request<Organization>('PATCH', v1('/org'), patch),
+  deleteOrg: (confirm: string) => request<{ ok: true }>('DELETE', v1('/org'), { confirm }),
+  verifyDomain: (domain: string, trusted = false) => request<Organization>('POST', v1('/org/domains/verify'), { domain, trusted }),
+  members: () => request<Member[]>('GET', v1('/org/members')),
+  addMember: (email: string, role: 'admin' | 'member') => request<{ status: 'added' | 'invited' }>('POST', v1('/org/members'), { email, role }),
+  setMemberRole: (id: string, role: 'admin' | 'member') => request<{ ok: true }>('PATCH', v1(`/org/members/${enc(id)}`), { role }),
+  removeMember: (id: string) => request<{ ok: true }>('DELETE', v1(`/org/members/${enc(id)}`)),
+  setConfigSource: (src: ConfigSource) => request<Organization>('PUT', v1('/org/config-source'), src),
+  syncConfig: () => request<Organization>('POST', v1('/org/config/sync')),
+  sso: () => request<{ available: boolean; enabled: boolean; providers: SsoProvider[] }>('GET', v1('/org/sso')),
+  enableSso: () => request<Organization>('POST', v1('/org/sso/enable')),
+  addSsoProvider: (p: SsoProviderInput) => request<SsoProvider>('POST', v1('/org/sso/providers'), p),
+  removeSsoProvider: (alias: string) => request<{ ok: true }>('DELETE', v1(`/org/sso/providers/${enc(alias)}`)),
 };
 
 export const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));

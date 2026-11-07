@@ -5,6 +5,7 @@ import { getIntegrationRow, type IntegrationRow } from './integrations.js';
 import { ingest } from './sync.js';
 import { beat, registerLoop } from '../health.js';
 import { maskText } from '../lib/mask.js';
+import { orgId, withOrg } from '../orgs/context.js';
 
 /**
  * Inbound webhooks are acknowledged immediately and processed by workers: the raw payload is persisted in
@@ -39,11 +40,13 @@ export function decodeBody(contentType: string, raw: string): unknown {
   return raw;
 }
 
+/** Persist an inbound webhook delivery of the current organization's integration (processed by workers). */
 export async function enqueueInbound(integration: string, headers: Record<string, unknown>, contentType: string, raw: string): Promise<string> {
   const id = newId();
   await run(
-    "INSERT INTO inbound_events (id, integration, headers, content_type, payload, status, attempts, next_attempt_at, received_at) VALUES (?, ?, ?, ?, ?, 'pending', 0, ?, ?)",
+    "INSERT INTO inbound_events (id, org_id, integration, headers, content_type, payload, status, attempts, next_attempt_at, received_at) VALUES (?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?)",
     id,
+    orgId(),
     integration,
     JSON.stringify(headers),
     contentType,
@@ -56,6 +59,7 @@ export async function enqueueInbound(integration: string, headers: Record<string
 
 interface InboundRow {
   id: string;
+  org_id: string;
   integration: string;
   headers: string;
   content_type: string;
@@ -89,10 +93,10 @@ async function handle(ev: InboundRow) {
   }
 }
 
-/** Process pending inbound events (any replica; claimed with a lease). Returns how many were handled. */
+/** Process pending inbound events (any replica, any organization; claimed with a lease). Returns how many were handled. */
 export async function processInbound(limit = 20): Promise<number> {
   const due = await all<InboundRow>(
-    "SELECT id, integration, headers, content_type, payload, attempts FROM inbound_events WHERE status = 'pending' AND next_attempt_at <= ? AND (locked_until IS NULL OR locked_until < ?) ORDER BY next_attempt_at LIMIT ?",
+    "SELECT id, org_id, integration, headers, content_type, payload, attempts FROM inbound_events WHERE status = 'pending' AND next_attempt_at <= ? AND (locked_until IS NULL OR locked_until < ?) ORDER BY next_attempt_at LIMIT ?",
     now(),
     now(),
     limit,
@@ -106,7 +110,7 @@ export async function processInbound(limit = 20): Promise<number> {
       now(),
     );
     if (!changes) continue;
-    await handle(ev);
+    await withOrg(ev.org_id, () => handle(ev));
     n++;
   }
   return n;

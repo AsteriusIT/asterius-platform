@@ -1,4 +1,6 @@
 import { kube } from '../../lib/kube.js';
+import { orgId } from '../../orgs/context.js';
+import { assertKubernetesAllowed } from '../../orgs/orgs.js';
 import { str } from '../../actions/types.js';
 import { MAX_PAGES, type Source } from '../types.js';
 
@@ -50,6 +52,7 @@ export const kubernetesSource: Source = {
     if (c.namespaces !== undefined && !Array.isArray(c.namespaces)) throw new Error('kubernetes: namespaces is a list');
   },
   async *list(kind, { config, log }) {
+    await assertKubernetesAllowed(orgId());
     const i = kind.lastIndexOf('/');
     if (i <= 0) throw new Error(`kubernetes: kind must be <apiVersion>/<Kind>, got "${kind}"`);
     const apiVersion = kind.slice(0, i);

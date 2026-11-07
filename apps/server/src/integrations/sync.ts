@@ -16,6 +16,7 @@ import { nextCron, parseCron } from '../lib/cron.js';
 import { withCircuit } from '../lib/resilience.js';
 import type { MappingDef } from '../schemas.js';
 import { getSource } from './sources/index.js';
+import { orgId, withOrg } from '../orgs/context.js';
 import type { SourceEnv } from './types.js';
 import { mapItem, type Bindings, type Mapped } from './mapping.js';
 import { entitySource, getIntegrationRow, toSyncRun, type IntegrationRow } from './integrations.js';
@@ -105,14 +106,21 @@ export interface Me {
 const PRIMARY_BONUS = 1_000_000;
 const effective = (m: Me, blueprint: string) => m.priority + (m.primaryFor.includes(blueprint) ? PRIMARY_BONUS : 0);
 
+/** Ownership priorities of the integrations writing entities, by organization and integration. */
 const infos = new Map<string, Me | null>();
 async function infoOf(source: string): Promise<Me | null> {
   if (!source.startsWith('integration:')) return null;
   const id = source.slice('integration:'.length);
-  if (infos.has(id)) return infos.get(id)!;
-  const row = await one<{ priority: number; primary_for: string | null }>('SELECT priority, primary_for FROM integrations WHERE identifier = ?', id);
+  const org = orgId();
+  const key = `${org}/${id}`;
+  if (infos.has(key)) return infos.get(key)!;
+  const row = await one<{ priority: number; primary_for: string | null }>(
+    'SELECT priority, primary_for FROM integrations WHERE org_id = ? AND identifier = ?',
+    org,
+    id,
+  );
   const info = row ? { priority: Number(row.priority), primaryFor: json<string[]>(row.primary_for, []) } : null;
-  infos.set(id, info);
+  infos.set(key, info);
   return info;
 }
 
@@ -124,7 +132,8 @@ type Ownership =
 export async function resolveOwnership(integration: string, me: Me, m: Mapped, merge: boolean): Promise<Ownership> {
   const mine = entitySource(integration);
   const row = await one<{ source: string; properties: string; relations: string; field_owners: string | null }>(
-    'SELECT source, properties, relations, field_owners FROM entities WHERE blueprint = ? AND identifier = ?',
+    'SELECT source, properties, relations, field_owners FROM entities WHERE org_id = ? AND blueprint = ? AND identifier = ?',
+    orgId(),
     m.blueprint,
     m.identifier,
   );
@@ -165,8 +174,9 @@ export async function resolveOwnership(integration: string, me: Me, m: Mapped, m
 
 async function recordOwners(blueprint: string, identifier: string, owners: Record<string, string> | null) {
   await run(
-    'UPDATE entities SET field_owners = ? WHERE blueprint = ? AND identifier = ?',
+    'UPDATE entities SET field_owners = ? WHERE org_id = ? AND blueprint = ? AND identifier = ?',
     owners && Object.keys(owners).length ? JSON.stringify(owners) : null,
+    orgId(),
     blueprint,
     identifier,
   );
@@ -288,21 +298,23 @@ async function processItem(mapping: MappingDef, item: unknown, bindings: Binding
 /** Full pull of one integration. Returns undefined when another worker holds it. */
 export async function runSync(identifier: string, trigger: SyncRun['trigger'], opts: { kind?: string; scope?: string } = {}): Promise<SyncRun | undefined> {
   const t = now();
+  const org = orgId();
   // The lease carries an owner token: only the holder can renew or release it, so a sync that outlived its lease
   // (and whose integration another worker has since claimed) can neither extend nor clear the new holder's lease.
   const owner = newId();
   const { changes } = await run(
-    'UPDATE integrations SET locked_until = ?, lock_owner = ? WHERE identifier = ? AND (locked_until IS NULL OR locked_until < ?)',
+    'UPDATE integrations SET locked_until = ?, lock_owner = ? WHERE org_id = ? AND identifier = ? AND (locked_until IS NULL OR locked_until < ?)',
     later(LEASE_MS),
     owner,
+    org,
     identifier,
     t,
   );
   if (!changes) return undefined;
-  infos.clear(); // ownership priorities are read afresh by every run
+  for (const k of infos.keys()) if (k.startsWith(`${org}/`)) infos.delete(k); // ownership priorities are read afresh by every run
   const r = await getIntegrationRow(identifier);
   const id = newId();
-  await run("INSERT INTO sync_runs (id, integration, trigger, status, started_at) VALUES (?, ?, ?, 'running', ?)", id, identifier, trigger, t);
+  await run("INSERT INTO sync_runs (id, org_id, integration, trigger, status, started_at) VALUES (?, ?, ?, ?, 'running', ?)", id, org, identifier, trigger, t);
   const stats: SyncStats = { upserted: 0, deleted: 0, skipped: 0, failed: 0 };
   const log = new SyncLog();
   let ok = true;
@@ -361,7 +373,13 @@ export async function runSync(identifier: string, trigger: SyncRun['trigger'], o
             await applyBatch(r.identifier, me, batch, stats, log, seen);
             n += page.length;
             listing.items += page.length;
-            const renewed = await run('UPDATE integrations SET locked_until = ? WHERE identifier = ? AND lock_owner = ?', later(LEASE_MS), identifier, owner);
+            const renewed = await run(
+              'UPDATE integrations SET locked_until = ? WHERE org_id = ? AND identifier = ? AND lock_owner = ?',
+              later(LEASE_MS),
+              org,
+              identifier,
+              owner,
+            );
             if (!renewed.changes) throw new Error('The sync lease was lost to another worker; stopping'); // renew the lease
           }
           if (stateSet && !listing.incomplete) nextKinds[kind] = newState;
@@ -386,7 +404,7 @@ export async function runSync(identifier: string, trigger: SyncRun['trigger'], o
       }
     }),
   );
-  if (ok && state) await run('UPDATE integrations SET sync_state = ? WHERE identifier = ?', JSON.stringify(state), identifier);
+  if (ok && state) await run('UPDATE integrations SET sync_state = ? WHERE org_id = ? AND identifier = ?', JSON.stringify(state), org, identifier);
 
   const status = !ok ? 'failure' : stats.failed ? 'partial' : 'success';
   await run(
@@ -399,8 +417,9 @@ export async function runSync(identifier: string, trigger: SyncRun['trigger'], o
     id,
   );
   await run(
-    'UPDATE integrations SET locked_until = NULL, lock_owner = NULL, requested_kind = NULL, requested_scope = NULL, next_sync_at = ? WHERE identifier = ? AND lock_owner = ?',
+    'UPDATE integrations SET locked_until = NULL, lock_owner = NULL, requested_kind = NULL, requested_scope = NULL, next_sync_at = ? WHERE org_id = ? AND identifier = ? AND lock_owner = ?',
     nextSyncAt(r),
+    org,
     identifier,
     owner,
   );
@@ -453,7 +472,8 @@ async function deleteMissing(
   const blueprints = [...new Set(listings.flatMap((l) => l.blueprints))];
   if (!blueprints.length) return;
   const existing = await all<{ blueprint: string; identifier: string }>(
-    `SELECT blueprint, identifier FROM entities WHERE source = ? AND blueprint IN (${blueprints.map(() => '?').join(',')})`,
+    `SELECT blueprint, identifier FROM entities WHERE org_id = ? AND source = ? AND blueprint IN (${blueprints.map(() => '?').join(',')})`,
+    orgId(),
     entitySource(r.identifier),
     ...blueprints,
   );
@@ -548,9 +568,11 @@ export const DELIVERY_WINDOW_MS = 24 * 3600_000;
 /** Remember a delivery id; false when it was already seen inside the window (a replay). */
 export async function recordDelivery(integration: string, deliveryId: string): Promise<boolean> {
   const cutoff = new Date(Date.now() - DELIVERY_WINDOW_MS).toISOString();
-  await run('DELETE FROM ingest_deliveries WHERE integration = ? AND delivery_id = ? AND received_at < ?', integration, deliveryId, cutoff);
+  const org = orgId();
+  await run('DELETE FROM ingest_deliveries WHERE org_id = ? AND integration = ? AND delivery_id = ? AND received_at < ?', org, integration, deliveryId, cutoff);
   const { changes } = await run(
-    'INSERT INTO ingest_deliveries (integration, delivery_id, received_at) VALUES (?, ?, ?) ON CONFLICT (integration, delivery_id) DO NOTHING',
+    'INSERT INTO ingest_deliveries (org_id, integration, delivery_id, received_at) VALUES (?, ?, ?, ?) ON CONFLICT (org_id, integration, delivery_id) DO NOTHING',
+    org,
     integration,
     deliveryId,
     now(),
@@ -573,8 +595,9 @@ export async function ingest(r: IntegrationRow, payload: unknown, headers: Recor
   await applyBatch(r.identifier, { priority: Number(r.priority ?? 0), primaryFor: json<string[]>(r.primary_for, []) }, batch, stats, log);
   const t = now();
   await run(
-    'INSERT INTO sync_runs (id, integration, trigger, status, stats, logs, started_at, ended_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    'INSERT INTO sync_runs (id, org_id, integration, trigger, status, stats, logs, started_at, ended_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
     newId(),
+    orgId(),
     r.identifier,
     'webhook',
     stats.failed ? 'failure' : 'success',
@@ -638,8 +661,16 @@ let running = 0;
 export function startSyncScheduler(log: FastifyBaseLogger) {
   const tick = async () => {
     if (running >= MAX_PARALLEL_SYNCS) return;
-    const due = await all<{ identifier: string; type: string; next_sync_at: string; requested_kind: string | null; requested_scope: string | null }>(
-      `SELECT identifier, type, next_sync_at, requested_kind, requested_scope FROM integrations
+    // Across organizations; each sync runs in the organization of its integration.
+    const due = await all<{
+      org_id: string;
+      identifier: string;
+      type: string;
+      next_sync_at: string;
+      requested_kind: string | null;
+      requested_scope: string | null;
+    }>(
+      `SELECT org_id, identifier, type, next_sync_at, requested_kind, requested_scope FROM integrations
        WHERE enabled = 1 AND next_sync_at IS NOT NULL AND next_sync_at <= ? AND (locked_until IS NULL OR locked_until < ?)
        ORDER BY next_sync_at LIMIT ?`,
       now(),
@@ -649,13 +680,18 @@ export function startSyncScheduler(log: FastifyBaseLogger) {
     metrics.loopTick('syncs');
     for (const d of due) {
       if (getSource(d.type).push) {
-        await run('UPDATE integrations SET next_sync_at = NULL WHERE identifier = ?', d.identifier);
+        await run('UPDATE integrations SET next_sync_at = NULL WHERE org_id = ? AND identifier = ?', d.org_id, d.identifier);
         continue;
       }
       running++;
-      runSync(d.identifier, d.next_sync_at === MANUAL ? 'manual' : 'schedule', { kind: d.requested_kind ?? undefined, scope: d.requested_scope ?? undefined })
-        .then((res) => res && log.info({ integration: d.identifier, status: res.status, stats: res.stats }, 'integration synced'))
-        .catch((err) => log.error({ err, integration: d.identifier }, 'integration sync crashed'))
+      withOrg(d.org_id, () =>
+        runSync(d.identifier, d.next_sync_at === MANUAL ? 'manual' : 'schedule', {
+          kind: d.requested_kind ?? undefined,
+          scope: d.requested_scope ?? undefined,
+        }),
+      )
+        .then((res) => res && log.info({ org: d.org_id, integration: d.identifier, status: res.status, stats: res.stats }, 'integration synced'))
+        .catch((err) => log.error({ err, org: d.org_id, integration: d.identifier }, 'integration sync crashed'))
         .finally(() => running--);
     }
   };

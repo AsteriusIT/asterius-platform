@@ -3,6 +3,7 @@ import type { Access, Blueprint, BlueprintPermissions, EffectivePermissions, Sub
 import { listBlueprints } from '../catalog/blueprints.js';
 import type { SqlValue } from '../db.js';
 import { forbidden } from '../lib/errors.js';
+import { orgId } from '../orgs/context.js';
 import { canEditEntity, isAdmin, matchesSubjects, requireUser, type Principal } from './users.js';
 
 /**
@@ -14,7 +15,17 @@ import { canEditEntity, isAdmin, matchesSubjects, requireUser, type Principal } 
 export type Operation = keyof BlueprintPermissions;
 
 /** Principal of unattended automation (AI agent tools): matches only rules that name nobody. */
-export const ANONYMOUS: Principal = { id: '', email: '', name: 'anonymous', role: 'member', roles: [], provider: 'service', teams: [] };
+export const ANONYMOUS: Principal = {
+  id: '',
+  email: '',
+  name: 'anonymous',
+  role: 'member',
+  roles: [],
+  provider: 'service',
+  teams: [],
+  superadmin: false,
+  org: null,
+};
 
 /** preHandler factory: admins and holders of one of the delegated roles. */
 export const requireRole = (...roles: string[]) =>
@@ -49,15 +60,18 @@ export function assertCan(p: Principal, bp: Blueprint, op: Operation, ownerTeam:
 }
 
 // ---------- read filter pushed into SQL ----------
-let restrictedCache: { at: number; list: Blueprint[] } | undefined;
+/** Per organization: blueprints carrying a read rule. */
+const restrictedCache = new Map<string, { at: number; list: Blueprint[] }>();
 async function restrictedBlueprints(): Promise<Blueprint[]> {
-  if (restrictedCache && Date.now() - restrictedCache.at < 3_000) return restrictedCache.list;
+  const org = orgId();
+  const hit = restrictedCache.get(org);
+  if (hit && Date.now() - hit.at < 3_000) return hit.list;
   const list = (await listBlueprints()).filter((b) => isRule(b.permissions?.read));
-  restrictedCache = { at: Date.now(), list };
+  restrictedCache.set(org, { at: Date.now(), list });
   return list;
 }
 export const invalidateAccessCache = () => {
-  restrictedCache = undefined;
+  restrictedCache.clear();
 };
 
 /**

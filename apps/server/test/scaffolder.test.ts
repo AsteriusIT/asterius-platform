@@ -1,3 +1,4 @@
+import { inDefaultOrg } from './helpers.js';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { describe, expect, it, vi } from 'vitest';
@@ -85,17 +86,18 @@ describe('scaffolder against a GitHub-like API', () => {
 });
 
 describe('tekton', () => {
-  it('maps the Succeeded condition and creates a PipelineRun', async () => {
-    expect(fromConditions(undefined).status).toBe('IN_PROGRESS');
-    expect(fromConditions([{ type: 'Succeeded', status: 'True', reason: 'Succeeded' }]).status).toBe('SUCCESS');
-    expect(fromConditions([{ type: 'Succeeded', status: 'False', reason: 'Failed', message: 'x' }])).toMatchObject({ status: 'FAILURE', message: 'x' });
-    const inv = getInvoker('tekton');
-    const started = await inv.start({ ctx, config: { pipeline: 'build', namespace: 'ci', params: { v: '1' } }, log: async () => undefined });
-    expect(started.state).toEqual({ name: 'asterius-abcdef120000', namespace: 'ci' });
-    expect(created[0]).toMatchObject({ kind: 'PipelineRun', spec: { pipelineRef: { name: 'build' }, params: [{ name: 'v', value: '1' }] } });
-    conditions = [{ type: 'Succeeded', status: 'True' }];
-    expect((await inv.poll!({ ctx, config: { pipeline: 'build' }, log: async () => undefined }, started.state!)).status).toBe('SUCCESS');
-    await inv.cancel!({ ctx, config: {}, log: async () => undefined }, started.state!);
-    expect(patched[0]).toMatchObject({ spec: { status: 'Cancelled' } });
-  });
+  it('maps the Succeeded condition and creates a PipelineRun', () =>
+    inDefaultOrg(async () => {
+      expect(fromConditions(undefined).status).toBe('IN_PROGRESS');
+      expect(fromConditions([{ type: 'Succeeded', status: 'True', reason: 'Succeeded' }]).status).toBe('SUCCESS');
+      expect(fromConditions([{ type: 'Succeeded', status: 'False', reason: 'Failed', message: 'x' }])).toMatchObject({ status: 'FAILURE', message: 'x' });
+      const inv = getInvoker('tekton');
+      const started = await inv.start({ ctx, config: { pipeline: 'build', namespace: 'ci', params: { v: '1' } }, log: async () => undefined });
+      expect(started.state).toEqual({ name: 'asterius-abcdef120000', namespace: 'ci' });
+      expect(created[0]).toMatchObject({ kind: 'PipelineRun', spec: { pipelineRef: { name: 'build' }, params: [{ name: 'v', value: '1' }] } });
+      conditions = [{ type: 'Succeeded', status: 'True' }];
+      expect((await inv.poll!({ ctx, config: { pipeline: 'build' }, log: async () => undefined }, started.state!)).status).toBe('SUCCESS');
+      await inv.cancel!({ ctx, config: {}, log: async () => undefined }, started.state!);
+      expect(patched[0]).toMatchObject({ spec: { status: 'Cancelled' } });
+    }));
 });

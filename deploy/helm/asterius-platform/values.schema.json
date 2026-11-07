@@ -224,7 +224,7 @@
       "properties": {
         "providers": {
           "type": "string",
-          "pattern": "^(local|entra)(,(local|entra))*$"
+          "pattern": "^(local|entra|oidc|github|saml|keycloak)(,(local|entra|oidc|github|saml|keycloak))*$"
         },
         "allowRegistration": {
           "type": "boolean"
@@ -590,6 +590,89 @@
           "items": {
             "type": "string"
           }
+        }
+      }
+    },
+    "organizations": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "creation": {
+          "type": "string",
+          "enum": [
+            "everyone",
+            "superadmin"
+          ]
+        },
+        "autoJoinDefault": {
+          "type": "boolean"
+        },
+        "kubernetesOrgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "platformIdentityOrgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "branding": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "maxLength": 60
+        },
+        "logo": {
+          "type": "string"
+        }
+      }
+    },
+    "keycloak": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "url": {
+          "type": "string"
+        },
+        "internalUrl": {
+          "type": "string"
+        },
+        "realm": {
+          "type": "string"
+        },
+        "clientId": {
+          "type": "string"
+        },
+        "host": {
+          "type": "string"
+        },
+        "image": {
+          "type": "string"
+        },
+        "replicas": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "existingSecret": {
+          "type": "string"
+        },
+        "database": {
+          "type": "object"
+        },
+        "resources": {
+          "type": "object"
+        },
+        "ingress": {
+          "type": "object"
         }
       }
     }

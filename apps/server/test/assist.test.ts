@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { client, fakeServer, register, silentLog, testApp, waitFor, type Api } from './helpers.js';
+import { inDefaultOrg } from './helpers.js';
 import { startRunWorker } from '../src/actions/worker.js';
 import { claimReview } from '../src/ai/review.js';
 
@@ -139,23 +140,24 @@ describe('assistants and authoring', () => {
 });
 
 describe('catalog quality reviews', () => {
-  it('finds missing owners and dangling relations, summarises with the model and claims one run per period', async () => {
-    await admin.put('/api/v1/blueprints/component', {
-      title: 'Component',
-      schema: { properties: {} },
-      relations: { service: { target: 'service', required: true } },
-    });
-    await admin.put('/api/v1/blueprints/component/entities/orphan', { properties: {}, relations: { service: 'gone-service' } });
-    reply = { summary: 'Assign owners first.' };
-    const res = await admin.post('/api/v1/ai/reviews/run', {});
-    expect(res.status, JSON.stringify(res.data)).toBe(200);
-    const kinds = new Set((res.data.findings as { kind: string }[]).map((f) => f.kind));
-    expect(kinds).toEqual(new Set(['missing_owner', 'dangling_relation']));
-    expect(res.data.summary).toBe('Assign owners first.');
-    expect((await admin.get('/api/v1/ai/reviews')).data[0].id).toBe(res.data.id);
-    expect((await alice.get('/api/v1/ai/reviews')).status).toBe(403);
+  it('finds missing owners and dangling relations, summarises with the model and claims one run per period', () =>
+    inDefaultOrg(async () => {
+      await admin.put('/api/v1/blueprints/component', {
+        title: 'Component',
+        schema: { properties: {} },
+        relations: { service: { target: 'service', required: true } },
+      });
+      await admin.put('/api/v1/blueprints/component/entities/orphan', { properties: {}, relations: { service: 'gone-service' } });
+      reply = { summary: 'Assign owners first.' };
+      const res = await admin.post('/api/v1/ai/reviews/run', {});
+      expect(res.status, JSON.stringify(res.data)).toBe(200);
+      const kinds = new Set((res.data.findings as { kind: string }[]).map((f) => f.kind));
+      expect(kinds).toEqual(new Set(['missing_owner', 'dangling_relation']));
+      expect(res.data.summary).toBe('Assign owners first.');
+      expect((await admin.get('/api/v1/ai/reviews')).data[0].id).toBe(res.data.id);
+      expect((await alice.get('/api/v1/ai/reviews')).status).toBe(403);
 
-    expect(await claimReview(3600_000)).toBe(true);
-    expect(await claimReview(3600_000)).toBe(false);
-  });
+      expect(await claimReview(3600_000)).toBe(true);
+      expect(await claimReview(3600_000)).toBe(false);
+    }));
 });

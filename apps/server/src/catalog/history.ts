@@ -1,6 +1,7 @@
 import type { Entity, EntityVersion, EntityVersionDiff } from '@asterius/shared';
 import { all, json, now, one, run, type Driver, type SqlValue } from '../db.js';
 import { notFound } from '../lib/errors.js';
+import { orgId } from '../orgs/context.js';
 
 /**
  * Entity history: every change is recorded in `entity_versions` in the same transaction as the change itself
@@ -54,11 +55,17 @@ export interface VersionInput {
 
 /** Append a version using the caller's transaction. */
 export async function recordVersion(d: Driver, v: VersionInput) {
-  const last = await d.query<{ v: number | null }>('SELECT max(version) AS v FROM entity_versions WHERE blueprint = ? AND entity = ?', [v.blueprint, v.entity]);
+  const org = orgId();
+  const last = await d.query<{ v: number | null }>('SELECT max(version) AS v FROM entity_versions WHERE org_id = ? AND blueprint = ? AND entity = ?', [
+    org,
+    v.blueprint,
+    v.entity,
+  ]);
   const version = Number(last.rows[0]?.v ?? 0) + 1;
   // A delete keeps the last state so it can be restored; other ops store the new state.
   const snapshot = v.op === 'delete' ? v.before : v.after;
   const params: SqlValue[] = [
+    org,
     v.blueprint,
     v.entity,
     version,
@@ -71,7 +78,7 @@ export async function recordVersion(d: Driver, v: VersionInput) {
     now(),
   ];
   await d.query(
-    'INSERT INTO entity_versions (blueprint, entity, version, op, actor_id, actor_email, source, snapshot, diff, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    'INSERT INTO entity_versions (org_id, blueprint, entity, version, op, actor_id, actor_email, source, snapshot, diff, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
     params,
   );
   return version;
@@ -100,23 +107,35 @@ const toVersion = (r: Row): EntityVersion => ({
 
 export async function listVersions(blueprint: string, entity: string, limit = 50, offset = 0): Promise<{ items: EntityVersion[]; total: number }> {
   const rows = await all<Row>(
-    'SELECT * FROM entity_versions WHERE blueprint = ? AND entity = ? ORDER BY version DESC LIMIT ? OFFSET ?',
+    'SELECT * FROM entity_versions WHERE org_id = ? AND blueprint = ? AND entity = ? ORDER BY version DESC LIMIT ? OFFSET ?',
+    orgId(),
     blueprint,
     entity,
     limit,
     offset,
   );
-  const total = await one<{ n: number }>('SELECT count(*) AS n FROM entity_versions WHERE blueprint = ? AND entity = ?', blueprint, entity);
+  const total = await one<{ n: number }>(
+    'SELECT count(*) AS n FROM entity_versions WHERE org_id = ? AND blueprint = ? AND entity = ?',
+    orgId(),
+    blueprint,
+    entity,
+  );
   return { items: rows.map(toVersion), total: Number(total?.n ?? 0) };
 }
 
 export async function getVersion(blueprint: string, entity: string, version: number): Promise<EntityVersion> {
-  const r = await one<Row>('SELECT * FROM entity_versions WHERE blueprint = ? AND entity = ? AND version = ?', blueprint, entity, version);
+  const r = await one<Row>(
+    'SELECT * FROM entity_versions WHERE org_id = ? AND blueprint = ? AND entity = ? AND version = ?',
+    orgId(),
+    blueprint,
+    entity,
+    version,
+  );
   if (!r) throw notFound(`Version ${version} of ${blueprint}/${entity}`);
   return toVersion(r);
 }
 
-/** Retention, separate from runs: keeps the latest version of every entity whatever its age. */
+/** Retention (every organization), separate from runs: keeps the latest version of every entity whatever its age. */
 export async function purgeVersions(olderThan: string) {
-  return run('DELETE FROM entity_versions WHERE at < ? AND id NOT IN (SELECT max(id) FROM entity_versions GROUP BY blueprint, entity)', olderThan);
+  return run('DELETE FROM entity_versions WHERE at < ? AND id NOT IN (SELECT max(id) FROM entity_versions GROUP BY org_id, blueprint, entity)', olderThan);
 }

@@ -63,13 +63,19 @@ export async function housekeeping(log: FastifyBaseLogger) {
     await run("DELETE FROM inbound_events WHERE status != 'pending' AND received_at < ?", cutoff);
     // Sync history: RETENTION_DAYS, but always keep the last 20 per integration.
     let syncs = 0;
-    for (const { integration } of await all<{ integration: string }>('SELECT DISTINCT integration FROM sync_runs')) {
+    for (const { org_id, integration } of await all<{ org_id: string; integration: string }>('SELECT DISTINCT org_id, integration FROM sync_runs')) {
       const keep = await all<{ started_at: string }>(
-        'SELECT started_at FROM sync_runs WHERE integration = ? ORDER BY started_at DESC LIMIT 1 OFFSET 19',
+        'SELECT started_at FROM sync_runs WHERE org_id = ? AND integration = ? ORDER BY started_at DESC LIMIT 1 OFFSET 19',
+        org_id,
         integration,
       );
       if (keep[0])
-        syncs += await deleteInChunks('sync_runs', 'id', 'integration = ? AND started_at < ? AND started_at < ?', [integration, keep[0].started_at, cutoff]);
+        syncs += await deleteInChunks('sync_runs', 'id', 'org_id = ? AND integration = ? AND started_at < ? AND started_at < ?', [
+          org_id,
+          integration,
+          keep[0].started_at,
+          cutoff,
+        ]);
     }
     // Scorecards depend on relations too: re-evaluate everything once an hour; trends are kept for a year.
     const scored = await evaluateEverything();

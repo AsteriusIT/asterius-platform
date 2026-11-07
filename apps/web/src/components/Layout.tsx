@@ -52,6 +52,12 @@ import {
   IconUser,
   IconHelpCircle,
   IconUsersGroup,
+  IconBuilding,
+  IconBuildingCommunity,
+  IconCheck,
+  IconPlus,
+  IconSelector,
+  IconShieldLock,
   IconWebhook,
 } from '@tabler/icons-react';
 import { api } from '../lib/api';
@@ -82,7 +88,7 @@ export function Layout() {
   const t = useT();
   const isMobile = useMediaQuery('(max-width: 48em)');
   const qc = useQueryClient();
-  const { user, isAdmin, signOut } = useAuth();
+  const { user, isAdmin, isSuperadmin, org, signOut, switchOrg } = useAuth();
   const { colorScheme, setColorScheme } = useMantineColorScheme();
   const location = useLocation();
   const navigate = useNavigate();
@@ -93,6 +99,7 @@ export function Layout() {
     void qc.refetchQueries({ type: 'active' }).finally(() => setRefreshing(false));
   };
   const blueprints = useQuery({ queryKey: ['blueprints'], queryFn: api.blueprints, staleTime: 30_000 });
+  const meta = useQuery({ queryKey: ['meta'], queryFn: api.meta, staleTime: Infinity });
   const entityTotal = blueprints.data?.reduce((n, b) => n + (b.entityCount ?? 0), 0);
   const [collapsed, setCollapsed] = useLocalStorage({ key: 'asterius.nav-collapsed', defaultValue: false, getInitialValueInEffect: false });
   const mini = collapsed && !isMobile;
@@ -248,7 +255,79 @@ export function Layout() {
           )}
         </AppShell.Section>
 
-        <AppShell.Section grow component={ScrollArea} mt="sm" mx={-4} px={4}>
+        {/* Organization switcher: the tenant every page works in. */}
+        <AppShell.Section mt="sm">
+          <Menu position={mini ? 'right-start' : 'bottom-start'} width={260}>
+            <Menu.Target>
+              <Tooltip label={org?.name ?? 'Organization'} position="right" disabled={!mini}>
+                <UnstyledButton className="nav-link org-switcher" w="100%" display="block" aria-label={`Organization: ${org?.name ?? 'none'}`} data-tour="org">
+                  <Group gap={10} wrap="nowrap" justify={mini ? 'center' : undefined}>
+                    <Avatar radius="md" size={26} color="brand" variant="filled">
+                      {initials(org?.name)}
+                    </Avatar>
+                    {!mini && (
+                      <>
+                        <Box style={{ flex: 1, minWidth: 0 }}>
+                          <Text fz={13.5} fw={600} truncate>
+                            {org?.name}
+                          </Text>
+                          <Text fz={11.5} c="var(--text-3)" truncate>
+                            {isAdmin ? 'Admin' : 'Member'}
+                            {user?.organizations && user.organizations.length > 1 ? ` · ${user.organizations.length} organizations` : ''}
+                          </Text>
+                        </Box>
+                        <IconSelector size={15} color="var(--text-3)" />
+                      </>
+                    )}
+                  </Group>
+                </UnstyledButton>
+              </Tooltip>
+            </Menu.Target>
+            <Menu.Dropdown>
+              <Menu.Label>Organizations</Menu.Label>
+              {user?.organizations?.map((o) => (
+                <Menu.Item
+                  key={o.id}
+                  leftSection={
+                    <Avatar radius="sm" size={20} color="brand" variant={o.slug === org?.slug ? 'filled' : 'light'} fz={10}>
+                      {initials(o.name)}
+                    </Avatar>
+                  }
+                  rightSection={o.slug === org?.slug ? <IconCheck size={14} /> : undefined}
+                  onClick={() => {
+                    if (o.slug === org?.slug) return;
+                    close();
+                    switchOrg(o.slug);
+                    void navigate('/');
+                  }}
+                >
+                  {o.name}
+                </Menu.Item>
+              ))}
+              {org && !user?.organizations?.some((o) => o.slug === org.slug) && (
+                <Menu.Item leftSection={<IconBuilding size={16} />} rightSection={<IconCheck size={14} />} disabled>
+                  {org.name} (super-admin)
+                </Menu.Item>
+              )}
+              <Menu.Divider />
+              {isAdmin && (
+                <Menu.Item component={Link} to="/admin/organization" leftSection={<IconBuilding size={16} />} onClick={close}>
+                  Organization settings
+                </Menu.Item>
+              )}
+              <Menu.Item component={Link} to="/orgs/new" leftSection={<IconPlus size={16} />} onClick={close}>
+                New organization
+              </Menu.Item>
+              {isSuperadmin && (
+                <Menu.Item component={Link} to="/platform/organizations" leftSection={<IconBuildingCommunity size={16} />} onClick={close}>
+                  All organizations
+                </Menu.Item>
+              )}
+            </Menu.Dropdown>
+          </Menu>
+        </AppShell.Section>
+
+        <AppShell.Section grow component={ScrollArea} mt={4} mx={-4} px={4}>
           {link('/', 'Home', <IconHome size={18} stroke={1.6} />)}
           {link('/self-service', 'Self-service', <IconRocket size={18} stroke={1.6} />, undefined, 'self-service')}
 
@@ -282,6 +361,13 @@ export function Layout() {
               {link('/admin/audit', 'Audit log', <IconHistory size={18} stroke={1.6} />)}
               {link('/admin/ai', 'AI usage', <IconRobot size={18} stroke={1.6} />)}
               {link('/admin/config', 'Configuration', <IconSettingsAutomation size={18} stroke={1.6} />)}
+              {link('/admin/organization', 'Organization', <IconBuilding size={18} stroke={1.6} />)}
+            </div>
+          )}
+          {isSuperadmin && (
+            <div>
+              {section('Platform')}
+              {link('/platform/organizations', 'All organizations', <IconBuildingCommunity size={18} stroke={1.6} />)}
             </div>
           )}
         </AppShell.Section>
@@ -324,6 +410,11 @@ export function Layout() {
               <Menu.Item component={Link} to="/profile" leftSection={<IconUser size={16} />} onClick={close}>
                 Profile & API tokens
               </Menu.Item>
+              {meta.data?.accountUrl && user?.provider === 'keycloak' && (
+                <Menu.Item component="a" href={meta.data.accountUrl} target="_blank" rel="noreferrer" leftSection={<IconShieldLock size={16} />}>
+                  Password, MFA & linked accounts
+                </Menu.Item>
+              )}
               <Menu.Item leftSection={<IconHelpCircle size={16} />} onClick={startTour}>
                 Take the tour
               </Menu.Item>

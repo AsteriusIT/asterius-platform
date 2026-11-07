@@ -1,15 +1,15 @@
 import { z } from 'zod';
 import type { Principal } from '../auth/users.js';
 import { blueprintOf, canTrigger, forViewer, getAction, isRunnable, listActions } from '../actions/actions.js';
-import { getRun, listRuns, triggerRun } from '../actions/runs.js';
+import { getRun, listRuns, pendingApprovals, triggerRun } from '../actions/runs.js';
 import { runCatalogTool } from './tools.js';
 import { truncate } from './model.js';
 import { errorMessage } from '../lib/errors.js';
 
 /**
  * The platform as a Model Context Protocol server (Streamable HTTP transport, stateless JSON responses).
- * Callers authenticate with an API token and act with that user's permissions: the catalog is readable,
- * actions are started (and runs read) exactly as through the API.
+ * Callers authenticate with an API token and act with that user's permissions in the token's organization: the
+ * catalog is readable, actions are started (and runs read) exactly as through the API. Approving is not exposed.
  */
 
 const PROTOCOL_VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05'];
@@ -25,6 +25,13 @@ interface ToolDef {
 const obj = (properties: Record<string, unknown>, required: string[] = []) => ({ type: 'object', properties, required, additionalProperties: false });
 
 const TOOLS: ToolDef[] = [
+  {
+    name: 'whoami',
+    description: 'The signed-in user, the organization the token works in, the role and the teams in it.',
+    inputSchema: obj({}),
+    annotations: { readOnlyHint: true },
+    run: async (_i, p) => ({ user: { name: p.name, email: p.email }, organization: p.org, role: p.role, roles: p.roles, teams: p.teams }),
+  },
   {
     name: 'list_blueprints',
     description: 'List the kinds of entities in the software catalog (blueprints) with their properties and relations.',
@@ -96,6 +103,23 @@ const TOOLS: ToolDef[] = [
         p,
       );
       return page.items.map((r) => ({ id: r.id, action: r.action, status: r.status, statusLabel: r.statusLabel, createdAt: r.createdAt }));
+    },
+  },
+  {
+    name: 'list_approvals',
+    description: 'Requests and workflow steps waiting for a decision you can make. Decisions stay with people: there is no tool to approve.',
+    inputSchema: obj({ limit: { type: 'number' } }),
+    annotations: { readOnlyHint: true },
+    run: async (i, p) => {
+      const { items } = await pendingApprovals(p, { limit: Math.min(Math.max(Number(i.limit) || 20, 1), 100) });
+      return items.map((r) => ({
+        id: r.id,
+        action: r.actionTitle,
+        entity: r.entity,
+        status: r.status,
+        requestedBy: r.triggeredBy?.email,
+        url: `/runs/${r.id}`,
+      }));
     },
   },
   {

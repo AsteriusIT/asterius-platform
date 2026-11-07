@@ -9,13 +9,16 @@ import { verifyWebhook } from '../integrations/sync.js';
 import { startAutomatedRun } from './runs.js';
 import { nextTick } from './trigger-defs.js';
 import type { WorkflowTriggerDef } from '../schemas.js';
+import { maybeOrgId, orgId, withOrg } from '../orgs/context.js';
 
 /**
  * Automatic workflow triggers (everything but forms):
  *  - schedule: `fireDueSchedules` runs on every worker; a tick is claimed with a conditional UPDATE of
  *    `actions.next_fire_at`, so exactly one replica starts the run;
  *  - event: catalog events and finished runs, matched in the process that emits them (see events.ts);
- *  - webhook: `POST /api/v1/hooks/:action`, authenticated with the trigger's secret.
+ *  - webhook: `POST /api/v1/hooks/:org/:action` (`/hooks/:action`: the default organization), authenticated with the
+ *    trigger's secret.
+ * Schedules are found across organizations; each run starts in the organization of its action.
  */
 
 type Trigger<T extends WorkflowTriggerDef['type']> = Extract<WorkflowTriggerDef, { type: T }>;
@@ -37,8 +40,8 @@ async function renderEntity(template: string | undefined, ctx: unknown): Promise
 // ---------- schedule ----------
 export async function fireDueSchedules(log?: Pick<FastifyBaseLogger, 'error' | 'info'>) {
   const t = now();
-  const due = await all<{ identifier: string; trigger_config: string; next_fire_at: string }>(
-    'SELECT identifier, trigger_config, next_fire_at FROM actions WHERE enabled = 1 AND next_fire_at IS NOT NULL AND next_fire_at <= ? ORDER BY next_fire_at LIMIT 50',
+  const due = await all<{ org_id: string; identifier: string; trigger_config: string; next_fire_at: string }>(
+    'SELECT org_id, identifier, trigger_config, next_fire_at FROM actions WHERE enabled = 1 AND next_fire_at IS NOT NULL AND next_fire_at <= ? ORDER BY next_fire_at LIMIT 50',
     t,
   );
   let started = 0;
@@ -47,19 +50,22 @@ export async function fireDueSchedules(log?: Pick<FastifyBaseLogger, 'error' | '
     if (trig?.type !== 'schedule') continue;
     // One run per tick, whatever the number of replicas or missed ticks: whoever moves next_fire_at forward owns the tick.
     const { changes } = await run(
-      'UPDATE actions SET next_fire_at = ? WHERE identifier = ? AND next_fire_at = ?',
+      'UPDATE actions SET next_fire_at = ? WHERE org_id = ? AND identifier = ? AND next_fire_at = ?',
       nextTick(trig),
+      d.org_id,
       d.identifier,
       d.next_fire_at,
     );
     if (!changes) continue;
     try {
-      const inputs = await renderInputs(trig.inputs, { schedule: { at: d.next_fire_at, cron: trig.cron, timezone: trig.timezone } });
-      const id = await startAutomatedRun(d.identifier, { inputs, source: { type: 'schedule', info: { cron: trig.cron, tick: d.next_fire_at } } });
+      const id = await withOrg(d.org_id, async () => {
+        const inputs = await renderInputs(trig.inputs, { schedule: { at: d.next_fire_at, cron: trig.cron, timezone: trig.timezone } });
+        return startAutomatedRun(d.identifier, { inputs, source: { type: 'schedule', info: { cron: trig.cron, tick: d.next_fire_at } } });
+      });
       started++;
-      log?.info({ action: d.identifier, runId: id }, 'scheduled run started');
+      log?.info({ org: d.org_id, action: d.identifier, runId: id }, 'scheduled run started');
     } catch (err) {
-      log?.error({ err, action: d.identifier }, 'scheduled run could not start');
+      log?.error({ err, org: d.org_id, action: d.identifier }, 'scheduled run could not start');
     }
   }
   return started;
@@ -85,22 +91,26 @@ export function startTriggerScheduler(log: FastifyBaseLogger) {
 const MAX_EVENT_DEPTH = 3;
 const MAX_EVENT_RUNS_PER_MINUTE = 30;
 const CACHE_MS = 5_000;
-let cache: { at: number; actions: { identifier: string; trigger: Trigger<'event'> }[] } | undefined;
+/** Event-triggered actions per organization (events are emitted in the organization of the change). */
+const cache = new Map<string, { at: number; actions: { identifier: string; trigger: Trigger<'event'> }[] }>();
 
 export const invalidateTriggerCache = () => {
-  cache = undefined;
+  cache.clear();
 };
 
 async function eventActions() {
-  if (cache && Date.now() - cache.at < CACHE_MS) return cache.actions;
+  const org = orgId();
+  const hit = cache.get(org);
+  if (hit && Date.now() - hit.at < CACHE_MS) return hit.actions;
   const rows = await all<{ identifier: string; trigger_config: string }>(
-    "SELECT identifier, trigger_config FROM actions WHERE enabled = 1 AND trigger = 'event'",
+    "SELECT identifier, trigger_config FROM actions WHERE org_id = ? AND enabled = 1 AND trigger = 'event'",
+    org,
   );
   const actions = rows.flatMap((r) => {
     const trigger = json<Trigger<'event'> | null>(r.trigger_config, null);
     return trigger?.type === 'event' ? [{ identifier: r.identifier, trigger }] : [];
   });
-  cache = { at: Date.now(), actions };
+  cache.set(org, { at: Date.now(), actions });
   return actions;
 }
 
@@ -110,6 +120,7 @@ interface RunData {
 }
 
 async function onDomainEvent(e: DomainEvent) {
+  if (!maybeOrgId()) return; // platform-level events (accounts) start no workflow
   const data = (e.data ?? {}) as RunData;
   const finishedRun = e.type === 'run.finished' ? data.run : undefined;
   const depth = (finishedRun?.trigger?.type === 'event' ? (finishedRun.trigger.depth ?? 0) : 0) + 1;
@@ -119,7 +130,8 @@ async function onDomainEvent(e: DomainEvent) {
     // Loops (an action reacting to its own effects) are cut by a depth limit on run chains and by a rate limit.
     if (depth > MAX_EVENT_DEPTH) continue;
     const recent = await one<{ n: number }>(
-      "SELECT count(*) AS n FROM runs WHERE action = ? AND trigger_type = 'event' AND created_at > ?",
+      "SELECT count(*) AS n FROM runs WHERE org_id = ? AND action = ? AND trigger_type = 'event' AND created_at > ?",
+      orgId(),
       identifier,
       new Date(Date.now() - 60_000).toISOString(),
     );
@@ -156,13 +168,14 @@ export function registerTriggerListeners() {
   onEvent(onDomainEvent);
 }
 
-// ---------- inbound webhook ----------
+// ---------- inbound webhook (in the organization of the request) ----------
 export async function receiveWebhook(
   actionId: string,
   req: { headers: Record<string, string | string[] | undefined>; rawBody: string; body: unknown; query: unknown },
 ): Promise<{ runId: string }> {
   const row = await one<{ identifier: string; trigger_config: string | null; enabled: number; allowed_secrets: string | null }>(
-    "SELECT identifier, trigger_config, enabled, allowed_secrets FROM actions WHERE identifier = ? AND trigger = 'webhook'",
+    "SELECT identifier, trigger_config, enabled, allowed_secrets FROM actions WHERE org_id = ? AND identifier = ? AND trigger = 'webhook'",
+    orgId(),
     actionId,
   );
   const trig = json<Trigger<'webhook'> | null>(row?.trigger_config, null);

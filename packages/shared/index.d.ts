@@ -6,7 +6,7 @@
 // ---------- identity ----------
 export type Role = 'admin' | 'member';
 /** Delegated roles (integration-admin, blueprint-owner, approver), granted on top of `member` (any other slug is a custom role usable in permission subjects). */
-export type UserProvider = 'local' | 'entra' | 'oidc' | 'github' | 'saml' | 'scim' | 'service';
+export type UserProvider = 'local' | 'entra' | 'oidc' | 'github' | 'saml' | 'scim' | 'keycloak' | 'service';
 
 export interface TeamRef {
   identifier: string;
@@ -26,6 +26,96 @@ export interface PublicUser {
   lastLoginAt?: string | null;
   /** Onboarding tour completed or skipped; null: show it at next sign-in. */
   tourCompletedAt?: string | null;
+  /** Runs the platform: manages every organization. */
+  superadmin?: boolean;
+  /** Organization the request ran in (role and teams are the ones of this organization). */
+  organization?: OrgRef | null;
+  /** Organizations the user belongs to. */
+  organizations?: OrgMembership[];
+}
+
+// ---------- organizations (tenants) ----------
+
+export interface OrgRef {
+  id: string;
+  slug: string;
+  name: string;
+}
+
+export interface OrgMembership extends OrgRef {
+  role: Role;
+}
+
+/** Where an organization's configuration as code comes from. */
+export type ConfigSource =
+  | { type: 'none' }
+  /** CONFIG_DIR/orgs/<slug>/ (ConfigMap, git-sync sidecar…) */
+  | { type: 'directory' }
+  /** A Git repository the workers pull (https only; token as a secret reference of the organization). */
+  | { type: 'git'; url: string; branch: string; path: string; token: string | null };
+
+export interface ConfigSyncStatus {
+  at: string | null;
+  ok: boolean;
+  revision: string | null;
+  files: number;
+  error: string | null;
+}
+
+export interface DomainStatus {
+  domain: string;
+  /** Verified domains route SSO sign-ins and let SSO-verified people join automatically. */
+  verified: boolean;
+  /** DNS TXT record to publish to verify the domain. */
+  record: string;
+  value: string;
+}
+
+export interface Organization extends OrgRef {
+  domains: string[];
+  domainStatus: DomainStatus[];
+  managed: boolean;
+  createdAt: string;
+  memberCount: number;
+  configSource: ConfigSource;
+  configStatus: ConfigSyncStatus | null;
+  /** Keycloak Organization linked to this organization (SSO). */
+  sso: { enabled: boolean; keycloakOrgId: string | null };
+}
+
+export interface Member {
+  id: string;
+  email: string;
+  name: string;
+  provider: UserProvider;
+  role: Role;
+  via: 'manual' | 'sso' | 'config';
+  active: boolean;
+  lastLoginAt: string | null;
+  joinedAt: string;
+}
+
+/** An identity provider connected to an organization (Keycloak brokering). */
+export interface SsoProvider {
+  alias: string;
+  displayName: string;
+  type: 'oidc' | 'saml';
+  enabled: boolean;
+  /** Email domain routed to this provider at sign-in. */
+  domain: string | null;
+  /** oidc: discovery / issuer URL · saml: metadata URL */
+  url: string | null;
+}
+
+export interface SsoProviderInput {
+  alias: string;
+  displayName: string;
+  type: 'oidc' | 'saml';
+  /** oidc: issuer or .well-known/openid-configuration URL · saml: IdP metadata URL */
+  url: string;
+  clientId?: string;
+  clientSecret?: string;
+  domain?: string | null;
 }
 
 export interface Team {
@@ -776,12 +866,16 @@ export interface ModelInfo {
 }
 
 export interface Meta {
+  /** Who may create organizations. */
+  orgCreation: 'everyone' | 'superadmin';
+  /** Keycloak sign-in: the URL of its account console (password, MFA, linked identities). */
+  accountUrl: string | null;
   /** Product name (BRAND_NAME). */
   name: string;
   /** Custom logo URL / data URI (BRAND_LOGO); null: the built-in logo. */
   logo: string | null;
   version: string;
-  authProviders: ('local' | 'entra' | 'oidc' | 'github' | 'saml')[];
+  authProviders: ('local' | 'entra' | 'oidc' | 'github' | 'saml' | 'keycloak')[];
   /** Labels of the generic OIDC / SAML sign-in buttons. */
   oidcTitle?: string;
   /** Browser sessions use an httpOnly cookie and a CSRF header. */

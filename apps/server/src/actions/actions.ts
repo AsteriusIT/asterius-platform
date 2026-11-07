@@ -10,6 +10,7 @@ import { actionDef, type ActionDef } from '../schemas.js';
 import { validator } from '../catalog/validation.js';
 import { stepsOf, validateWorkflow } from './workflow.js';
 import { isAdmin, matchesSubjects, type Principal } from '../auth/users.js';
+import { orgId } from '../orgs/context.js';
 
 interface Row {
   identifier: string;
@@ -82,7 +83,7 @@ export const forViewer = (a: Action, p: Principal): Action => {
 };
 
 export async function listActions(): Promise<Action[]> {
-  return (await all<Row>('SELECT * FROM actions ORDER BY title')).map(toAction);
+  return (await all<Row>('SELECT * FROM actions WHERE org_id = ? ORDER BY title', orgId())).map(toAction);
 }
 
 /** The blueprint a trigger targets (null: none). */
@@ -96,7 +97,7 @@ export const canTrigger = (a: Action, p: Principal, ownerTeam: string | null) =>
   a.enabled && isRunnable(a) && (a.trigger?.type === 'form' || a.trigger?.type === 'api') && matchesSubjects(p, a.trigger.allowed, ownerTeam);
 
 export async function getAction(id: string): Promise<Action> {
-  const r = await one<Row>('SELECT * FROM actions WHERE identifier = ?', id);
+  const r = await one<Row>('SELECT * FROM actions WHERE org_id = ? AND identifier = ?', orgId(), id);
   if (!r) throw notFound(`Action ${id}`);
   return toAction(r);
 }
@@ -111,14 +112,15 @@ export async function upsertAction(
   if (def.steps.some((s) => s.type === 'workflow' && s.action === def.identifier)) throw badRequest('A workflow cannot call itself as a sub-workflow');
   if (t0?.type === 'event' && t0.action === def.identifier) throw badRequest('Trigger: a workflow cannot be triggered by its own runs');
   const triggerBlueprint = t0 && 'blueprint' in t0 ? (t0.blueprint ?? null) : null;
-  if (triggerBlueprint && !(await one('SELECT identifier FROM blueprints WHERE identifier = ?', triggerBlueprint)))
+  const org = orgId();
+  if (triggerBlueprint && !(await one('SELECT identifier FROM blueprints WHERE org_id = ? AND identifier = ?', org, triggerBlueprint)))
     throw badRequest(`Blueprint "${triggerBlueprint}" does not exist`);
   const form = isFormLike(t0) ? t0 : null;
   if (form && form.on !== 'create' && !form.blueprint) throw badRequest(`Forms submitted on an entity ("${form.on}") need a blueprint`);
   if (form) validator(form.inputs as never);
   validateWorkflow(stepsOf(def));
   assertSecretsAllowed(def.secrets, [def.steps, def.invoker, t0]);
-  const existing = await one<Row>('SELECT * FROM actions WHERE identifier = ?', def.identifier);
+  const existing = await one<Row>('SELECT * FROM actions WHERE org_id = ? AND identifier = ?', org, def.identifier);
   if (existing && bool(existing.managed) && !opts.managed) throw managedError('Action', def.identifier);
   const t = now();
   const doc = definitionDoc(def);
@@ -146,17 +148,19 @@ export async function upsertAction(
   ];
   if (existing)
     await run(
-      'UPDATE actions SET title = ?, description = ?, icon = ?, blueprint = ?, trigger = ?, inputs = ?, invoker = ?, steps = ?, approval = ?, allowed = ?, enabled = ?, managed = ?, trigger_config = ?, next_fire_at = ?, version = ?, allowed_secrets = ?, updated_at = ? WHERE identifier = ?',
+      'UPDATE actions SET title = ?, description = ?, icon = ?, blueprint = ?, trigger = ?, inputs = ?, invoker = ?, steps = ?, approval = ?, allowed = ?, enabled = ?, managed = ?, trigger_config = ?, next_fire_at = ?, version = ?, allowed_secrets = ?, updated_at = ? WHERE org_id = ? AND identifier = ?',
       ...vals,
       t,
+      org,
       def.identifier,
     );
   else
     await run(
-      'INSERT INTO actions (title, description, icon, blueprint, trigger, inputs, invoker, steps, approval, allowed, enabled, managed, trigger_config, next_fire_at, version, allowed_secrets, created_at, updated_at, identifier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO actions (title, description, icon, blueprint, trigger, inputs, invoker, steps, approval, allowed, enabled, managed, trigger_config, next_fire_at, version, allowed_secrets, created_at, updated_at, org_id, identifier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       ...vals,
       t,
       t,
+      org,
       def.identifier,
     );
   invalidateTriggerCache();
@@ -166,6 +170,6 @@ export async function upsertAction(
 export async function deleteAction(id: string, opts: { managed?: boolean } = {}) {
   const a = await getAction(id);
   if (a.managed && !opts.managed) throw managedError('Action', id);
-  await run('DELETE FROM actions WHERE identifier = ?', id); // past runs keep their snapshot
+  await run('DELETE FROM actions WHERE org_id = ? AND identifier = ?', orgId(), id); // past runs keep their snapshot
   invalidateTriggerCache();
 }

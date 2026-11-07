@@ -5,6 +5,7 @@ import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { client, register, testApp } from './helpers.js';
+import { inDefaultOrg } from './helpers.js';
 
 const base = await vi.hoisted(async () => {
   const p = 20000 + Math.floor(Math.random() * 20000);
@@ -97,32 +98,35 @@ afterAll(async () => {
 });
 
 describe('external secret providers', () => {
-  it('resolves each provider through workload identity', async () => {
-    const { resolveRef } = await import('../src/secrets.js');
-    expect(await resolveRef('vault', 'secret/payments/db#password')).toBe('vault-pw');
-    expect(await resolveRef('awssm', 'prod/db#password')).toBe('aws-pw');
-    expect(await resolveRef('awssm', 'plain-secret')).toBe('plain');
-    expect(await resolveRef('azkv', 'my-vault/db-password')).toBe('az-pw');
-    expect(await resolveRef('gcpsm', 'my-project/db-password')).toBe('gcp-pw');
-  });
+  it('resolves each provider through workload identity', () =>
+    inDefaultOrg(async () => {
+      const { resolveRef } = await import('../src/secrets.js');
+      expect(await resolveRef('vault', 'secret/payments/db#password')).toBe('vault-pw');
+      expect(await resolveRef('awssm', 'prod/db#password')).toBe('aws-pw');
+      expect(await resolveRef('awssm', 'plain-secret')).toBe('plain');
+      expect(await resolveRef('azkv', 'my-vault/db-password')).toBe('az-pw');
+      expect(await resolveRef('gcpsm', 'my-project/db-password')).toBe('gcp-pw');
+    }));
 
-  it('works inside templates and single-value references', async () => {
-    const { render } = await import('../src/lib/expr.js');
-    const { resolveRef, resolveValue } = await import('../src/secrets.js');
-    const r = await render({ h: 'Bearer ${vault:secret/payments/db#password}' }, {}, resolveRef);
-    expect(r.value).toEqual({ h: 'Bearer vault-pw' });
-    expect(r.secrets).toEqual(['vault-pw']); // registered for log redaction
-    expect(await resolveValue('${gcpsm:my-project/db-password}')).toBe('gcp-pw');
-  });
+  it('works inside templates and single-value references', () =>
+    inDefaultOrg(async () => {
+      const { render } = await import('../src/lib/expr.js');
+      const { resolveRef, resolveValue } = await import('../src/secrets.js');
+      const r = await render({ h: 'Bearer ${vault:secret/payments/db#password}' }, {}, resolveRef);
+      expect(r.value).toEqual({ h: 'Bearer vault-pw' });
+      expect(r.secrets).toEqual(['vault-pw']); // registered for log redaction
+      expect(await resolveValue('${gcpsm:my-project/db-password}')).toBe('gcp-pw');
+    }));
 
-  it('rejects traversal, unknown keys, disallowed kubernetes namespaces and unconfigured providers', async () => {
-    const { resolveRef } = await import('../src/secrets.js');
-    await expect(resolveRef('vault', 'secret/../sys/x#k')).rejects.toThrow(/Invalid vault reference/);
-    await expect(resolveRef('vault', 'secret/payments/db#missing')).rejects.toThrow(/not found/);
-    await expect(resolveRef('azkv', '../evil/x')).rejects.toThrow(/Invalid/);
-    await expect(resolveRef('k8s', 'kube-system/token/value')).rejects.toThrow(/not configured|not allowed/);
-    await expect(resolveRef('nosuch', 'x')).rejects.toThrow(); // falls through to the database secrets: not defined
-  });
+  it('rejects traversal, unknown keys, disallowed kubernetes namespaces and unconfigured providers', () =>
+    inDefaultOrg(async () => {
+      const { resolveRef } = await import('../src/secrets.js');
+      await expect(resolveRef('vault', 'secret/../sys/x#k')).rejects.toThrow(/Invalid vault reference/);
+      await expect(resolveRef('vault', 'secret/payments/db#missing')).rejects.toThrow(/not found/);
+      await expect(resolveRef('azkv', '../evil/x')).rejects.toThrow(/Invalid/);
+      await expect(resolveRef('k8s', 'kube-system/token/value')).rejects.toThrow(/not configured|not allowed/);
+      await expect(resolveRef('nosuch', 'x')).rejects.toThrow(); // falls through to the database secrets: not defined
+    }));
 
   it('does not leak provider responses into errors', async () => {
     const { resolveRef } = await import('../src/secrets.js');

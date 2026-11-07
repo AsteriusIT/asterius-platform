@@ -7,8 +7,11 @@ import { checkTemplate } from '../lib/expr.js';
 import { integrationDef, type IntegrationDef } from '../schemas.js';
 import { getSource } from './sources/index.js';
 import { checkMapping } from './mapping.js';
+import { orgId } from '../orgs/context.js';
+import { orgSlug } from '../orgs/orgs.js';
 
 export interface IntegrationRow {
+  org_id: string;
   identifier: string;
   title: string;
   type: string;
@@ -55,9 +58,11 @@ export const toSyncRun = (r: SyncRow): SyncRun => ({
 });
 
 export const entitySource = (identifier: string) => `integration:${identifier}`;
-export const webhookUrl = (identifier: string) => `${platform.PUBLIC_URL}/api/v1/ingest/${identifier}`;
+/** Inbound webhook endpoint of an integration: /api/v1/ingest/<organization>/<integration>. */
+export const webhookUrl = (org: string, identifier: string) => `${platform.PUBLIC_URL}/api/v1/ingest/${org}/${identifier}`;
 
-export function toIntegration(r: IntegrationRow, lastSync: SyncRun | null, lastSuccessAt: string | null = null): Integration {
+/** `org`: slug of the organization (inbound webhook URL). */
+export function toIntegration(r: IntegrationRow, lastSync: SyncRun | null, lastSuccessAt: string | null, org: string): Integration {
   return {
     identifier: r.identifier,
     title: r.title,
@@ -75,47 +80,56 @@ export function toIntegration(r: IntegrationRow, lastSync: SyncRun | null, lastS
     primaryFor: json<string[]>(r.primary_for, []),
     lastSync,
     lastSuccessAt,
-    ...(r.type === 'webhook' ? { webhookUrl: webhookUrl(r.identifier) } : {}),
+    ...(r.type === 'webhook' ? { webhookUrl: webhookUrl(org, r.identifier) } : {}),
   };
 }
 
 async function lastSyncs(): Promise<Map<string, SyncRun>> {
   const rows = await all<SyncRow>(
-    `SELECT s.* FROM sync_runs s JOIN (SELECT integration, max(started_at) AS m FROM sync_runs GROUP BY integration) l
-     ON l.integration = s.integration AND l.m = s.started_at`,
+    `SELECT s.* FROM sync_runs s JOIN (SELECT integration, max(started_at) AS m FROM sync_runs WHERE org_id = ? GROUP BY integration) l
+     ON l.integration = s.integration AND l.m = s.started_at WHERE s.org_id = ?`,
+    orgId(),
+    orgId(),
   );
   return new Map(rows.map((r) => [r.integration, toSyncRun(r)]));
 }
 
 async function lastSuccesses(): Promise<Map<string, string>> {
   const rows = await all<{ integration: string; t: string }>(
-    "SELECT integration, max(ended_at) AS t FROM sync_runs WHERE status = 'success' GROUP BY integration",
+    "SELECT integration, max(ended_at) AS t FROM sync_runs WHERE org_id = ? AND status = 'success' GROUP BY integration",
+    orgId(),
   );
   return new Map(rows.map((r) => [r.integration, r.t]));
 }
 
 export async function listIntegrations(): Promise<Integration[]> {
-  const [last, ok] = await Promise.all([lastSyncs(), lastSuccesses()]);
-  return (await all<IntegrationRow>('SELECT * FROM integrations ORDER BY title')).map((r) =>
-    toIntegration(r, last.get(r.identifier) ?? null, ok.get(r.identifier) ?? null),
+  const [last, ok, org] = await Promise.all([lastSyncs(), lastSuccesses(), orgSlug(orgId())]);
+  return (await all<IntegrationRow>('SELECT * FROM integrations WHERE org_id = ? ORDER BY title', orgId())).map((r) =>
+    toIntegration(r, last.get(r.identifier) ?? null, ok.get(r.identifier) ?? null, org),
   );
 }
 
 export async function getIntegrationRow(id: string): Promise<IntegrationRow> {
-  const r = await one<IntegrationRow>('SELECT * FROM integrations WHERE identifier = ?', id);
+  const r = await one<IntegrationRow>('SELECT * FROM integrations WHERE org_id = ? AND identifier = ?', orgId(), id);
   if (!r) throw notFound(`Integration ${id}`);
   return r;
 }
 
 export async function getIntegration(id: string): Promise<Integration> {
   const r = await getIntegrationRow(id);
-  const last = await one<SyncRow>('SELECT * FROM sync_runs WHERE integration = ? ORDER BY started_at DESC LIMIT 1', id);
-  const ok = await one<{ t: string | null }>("SELECT max(ended_at) AS t FROM sync_runs WHERE integration = ? AND status = 'success'", id);
-  return toIntegration(r, last ? toSyncRun(last) : null, ok?.t ?? null);
+  const last = await one<SyncRow>('SELECT * FROM sync_runs WHERE org_id = ? AND integration = ? ORDER BY started_at DESC LIMIT 1', orgId(), id);
+  const ok = await one<{ t: string | null }>(
+    "SELECT max(ended_at) AS t FROM sync_runs WHERE org_id = ? AND integration = ? AND status = 'success'",
+    orgId(),
+    id,
+  );
+  return toIntegration(r, last ? toSyncRun(last) : null, ok?.t ?? null, await orgSlug(orgId()));
 }
 
 export async function syncHistory(id: string, limit = 30): Promise<SyncRun[]> {
-  return (await all<SyncRow>('SELECT * FROM sync_runs WHERE integration = ? ORDER BY started_at DESC LIMIT ?', id, limit)).map(toSyncRun);
+  return (await all<SyncRow>('SELECT * FROM sync_runs WHERE org_id = ? AND integration = ? ORDER BY started_at DESC LIMIT ?', orgId(), id, limit)).map(
+    toSyncRun,
+  );
 }
 
 export async function upsertIntegration(input: unknown, opts: { managed?: boolean } = {}): Promise<{ integration: Integration; created: boolean }> {
@@ -144,10 +158,11 @@ export async function upsertIntegration(input: unknown, opts: { managed?: boolea
       !kinds.includes(m.kind)
     )
       throw badRequest(`${def.type}: unknown kind "${m.kind}" (available: ${kinds.join(', ')})`);
-    if (!(await one('SELECT identifier FROM blueprints WHERE identifier = ?', m.entity.blueprint)))
+    if (!(await one('SELECT identifier FROM blueprints WHERE org_id = ? AND identifier = ?', orgId(), m.entity.blueprint)))
       throw badRequest(`Blueprint "${m.entity.blueprint}" does not exist`);
   }
-  const existing = await one<IntegrationRow>('SELECT * FROM integrations WHERE identifier = ?', def.identifier);
+  const org = orgId();
+  const existing = await one<IntegrationRow>('SELECT * FROM integrations WHERE org_id = ? AND identifier = ?', org, def.identifier);
   if (existing && bool(existing.managed) && !opts.managed) throw managedError('Integration', def.identifier);
   const t = now();
   const vals = [
@@ -167,18 +182,20 @@ export async function upsertIntegration(input: unknown, opts: { managed?: boolea
   ];
   if (existing)
     await run(
-      'UPDATE integrations SET title = ?, type = ?, enabled = ?, config = ?, mappings = ?, interval_minutes = ?, delete_missing = ?, delete_max_percent = ?, delete_dry_run = ?, schedule = ?, priority = ?, primary_for = ?, managed = ?, sync_state = NULL, updated_at = ? WHERE identifier = ?',
+      'UPDATE integrations SET title = ?, type = ?, enabled = ?, config = ?, mappings = ?, interval_minutes = ?, delete_missing = ?, delete_max_percent = ?, delete_dry_run = ?, schedule = ?, priority = ?, primary_for = ?, managed = ?, sync_state = NULL, updated_at = ? WHERE org_id = ? AND identifier = ?',
       ...vals,
       t,
+      org,
       def.identifier,
     );
   else
     await run(
-      'INSERT INTO integrations (title, type, enabled, config, mappings, interval_minutes, delete_missing, delete_max_percent, delete_dry_run, schedule, priority, primary_for, managed, created_at, updated_at, next_sync_at, identifier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO integrations (title, type, enabled, config, mappings, interval_minutes, delete_missing, delete_max_percent, delete_dry_run, schedule, priority, primary_for, managed, created_at, updated_at, next_sync_at, org_id, identifier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       ...vals,
       t,
       t,
       t, // first sync as soon as a worker sees it
+      org,
       def.identifier,
     );
   return { integration: await getIntegration(def.identifier), created: !existing };
@@ -187,9 +204,9 @@ export async function upsertIntegration(input: unknown, opts: { managed?: boolea
 export async function deleteIntegration(id: string, opts: { managed?: boolean; deleteEntities?: boolean } = {}) {
   const r = await getIntegrationRow(id);
   if (bool(r.managed) && !opts.managed) throw managedError('Integration', id);
-  await run('DELETE FROM integrations WHERE identifier = ?', id);
+  await run('DELETE FROM integrations WHERE org_id = ? AND identifier = ?', orgId(), id);
   // Entities stay in the catalog unless asked; they then show `integration:<id>` as an orphaned source.
-  if (opts.deleteEntities) await run('DELETE FROM entities WHERE source = ?', entitySource(id));
+  if (opts.deleteEntities) await run('DELETE FROM entities WHERE org_id = ? AND source = ?', orgId(), entitySource(id));
 }
 
 /** Ask workers to sync now (works from API-only pods: the next worker tick picks it up). */
@@ -198,10 +215,11 @@ export async function requestSync(id: string, kind?: string, scope?: string) {
   if (getSource(r.type).push) throw badRequest('Webhook integrations receive data; there is nothing to pull');
   if (kind && !json<Array<{ kind: string }>>(r.mappings, []).some((m) => m.kind === kind)) throw badRequest(`No mapping for kind "${kind}"`);
   await run(
-    'UPDATE integrations SET next_sync_at = ?, requested_kind = ?, requested_scope = ? WHERE identifier = ?',
+    'UPDATE integrations SET next_sync_at = ?, requested_kind = ?, requested_scope = ? WHERE org_id = ? AND identifier = ?',
     '1970-01-01T00:00:00.000Z',
     kind ?? null,
     scope ?? null,
+    orgId(),
     id,
   ); // MANUAL in sync.ts
 }

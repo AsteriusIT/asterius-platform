@@ -19,12 +19,13 @@ import {
   revokeSession,
   getUser,
   publicUser,
-  requireUser,
+  requireAccount,
   setTourCompleted,
   verifyPassword,
   type UserRow,
 } from '../auth/users.js';
 import { entraRoutes } from '../auth/entra.js';
+import { accountUrl, keycloakLogoutUrl, keycloakRoutes } from '../auth/keycloak.js';
 import { clearFailures, isLocked, recordFailure } from '../auth/lockout.js';
 import { oidcRoutes } from '../auth/oidc.js';
 import { githubRoutes } from '../auth/github.js';
@@ -52,7 +53,9 @@ export async function authRoutes(app: FastifyInstance) {
     authProviders: config.AUTH_PROVIDERS,
     ...(config.AUTH_PROVIDERS.includes('oidc') ? { oidcTitle: config.OIDC_TITLE } : {}),
     ...(config.AUTH_PROVIDERS.includes('saml') ? { samlTitle: config.SAML_TITLE } : {}),
-    allowRegistration: config.AUTH_PROVIDERS.includes('local') && config.ALLOW_REGISTRATION,
+    allowRegistration: (config.AUTH_PROVIDERS.includes('local') && config.ALLOW_REGISTRATION) || config.AUTH_PROVIDERS.includes('keycloak'),
+    orgCreation: config.ORG_CREATION,
+    accountUrl: accountUrl(),
     invokers: invokerInfos(),
     sources: sourceInfos(),
     models: MODELS,
@@ -88,44 +91,48 @@ export async function authRoutes(app: FastifyInstance) {
       .parse(req.body);
     assertPassword(body.password);
     const user = await createLocalUser(body.email, body.name, body.password, body.bootstrapToken);
-    await audit({ id: user.id, email: user.email }, 'auth.registered', null, { role: user.role });
+    await audit({ id: user.id, email: user.email }, 'auth.registered', null, { superadmin: user.superadmin === 1 }, null);
     return localSession(req, reply, user);
   });
 
+  /** `redirect`: where the browser goes next to end the identity provider's session too (Keycloak). */
   app.post('/api/auth/logout', async (req, reply) => {
     const token = sessionToken(req);
-    if (token) await deleteSession(token);
+    const idToken = token ? await deleteSession(token) : null;
     if (config.SESSION_COOKIE) reply.header('set-cookie', sessionCookie(null));
-    return { ok: true };
+    return { ok: true, ...(idToken && config.AUTH_PROVIDERS.includes('keycloak') ? { redirect: keycloakLogoutUrl(idToken) } : {}) };
   });
 
-  app.get('/api/auth/me', { preHandler: requireUser }, async (req) => ({
-    ...(await publicUser((await getUser(req.principal.id))!)),
+  /** The signed-in account, its organizations, and its role in the organization of the request (X-Asterius-Org). */
+  app.get('/api/auth/me', { preHandler: requireAccount }, async (req) => ({
+    ...(await publicUser((await getUser(req.principal.id))!, req.principal.org)),
     ...(config.SESSION_COOKIE && !bearer(req) ? { csrfToken: csrfFor(sessionToken(req)!) } : {}),
-    permissions: await effectivePermissions(req.principal),
+    // Permissions are per organization: none before the account has one.
+    ...(req.principal.org ? { permissions: await effectivePermissions(req.principal) } : {}),
   }));
   // Sessions of the caller: list, revoke one, or sign out everywhere (keeping this one with ?others=true).
-  app.get('/api/auth/sessions', { preHandler: requireUser }, async (req) => listSessions(req.principal.id, sessionToken(req)));
-  app.delete('/api/auth/sessions/:id', { preHandler: requireUser }, async (req) => {
+  app.get('/api/auth/sessions', { preHandler: requireAccount }, async (req) => listSessions(req.principal.id, sessionToken(req)));
+  app.delete('/api/auth/sessions/:id', { preHandler: requireAccount }, async (req) => {
     const { id } = z.object({ id: z.string().min(8).max(64) }).parse(req.params);
     await revokeSession(req.principal.id, id);
-    await audit({ id: req.principal.id, email: req.principal.email }, 'auth.session_revoked', id);
+    await audit({ id: req.principal.id, email: req.principal.email }, 'auth.session_revoked', id, {}, null);
     return { ok: true };
   });
-  app.post('/api/auth/sessions/revoke-all', { preHandler: requireUser }, async (req) => {
+  app.post('/api/auth/sessions/revoke-all', { preHandler: requireAccount }, async (req) => {
     const { others } = z.object({ others: z.boolean().default(false) }).parse(req.body ?? {});
     const revoked = await revokeAllSessions(req.principal.id, others ? sessionToken(req) : undefined);
-    await audit({ id: req.principal.id, email: req.principal.email }, 'auth.sessions_revoked', null, { revoked, keptCurrent: others });
+    await audit({ id: req.principal.id, email: req.principal.email }, 'auth.sessions_revoked', null, { revoked, keptCurrent: others }, null);
     return { revoked };
   });
-  app.put('/api/auth/me/tour', { preHandler: requireUser }, async (req) => {
+  app.put('/api/auth/me/tour', { preHandler: requireAccount }, async (req) => {
     const { completed } = z.object({ completed: z.boolean() }).parse(req.body);
     await setTourCompleted(req.principal.id, completed);
-    return publicUser((await getUser(req.principal.id))!);
+    return publicUser((await getUser(req.principal.id))!, req.principal.org);
   });
 
   if (config.AUTH_PROVIDERS.includes('entra')) await app.register(entraRoutes);
   if (config.AUTH_PROVIDERS.includes('oidc')) await app.register(oidcRoutes);
   if (config.AUTH_PROVIDERS.includes('github')) await app.register(githubRoutes);
   if (config.AUTH_PROVIDERS.includes('saml')) await app.register(samlRoutes);
+  if (config.AUTH_PROVIDERS.includes('keycloak')) await app.register(keycloakRoutes);
 }

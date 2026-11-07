@@ -4,6 +4,7 @@ import { componentLogger } from './logger.js';
 import { metrics } from './metrics.js';
 import { bumpConfigVersion, onConfigChange, syncCaches } from './lib/config-version.js';
 import { getBlueprintCached } from './catalog/blueprints.js';
+import { maybeOrgId } from './orgs/context.js';
 
 /**
  * Domain events. Each event is written to the outbox (`deliveries`) once per matching outbound webhook;
@@ -48,11 +49,12 @@ interface Sub {
 
 const log = componentLogger('events');
 
-let cache: { at: number; subs: Sub[] } | undefined;
+/** Subscriptions per organization, cached briefly (events of a sync come in thousands). */
+const cache = new Map<string, { at: number; subs: Sub[] }>();
 const CACHE_MS = 15_000;
 
 onConfigChange(() => {
-  cache = undefined;
+  cache.clear();
 });
 
 /** A webhook definition changed: drop the local cache and tell the other replicas. */
@@ -60,11 +62,13 @@ export async function invalidateWebhookCache() {
   await bumpConfigVersion();
 }
 
-async function subscriptions(): Promise<Sub[]> {
+async function subscriptions(org: string): Promise<Sub[]> {
   await syncCaches();
-  if (cache && Date.now() - cache.at < CACHE_MS) return cache.subs;
+  const hit = cache.get(org);
+  if (hit && Date.now() - hit.at < CACHE_MS) return hit.subs;
   const rows = await all<{ identifier: string; events: string; blueprints: string; filter: string | null; transform: string | null }>(
-    'SELECT identifier, events, blueprints, filter, transform FROM webhooks WHERE enabled = 1',
+    'SELECT identifier, events, blueprints, filter, transform FROM webhooks WHERE org_id = ? AND enabled = 1',
+    org,
   );
   const subs = rows.map((r) => ({
     identifier: r.identifier,
@@ -73,7 +77,7 @@ async function subscriptions(): Promise<Sub[]> {
     filter: r.filter,
     transform: r.transform,
   }));
-  cache = { at: Date.now(), subs };
+  cache.set(org, { at: Date.now(), subs });
   return subs;
 }
 
@@ -99,7 +103,10 @@ async function isReadRestricted(blueprint: string) {
  */
 export async function prepareEvents(events: DomainEvent[]): Promise<(d?: Driver) => Promise<void>> {
   for (const e of events) metrics.event(e.type);
-  const subs = await subscriptions();
+  // Platform-level events (accounts, outside any organization) have no organization webhooks.
+  const org = maybeOrgId();
+  if (!org) return async () => undefined;
+  const subs = await subscriptions(org);
   const rows: SqlValue[][] = [];
   for (const e of events) {
     if (e.type === 'run.finished') continue; // internal: never offered to outbound webhooks
@@ -122,14 +129,14 @@ export async function prepareEvents(events: DomainEvent[]): Promise<(d?: Driver)
         log.error({ err, webhook: s.identifier }, 'webhook filter/transform failed');
         continue;
       }
-      rows.push([newId(), s.identifier, e.type, JSON.stringify(body), 'pending', now(), now()]);
+      rows.push([newId(), org, s.identifier, e.type, JSON.stringify(body), 'pending', now(), now()]);
     }
   }
   return async (d) => {
     try {
       for (let i = 0; i < rows.length; i += OUTBOX_CHUNK) {
         const chunk = rows.slice(i, i + OUTBOX_CHUNK);
-        const sql = `INSERT INTO deliveries (id, webhook, event, payload, status, next_attempt_at, created_at) VALUES ${chunk.map(() => '(?, ?, ?, ?, ?, ?, ?)').join(', ')}`;
+        const sql = `INSERT INTO deliveries (id, org_id, webhook, event, payload, status, next_attempt_at, created_at) VALUES ${chunk.map(() => '(?, ?, ?, ?, ?, ?, ?, ?)').join(', ')}`;
         if (d) await d.query(sql, chunk.flat());
         else await run(sql, ...chunk.flat());
       }

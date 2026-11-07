@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Alert, Anchor, Button, Center, Divider, Paper, PasswordInput, Stack, Text, TextInput, Title } from '@mantine/core';
 import { useQuery } from '@tanstack/react-query';
 import { Navigate, useLocation, useNavigate, useSearchParams } from 'react-router';
-import { IconBrandGithub, IconBrandWindows, IconKey } from '@tabler/icons-react';
+import { IconBrandGithub, IconBrandWindows, IconKey, IconShieldLock } from '@tabler/icons-react';
 import { api, errorText } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { BrandLogo, useBrand } from '../components/Brand';
@@ -18,12 +18,19 @@ export function Login() {
   const [name, setName] = useState('');
   const [password, setPassword] = useState('');
   const [bootstrapToken, setBootstrapToken] = useState('');
+  const [ssoEmail, setSsoEmail] = useState('');
   const [error, setError] = useState<string | null>(params.get('error'));
   const [busy, setBusy] = useState(false);
   const from = (location.state as { from?: string } | null)?.from ?? '/';
 
   if (user) return <Navigate to={from} replace />;
   const providers = meta.data?.authProviders ?? [];
+  const keycloakUrl = (o: { email?: string; register?: boolean }) => {
+    const p = new URLSearchParams({ returnTo: from });
+    if (o.email?.includes('@')) p.set('email', o.email.trim());
+    if (o.register) p.set('register', '1');
+    return `/api/auth/keycloak/login?${p}`;
+  };
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -57,6 +64,30 @@ export function Login() {
               {error}
             </Alert>
           )}
+          {providers.includes('keycloak') && (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                window.location.assign(keycloakUrl({ email: ssoEmail }));
+              }}
+            >
+              <Stack gap="xs">
+                <TextInput
+                  type="email"
+                  placeholder="Work email (optional)"
+                  value={ssoEmail}
+                  onChange={(e) => setSsoEmail(e.currentTarget.value)}
+                  autoComplete="email"
+                  aria-label="Work email"
+                  description="Your company's sign-in opens when your organization has connected it"
+                />
+                <Button type="submit" leftSection={<IconShieldLock size={18} />}>
+                  Continue with SSO
+                </Button>
+              </Stack>
+            </form>
+          )}
+          {providers.includes('keycloak') && (providers.includes('entra') || providers.includes('local')) && <Divider label="or" />}
           {providers.includes('entra') && (
             <Button
               component="a"
@@ -116,7 +147,12 @@ export function Login() {
               </Stack>
             </form>
           )}
-          {meta.data?.allowRegistration && (
+          {providers.includes('keycloak') && !providers.includes('local') && (
+            <Text fz="sm" ta="center">
+              No account? <Anchor href={keycloakUrl({ register: true })}>Create one</Anchor>
+            </Text>
+          )}
+          {meta.data?.allowRegistration && providers.includes('local') && (
             <Text fz="sm" ta="center">
               {mode === 'login' ? 'No account? ' : 'Already registered? '}
               <Anchor component="button" type="button" onClick={() => setMode(mode === 'login' ? 'register' : 'login')}>
@@ -130,7 +166,7 @@ export function Login() {
   );
 }
 
-/** Entra ID sign-in lands here with the session token in the URL fragment (never sent to servers). */
+/** Entra ID and Keycloak sign-ins land here with the session token in the URL fragment (never sent to servers). */
 export function AuthCallback() {
   const { signIn } = useAuth();
   const navigate = useNavigate();

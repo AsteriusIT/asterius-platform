@@ -1,4 +1,6 @@
 import { kube, k8s } from '../../lib/kube.js';
+import { orgId } from '../../orgs/context.js';
+import { assertKubernetesAllowed } from '../../orgs/orgs.js';
 import { requireFields, str, stringValues, type InvokeResult, type Invoker } from '../types.js';
 
 /**
@@ -38,6 +40,7 @@ export const tektonInvoker: Invoker = {
   },
   validate: (c) => requireFields(c, ['pipeline'], 'tekton'),
   async start({ config, ctx, log }) {
+    await assertKubernetesAllowed(orgId()); // the platform's cluster credentials (KUBERNETES_ORGS)
     const namespace = str(config.namespace || 'default');
     const name = runName(ctx.run.id);
     const body = {
@@ -54,6 +57,7 @@ export const tektonInvoker: Invoker = {
     return { status: 'IN_PROGRESS', state: { name, namespace }, statusLabel: 'Pending' };
   },
   async poll({ config, log }, state): Promise<InvokeResult> {
+    await assertKubernetesAllowed(orgId()); // the platform's cluster credentials (KUBERNETES_ORGS)
     const k = kube(config.context ? str(config.context) : undefined);
     const pr = (await k.objects.read(ref(str(state.namespace), str(state.name)))) as { status?: { conditions?: Condition[] } };
     const r = fromConditions(pr.status?.conditions);
@@ -61,6 +65,7 @@ export const tektonInvoker: Invoker = {
     return { status: r.status, state, statusLabel: r.label };
   },
   async cancel({ config }, state) {
+    await assertKubernetesAllowed(orgId()); // the platform's cluster credentials (KUBERNETES_ORGS)
     const k = kube(config.context ? str(config.context) : undefined);
     await k.objects.patch(
       { ...ref(str(state.namespace), str(state.name)), spec: { status: 'Cancelled' } } as k8s.KubernetesObject,

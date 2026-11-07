@@ -13,6 +13,7 @@ import { parseDuration } from './waiting.js';
 import { isFormLike } from './trigger-defs.js';
 import { stepsOf, type Step } from './workflow.js';
 import type { RunContext } from './types.js';
+import { orgId } from '../orgs/context.js';
 
 /**
  * Dry run: render every template, evaluate every condition and transform, validate invoker configurations and
@@ -54,7 +55,7 @@ async function secretExists(kind: string, name: string, missing: Set<string>, al
   }
   if (kind === 'env') {
     if (process.env[name] === undefined || Object.keys(config).includes(name)) missing.add(`\${env:${name}}`);
-  } else if (!(await one('SELECT name FROM secrets WHERE name = ?', name))) missing.add(`\${secret:${name}}`);
+  } else if (!(await one('SELECT name FROM secrets WHERE org_id = ? AND name = ?', orgId(), name))) missing.add(`\${secret:${name}}`);
 }
 
 export async function dryRun(actionId: string, p: Principal, input: DryRunInput): Promise<DryRunResult> {

@@ -3,6 +3,7 @@ import { requireFields, str } from '../../actions/types.js';
 import { MAX_PAGES, type Source } from '../types.js';
 import { assertReadOnly, validateIdent } from '../../lib/sql-guard.js';
 import { assertHostAllowed } from '../../lib/netguard.js';
+import { DEFAULT_ORG, orgId } from '../../orgs/context.js';
 
 /**
  * Ingest rows of a read-only SQL query (a CMDB, a licence database…). One query per kind (`queries`), the connection
@@ -46,6 +47,8 @@ async function connect(driver: Driver, url: string, timeoutMs: number): Promise<
   // The SSRF guard covers database hosts too: a source must not be a way to reach internal systems.
   const host = driver === 'sqlite' ? undefined : hostOf(url);
   if (host) await assertHostAllowed(host);
+  // A local file is the platform's own disk (its SQLite database holds every organization): the default organization only.
+  if (driver === 'sqlite' && orgId() !== DEFAULT_ORG) throw new Error('sql: the sqlite driver is reserved to the default organization');
   switch (driver) {
     case 'postgres': {
       const pg = await import('pg');

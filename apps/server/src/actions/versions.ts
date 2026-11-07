@@ -3,6 +3,7 @@ import { all, json, now, one, run } from '../db.js';
 import { badRequest, conflict, notFound } from '../lib/errors.js';
 import type { Actor } from '../audit.js';
 import type { ActionDef } from '../schemas.js';
+import { orgId } from '../orgs/context.js';
 
 /**
  * Action history: every change of an action's definition creates a numbered version (kept after the action is
@@ -24,18 +25,24 @@ export const definitionDoc = (def: ActionDef) => JSON.stringify(def);
 /** The version a definition will have once saved: unchanged → current, changed → next, new → after any deleted history. */
 export async function nextVersion(id: string, current: number | undefined, doc: string): Promise<{ version: number; isNew: boolean }> {
   if (current !== undefined) {
-    const row = await one<{ definition: string }>('SELECT definition FROM action_versions WHERE action = ? AND version = ?', id, current);
+    const row = await one<{ definition: string }>(
+      'SELECT definition FROM action_versions WHERE org_id = ? AND action = ? AND version = ?',
+      orgId(),
+      id,
+      current,
+    );
     if (row?.definition === doc) return { version: current, isNew: false };
     return { version: current + 1, isNew: true };
   }
-  const max = await one<{ v: number | null }>('SELECT max(version) AS v FROM action_versions WHERE action = ?', id);
+  const max = await one<{ v: number | null }>('SELECT max(version) AS v FROM action_versions WHERE org_id = ? AND action = ?', orgId(), id);
   return { version: Number(max?.v ?? 0) + 1, isNew: true };
 }
 
 export async function recordVersion(id: string, version: number, doc: string, actor: Actor, note?: string) {
   try {
     await run(
-      'INSERT INTO action_versions (action, version, definition, actor_id, actor_email, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO action_versions (org_id, action, version, definition, actor_id, actor_email, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      orgId(),
       id,
       version,
       doc,
@@ -57,11 +64,11 @@ const toVersion = (r: VersionRow): ActionVersion => ({
 });
 
 export async function listVersions(id: string): Promise<ActionVersion[]> {
-  return (await all<VersionRow>('SELECT * FROM action_versions WHERE action = ? ORDER BY version DESC LIMIT 200', id)).map(toVersion);
+  return (await all<VersionRow>('SELECT * FROM action_versions WHERE org_id = ? AND action = ? ORDER BY version DESC LIMIT 200', orgId(), id)).map(toVersion);
 }
 
 export async function getVersion(id: string, version: number): Promise<ActionVersion & { definition: Record<string, unknown> }> {
-  const r = await one<VersionRow>('SELECT * FROM action_versions WHERE action = ? AND version = ?', id, version);
+  const r = await one<VersionRow>('SELECT * FROM action_versions WHERE org_id = ? AND action = ? AND version = ?', orgId(), id, version);
   if (!r) throw notFound(`Version ${version} of action ${id}`);
   return { ...toVersion(r), definition: json(r.definition, {}) };
 }

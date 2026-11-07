@@ -1,5 +1,7 @@
 import { config as platform } from '../../config.js';
 import { k8s, kube } from '../../lib/kube.js';
+import { orgId } from '../../orgs/context.js';
+import { assertKubernetesAllowed } from '../../orgs/orgs.js';
 import type { LogFn } from '../../lib/ci-logs.js';
 import { requireFields, str, stringValues, type Invoker } from '../types.js';
 
@@ -163,6 +165,7 @@ export const kubernetesJobInvoker: Invoker = {
         },
       },
     };
+    await assertKubernetesAllowed(orgId());
     const k = kube(context);
     const secret: k8s.V1Secret = {
       apiVersion: 'v1',
@@ -187,6 +190,7 @@ export const kubernetesJobInvoker: Invoker = {
     return { status: 'IN_PROGRESS', state: { name, namespace }, statusLabel: 'job created' };
   },
   async poll({ config, log }, state) {
+    await assertKubernetesAllowed(orgId());
     const k = kube(config.context ? str(config.context) : undefined);
     const job = await k.batch.readNamespacedJob({ name: str(state.name), namespace: str(state.namespace) });
     const done = job.status?.succeeded ? 'SUCCESS' : job.status?.conditions?.some((c) => c.type === 'Failed' && c.status === 'True') ? 'FAILURE' : null;
@@ -215,6 +219,7 @@ export const kubernetesJobInvoker: Invoker = {
     return { status: done, state, statusLabel: done === 'SUCCESS' ? 'succeeded' : 'failed' };
   },
   async cancel({ config }, state) {
+    await assertKubernetesAllowed(orgId());
     await kube(config.context ? str(config.context) : undefined).batch.deleteNamespacedJob({
       name: str(state.name),
       namespace: str(state.namespace),

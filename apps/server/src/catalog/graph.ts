@@ -1,6 +1,7 @@
 import type { EntityGraph, GraphEdge, GraphNode } from '@asterius/shared';
 import { all, type SqlValue } from '../db.js';
 import { getEntity } from './entities.js';
+import { orgId } from '../orgs/context.js';
 
 export const MAX_DEPTH = 6;
 export const MAX_NODES = 1000;
@@ -22,14 +23,15 @@ interface EdgeRow {
 async function walk(bp: string, id: string, dir: 'out' | 'in', depth: number): Promise<EdgeRow[]> {
   const from = dir === 'out' ? ['blueprint', 'identifier'] : ['target_blueprint', 'target_identifier'];
   const next = dir === 'out' ? ['tb', 'ti'] : ['sb', 'si'];
-  const params: SqlValue[] = [bp, id, depth];
+  const org = orgId();
+  const params: SqlValue[] = [org, bp, id, org, depth];
   return all<EdgeRow>(
     `WITH RECURSIVE walk(sb, si, rel, tb, ti, depth) AS (
        SELECT r.blueprint, r.identifier, r.relation, r.target_blueprint, r.target_identifier, 1
-       FROM entity_relations r WHERE r.${from[0]} = ? AND r.${from[1]} = ?
+       FROM entity_relations r WHERE r.org_id = ? AND r.${from[0]} = ? AND r.${from[1]} = ?
        UNION
        SELECT r.blueprint, r.identifier, r.relation, r.target_blueprint, r.target_identifier, w.depth + 1
-       FROM walk w JOIN entity_relations r ON r.${from[0]} = w.${next[0]} AND r.${from[1]} = w.${next[1]}
+       FROM walk w JOIN entity_relations r ON r.org_id = ? AND r.${from[0]} = w.${next[0]} AND r.${from[1]} = w.${next[1]}
        WHERE w.depth < ?
      )
      SELECT sb, si, rel, tb, ti, min(depth) AS depth FROM walk GROUP BY sb, si, rel, tb, ti ORDER BY min(depth), sb, si, rel, tb, ti LIMIT ${MAX_EDGES + 1}`,
@@ -81,7 +83,8 @@ export async function entityGraph(bp: string, id: string, opts: { depth: number;
     for (let o = 0; o < ids.length; o += 200) {
       const part = ids.slice(o, o + 200);
       const rows = await all<{ identifier: string; title: string; team: string | null }>(
-        `SELECT identifier, title, team FROM entities WHERE blueprint = ? AND identifier IN (${part.map(() => '?').join(',')})`,
+        `SELECT identifier, title, team FROM entities WHERE org_id = ? AND blueprint = ? AND identifier IN (${part.map(() => '?').join(',')})`,
+        orgId(),
         b,
         ...part,
       );

@@ -42,6 +42,20 @@ data:
   ALLOW_REGISTRATION: {{ $v.auth.allowRegistration | quote }}
   SESSION_DAYS: {{ $v.auth.sessionDays | quote }}
   ADMIN_EMAILS: {{ join "," $v.auth.adminEmails | quote }}
+  ORG_CREATION: {{ $v.organizations.creation | quote }}
+  AUTO_JOIN_DEFAULT_ORG: {{ $v.organizations.autoJoinDefault | quote }}
+  KUBERNETES_ORGS: {{ join "," $v.organizations.kubernetesOrgs | quote }}
+  PLATFORM_IDENTITY_ORGS: {{ join "," ($v.organizations.platformIdentityOrgs | default (list "default")) | quote }}
+  {{- if or $v.keycloak.enabled $v.keycloak.url }}
+  KEYCLOAK_URL: {{ include "ap.keycloakUrl" . | quote }}
+  KEYCLOAK_REALM: {{ $v.keycloak.realm | quote }}
+  KEYCLOAK_CLIENT_ID: {{ $v.keycloak.clientId | quote }}
+  {{- if $v.keycloak.enabled }}
+  KEYCLOAK_INTERNAL_URL: {{ printf "http://%s:8080" (include "ap.keycloakName" .) | quote }}
+  {{- else if $v.keycloak.internalUrl }}
+  KEYCLOAK_INTERNAL_URL: {{ $v.keycloak.internalUrl | quote }}
+  {{- end }}
+  {{- end }}
   {{- with $v.auth.entra.tenantId }}
   ENTRA_TENANT_ID: {{ . | quote }}
   {{- end }}

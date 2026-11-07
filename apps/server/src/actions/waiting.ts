@@ -7,7 +7,7 @@ import { compact, validate } from '../catalog/validation.js';
 import { audit } from '../audit.js';
 import { actorOf, getUser, principalOf, type Principal } from '../auth/users.js';
 import { complete, buildContext, setStep } from './engine.js';
-import { addLog, emitRun, getRunRow, startAutomatedRun, type RunRow } from './runs.js';
+import { addLog, emitRun, getRunRow, inRunOrg, startAutomatedRun, type RunRow } from './runs.js';
 import { getAction } from './actions.js';
 import { notifyPendingDecision } from '../notifications/dispatch.js';
 import { canSubmitInput, loadSteps, stepDefs, type StepRow } from './steps.js';
@@ -110,7 +110,7 @@ export async function claimWaits(slots: number, spawn: (fn: () => Promise<void>)
      WHERE status = 'WAITING' AND next_at IS NOT NULL AND (run_id, step_id) IN (SELECT run_id, step_id FROM picked) RETURNING run_id, step_id`,
     [now(), slots, later(30_000)],
   );
-  for (const s of rows) spawn(() => visit(s.run_id, s.step_id));
+  for (const s of rows) spawn(() => inRunOrg(s.run_id, () => visit(s.run_id, s.step_id)));
   return rows.length;
 }
 

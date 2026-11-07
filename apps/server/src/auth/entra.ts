@@ -4,7 +4,7 @@ import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from 'jose';
 import { config } from '../config.js';
 import { all, one, run, withAdvisoryLock } from '../db.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { entraRole, syncEntraTeams, upsertEntraUser, type UserRow } from './users.js';
+import { syncExternalMembership, syncEntraTeams, upsertEntraUser, type UserRow } from './users.js';
 import { finishLogin } from './oauth.js';
 import { audit } from '../audit.js';
 
@@ -104,7 +104,8 @@ export async function resyncEntraMemberships(log: FastifyBaseLogger) {
         const oid = (u.external_id ?? '').split(':')[1];
         if (!oid) continue;
         const groups = await graphGroupsOf(oid);
-        await run('UPDATE users SET groups = ?, role = ? WHERE id = ?', JSON.stringify(groups), entraRole(u, u.email, groups), u.id);
+        await run('UPDATE users SET groups = ? WHERE id = ?', JSON.stringify(groups), u.id);
+        await syncExternalMembership(u.id, { externalId: u.external_id ?? '', email: u.email, name: u.name, groups, adminGroups: config.ENTRA_ADMIN_GROUPS });
         await syncEntraTeams(u.id, groups);
       } catch (err) {
         log.warn({ err, user: u.email }, 'entra membership re-sync failed');

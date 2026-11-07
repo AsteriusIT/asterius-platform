@@ -7,6 +7,8 @@ import { matchesSubjects, principalOf, type UserRow } from '../auth/users.js';
 import { approverSubjects } from '../actions/steps.js';
 import { dmSlack, mailConfigured, sendMail } from './channels.js';
 import { getNotificationPrefs, getNotificationSettings } from './settings.js';
+import { orgId } from '../orgs/context.js';
+import { findOrg, orgRef } from '../orgs/orgs.js';
 
 /**
  * The platform's own notifications, following each person's preferences (Profile → Notifications):
@@ -49,7 +51,12 @@ export async function notifyPendingDecision(o: {
 }) {
   const named = o.subjects && (o.subjects.roles?.length || o.subjects.teams?.length || o.subjects.users?.length || o.subjects.ownerTeam);
   const subjects: Subjects = o.kind === 'approval' ? approverSubjects(o.subjects) : named ? (o.subjects as Subjects) : { users: [] };
-  const users = await all<UserRow>("SELECT * FROM users WHERE active = 1 AND provider != 'service' ORDER BY name LIMIT 1000");
+  // Members of the run's organization (the context of the run).
+  const ref = orgRef((await findOrg(orgId()))!);
+  const users = await all<UserRow>(
+    "SELECT u.* FROM users u JOIN memberships m ON m.user_id = u.id WHERE m.org_id = ? AND u.active = 1 AND u.provider != 'service' ORDER BY u.name LIMIT 1000",
+    ref.id,
+  );
   const subject = o.kind === 'approval' ? `Approval needed: ${o.run.action_title}` : `Input needed: ${o.run.action_title}`;
   const body = [`${o.run.user_name ?? 'Someone'} started ${o.run.action_title}.`, o.stepName ? `Step: ${o.stepName}` : '', o.message ?? '']
     .filter(Boolean)
@@ -62,7 +69,7 @@ export async function notifyPendingDecision(o: {
     const eligible =
       o.kind === 'input' && !named
         ? isRequester
-        : matchesSubjects(await principalOf(u), subjects, o.run.team) && (o.kind !== 'approval' || o.allowSelf || !isRequester);
+        : matchesSubjects(await principalOf(u, ref), subjects, o.run.team) && (o.kind !== 'approval' || o.allowSelf || !isRequester);
     if (!eligible) continue;
     const prefs = await getNotificationPrefs(u.id);
     if (!prefs.approvals.length) continue;

@@ -179,6 +179,7 @@ export function buildOpenApi(routes: RouteInfo[], version = '0.1.0') {
   schemas.Error = { type: 'object', properties: { error: { type: 'string' } }, required: ['error'] };
 
   const paths: Record<string, Record<string, unknown>> = {};
+  const used = new Set<string>();
   for (const r of [...routes].sort((a, b) => a.url.localeCompare(b.url) || a.method.localeCompare(b.method))) {
     const url = toOpenApiPath(r.url);
     const method = r.method.toLowerCase();
@@ -186,10 +187,13 @@ export function buildOpenApi(routes: RouteInfo[], version = '0.1.0') {
     const body = BODIES[`${r.method} ${r.url}`];
     const segs = url.split('/').filter((s) => s && !s.startsWith('{'));
     paths[url] ??= {};
+    const by = params.length ? `-by-${params.map((p) => p.name).join('-')}` : '';
+    let operationId = camel(`${method}-${segs.filter((x) => x !== 'api' && x !== 'v1').join('-') || 'root'}${by}`);
+    // The same route under /api and /api/v1 (e.g. the MCP endpoint): keep the full path in the second id.
+    if (used.has(operationId)) operationId = camel(`${method}-${segs.join('-')}${by}`);
+    used.add(operationId);
     paths[url]![method] = {
-      operationId: camel(
-        `${method}-${segs.filter((x) => x !== 'api' && x !== 'v1').join('-') || 'root'}${params.length ? `-by-${params.map((p) => p.name).join('-')}` : ''}`,
-      ),
+      operationId,
       tags: [segs.filter((x) => x !== 'api' && x !== 'v1')[0] ?? 'api'],
       summary: `${r.method} ${url}`,
       parameters: params,

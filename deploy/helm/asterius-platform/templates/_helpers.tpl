@@ -51,6 +51,19 @@ s3Credentials:
 {{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}
 {{- end -}}
 
+{{- define "ap.keycloakName" -}}
+{{- printf "%s-keycloak" (include "ap.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{- define "ap.keycloakSecretName" -}}
+{{- .Values.keycloak.existingSecret | default (include "ap.keycloakName" .) -}}
+{{- end -}}
+
+{{/* Public URL of Keycloak: the chart's own (https://host) or an existing one (keycloak.url). */}}
+{{- define "ap.keycloakUrl" -}}
+{{- if .Values.keycloak.enabled -}}https://{{ .Values.keycloak.host }}{{- else -}}{{ .Values.keycloak.url }}{{- end -}}
+{{- end -}}
+
 {{- define "ap.cnpgName" -}}
 {{- printf "%s-db" (include "ap.fullname" .) -}}
 {{- end -}}
@@ -59,6 +72,15 @@ s3Credentials:
 {{- define "ap.validate" -}}
 {{- if not (or .Values.database.url .Values.secrets.existingSecret .Values.database.cnpg.enabled) -}}
 {{- fail "A PostgreSQL database is required: set database.url, DATABASE_URL in secrets.existingSecret, or database.cnpg.enabled=true" -}}
+{{- end -}}
+{{- if and .Values.keycloak.enabled (not .Values.keycloak.host) -}}
+{{- fail "keycloak.enabled: set keycloak.host (the public host name of the identity service)" -}}
+{{- end -}}
+{{- if and .Values.keycloak.enabled (not .Values.keycloak.database.url) -}}
+{{- fail "keycloak.enabled: set keycloak.database.url (jdbc:postgresql://host:5432/keycloak); credentials go in the Keycloak Secret (KC_DB_USERNAME, KC_DB_PASSWORD)" -}}
+{{- end -}}
+{{- if and (contains "keycloak" .Values.auth.providers) (not (or .Values.keycloak.enabled .Values.keycloak.url)) -}}
+{{- fail "auth.providers includes keycloak: enable keycloak.enabled or set keycloak.url to an existing Keycloak" -}}
 {{- end -}}
 {{- if and (contains "entra" .Values.auth.providers) (not (and .Values.auth.entra.tenantId .Values.auth.entra.clientId)) -}}
 {{- fail "auth.providers includes entra: set auth.entra.tenantId and auth.entra.clientId (ENTRA_CLIENT_SECRET goes in the Secret)" -}}
@@ -123,11 +145,17 @@ containers:
       - name: DATABASE_URL
         valueFrom: { secretKeyRef: { name: {{ include "ap.cnpgName" .root }}-app, key: uri } }
       {{- end }}
+      {{- if $v.keycloak.enabled }}
+      - name: KEYCLOAK_CLIENT_SECRET
+        valueFrom: { secretKeyRef: { name: {{ include "ap.keycloakSecretName" .root }}, key: ASTERIUS_CLIENT_SECRET } }
+      {{- end }}
     envFrom:
       - configMapRef: { name: {{ include "ap.fullname" .root }}-env }
       - secretRef: { name: {{ include "ap.secretName" .root }} }
     volumeMounts:
       - { name: tmp, mountPath: /tmp }
+      # Shallow clones of organizations' configuration repositories (re-cloned after a restart).
+      - { name: data, mountPath: /data }
       {{- if or $v.plugins.existingConfigMap $v.plugins.existingClaim }}
       - { name: plugins, mountPath: /plugins, readOnly: true }
       {{- end }}
@@ -191,6 +219,8 @@ containers:
 volumes:
   - name: tmp
     emptyDir: { sizeLimit: 256Mi }
+  - name: data
+    emptyDir: { sizeLimit: 2Gi }
   {{- if $v.plugins.existingClaim }}
   - name: plugins
     persistentVolumeClaim: { claimName: {{ $v.plugins.existingClaim }}, readOnly: true }

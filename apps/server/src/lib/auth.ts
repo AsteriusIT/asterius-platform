@@ -3,6 +3,8 @@ import { readFile } from 'node:fs/promises';
 import { Agent } from 'undici';
 import { guardedLookup } from './netguard.js';
 import { authDef, type AuthDef } from '../schemas.js';
+import { maybeOrgId } from '../orgs/context.js';
+import { assertPlatformIdentityAllowed } from '../orgs/orgs.js';
 
 /**
  * Generic authentication of outbound HTTP calls, shared by every HTTP-based source and invoker. A resource sets
@@ -148,9 +150,17 @@ async function awsWebIdentity(fetchToken: TokenFetch): Promise<AwsCreds> {
 }
 
 // ---------- resolution ----------
+/** Auth blocks that fall back to the platform's own identity (no credential in the block). */
+const ambient = (a: AuthDef) =>
+  a.type === 'azure-managed-identity' ||
+  (a.type === 'gcp-service-account' && !a.serviceAccountJson) ||
+  (a.type === 'aws-sigv4' && !(a.accessKeyId && a.secretAccessKey));
+
 export async function resolveAuth(raw: unknown, req: AuthRequest, fetchToken: TokenFetch): Promise<AuthResult> {
   const a = parseAuth(raw);
   if (!a) return { headers: {} };
+  const org = maybeOrgId();
+  if (org && ambient(a)) await assertPlatformIdentityAllowed(org, `auth ${a.type}`);
   switch (a.type) {
     case 'basic':
       return { headers: { authorization: `Basic ${Buffer.from(`${a.username}:${a.password}`).toString('base64')}` } };

@@ -38,6 +38,7 @@ const access = () => import('./pages/admin/Access');
 const system = () => import('./pages/admin/System');
 const notificationsAdmin = () => import('./pages/admin/Notifications');
 const ai = () => import('./pages/admin/AiAdmin');
+const organization = () => import('./pages/Organization');
 
 const queryClient = createQueryClient();
 
@@ -46,12 +47,19 @@ function RequireAuth() {
   const location = useLocation();
   if (loading) return <Loading />;
   if (!user) return <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />;
+  // Signed in without an organization: create one or wait for an invitation.
+  if (!user.organization && location.pathname !== '/welcome') return <Navigate to="/welcome" replace />;
   return <Outlet />;
 }
 
 function RequireAdmin() {
   const { isAdmin } = useAuth();
   return isAdmin ? <Outlet /> : <Navigate to="/" replace />;
+}
+
+function RequireSuperadmin() {
+  const { isSuperadmin } = useAuth();
+  return isSuperadmin ? <Outlet /> : <Navigate to="/" replace />;
 }
 
 function Root() {
@@ -73,6 +81,7 @@ const router = createBrowserRouter([
       {
         element: <RequireAuth />,
         children: [
+          { path: '/welcome', element: page(organization, 'Welcome') },
           {
             element: <Layout />,
             errorElement: <RouteError />,
@@ -87,6 +96,12 @@ const router = createBrowserRouter([
               { path: '/runs/:id', element: page(runs, 'RunPage') },
               { path: '/approvals', element: page(runs, 'Approvals') },
               { path: '/profile', element: page(profile, 'Profile') },
+              { path: '/orgs/new', element: page(organization, 'NewOrganization') },
+              {
+                path: '/platform',
+                element: <RequireSuperadmin />,
+                children: [{ path: 'organizations', element: page(organization, 'PlatformOrganizations') }],
+              },
               {
                 path: '/admin',
                 element: <RequireAdmin />,
@@ -106,6 +121,7 @@ const router = createBrowserRouter([
                   { path: 'config', element: page(system, 'ConfigAdmin') },
                   { path: 'notifications', element: page(notificationsAdmin, 'NotificationsAdmin') },
                   { path: 'deliveries', element: page(system, 'DeliveriesAdmin') },
+                  { path: 'organization', element: page(organization, 'OrganizationSettings') },
                 ],
               },
               { path: '*', element: <Navigate to="/" replace /> },

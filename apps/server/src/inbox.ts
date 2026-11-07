@@ -1,4 +1,5 @@
 import { all, newId, now, one, run } from './db.js';
+import { maybeOrgId, orgId } from './orgs/context.js';
 
 /**
  * In-app notifications: one row per (user, event). Created by the run lifecycle (approval requested, run finished);
@@ -31,11 +32,13 @@ interface Row {
   read_at: string | null;
 }
 
+/** In-app notification of the current organization (its links point into that organization). */
 export async function notify(userId: string, n: { kind: string; title: string; body?: string; link?: string | null; dedupe: string }) {
   if (await one('SELECT 1 AS x FROM notifications WHERE user_id = ? AND dedupe = ?', userId, n.dedupe)) return false;
   await run(
-    'INSERT INTO notifications (id, user_id, kind, title, body, link, dedupe, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    'INSERT INTO notifications (id, org_id, user_id, kind, title, body, link, dedupe, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
     newId(),
+    maybeOrgId(),
     userId,
     n.kind,
     n.title.slice(0, 200),
@@ -49,13 +52,14 @@ export async function notify(userId: string, n: { kind: string; title: string; b
 
 export async function listNotifications(userId: string, q: { unread?: boolean; limit: number; offset: number }) {
   const rows = await all<Row>(
-    `SELECT id, kind, title, body, link, created_at, read_at FROM notifications WHERE user_id = ? ${q.unread ? 'AND read_at IS NULL' : ''}
+    `SELECT id, kind, title, body, link, created_at, read_at FROM notifications WHERE user_id = ? AND org_id = ? ${q.unread ? 'AND read_at IS NULL' : ''}
      ORDER BY created_at DESC LIMIT ? OFFSET ?`,
     userId,
+    orgId(),
     q.limit,
     q.offset,
   );
-  const unread = await one<{ n: number }>('SELECT count(*) AS n FROM notifications WHERE user_id = ? AND read_at IS NULL', userId);
+  const unread = await one<{ n: number }>('SELECT count(*) AS n FROM notifications WHERE user_id = ? AND org_id = ? AND read_at IS NULL', userId, orgId());
   const items: NotificationView[] = rows.map((r) => ({
     id: r.id,
     kind: r.kind,
@@ -68,9 +72,10 @@ export async function listNotifications(userId: string, q: { unread?: boolean; l
   return { items, unread: Number(unread?.n ?? 0) };
 }
 
-/** Mark the given notifications (or all of the user's) as read. */
+/** Mark the given notifications (or all of the user's in the current organization) as read. */
 export async function markRead(userId: string, ids: string[] | 'all') {
-  if (ids === 'all') return (await run('UPDATE notifications SET read_at = ? WHERE user_id = ? AND read_at IS NULL', now(), userId)).changes;
+  if (ids === 'all')
+    return (await run('UPDATE notifications SET read_at = ? WHERE user_id = ? AND org_id = ? AND read_at IS NULL', now(), userId, orgId())).changes;
   let n = 0;
   for (const id of ids) n += (await run('UPDATE notifications SET read_at = ? WHERE user_id = ? AND id = ? AND read_at IS NULL', now(), userId, id)).changes;
   return n;
@@ -87,7 +92,7 @@ export async function setPrefs(userId: string, p: NotificationPrefs) {
   return p;
 }
 
-/** Drop read notifications older than 90 days. */
+/** Drop read notifications older than 90 days (every organization). */
 export async function purgeNotifications() {
   const cutoff = new Date(Date.now() - 90 * 86_400_000).toISOString();
   await run('DELETE FROM notifications WHERE read_at IS NOT NULL AND created_at < ?', cutoff);

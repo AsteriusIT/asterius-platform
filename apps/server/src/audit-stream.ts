@@ -21,6 +21,8 @@ interface Row {
   actor_email: string | null;
   target: string | null;
   detail: string;
+  /** Null: platform-level (sign-ins, organization management). */
+  org_id: string | null;
 }
 
 export const streamEnabled = () => !!(config.AUDIT_STREAM_URL || config.AUDIT_SYSLOG_URL);
@@ -28,6 +30,7 @@ export const streamEnabled = () => !!(config.AUDIT_STREAM_URL || config.AUDIT_SY
 const event = (r: Row) => ({
   id: r.id,
   at: r.at,
+  organization: r.org_id,
   action: r.action,
   actor: r.actor_email,
   target: r.target,
@@ -78,7 +81,9 @@ export async function flushAuditStream(): Promise<number> {
   return withAdvisoryLock(726211, async () => {
     let total = 0;
     for (;;) {
-      const rows = await all<Row>('SELECT id, at, action, actor_email, target, detail FROM audit_log WHERE streamed_at IS NULL ORDER BY at, id LIMIT 200');
+      const rows = await all<Row>(
+        'SELECT id, at, action, actor_email, target, detail, org_id FROM audit_log WHERE streamed_at IS NULL ORDER BY at, id LIMIT 200',
+      );
       if (!rows.length) return total;
       if (config.AUDIT_STREAM_URL) await sendHttp(rows);
       if (config.AUDIT_SYSLOG_URL) await sendSyslog(rows);

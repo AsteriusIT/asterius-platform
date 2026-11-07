@@ -109,7 +109,7 @@ describe('audit log', () => {
     expect(await flushAuditStream()).toBe(0); // nothing new
     await admin.put('/api/v1/teams/later', { title: 'Later' });
     expect(await flushAuditStream()).toBe(1);
-    expect(syslogLine({ id: 'x', at: '2026-01-01T00:00:00.000Z', action: 'a b', actor_email: 'u@x', target: null, detail: '{}' })).toMatch(
+    expect(syslogLine({ id: 'x', at: '2026-01-01T00:00:00.000Z', action: 'a b', actor_email: 'u@x', target: null, detail: '{}', org_id: null })).toMatch(
       /^<110>1 2026-01-01T00:00:00.000Z \S+ asterius-platform - a_b - \{/,
     );
   });

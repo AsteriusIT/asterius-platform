@@ -18,7 +18,9 @@ import { catalogRoutes } from './routes/catalog.js';
 import { actionRoutes } from './routes/actions.js';
 import { integrationRoutes } from './routes/integrations.js';
 import { adminRoutes } from './routes/admin.js';
+import { orgRoutes } from './routes/orgs.js';
 import { migrateLiteralWebhookSecrets } from './webhooks/webhooks.js';
+import { openRequestContext } from './orgs/context.js';
 
 function trustProxy(v: string): boolean | string[] | ((address: string, hop: number) => boolean) {
   const t = v.trim().toLowerCase();
@@ -41,7 +43,7 @@ import { aiRoutes } from './routes/ai.js';
 import { mcpRoutes } from './routes/mcp.js';
 
 export interface AppOptions {
-  reloadConfig?: () => Promise<void>;
+  reloadConfig?: (org?: string) => Promise<void>;
   logger?: boolean;
 }
 
@@ -89,6 +91,9 @@ export async function buildApp(opts: AppOptions = {}): Promise<FastifyInstance> 
       done(Object.assign(new Error('Invalid JSON body'), { statusCode: 400 }), undefined);
     }
   });
+
+  // Organization context of the request (filled in by authentication, read by every org-scoped query).
+  app.addHook('onRequest', (_req, _reply, done) => openRequestContext(done));
 
   app.setErrorHandler((err, req, reply) => {
     if (err instanceof ZodError)
@@ -138,6 +143,8 @@ export async function buildApp(opts: AppOptions = {}): Promise<FastifyInstance> 
   const routes = collectRoutes(app);
   await app.register(authRoutes);
   await app.register(scimRoutes);
+  await app.register(orgRoutes, { reloadConfig: opts.reloadConfig ?? (async () => undefined) });
+  await app.register(mcpRoutes, { prefix: '/api' }); // documented address; also under /api/v1
   await app.register(
     async (v1) => {
       await v1.register(catalogRoutes);

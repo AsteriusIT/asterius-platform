@@ -13,6 +13,7 @@ import {
   listUsers,
   publicUser,
   requireAdmin,
+  requireSuperadmin,
   requireUser,
   tokenLifetime,
   updateUser,
@@ -38,8 +39,14 @@ import { badRequest, errorMessage, forbidden } from '../lib/errors.js';
 import { grants, ipAllowSchema, scopeSchema, SCOPES } from '../auth/scopes.js';
 import { roleName } from '../schemas.js';
 import { exportArchive, importArchive } from '../archive.js';
+import { DEFAULT_ORG, orgId } from '../orgs/context.js';
+import path from 'node:path';
+import { getOrg, toOrganization } from '../orgs/orgs.js';
 
-export async function adminRoutes(app: FastifyInstance, opts: { reloadConfig: () => Promise<void> }) {
+/** Where the configuration directory of an organization lives (CONFIG_DIR for the default one). */
+const configDirOf = (slug: string) => (slug === DEFAULT_ORG ? config.CONFIG_DIR : path.join(config.CONFIG_DIR, 'orgs', slug));
+
+export async function adminRoutes(app: FastifyInstance, opts: { reloadConfig: (org?: string) => Promise<void> }) {
   // ---- for every signed-in user ----
   await app.register(async (user) => {
     user.addHook('preHandler', requireUser);
@@ -111,7 +118,7 @@ export async function adminRoutes(app: FastifyInstance, opts: { reloadConfig: ()
         })
         .parse(req.body);
       if (id === req.principal.id && (body.role === 'member' || body.active === false)) throw badRequest('You cannot demote or disable yourself');
-      const u = await updateUser(id, body);
+      const u = await updateUser(id, body, req.principal);
       await audit(actorOf(req.principal), 'user.updated', u.email, body);
       return u;
     });
@@ -148,7 +155,7 @@ export async function adminRoutes(app: FastifyInstance, opts: { reloadConfig: ()
         expiresInDays: tokenLifetime(body.expiresInDays, null),
       });
       await audit(actorOf(req.principal), 'service_account.created', body.name, { role: body.role });
-      return reply.code(201).send({ user: await publicUser(sa), token: t.token });
+      return reply.code(201).send({ user: await publicUser(sa, req.principal.org), token: t.token });
     });
 
     admin.put('/teams/:id', async (req) => {
@@ -268,22 +275,22 @@ export async function adminRoutes(app: FastifyInstance, opts: { reloadConfig: ()
       to: date,
     });
     admin.get('/audit', async (req, reply) => {
-      const { entries, nextCursor } = await listAudit(
-        page
-          .merge(auditQuery)
-          .extend({ cursor: z.string().max(500).optional() })
-          .parse(req.query),
-      );
+      const q = page
+        .merge(auditQuery)
+        .extend({ cursor: z.string().max(500).optional() })
+        .parse(req.query);
+      // Platform-level entries (sign-ins, organization management) are shown to super-admins only.
+      const { entries, nextCursor } = await listAudit({ ...q, platform: req.principal.superadmin });
       nextPageHeaders(req, reply, nextCursor);
       return entries;
     });
-    admin.get('/audit/facets', async (req) => auditFacets(auditQuery.parse(req.query)));
+    admin.get('/audit/facets', async (req) => auditFacets({ ...auditQuery.parse(req.query), platform: req.principal.superadmin }));
     /** Export with the same filters: CSV (spreadsheet-safe) or NDJSON. Exporting is itself audited. */
     admin.get('/audit/export', async (req, reply) => {
       const q = auditQuery.extend({ format: z.enum(['csv', 'json']).default('csv') }).parse(req.query);
       const { format, ...filters } = q;
       await audit(actorOf(req.principal), 'audit.exported', null, { format, ...filters });
-      const rows = exportAudit(filters);
+      const rows = exportAudit({ ...filters, platform: req.principal.superadmin });
       const stream =
         format === 'csv'
           ? Readable.from(
@@ -303,12 +310,16 @@ export async function adminRoutes(app: FastifyInstance, opts: { reloadConfig: ()
         .send(stream);
     });
     /** Recompute the hash chain (AUDIT_HASH_CHAIN): detects modified, removed or reordered entries. */
-    admin.get('/audit/verify', async () => verifyAuditChain());
+    // The chain spans every organization: super-admins only.
+    admin.get('/audit/verify', { preHandler: requireSuperadmin }, async () => verifyAuditChain());
 
     admin.get('/config', async () => {
       const st = await configStatus();
+      const org = await toOrganization(await getOrg(orgId()));
       return {
-        dir: config.CONFIG_DIR,
+        dir: st.dir,
+        source: org.configSource,
+        sync: org.configStatus,
         managed: await managedCounts(),
         // Summary for the admin page header (details: /config/status and /config/plan).
         status: {
@@ -364,8 +375,8 @@ export async function adminRoutes(app: FastifyInstance, opts: { reloadConfig: ()
       return report;
     });
     admin.post('/config/reload', async (req) => {
-      await opts.reloadConfig();
-      await audit(actorOf(req.principal), 'config.reload_requested', config.CONFIG_DIR);
+      await opts.reloadConfig(orgId());
+      await audit(actorOf(req.principal), 'config.reload_requested', configDirOf((await getOrg(orgId())).slug));
       return { ok: true };
     });
   });

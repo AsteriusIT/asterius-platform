@@ -20,6 +20,8 @@ ENV NODE_ENV=production \
     CONFIG_DIR=/etc/asterius/config \
     DATA_DIR=/data \
     NODE_OPTIONS=--enable-source-maps
+# git: organizations can pull their configuration as code from their own repository (shallow, hardened clones).
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=build --chown=root:root /src/node_modules ./node_modules
 COPY --from=build --chown=root:root /src/packages/shared ./packages/shared

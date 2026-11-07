@@ -32,6 +32,39 @@ secrets (encrypted) · audit_log
 
 Entity properties and relations are JSON documents validated against the blueprint. The `entity_relations` table indexes relations for reverse lookups ("referenced by"). Relation targets may be missing, because ingestion order is not guaranteed; the UI shows them as such.
 
+## Organizations (multi-tenancy)
+
+One deployment serves many organizations; data is separated by an `org_id` on every resource (part of the primary key
+of named resources, so identifiers are per organization). Users are global identities with `memberships` (role per
+organization) and an optional platform `superadmin` flag.
+
+- **Request scope.** `orgs/context.ts` keeps the organization in an `AsyncLocalStorage` context: authentication enters it
+  (API tokens are bound to the organization they were created in; browser sessions send `X-Asterius-Org`, else the last
+  one used), every org-scoped query reads it with `orgId()`, which throws outside a context: a query cannot silently
+  run across tenants. Background work enters the organization of what it processes (`inRunOrg` for run workers and
+  housekeeping, the sync and schedule schedulers, the inbound-event and delivery workers, the config loader) or loops
+  over organizations (`forEachOrg`: scorecard passes, AI catalog reviews). Caches are keyed by organization.
+- **Data.** Named resources have `org_id` in their primary key (teams, blueprints, entities, actions, integrations,
+  webhooks, secrets, scorecards, dashboards, action versions, tombstones, AI budgets…); records keyed by an id carry an
+  `org_id` column (runs, tokens, audit, entity history, AI usage and reviews, inbox notifications); notification
+  settings and the config-as-code status are one row per organization. Model prices, rate limits and login counters
+  are platform-wide. Migration 35 (`orgs/migrations.ts`) detects each table's shape, so fresh installs, single-tenant
+  installs and the first multi-tenant build all converge to the same schema.
+- **Tenant boundaries.** `${env:NAME}` references (pod environment), the SQL source's `sqlite` driver (local files)
+  and, unless listed otherwise, the platform's Kubernetes credentials (`KUBERNETES_ORGS`) and its own cloud identity
+  (`PLATFORM_IDENTITY_ORGS`: external secret managers, auth blocks without credentials) are reserved to the default
+  organization; secrets resolve in their own organization only; inbound webhooks and workflow webhook triggers are
+  addressed per organization (`/api/v1/ingest/<org>/<integration>`, `/api/v1/hooks/<org>/<action>`); SCIM tokens
+  provision their own organization; email domains need DNS verification before they route SSO sign-ins or grant
+  membership. Super-admins see platform-level audit entries, verify the audit hash chain and edit model prices.
+- **Identity.** Keycloak (optional) is the identity broker: OIDC code flow + PKCE, `organization` claim → memberships
+  (`via = 'sso'`), single sign-out with `id_token_hint`. The admin REST API (client service account) creates Keycloak
+  Organizations, invitations and identity providers.
+- **Configuration as code.** `config-loader.ts` applies each organization's sources (platform `CONFIG_DIR`,
+  `CONFIG_DIR/orgs/<slug>`, or a Git repository pulled by `orgs/git-source.ts`) inside that organization's context.
+- **MCP.** `ai/mcp-server.ts` (`POST /api/mcp`, also `/api/v1/mcp`): stateless JSON-RPC MCP server; tools run with the
+  token owner's permissions in the token's organization.
+
 ## Workflows
 
 A workflow (action) is a trigger — a form submission: `trigger: { type: form, on, blueprint, inputs, allowed, approval }` — followed by steps. Without a trigger or steps it is a draft that cannot run. The steps form a graph (`apps/server/src/actions/workflow.ts`): `needs` omitted → after the previous step; `needs: []` → at the start; `needs: [a, b]` → after both. A step may only depend on earlier steps, so a workflow cannot contain a cycle. A single-`invoker` action is a one-step workflow.

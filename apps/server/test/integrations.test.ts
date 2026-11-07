@@ -4,11 +4,13 @@ import { createHmac } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { client, fakeServer, register, silentLog, testApp, type Api } from './helpers.js';
+import { inDefaultOrg } from './helpers.js';
 import { runSync } from '../src/integrations/sync.js';
 import { processInbound } from '../src/integrations/inbound.js';
 import { registerSource } from '../src/integrations/sources/index.js';
 import type { Source } from '../src/integrations/types.js';
 import { applyConfig, readConfigDir } from '../src/config-loader.js';
+import { DEFAULT_ORG, withOrg } from '../src/orgs/context.js';
 
 let app: FastifyInstance;
 let admin: Api;
@@ -53,7 +55,7 @@ describe('pull integrations (http source)', () => {
       { code: 'c3', name: 'Gamma', tier: 3, active: true },
       { code: 'z9', name: 'Inactive', tier: 3, active: false },
     ];
-    const first = (await runSync('cmdb', 'manual'))!;
+    const first = (await withOrg(DEFAULT_ORG, () => runSync('cmdb', 'manual')))!;
     expect(first.status, first.logs.join('\n')).toBe('success');
     expect(first.stats).toEqual({ upserted: 3, deleted: 0, skipped: 1, failed: 0 });
     const list = await member.get('/api/v1/blueprints/app/entities');
@@ -67,12 +69,12 @@ describe('pull integrations (http source)', () => {
     expect((await admin.patch('/api/v1/blueprints/app/entities/a1', { properties: { tier: 'x' } })).status).toBe(400);
 
     items = [{ code: 'a1', name: 'Alpha', tier: 1, active: true }];
-    const second = (await runSync('cmdb', 'manual'))!;
+    const second = (await withOrg(DEFAULT_ORG, () => runSync('cmdb', 'manual')))!;
     expect(second.stats).toMatchObject({ upserted: 0, deleted: 2, skipped: 1 });
 
     // An empty listing never wipes the catalog (expired token, outage returning []).
     items = [];
-    const third = (await runSync('cmdb', 'manual'))!;
+    const third = (await withOrg(DEFAULT_ORG, () => runSync('cmdb', 'manual')))!;
     expect(third.stats.deleted).toBe(0);
     expect(third.logs.join('\n')).toMatch(/SKIPPED deleting 1 entities/);
   });
@@ -86,7 +88,7 @@ describe('pull integrations (http source)', () => {
       config: { url: 'http://127.0.0.1:1/nothing' },
       mappings: [{ kind: 'item', entity: { blueprint: 'app', identifier: 'code' } }],
     });
-    const r = (await runSync('down', 'manual'))!;
+    const r = (await withOrg(DEFAULT_ORG, () => runSync('down', 'manual')))!;
     expect(r.status).toBe('failure');
     expect((await admin.get('/api/v1/integrations/down')).data.lastSync.status).toBe('failure');
   });
@@ -125,98 +127,102 @@ describe('sync safety and incremental state', () => {
   const count = async (id: string) =>
     (await member.get('/api/v1/blueprints/app/entities')).data.items.filter((e: { source: string }) => e.source === `integration:${id}`).length;
 
-  it('never deletes for an incomplete listing, a too large deletion, and supports dry runs', async () => {
-    registerSource(scripted);
-    expect((await save('safe', { config: { fullReconcileHours: 0 } })).status).toBe(200);
-    script.items = { a: codes(10, 'x') };
-    expect((await runSync('safe', 'manual'))!.stats.upserted).toBe(10);
+  it('never deletes for an incomplete listing, a too large deletion, and supports dry runs', () =>
+    inDefaultOrg(async () => {
+      registerSource(scripted);
+      expect((await save('safe', { config: { fullReconcileHours: 0 } })).status).toBe(200);
+      script.items = { a: codes(10, 'x') };
+      expect((await runSync('safe', 'manual'))!.stats.upserted).toBe(10);
 
-    // Truncated listing: 2 of 10 seen, flagged incomplete → nothing deleted.
-    script.items = { a: codes(2, 'x') };
-    script.incomplete = { a: 'page cap' };
-    let r = (await runSync('safe', 'manual'))!;
-    expect(r.stats.deleted).toBe(0);
-    expect(r.logs.join('\n')).toMatch(/SKIPPED deleting 8 entities of blueprint app: a listing incomplete \(page cap\)/);
-    expect(await count('safe')).toBe(10);
+      // Truncated listing: 2 of 10 seen, flagged incomplete → nothing deleted.
+      script.items = { a: codes(2, 'x') };
+      script.incomplete = { a: 'page cap' };
+      let r = (await runSync('safe', 'manual'))!;
+      expect(r.stats.deleted).toBe(0);
+      expect(r.logs.join('\n')).toMatch(/SKIPPED deleting 8 entities of blueprint app: a listing incomplete \(page cap\)/);
+      expect(await count('safe')).toBe(10);
 
-    // Complete but 80% of the entities would go: above the default 20% guard.
-    script.incomplete = {};
-    r = (await runSync('safe', 'manual'))!;
-    expect(r.stats.deleted).toBe(0);
-    expect(r.logs.join('\n')).toMatch(/deleteMaxPercent 20%/);
+      // Complete but 80% of the entities would go: above the default 20% guard.
+      script.incomplete = {};
+      r = (await runSync('safe', 'manual'))!;
+      expect(r.stats.deleted).toBe(0);
+      expect(r.logs.join('\n')).toMatch(/deleteMaxPercent 20%/);
 
-    // Dry run reports without deleting.
-    await save('safe', { deleteMaxPercent: 100, deleteDryRun: true });
-    r = (await runSync('safe', 'manual'))!;
-    expect(r.stats.deleted).toBe(0);
-    expect(r.logs.join('\n')).toMatch(/DRY RUN: would delete 8 entities/);
-    expect(await count('safe')).toBe(10);
+      // Dry run reports without deleting.
+      await save('safe', { deleteMaxPercent: 100, deleteDryRun: true });
+      r = (await runSync('safe', 'manual'))!;
+      expect(r.stats.deleted).toBe(0);
+      expect(r.logs.join('\n')).toMatch(/DRY RUN: would delete 8 entities/);
+      expect(await count('safe')).toBe(10);
 
-    await save('safe', { deleteMaxPercent: 100 });
-    r = (await runSync('safe', 'manual'))!;
-    expect(r.stats.deleted).toBe(8);
-    expect(await count('safe')).toBe(2);
-  });
+      await save('safe', { deleteMaxPercent: 100 });
+      r = (await runSync('safe', 'manual'))!;
+      expect(r.stats.deleted).toBe(8);
+      expect(await count('safe')).toBe(2);
+    }));
 
-  it('protects the blueprint when one of its kinds returns nothing', async () => {
-    registerSource(scripted);
-    await save('two', {
-      config: { fullReconcileHours: 0 },
-      deleteMaxPercent: 100,
-      mappings: [
-        { kind: 'a', entity: { blueprint: 'app', identifier: '"two-" & code' } },
-        { kind: 'b', entity: { blueprint: 'app', identifier: '"two-b-" & code' } },
-      ],
-    });
-    script.items = { a: codes(3, 'p'), b: codes(3, 'q') };
-    await runSync('two', 'manual');
-    script.items = { a: codes(3, 'p'), b: [] };
-    const r = (await runSync('two', 'manual'))!;
-    expect(r.stats.deleted).toBe(0);
-    expect(r.logs.join('\n')).toMatch(/b returned nothing/);
-    expect(await count('two')).toBe(6);
-  });
+  it('protects the blueprint when one of its kinds returns nothing', () =>
+    inDefaultOrg(async () => {
+      registerSource(scripted);
+      await save('two', {
+        config: { fullReconcileHours: 0 },
+        deleteMaxPercent: 100,
+        mappings: [
+          { kind: 'a', entity: { blueprint: 'app', identifier: '"two-" & code' } },
+          { kind: 'b', entity: { blueprint: 'app', identifier: '"two-b-" & code' } },
+        ],
+      });
+      script.items = { a: codes(3, 'p'), b: codes(3, 'q') };
+      await runSync('two', 'manual');
+      script.items = { a: codes(3, 'p'), b: [] };
+      const r = (await runSync('two', 'manual'))!;
+      expect(r.stats.deleted).toBe(0);
+      expect(r.logs.join('\n')).toMatch(/b returned nothing/);
+      expect(await count('two')).toBe(6);
+    }));
 
-  it('runs incrementally between full reconciles and only deletes on a full run', async () => {
-    registerSource(scripted);
-    await save('inc', { deleteMaxPercent: 100 });
-    script.items = { a: codes(4, 'i') };
-    script.states = [];
-    await runSync('inc', 'manual'); // full: no state yet
-    script.items = { a: codes(1, 'i') }; // would look like 3 deletions
-    const r = (await runSync('inc', 'manual'))!; // incremental: state handed over, nothing deleted
-    expect(script.states[0]).toBeUndefined();
-    expect(script.states[1]).toMatchObject({ since: expect.any(String) });
-    expect(r.stats.deleted).toBe(0);
-    expect(r.logs.join('\n')).toMatch(/deferred to the next full reconcile/);
-    expect(await count('inc')).toBe(4);
-    // Changing the configuration resets the state: full again, deletes.
-    await save('inc', { deleteMaxPercent: 100, title: 'inc2' });
-    expect((await runSync('inc', 'manual'))!.stats.deleted).toBe(3);
-  });
+  it('runs incrementally between full reconciles and only deletes on a full run', () =>
+    inDefaultOrg(async () => {
+      registerSource(scripted);
+      await save('inc', { deleteMaxPercent: 100 });
+      script.items = { a: codes(4, 'i') };
+      script.states = [];
+      await runSync('inc', 'manual'); // full: no state yet
+      script.items = { a: codes(1, 'i') }; // would look like 3 deletions
+      const r = (await runSync('inc', 'manual'))!; // incremental: state handed over, nothing deleted
+      expect(script.states[0]).toBeUndefined();
+      expect(script.states[1]).toMatchObject({ since: expect.any(String) });
+      expect(r.stats.deleted).toBe(0);
+      expect(r.logs.join('\n')).toMatch(/deferred to the next full reconcile/);
+      expect(await count('inc')).toBe(4);
+      // Changing the configuration resets the state: full again, deletes.
+      await save('inc', { deleteMaxPercent: 100, title: 'inc2' });
+      expect((await runSync('inc', 'manual'))!.stats.deleted).toBe(3);
+    }));
 
-  it('sends If-None-Match and a since parameter from the http source', async () => {
-    let seen: Array<{ inm?: string; since: string | null }> = [];
-    const s = await fakeServer();
-    await s.close();
-    const srv = await fakeServer((r) => {
-      seen.push({ inm: r.headers['if-none-match'] as string | undefined, since: new URL(r.url, 'http://x').searchParams.get('since') });
-      return { body: [{ code: 'e1' }] };
-    });
-    await admin.put('/api/v1/integrations/etag', {
-      title: 'etag',
-      type: 'http',
-      intervalMinutes: 0,
-      config: { url: `${srv.url}/list`, incremental: { sinceParam: 'since' } },
-      mappings: [{ kind: 'item', entity: { blueprint: 'app', identifier: '"etag-" & code' } }],
-    });
-    await runSync('etag', 'manual');
-    await runSync('etag', 'manual');
-    expect(seen[0]?.since).toBeNull();
-    expect(seen[1]?.since).toMatch(/^\d{4}-/);
-    await srv.close();
-    seen = [];
-  });
+  it('sends If-None-Match and a since parameter from the http source', () =>
+    inDefaultOrg(async () => {
+      let seen: Array<{ inm?: string; since: string | null }> = [];
+      const s = await fakeServer();
+      await s.close();
+      const srv = await fakeServer((r) => {
+        seen.push({ inm: r.headers['if-none-match'] as string | undefined, since: new URL(r.url, 'http://x').searchParams.get('since') });
+        return { body: [{ code: 'e1' }] };
+      });
+      await admin.put('/api/v1/integrations/etag', {
+        title: 'etag',
+        type: 'http',
+        intervalMinutes: 0,
+        config: { url: `${srv.url}/list`, incremental: { sinceParam: 'since' } },
+        mappings: [{ kind: 'item', entity: { blueprint: 'app', identifier: '"etag-" & code' } }],
+      });
+      await runSync('etag', 'manual');
+      await runSync('etag', 'manual');
+      expect(seen[0]?.since).toBeNull();
+      expect(seen[1]?.since).toMatch(/^\d{4}-/);
+      await srv.close();
+      seen = [];
+    }));
 });
 
 describe('inbound webhooks', () => {
@@ -236,14 +242,14 @@ describe('inbound webhooks', () => {
       ],
     });
     expect(saved.status, JSON.stringify(saved.data)).toBe(200);
-    expect(saved.data.webhookUrl).toBe('http://platform.test/api/v1/ingest/events');
+    expect(saved.data.webhookUrl).toBe('http://platform.test/api/v1/ingest/default/events');
   });
 
   const post = (body: unknown, secret = 'hook-secret-1', event = 'app') => {
     const raw = JSON.stringify(body);
     return app.inject({
       method: 'POST',
-      url: '/api/v1/ingest/events',
+      url: '/api/v1/ingest/default/events',
       headers: {
         'content-type': 'application/json',
         'x-event': event,
@@ -381,7 +387,7 @@ entities:
     );
     const plan = (await admin.get('/api/v1/config/plan')).data as Array<{ kind: string; identifier: string; action: string }>;
     expect(plan).toContainEqual({ kind: 'blueprint', identifier: 'db', action: 'create' });
-    expect(await applyConfig(readConfigDir(dir), silentLog)).toEqual([]);
+    expect(await withOrg(DEFAULT_ORG, () => applyConfig(readConfigDir(dir), silentLog))).toEqual([]);
     const after = (await admin.get('/api/v1/config/plan')).data as Array<{ action: string }>;
     expect(after.filter((p) => p.action !== 'unchanged')).toEqual([]);
     const bp = await member.get('/api/v1/blueprints/db');
@@ -394,14 +400,14 @@ entities:
     // kept, with a warning (the seeded entity is gone).
     expect((await admin.post('/api/v1/blueprints/db/entities', { identifier: 'mine' })).status).toBeLessThan(300);
     fs.writeFileSync(path.join(dir, 'platform.yaml'), 'teams:\n  - { identifier: ops, title: Ops }\n');
-    await applyConfig(readConfigDir(dir), silentLog);
+    await withOrg(DEFAULT_ORG, () => applyConfig(readConfigDir(dir), silentLog));
     expect((await admin.get('/api/v1/actions/create-db')).status).toBe(404);
     expect((await admin.get('/api/v1/blueprints/db')).status).toBe(200);
     expect((await admin.get('/api/v1/blueprints/db/entities/main')).status).toBe(404);
 
     // Without it, the blueprint goes too.
     await admin.del('/api/v1/blueprints/db/entities/mine');
-    await applyConfig(readConfigDir(dir), silentLog);
+    await withOrg(DEFAULT_ORG, () => applyConfig(readConfigDir(dir), silentLog));
     expect((await admin.get('/api/v1/blueprints/db')).status).toBe(404);
 
     // A broken file is surfaced by the status endpoint (the previous configuration stays in force).

@@ -52,10 +52,11 @@ export function assertSecureUrl(url: string, what: string) {
 
 /**
  * End of an SSO flow: open the session and send the browser back to the app. Cookie mode sets the httpOnly cookie
- * (nothing secret in the URL); otherwise the token travels in the URL fragment.
+ * (nothing secret in the URL); otherwise the token travels in the URL fragment. `idToken`: the identity provider's ID
+ * token, kept for single sign-out (Keycloak).
  */
-export async function finishLogin(req: FastifyRequest, reply: FastifyReply, userId: string, returnTo: string, status: 302 | 303 = 302) {
-  const token = await createSession(userId, { ip: req.ip, userAgent: req.headers['user-agent'] });
+export async function finishLogin(req: FastifyRequest, reply: FastifyReply, userId: string, returnTo: string, status: 302 | 303 = 302, idToken?: string) {
+  const token = await createSession(userId, { ip: req.ip, userAgent: req.headers['user-agent'], idToken });
   if (!config.SESSION_COOKIE) return reply.redirect(successUrl(token, returnTo), status);
   reply.header('set-cookie', sessionCookie(token));
   return reply.redirect(successUrl('cookie', returnTo), status);

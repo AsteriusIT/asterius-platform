@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { client, register, silentLog, testApp, type Api } from './helpers.js';
+import { inDefaultOrg } from './helpers.js';
 import { all, driver, later, one, run as sql } from '../src/db.js';
 import { cancelSteps, claimPolls, claimRuns, claimSteps, executeStep, stepHousekeeping } from '../src/actions/engine.js';
 import { cancelRun, getRunRow } from '../src/actions/runs.js';
@@ -38,7 +39,7 @@ beforeAll(async () => {
   admin = client(app, (await register(app, 'admin@example.com')).token);
   const a = await register(app, 'alice@example.com');
   alice = client(app, a.token);
-  aliceP = { id: a.user.id, email: 'alice@example.com', name: 'alice', role: 'member', provider: 'local', teams: [], roles: [] };
+  aliceP = { id: a.user.id, email: 'alice@example.com', name: 'alice', role: 'member', provider: 'local', teams: [], roles: [], superadmin: false, org: null };
   const base = { trigger: 'create', approval: { required: false } };
   await admin.put('/api/v1/actions/noop', { title: 'Noop', ...base, steps: [{ id: 't', type: 'transform', output: { ok: 'true' } }] });
   await admin.put('/api/v1/actions/gated', {
@@ -123,33 +124,35 @@ describe('housekeeping (ap-na0.3, ap-na0.6)', () => {
     expect(r.status).toBe('FAILURE');
   });
 
-  it('sets a run deadline when the workflow starts (run timeout plus approval waits) and enforces it', async () => {
-    const id = await trigger('gated');
-    await startQueuedRuns();
-    const row = await getRunRow(id);
-    const hours = (Date.parse(row.deadline_at!) - Date.parse(row.started_at!)) / 3_600_000;
-    expect(hours).toBeCloseTo(24 + 7 * 24, 0); // RUN_TIMEOUT_HOURS + the 7 day approval step
-    // The step deadlines no longer use RUN_TIMEOUT_HOURS: only the approval's own timeout applies.
-    await sql('UPDATE runs SET deadline_at = ? WHERE id = ?', later(-1000), id);
-    await Promise.all([stepHousekeeping(silentLog), stepHousekeeping(silentLog)]);
-    const r = await view(id);
-    expect(r.status).toBe('FAILURE');
-    expect(r.statusLabel).toBe('Timed out');
-    expect(r.steps.map((s) => s.status)).toEqual(['CANCELLED', 'CANCELLED']);
-    expect(r.logs.filter((l) => l.message.includes('exceeded its time limit'))).toHaveLength(1);
-  });
+  it('sets a run deadline when the workflow starts (run timeout plus approval waits) and enforces it', () =>
+    inDefaultOrg(async () => {
+      const id = await trigger('gated');
+      await startQueuedRuns();
+      const row = await getRunRow(id);
+      const hours = (Date.parse(row.deadline_at!) - Date.parse(row.started_at!)) / 3_600_000;
+      expect(hours).toBeCloseTo(24 + 7 * 24, 0); // RUN_TIMEOUT_HOURS + the 7 day approval step
+      // The step deadlines no longer use RUN_TIMEOUT_HOURS: only the approval's own timeout applies.
+      await sql('UPDATE runs SET deadline_at = ? WHERE id = ?', later(-1000), id);
+      await Promise.all([stepHousekeeping(silentLog), stepHousekeeping(silentLog)]);
+      const r = await view(id);
+      expect(r.status).toBe('FAILURE');
+      expect(r.statusLabel).toBe('Timed out');
+      expect(r.steps.map((s) => s.status)).toEqual(['CANCELLED', 'CANCELLED']);
+      expect(r.logs.filter((l) => l.message.includes('exceeded its time limit'))).toHaveLength(1);
+    }));
 });
 
 describe('cancellation (ap-na0.7)', () => {
-  it('cancelling a QUEUED run that a worker claims at the same moment still cancels it', async () => {
-    const id = await trigger('noop');
-    const cancelling = cancelRun(aliceP, id, cancelSteps); // reads QUEUED …
-    const claimed = await claimRuns('w-race', 5, noSpawn); // … the worker claims it before the cancel update
-    expect(claimed).toBe(1);
-    const run = await cancelling; // used to fail with 409 "changed meanwhile"
-    expect(run.status).toBe('CANCELLED');
-    expect((await getRunRow(id)).status).toBe('CANCELLED');
-  });
+  it('cancelling a QUEUED run that a worker claims at the same moment still cancels it', () =>
+    inDefaultOrg(async () => {
+      const id = await trigger('noop');
+      const cancelling = cancelRun(aliceP, id, cancelSteps); // reads QUEUED …
+      const claimed = await claimRuns('w-race', 5, noSpawn); // … the worker claims it before the cancel update
+      expect(claimed).toBe(1);
+      const run = await cancelling; // used to fail with 409 "changed meanwhile"
+      expect(run.status).toBe('CANCELLED');
+      expect((await getRunRow(id)).status).toBe('CANCELLED');
+    }));
 
   it('a run with a cancel request stops advancing', async () => {
     const id = await trigger('gated');
@@ -165,14 +168,15 @@ describe('cancellation (ap-na0.7)', () => {
 });
 
 describe('step ownership (ap-na0.1)', () => {
-  it('a worker that lost its lease cannot write the step result', async () => {
-    const id = await trigger('noop');
-    await startQueuedRuns();
-    expect(await claimSteps('w-new', 1, noSpawn)).toBe(1);
-    await sql("UPDATE run_steps SET attempt = 2 WHERE run_id = ? AND step_id = 't'", id); // re-claimed since the old worker started
-    await executeStep(id, 't', { worker: 'w-old', attempt: 1 });
-    const step = await one<{ status: string; worker: string }>("SELECT status, worker FROM run_steps WHERE run_id = ? AND step_id = 't'", id);
-    expect(step).toEqual({ status: 'RUNNING', worker: 'w-new' });
-    expect((await view(id)).status).toBe('IN_PROGRESS');
-  });
+  it('a worker that lost its lease cannot write the step result', () =>
+    inDefaultOrg(async () => {
+      const id = await trigger('noop');
+      await startQueuedRuns();
+      expect(await claimSteps('w-new', 1, noSpawn)).toBe(1);
+      await sql("UPDATE run_steps SET attempt = 2 WHERE run_id = ? AND step_id = 't'", id); // re-claimed since the old worker started
+      await executeStep(id, 't', { worker: 'w-old', attempt: 1 });
+      const step = await one<{ status: string; worker: string }>("SELECT status, worker FROM run_steps WHERE run_id = ? AND step_id = 't'", id);
+      expect(step).toEqual({ status: 'RUNNING', worker: 'w-new' });
+      expect((await view(id)).status).toBe('IN_PROGRESS');
+    }));
 });

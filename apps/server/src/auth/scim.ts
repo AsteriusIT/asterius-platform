@@ -6,6 +6,8 @@ import { config } from '../config.js';
 import { HttpError } from '../lib/errors.js';
 import { SLUG } from '../schemas.js';
 import { authenticate, type UserRow } from './users.js';
+import { orgId } from '../orgs/context.js';
+import { addMember, findOrg, membership, verifiedDomains } from '../orgs/orgs.js';
 
 /**
  * SCIM 2.0 provisioning (RFC 7643/7644) under /scim/v2, so an identity provider creates, updates and deactivates
@@ -13,7 +15,11 @@ import { authenticate, type UserRow } from './users.js';
  * carries only the `scim` scope (created by an admin with POST /api/v1/scim/token); that scope grants nothing else.
  *  - Users are provisioned with provider `scim` (no password). The first SSO sign-in with the same verified email
  *    adopts the account (see `adoptScimUser`); users that already signed in through SSO are managed in place.
- *  - Deactivation (active=false or DELETE) disables the account and revokes its sessions and API tokens at once.
+ *  - Organizations: the token is an API token of one organization, so users and groups are that organization's
+ *    members and teams. Provisioning makes the user a member; an account that already exists joins only when its
+ *    email domain is verified by the organization.
+ *  - Deactivation (active=false or DELETE) removes the membership; an account that belongs to no other organization
+ *    is also disabled, with its sessions and API tokens revoked at once.
  *  - Groups are teams: members added through SCIM are tagged `via = 'scim'`; teams defined in CONFIG_DIR stay managed
  *    (their membership can be edited here, their definition cannot).
  */
@@ -35,6 +41,8 @@ class ScimError extends HttpError {
 
 /** Accounts SCIM may manage: federated identities, never local passwords or service accounts. */
 const MANAGED = "provider NOT IN ('local', 'service')";
+/** Members of the organization of the request (first parameter: the organization id). */
+const MEMBER = 'id IN (SELECT user_id FROM memberships WHERE org_id = ?)';
 
 interface TeamRow {
   identifier: string;
@@ -62,7 +70,8 @@ async function toUser(u: UserRow) {
 
 async function toGroup(t: TeamRow) {
   const members = await all<{ id: string; name: string }>(
-    'SELECT u.id, u.name FROM team_members m JOIN users u ON u.id = m.user_id WHERE m.team = ? ORDER BY u.name',
+    'SELECT u.id, u.name FROM team_members m JOIN users u ON u.id = m.user_id WHERE m.org_id = ? AND m.team = ? ORDER BY u.name',
+    orgId(),
     t.identifier,
   );
   return {
@@ -103,14 +112,29 @@ function parseFilter(filter: string | undefined, attrs: Record<string, string>) 
 }
 
 // ---------- operations ----------
+/** Other organizations of the user (their SCIM / admins decide there). */
+const otherOrgs = async (userId: string) =>
+  Number((await one<{ n: number }>('SELECT count(*) AS n FROM memberships WHERE user_id = ? AND org_id != ?', userId, orgId()))?.n ?? 0);
+
+/**
+ * Deprovision in the current organization. An account that only belongs here is disabled (the membership stays, so
+ * the identity provider can reactivate it); otherwise only this organization's membership, teams and tokens go.
+ */
 export async function deprovision(userId: string) {
-  await run('UPDATE users SET active = 0 WHERE id = ?', userId);
-  await run('DELETE FROM sessions WHERE user_id = ?', userId);
-  await run('DELETE FROM api_tokens WHERE user_id = ?', userId);
+  const org = orgId();
+  if ((await otherOrgs(userId)) === 0) {
+    await run('UPDATE users SET active = 0 WHERE id = ? AND superadmin = 0', userId);
+    await run('DELETE FROM sessions WHERE user_id = ?', userId);
+    await run('DELETE FROM api_tokens WHERE user_id = ?', userId);
+    return;
+  }
+  await run('DELETE FROM memberships WHERE org_id = ? AND user_id = ?', org, userId);
+  await run('DELETE FROM team_members WHERE org_id = ? AND user_id = ?', org, userId);
+  await run('DELETE FROM api_tokens WHERE org_id = ? AND user_id = ?', org, userId);
 }
 
 async function getManaged(id: string) {
-  const u = await one<UserRow>(`SELECT * FROM users WHERE id = ? AND ${MANAGED}`, id);
+  const u = await one<UserRow>(`SELECT * FROM users WHERE id = ? AND ${MANAGED} AND ${MEMBER}`, id, orgId());
   if (!u) throw new ScimError(404, 'User not found');
   return u;
 }
@@ -123,14 +147,26 @@ async function applyUser(id: string, v: ReturnType<typeof normalize>) {
     id,
   );
   if (clash) throw new ScimError(409, 'Another user has this userName', 'uniqueness');
-  await run('UPDATE users SET email = ?, name = ?, external_id = COALESCE(?, external_id) WHERE id = ?', v.email, v.name, v.externalId, id);
-  if (v.active) await run('UPDATE users SET active = 1 WHERE id = ?', id);
-  else await deprovision(id);
+  // The account is global: only an organization it exclusively belongs to may change its profile or reactivate it.
+  const exclusive = (await otherOrgs(id)) === 0;
+  if (exclusive) await run('UPDATE users SET email = ?, name = ?, external_id = COALESCE(?, external_id) WHERE id = ?', v.email, v.name, v.externalId, id);
+  if (!v.active) await deprovision(id);
+  else if (exclusive) await run('UPDATE users SET active = 1 WHERE id = ?', id);
 }
 
 async function createUser(v: ReturnType<typeof normalize>) {
+  const org = orgId();
   const existing = await one<UserRow>(`SELECT * FROM users WHERE email = ? AND ${MANAGED}`, v.email);
-  if (existing) throw new ScimError(409, 'A user with this userName already exists', 'uniqueness');
+  if (existing) {
+    if (await membership(org, existing.id)) throw new ScimError(409, 'A user with this userName already exists', 'uniqueness');
+    // An account of another organization joins this one only for an email domain this organization proved it owns.
+    const domain = v.email.split('@')[1] ?? '';
+    const row = await findOrg(org);
+    if (!row || !verifiedDomains(row).includes(domain))
+      throw new ScimError(409, 'This account exists in another organization; verify its email domain first', 'uniqueness');
+    await addMember(org, existing.id, 'member', 'sso');
+    return existing.id;
+  }
   const id = newId();
   // Provisioned accounts start as plain members; the admin role is never granted through SCIM.
   await run(
@@ -142,6 +178,7 @@ async function createUser(v: ReturnType<typeof normalize>) {
     v.active ? 1 : 0,
     now(),
   );
+  await addMember(org, id, 'member', 'sso');
   return id;
 }
 
@@ -194,26 +231,27 @@ const patchBody = z.object({
 });
 
 async function managedTeam(id: string) {
-  const t = await one<TeamRow>('SELECT identifier, title, managed, created_at FROM teams WHERE identifier = ?', id);
+  const t = await one<TeamRow>('SELECT identifier, title, managed, created_at FROM teams WHERE org_id = ? AND identifier = ?', orgId(), id);
   if (!t) throw new ScimError(404, 'Group not found');
   return t;
 }
 
 async function setMembers(team: string, userIds: string[], mode: 'add' | 'remove' | 'replace') {
+  const org = orgId();
   const users = userIds.length
-    ? await all<{ id: string }>(`SELECT id FROM users WHERE ${MANAGED} AND id IN (${userIds.map(() => '?').join(',')})`, ...userIds)
+    ? await all<{ id: string }>(`SELECT id FROM users WHERE ${MANAGED} AND ${MEMBER} AND id IN (${userIds.map(() => '?').join(',')})`, org, ...userIds)
     : [];
   const valid = new Set(users.map((u) => u.id));
   if (mode !== 'remove' && valid.size !== new Set(userIds).size) throw new ScimError(400, 'Unknown member', 'invalidValue');
   await tx(async (d) => {
-    if (mode === 'replace') await d.query("DELETE FROM team_members WHERE team = ? AND via = 'scim'", [team]);
+    if (mode === 'replace') await d.query("DELETE FROM team_members WHERE org_id = ? AND team = ? AND via = 'scim'", [org, team]);
     for (const id of valid) {
       if (mode === 'remove') {
-        await d.query('DELETE FROM team_members WHERE team = ? AND user_id = ?', [team, id]);
+        await d.query('DELETE FROM team_members WHERE org_id = ? AND team = ? AND user_id = ?', [org, team, id]);
         continue;
       }
-      const has = await d.query('SELECT team FROM team_members WHERE team = ? AND user_id = ?', [team, id]);
-      if (!has.rows.length) await d.query("INSERT INTO team_members (team, user_id, via) VALUES (?, ?, 'scim')", [team, id]);
+      const has = await d.query('SELECT team FROM team_members WHERE org_id = ? AND team = ? AND user_id = ?', [org, team, id]);
+      if (!has.rows.length) await d.query("INSERT INTO team_members (org_id, team, user_id, via) VALUES (?, ?, ?, 'scim')", [org, team, id]);
     }
   });
 }
@@ -296,8 +334,8 @@ export async function scimRoutes(app: FastifyInstance) {
       s.get('/Users', async (req) => {
         const q = paging.parse(req.query);
         const f = parseFilter(q.filter, { username: 'email', externalid: 'external_id', 'emails.value': 'email' });
-        const where = `WHERE ${MANAGED}${f ? ` AND ${f.column} = ?` : ''}`;
-        const params = f ? [f.column === 'email' ? f.value.toLowerCase() : f.value] : [];
+        const where = `WHERE ${MANAGED} AND ${MEMBER}${f ? ` AND ${f.column} = ?` : ''}`;
+        const params = [orgId(), ...(f ? [f.column === 'email' ? f.value.toLowerCase() : f.value] : [])];
         const total = Number((await one<{ n: number }>(`SELECT count(*) AS n FROM users ${where}`, ...params))?.n ?? 0);
         const rows = await all<UserRow>(`SELECT * FROM users ${where} ORDER BY created_at, id LIMIT ? OFFSET ?`, ...params, q.count, q.startIndex - 1);
         return { schemas: [LIST], totalResults: total, startIndex: q.startIndex, itemsPerPage: rows.length, Resources: await Promise.all(rows.map(toUser)) };
@@ -337,8 +375,8 @@ export async function scimRoutes(app: FastifyInstance) {
       s.get('/Groups', async (req) => {
         const q = paging.parse(req.query);
         const f = parseFilter(q.filter, { displayname: 'title', id: 'identifier' });
-        const where = f ? `WHERE ${f.column} = ?` : '';
-        const params = f ? [f.value] : [];
+        const where = `WHERE org_id = ?${f ? ` AND ${f.column} = ?` : ''}`;
+        const params = [orgId(), ...(f ? [f.value] : [])];
         const total = Number((await one<{ n: number }>(`SELECT count(*) AS n FROM teams ${where}`, ...params))?.n ?? 0);
         const rows = await all<TeamRow>(
           `SELECT identifier, title, managed, created_at FROM teams ${where} ORDER BY title LIMIT ? OFFSET ?`,
@@ -361,10 +399,11 @@ export async function scimRoutes(app: FastifyInstance) {
           .replace(/^[^a-z]+/, 'g-')
           .slice(0, 64);
         if (!SLUG.test(identifier)) throw new ScimError(400, 'displayName cannot be turned into a team identifier', 'invalidValue');
-        if (await one('SELECT identifier FROM teams WHERE identifier = ?', identifier))
+        if (await one('SELECT identifier FROM teams WHERE org_id = ? AND identifier = ?', orgId(), identifier))
           throw new ScimError(409, 'A group with this name already exists', 'uniqueness');
         await run(
-          "INSERT INTO teams (identifier, title, description, managed, created_at) VALUES (?, ?, 'Provisioned by SCIM', 0, ?)",
+          "INSERT INTO teams (org_id, identifier, title, description, managed, created_at) VALUES (?, ?, ?, 'Provisioned by SCIM', 0, ?)",
+          orgId(),
           identifier,
           body.displayName,
           now(),
@@ -387,7 +426,8 @@ export async function scimRoutes(app: FastifyInstance) {
           .object({ displayName: z.string().min(1).max(100).optional(), members: z.array(z.object({ value: z.string() })).default([]) })
           .passthrough()
           .parse(req.body);
-        if (body.displayName && !t.managed) await run('UPDATE teams SET title = ? WHERE identifier = ?', body.displayName, t.identifier);
+        if (body.displayName && !t.managed)
+          await run('UPDATE teams SET title = ? WHERE org_id = ? AND identifier = ?', body.displayName, orgId(), t.identifier);
         await setMembers(
           t.identifier,
           body.members.map((m) => m.value),
@@ -403,14 +443,20 @@ export async function scimRoutes(app: FastifyInstance) {
           const path = op.path ?? '';
           if (/^members/i.test(path) || (!path && verb !== 'remove')) {
             if (!path && op.value && typeof op.value === 'object' && 'displayName' in op.value && !t.managed)
-              await run('UPDATE teams SET title = ? WHERE identifier = ?', String((op.value as { displayName: string }).displayName), t.identifier);
+              await run(
+                'UPDATE teams SET title = ? WHERE org_id = ? AND identifier = ?',
+                String((op.value as { displayName: string }).displayName),
+                orgId(),
+                t.identifier,
+              );
             const filtered = /members\[value eq "([^"]+)"\]/i.exec(path)?.[1];
             if (verb === 'remove') await setMembers(t.identifier, filtered ? [filtered] : memberIds(op.value), 'remove');
             else if (verb === 'add' || verb === 'replace') {
               const ids = memberIds(path ? op.value : ((op.value as { members?: unknown })?.members ?? []));
               await setMembers(t.identifier, ids, verb === 'add' ? 'add' : 'replace');
             }
-          } else if (/^displayname$/i.test(path) && !t.managed) await run('UPDATE teams SET title = ? WHERE identifier = ?', String(op.value), t.identifier);
+          } else if (/^displayname$/i.test(path) && !t.managed)
+            await run('UPDATE teams SET title = ? WHERE org_id = ? AND identifier = ?', String(op.value), orgId(), t.identifier);
           else throw new ScimError(400, `Unsupported path "${path}"`, 'invalidPath');
         }
         await audit(actor(req), 'scim.group_patched', t.identifier);
@@ -419,9 +465,9 @@ export async function scimRoutes(app: FastifyInstance) {
       s.delete('/Groups/:id', async (req, reply) => {
         const t = await managedTeam((req.params as { id: string }).id);
         if (t.managed) throw new ScimError(400, 'This group is defined in the configuration files and cannot be deleted', 'mutability');
-        const owned = await one<{ n: number }>('SELECT count(*) AS n FROM entities WHERE team = ?', t.identifier);
+        const owned = await one<{ n: number }>('SELECT count(*) AS n FROM entities WHERE org_id = ? AND team = ?', orgId(), t.identifier);
         if (Number(owned?.n) > 0) throw new ScimError(409, `The team owns ${owned!.n} entities; reassign them first`, 'mutability');
-        await run('DELETE FROM teams WHERE identifier = ?', t.identifier);
+        await run('DELETE FROM teams WHERE org_id = ? AND identifier = ?', orgId(), t.identifier);
         await audit(actor(req), 'scim.group_deleted', t.identifier);
         return reply.code(204).send();
       });

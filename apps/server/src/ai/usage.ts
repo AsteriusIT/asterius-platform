@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { config } from '../config.js';
 import { all, newId, now, one, run, type SqlValue } from '../db.js';
 import { badRequest } from '../lib/errors.js';
+import { maybeOrgId, orgId } from '../orgs/context.js';
 
 /**
  * AI cost governance: every model call is recorded in `llm_usage` (successful or not), prices come from the
@@ -125,11 +126,13 @@ export interface UsageRecord extends UsageScope {
 
 export const ZERO_TOKENS: Tokens = { input: 0, output: 0, cacheWrite: 0, cacheRead: 0 };
 
+/** Usage is recorded in the organization of the call (null: platform-level). */
 export async function recordUsage(u: UsageRecord) {
   await run(
-    `INSERT INTO llm_usage (id, at, kind, run_id, step_id, action, team, user_id, model, input_tokens, output_tokens, cache_write_tokens, cache_read_tokens, cost_usd, outcome, error)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO llm_usage (id, org_id, at, kind, run_id, step_id, action, team, user_id, model, input_tokens, output_tokens, cache_write_tokens, cache_read_tokens, cost_usd, outcome, error)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     newId(),
+    maybeOrgId(),
     now(),
     u.kind,
     u.runId ?? null,
@@ -178,8 +181,9 @@ const toBudget = (r: BudgetRow): Budget => ({
   hardUsd: r.hard_usd === null ? null : Number(r.hard_usd),
 });
 
+/** Budgets of the current organization (`global`: its monthly total). */
 export async function listBudgets(): Promise<Budget[]> {
-  return (await all<BudgetRow>('SELECT * FROM ai_budgets ORDER BY scope, key')).map(toBudget);
+  return (await all<BudgetRow>('SELECT * FROM ai_budgets WHERE org_id = ? ORDER BY scope, key', orgId())).map(toBudget);
 }
 
 export async function upsertBudget(raw: unknown): Promise<Budget> {
@@ -187,22 +191,32 @@ export async function upsertBudget(raw: unknown): Promise<Budget> {
   if (b.softUsd != null && b.hardUsd != null && b.softUsd > b.hardUsd) throw badRequest('The soft limit cannot exceed the hard limit');
   const key = b.scope === 'global' || b.scope === 'run' ? '*' : b.key;
   if (key === '*' && (b.scope === 'action' || b.scope === 'team')) throw badRequest(`A ${b.scope} budget needs the ${b.scope} identifier as key`);
-  const existing = await one<BudgetRow>('SELECT * FROM ai_budgets WHERE scope = ? AND key = ?', b.scope, key);
+  const org = orgId();
+  const existing = await one<BudgetRow>('SELECT * FROM ai_budgets WHERE org_id = ? AND scope = ? AND key = ?', org, b.scope, key);
   const id = existing?.id ?? newId();
-  if (existing) await run('UPDATE ai_budgets SET soft_usd = ?, hard_usd = ? WHERE id = ?', b.softUsd ?? null, b.hardUsd ?? null, id);
-  else await run('INSERT INTO ai_budgets (id, scope, key, soft_usd, hard_usd) VALUES (?, ?, ?, ?, ?)', id, b.scope, key, b.softUsd ?? null, b.hardUsd ?? null);
+  if (existing) await run('UPDATE ai_budgets SET soft_usd = ?, hard_usd = ? WHERE org_id = ? AND id = ?', b.softUsd ?? null, b.hardUsd ?? null, org, id);
+  else
+    await run(
+      'INSERT INTO ai_budgets (id, org_id, scope, key, soft_usd, hard_usd) VALUES (?, ?, ?, ?, ?, ?)',
+      id,
+      org,
+      b.scope,
+      key,
+      b.softUsd ?? null,
+      b.hardUsd ?? null,
+    );
   return { id, scope: b.scope, key, softUsd: b.softUsd ?? null, hardUsd: b.hardUsd ?? null };
 }
 
 export async function deleteBudget(id: string) {
-  await run('DELETE FROM ai_budgets WHERE id = ?', id);
+  await run('DELETE FROM ai_budgets WHERE org_id = ? AND id = ?', orgId(), id);
 }
 
 export const monthStart = (d = new Date()) => new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1)).toISOString();
 
 async function spent(scope: BudgetScope, key: string, runId?: string | null): Promise<number> {
-  const where: string[] = [];
-  const params: SqlValue[] = [];
+  const where: string[] = ['org_id = ?'];
+  const params: SqlValue[] = [orgId()];
   if (scope === 'run') {
     if (!runId) return 0;
     where.push('run_id = ?');
@@ -226,13 +240,14 @@ export class BudgetExceeded extends Error {}
  * Totals are read from llm_usage, so every replica sees the same spend (concurrent calls may overshoot by one call).
  */
 export async function checkBudgets(scope: UsageScope, extraRunHardUsd?: number): Promise<string[]> {
+  if (!maybeOrgId()) return []; // platform-level calls have no organization budget
   const checks: { scope: BudgetScope; key: string; label: string }[] = [
-    { scope: 'global', key: '*', label: 'platform monthly AI budget' },
+    { scope: 'global', key: '*', label: 'organization monthly AI budget' },
     { scope: 'run', key: '*', label: 'per-run AI budget' },
   ];
   if (scope.action) checks.push({ scope: 'action', key: scope.action, label: `monthly AI budget of action "${scope.action}"` });
   if (scope.team) checks.push({ scope: 'team', key: scope.team, label: `monthly AI budget of team "${scope.team}"` });
-  const budgets = await all<BudgetRow>('SELECT * FROM ai_budgets WHERE scope IN (?, ?, ?, ?)', 'global', 'run', 'action', 'team');
+  const budgets = await all<BudgetRow>('SELECT * FROM ai_budgets WHERE org_id = ? AND scope IN (?, ?, ?, ?)', orgId(), 'global', 'run', 'action', 'team');
   const warnings: string[] = [];
   for (const c of checks) {
     const b = budgets.find((x) => x.scope === c.scope && x.key === c.key);
@@ -258,21 +273,26 @@ export interface UsageReport {
   byDay: { day: string; costUsd: number }[];
 }
 
+/** Usage of the current organization. */
 export async function usageReport(since = monthStart()): Promise<UsageReport> {
+  const org = orgId();
   const group = (col: string) =>
     all<{ key: string | null; calls: number; cost: number | null }>(
-      `SELECT ${col} AS key, count(*) AS calls, COALESCE(SUM(cost_usd), 0) AS cost FROM llm_usage WHERE at >= ? GROUP BY ${col} ORDER BY cost DESC LIMIT 50`,
+      `SELECT ${col} AS key, count(*) AS calls, COALESCE(SUM(cost_usd), 0) AS cost FROM llm_usage WHERE org_id = ? AND at >= ? GROUP BY ${col} ORDER BY cost DESC LIMIT 50`,
+      org,
       since,
     );
   const [t] = await all<{ calls: number; cost: number; i: number; o: number; cr: number; cw: number; failed: number }>(
     `SELECT count(*) AS calls, COALESCE(SUM(cost_usd), 0) AS cost, COALESCE(SUM(input_tokens), 0) AS i, COALESCE(SUM(output_tokens), 0) AS o,
             COALESCE(SUM(cache_read_tokens), 0) AS cr, COALESCE(SUM(cache_write_tokens), 0) AS cw,
             COALESCE(SUM(CASE WHEN outcome = 'success' THEN 0 ELSE 1 END), 0) AS failed
-     FROM llm_usage WHERE at >= ?`,
+     FROM llm_usage WHERE org_id = ? AND at >= ?`,
+    org,
     since,
   );
   const days = await all<{ day: string; cost: number }>(
-    'SELECT substr(at, 1, 10) AS day, COALESCE(SUM(cost_usd), 0) AS cost FROM llm_usage WHERE at >= ? GROUP BY substr(at, 1, 10) ORDER BY day',
+    'SELECT substr(at, 1, 10) AS day, COALESCE(SUM(cost_usd), 0) AS cost FROM llm_usage WHERE org_id = ? AND at >= ? GROUP BY substr(at, 1, 10) ORDER BY day',
+    org,
     since,
   );
   return {

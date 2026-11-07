@@ -1,5 +1,6 @@
 import { config as platform } from '../../config.js';
 import { all } from '../../db.js';
+import { orgId } from '../../orgs/context.js';
 import { deleteEntity, upsertEntity } from '../../catalog/entities.js';
 import { requireFields, str, type Invoker } from '../types.js';
 
@@ -73,7 +74,8 @@ async function dependentsOf(blueprint: string, identifier: string) {
   const visit = async (bp: string, id: string, depth: number) => {
     if (depth > 5) return; // relations may form cycles: a bounded walk
     const rows = await all<{ blueprint: string; identifier: string }>(
-      'SELECT DISTINCT blueprint, identifier FROM entity_relations WHERE target_blueprint = ? AND target_identifier = ?',
+      'SELECT DISTINCT blueprint, identifier FROM entity_relations WHERE org_id = ? AND target_blueprint = ? AND target_identifier = ?',
+      orgId(),
       bp,
       id,
     );

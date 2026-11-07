@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { audit } from '../audit.js';
-import { actorOf, requireAdmin, requireUser } from '../auth/users.js';
+import { actorOf, requireAdmin, requireSuperadmin, requireUser } from '../auth/users.js';
 import { aiConfigured } from '../ai/model.js';
 import { askCatalog, draftBlueprint, draftWorkflow, explainRun, suggestMapping } from '../ai/assist.js';
 import { badRequest, notFound } from '../lib/errors.js';
@@ -10,7 +10,7 @@ import { config } from '../config.js';
 import { deleteBudget, deletePrice, listBudgets, listPrices, setPrice, upsertBudget, usageReport } from '../ai/usage.js';
 import { idParam } from './util.js';
 
-/** AI endpoints: status for everyone, governance (usage, prices, budgets) for admins. */
+/** AI endpoints: status for everyone, governance (usage, budgets) for organization admins, model prices for super-admins. */
 export async function aiRoutes(app: FastifyInstance) {
   await app.register(async (user) => {
     user.addHook('preHandler', requireUser);
@@ -65,13 +65,14 @@ export async function aiRoutes(app: FastifyInstance) {
     admin.post('/ai/reviews/run', { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (req) => runReview('manual', actorOf(req.principal)));
 
     admin.get('/ai/prices', async () => listPrices());
-    admin.put('/ai/prices/:model', async (req) => {
+    // Prices are the platform's (every organization's costs): super-admins edit them.
+    admin.put('/ai/prices/:model', { preHandler: requireSuperadmin }, async (req) => {
       const { model } = z.object({ model: z.string().min(1).max(100) }).parse(req.params);
       await setPrice(model, req.body);
       await audit(actorOf(req.principal), 'ai.price_set', model);
       return listPrices();
     });
-    admin.delete('/ai/prices/:model', async (req) => {
+    admin.delete('/ai/prices/:model', { preHandler: requireSuperadmin }, async (req) => {
       const { model } = z.object({ model: z.string().min(1).max(100) }).parse(req.params);
       await deletePrice(model);
       await audit(actorOf(req.principal), 'ai.price_deleted', model);

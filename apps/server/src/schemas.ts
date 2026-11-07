@@ -406,7 +406,8 @@ const approvalPolicy = z
  *  - `api`: like a form, without a page: inputs only come from the API (`POST /actions/:id/runs`);
  *  - `schedule`: a cron expression in a time zone, one run per tick;
  *  - `event`: a catalog or run event (optionally filtered with a JSONata expression);
- *  - `webhook`: `POST /api/v1/hooks/<action>`, authenticated by a shared secret or HMAC signature.
+ *  - `webhook`: `POST /api/v1/hooks/<organization>/<action>` (`/hooks/<action>`: the default organization), authenticated
+ *    by a shared secret or HMAC signature.
  * `inputs` of the last three map the context (`event`, `body`, `headers`, `schedule`) to the run inputs with `{{ }}` templates.
  */
 const formFields = {
@@ -688,7 +689,21 @@ export type EntityInput = z.infer<typeof entityInput>;
 /** Seed entities in configuration files: created when missing, never overwritten. */
 export const seedEntity = entityInput.extend({ blueprint: slug });
 
+/**
+ * Organizations declared in the platform's own configuration files (CONFIG_DIR root): created when missing, kept in sync
+ * (name, domains), never deleted automatically. `admins` (emails) become admins once those accounts exist.
+ */
+export const orgDecl = z.object({
+  slug,
+  name: z.string().min(1).max(100),
+  domains: z.array(z.string().toLowerCase()).default([]),
+  admins: z.array(z.string().email().toLowerCase()).default([]),
+});
+export type OrgDecl = z.infer<typeof orgDecl>;
+
 export const configFile = z.object({
+  /** Platform files only (not in an organization's own configuration). */
+  organizations: z.array(orgDecl).default([]),
   teams: z.array(teamDef).default([]),
   blueprints: z.array(blueprintDef).default([]),
   actions: z.array(actionDef).default([]),

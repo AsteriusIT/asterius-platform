@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { client, register, testApp, type Api } from './helpers.js';
+import { inDefaultOrg } from './helpers.js';
 
 let app: FastifyInstance;
 let admin: Api;
@@ -65,28 +66,29 @@ describe('SCIM 2.0', () => {
     expect(users.find((u) => u.email === 'ada@example.com')).toMatchObject({ role: 'member', provider: 'scim' });
   });
 
-  it('deactivation revokes sessions and tokens immediately', async () => {
-    const u = await scim('POST', '/Users', newUser('grace@example.com'));
-    const { createSession, createApiToken } = await import('../src/auth/users.js');
-    const session = await createSession(u.data.id);
-    const token = (await createApiToken({ name: 't', userId: u.data.id, createdBy: u.data.id })).token;
-    expect((await client(app, session).get('/api/auth/me')).status).toBe(200);
-    expect((await client(app, token).get('/api/auth/me')).status).toBe(200);
+  it('deactivation revokes sessions and tokens immediately', () =>
+    inDefaultOrg(async () => {
+      const u = await scim('POST', '/Users', newUser('grace@example.com'));
+      const { createSession, createApiToken } = await import('../src/auth/users.js');
+      const session = await createSession(u.data.id);
+      const token = (await createApiToken({ name: 't', userId: u.data.id, createdBy: u.data.id })).token;
+      expect((await client(app, session).get('/api/auth/me')).status).toBe(200);
+      expect((await client(app, token).get('/api/auth/me')).status).toBe(200);
 
-    const patched = await scim('PATCH', `/Users/${u.data.id}`, {
-      schemas: ['urn:ietf:params:scim:api:messages:2.0:PatchOp'],
-      Operations: [{ op: 'Replace', path: 'active', value: false }],
-    });
-    expect(patched.data.active).toBe(false);
-    expect((await client(app, session).get('/api/auth/me')).status).toBe(401);
-    expect((await client(app, token).get('/api/auth/me')).status).toBe(401);
+      const patched = await scim('PATCH', `/Users/${u.data.id}`, {
+        schemas: ['urn:ietf:params:scim:api:messages:2.0:PatchOp'],
+        Operations: [{ op: 'Replace', path: 'active', value: false }],
+      });
+      expect(patched.data.active).toBe(false);
+      expect((await client(app, session).get('/api/auth/me')).status).toBe(401);
+      expect((await client(app, token).get('/api/auth/me')).status).toBe(401);
 
-    // Reactivation (Okta/Entra send value as an object without path too).
-    const back = await scim('PATCH', `/Users/${u.data.id}`, { Operations: [{ op: 'replace', value: { active: true } }] });
-    expect(back.data.active).toBe(true);
-    expect((await scim('DELETE', `/Users/${u.data.id}`)).status).toBe(204);
-    expect((await scim('GET', `/Users/${u.data.id}`)).data.active).toBe(false);
-  });
+      // Reactivation (Okta/Entra send value as an object without path too).
+      const back = await scim('PATCH', `/Users/${u.data.id}`, { Operations: [{ op: 'replace', value: { active: true } }] });
+      expect(back.data.active).toBe(true);
+      expect((await scim('DELETE', `/Users/${u.data.id}`)).status).toBe(204);
+      expect((await scim('GET', `/Users/${u.data.id}`)).data.active).toBe(false);
+    }));
 
   it('never exposes local accounts or service accounts', async () => {
     const all = (await scim('GET', '/Users?count=200')).data.Resources as { userName: string }[];

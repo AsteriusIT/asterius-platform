@@ -12,6 +12,7 @@ export default defineConfig({
       PUBLIC_URL: 'http://platform.test',
       ALLOW_REGISTRATION: 'true',
       ADMIN_EMAILS: 'admin@example.com',
+      AUTO_JOIN_DEFAULT_ORG: 'true', // most suites work in the default organization; organizations.test.ts turns it off
       RUN_POLL_SECONDS: '2',
       WORKER_IDLE_MAX_MS: '500',
       LOG_LEVEL: 'silent',

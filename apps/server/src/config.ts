@@ -71,7 +71,7 @@ const schema = z.object({
     .string()
     .optional()
     .transform((v) => (v || 'local').split(',').map((x) => x.trim()))
-    .pipe(z.array(z.enum(['local', 'entra', 'oidc', 'github', 'saml'])).min(1)),
+    .pipe(z.array(z.enum(['local', 'entra', 'oidc', 'github', 'saml', 'keycloak'])).min(1)),
   /** Open self-registration. Default: on for a local PUBLIC_URL (development), off once a real public URL is set. */
   ALLOW_REGISTRATION: z.string().optional(),
   /**
@@ -151,6 +151,32 @@ const schema = z.object({
   GITHUB_ADMIN_TEAMS: list,
   GITHUB_API_URL: z.string().default('https://api.github.com'),
   GITHUB_URL: z.string().default('https://github.com'),
+  // ---- Keycloak (registration, login, per-organization SSO) ----
+  /**
+   * Base URL of Keycloak as browsers reach it (https://id.example.com). With AUTH_PROVIDERS containing `keycloak`, sign-in
+   * and registration happen there, and each platform organization maps to a Keycloak Organization (same alias) whose
+   * identity providers (Entra, Okta, Google, any OIDC / SAML) organization admins connect from the platform.
+   */
+  KEYCLOAK_URL: z.string().optional(),
+  /** Back-channel URL (token, JWKS, admin API) when it differs from KEYCLOAK_URL, e.g. the in-cluster service. */
+  KEYCLOAK_INTERNAL_URL: z.string().optional(),
+  KEYCLOAK_REALM: z.string().default('asterius'),
+  /** Confidential OIDC client, with a service account holding realm-management: manage-users, manage-identity-providers, manage-realm. */
+  KEYCLOAK_CLIENT_ID: z.string().default('asterius-platform'),
+  KEYCLOAK_CLIENT_SECRET: z.string().optional(),
+
+  // ---- organizations ----
+  /** Who may create organizations: everyone signed in (self-service sign-up) or platform super-admins only. */
+  ORG_CREATION: z.enum(['everyone', 'superadmin']).default('everyone'),
+  /**
+   * Single-tenant installs: new accounts join the default organization (the bootstrap super-admin as its admin). Off by
+   * default: a new account belongs to no organization until it creates one, is invited, or signs in through an
+   * organization's SSO.
+   */
+  AUTO_JOIN_DEFAULT_ORG: z
+    .string()
+    .optional()
+    .transform((v) => v === 'true' || v === '1'),
 
   // ---- workers ----
   /** Concurrent action runs per worker process. */
@@ -201,6 +227,34 @@ const schema = z.object({
    * applies). Other kubeconfig contexts than the default one are refused unless listed in KUBE_JOB_CONTEXTS.
    */
   KUBE_JOB_NAMESPACES: list,
+  /**
+   * Organizations (slugs) allowed to use the platform's own workload identity: external secret manager references
+   * (`${vault:…}`, `${awssm:…}`, `${azkv:…}`, `${gcpsm:…}`, `${k8s:…}`) and `auth` blocks without credentials (Azure
+   * managed / workload identity, the GCP metadata server, AWS IRSA). Other organizations bring their own credentials.
+   * Default: the default organization only.
+   */
+  PLATFORM_IDENTITY_ORGS: z
+    .string()
+    .optional()
+    .transform((v) =>
+      (v ?? 'default')
+        .split(',')
+        .map((x) => x.trim())
+        .filter(Boolean),
+    ),
+  /**
+   * Organizations (slugs) allowed to use the platform's own Kubernetes access: the Kubernetes source and the Job invoker
+   * run with the platform's service account / kubeconfig, which tenants must not borrow. Default: the default organization.
+   */
+  KUBERNETES_ORGS: z
+    .string()
+    .optional()
+    .transform((v) =>
+      (v ?? 'default')
+        .split(',')
+        .map((x) => x.trim())
+        .filter(Boolean),
+    ),
   KUBE_JOB_SERVICE_ACCOUNTS: list,
   KUBE_JOB_CONTEXTS: list,
   /** Keep entity history (versions, diffs) for N days; the latest version of every entity is always kept. */
