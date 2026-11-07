@@ -1,23 +1,26 @@
-import http from 'node:http';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { exportJWK, generateKeyPair, SignJWT, type JWK } from 'jose';
 import type { FastifyInstance } from 'fastify';
 import { client, register, testApp } from './helpers.js';
 import { run } from '../src/db.js';
 
-const port = vi.hoisted(() => {
-  const p = 20000 + Math.floor(Math.random() * 20000);
+// The IdP binds an OS-assigned port (no random-port collisions with other suites or ephemeral ports); the issuer
+// must be known before config.ts is imported, so the socket is opened here and the request handler attached later.
+const { idp, port } = await vi.hoisted(async () => {
+  const http = await import('node:http');
+  const idp = http.createServer();
+  await new Promise<void>((r) => idp.listen(0, '127.0.0.1', r));
+  const p = (idp.address() as { port: number }).port;
   process.env.AUTH_PROVIDERS = 'local,oidc';
   process.env.OIDC_ISSUER = `http://127.0.0.1:${p}`;
   process.env.OIDC_CLIENT_ID = 'asterius';
   process.env.OIDC_CLIENT_SECRET = 'shh';
   process.env.MCP_OAUTH_AUDIENCES = 'claude-connector';
-  return p;
+  return { idp, port: p };
 });
 const issuer = `http://127.0.0.1:${port}`;
 const resource = 'http://platform.test/api/mcp';
 
-let idp: http.Server;
 let app: FastifyInstance;
 let jwk: JWK;
 let signKey: CryptoKey;
@@ -44,20 +47,19 @@ beforeAll(async () => {
   const { publicKey, privateKey } = await generateKeyPair('RS256');
   signKey = privateKey as CryptoKey;
   jwk = { ...(await exportJWK(publicKey)), kid: 'k1', alg: 'RS256', use: 'sig' };
-  idp = http.createServer((req, res) => {
+  idp.on('request', (req, res) => {
     const send = (body: unknown) => res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(body));
     if (req.url === '/.well-known/openid-configuration')
       return send({ issuer, authorization_endpoint: `${issuer}/auth`, token_endpoint: `${issuer}/token`, jwks_uri: `${issuer}/jwks` });
     if (req.url === '/jwks') return send({ keys: [jwk] });
     res.writeHead(404).end();
   });
-  await new Promise<void>((r) => idp.listen(port, '127.0.0.1', r));
   app = await testApp();
   const reg = await register(app, 'sso@example.com');
   sessionToken = reg.token;
   // The account of this person was created by an earlier OIDC sign-in.
   await run("UPDATE users SET provider = 'oidc', external_id = ? WHERE id = ?", `${issuer}|kc-sub-1`, reg.user.id);
-});
+}, 60_000); // RSA keygen + app/migrations boot: well over the 10s default hook timeout on a loaded machine
 afterAll(async () => {
   await app.close();
   await new Promise((r) => idp.close(r));
