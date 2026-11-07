@@ -25,6 +25,10 @@ export function Login() {
 
   if (user) return <Navigate to={from} replace />;
   const providers = meta.data?.authProviders ?? [];
+  // Three stacked sections (Keycloak SSO, provider buttons, local form): one "or" between two present sections.
+  const hasButtons = (['entra', 'oidc', 'saml', 'github'] as const).some((p) => providers.includes(p));
+  const hasKeycloak = providers.includes('keycloak');
+  const hasLocal = providers.includes('local');
   const keycloakUrl = (o: { email?: string; register?: boolean }) => {
     const p = new URLSearchParams({ returnTo: from });
     if (o.email?.includes('@')) p.set('email', o.email.trim());
@@ -87,7 +91,7 @@ export function Login() {
               </Stack>
             </form>
           )}
-          {providers.includes('keycloak') && (providers.includes('entra') || providers.includes('local')) && <Divider label="or" />}
+          {hasKeycloak && (hasButtons || hasLocal) && <Divider label="or" />}
           {providers.includes('entra') && (
             <Button
               component="a"
@@ -118,7 +122,7 @@ export function Login() {
               Continue with GitHub
             </Button>
           )}
-          {providers.includes('local') && providers.some((p) => p !== 'local') && <Divider label="or" />}
+          {hasLocal && hasButtons && <Divider label="or" />}
           {providers.includes('local') && (
             <form onSubmit={submit}>
               <Stack gap="sm">
