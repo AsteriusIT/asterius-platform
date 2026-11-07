@@ -21,7 +21,11 @@ ENV NODE_ENV=production \
     DATA_DIR=/data \
     NODE_OPTIONS=--enable-source-maps
 # git: organizations can pull their configuration as code from their own repository (shallow, hardened clones).
-RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
+# Package managers are not needed at runtime (CMD runs node directly) and their bundled dependencies (npm's undici,
+# brace-expansion...) only add CVEs to the image scan: removed.
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/* \
+ && rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack /opt/yarn-v* \
+           /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /usr/local/bin/yarn /usr/local/bin/yarnpkg
 WORKDIR /app
 COPY --from=build --chown=root:root /src/node_modules ./node_modules
 COPY --from=build --chown=root:root /src/packages/shared ./packages/shared
