@@ -1,3 +1,4 @@
+import { isGitMetadata } from './security.js';
 import type { Rendered, TemplateFile } from './types.js';
 
 export const MAX_FILES = 200;
@@ -27,7 +28,10 @@ export function renderFiles(files: TemplateFile[], vars: Record<string, string>,
   return files.map((f) => {
     const rendered = renderText(f.path, vars);
     const path = [dir && dir !== '.' ? dir : '', rendered].filter(Boolean).join('/');
-    if (path.split('/').some((seg) => seg === '..' || seg === '') || path.startsWith('/')) throw new Error(`unsafe path in template: "${rendered}"`);
+    // eslint-disable-next-line no-control-regex
+    if (path.split('/').some((seg) => seg === '..' || seg === '.' || seg === '') || path.startsWith('/') || /[\\\u0000-\u001f]/.test(path))
+      throw new Error(`unsafe path in template: "${rendered}"`);
+    if (path.split('/').some(isGitMetadata)) throw new Error(`refusing to write into .git: "${rendered}"`);
     const raw = Buffer.from(f.content, 'base64');
     if (raw.includes(0)) return { path, content: f.content }; // binary
     return { path, content: Buffer.from(renderText(raw.toString('utf8'), vars)).toString('base64') };

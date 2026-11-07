@@ -96,6 +96,12 @@ export function assertUrlAllowed(raw: string | URL) {
   else if (hostMatches(deny, host)) throw new Error(`Outbound request to ${host} is denied (OUTBOUND_DENY)`);
 }
 
+/** True when the admin explicitly allow-listed this host or IP (OUTBOUND_ALLOW): the only case where plain http to it is acceptable. */
+export function isExplicitlyAllowed(host: string) {
+  const h = host.replace(/^\[|\]$/g, '').toLowerCase();
+  return hostMatches(allow, h) || listed(allow.nets, h);
+}
+
 /** Same scheme, host and port: required before following a URL supplied by an upstream (pagination, redirects). */
 export function sameOrigin(a: string | URL, b: string | URL) {
   return new URL(a).origin === new URL(b).origin;

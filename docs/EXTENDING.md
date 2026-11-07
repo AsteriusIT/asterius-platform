@@ -196,6 +196,19 @@ If the name already exists (422) the run does not fail only when the repository 
 
 GitLab `mode: new-repository` creates the project (`POST /projects`) and pushes the files as the initial commit; `prUrl` is `null`, `repoUrl` is the project `web_url`. `repo` is the project path (`group/sub/name`); alternatively `repo: name` plus `namespace: group/sub`. Optional: `description`, `visibility` (`private` default, `internal`, `public`), `defaultBranch` (default `baseBranch` or `main`). If the project already exists it is used only when empty or with `reuseExisting: true` (files are then committed on its default branch, existing paths updated); otherwise the run fails. In `pull-request` mode a re-run is idempotent: an existing branch receives the commit on top of it (existing files are updated) and an open MR for the same source/target branches is reused (same `prUrl`/`number`).
 
+#### Scaffolder tokens and security
+
+Token scopes (least privilege):
+
+| Provider | Needed |
+| --- | --- |
+| GitHub fine-grained token | `Contents: write` + `Pull requests: write` on the target repository (and `Contents: read` on the template). `new-repository` additionally needs `Administration: write` (organization/account level) and, with `team`, `Members: read`/team admin. Templates containing `.github/workflows/*` need `Workflows: write`. |
+| GitHub classic token | `repo` (`workflow` if the template contains `.github/workflows/*`; `admin:org` only for `team`). |
+| GitLab | `api` (project access tokens: role Developer for `pull-request`, Maintainer/group Owner to create projects). |
+| Azure DevOps PAT | `Code (Read & write)` for both modes. Creating a repository (`new-repository`) requires the *Create repository* permission on the project/organization for the PAT owner (a project-level permission, not a PAT scope; `Code (Read, write, & manage)` also covers it). |
+
+Safeguards enforced by the invoker: `apiUrl` / `baseUrl` / `organization` must be `https` URLs without credentials and, like every outbound call, go through the SSRF guard (private, loopback and link-local addresses are refused unless allow-listed in `OUTBOUND_ALLOW`; plain `http` is only accepted for allow-listed hosts). Repository and ref names are restricted to plain segments (no `..`, `?`, `#`). Only `token` may be a `${secret:…}`/`${env:…}` reference: it is rejected in `variables`, `title`, `description`, `branch` and paths because the resolved value would be committed, and a final check refuses to publish any file containing the token or the run callback token. The token is masked in errors and logs. Rendered paths cannot be absolute, contain `..`, `\` or control characters, or enter `.git/` (any case). Writing `.github/workflows/` is allowed but logs a warning: a workflow runs with repository secrets once merged, so keep the PR review required and grant the `workflow` scope only when templates need it. Each successful publish writes a `scaffold.published` audit entry (provider, mode, repoUrl, prUrl, branch, file count; no token).
+
 Every invoker can also receive callbacks, for example a GitHub workflow that reports progress and the URL of what it created.
 
 ## The run callback API
