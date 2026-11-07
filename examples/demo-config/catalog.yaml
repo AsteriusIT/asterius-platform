@@ -52,6 +52,7 @@ blueprints:
     title: Environment
     icon: server
     description: Runtime environments (requested through self-service).
+    ttlProperty: expiresAt # past this date the platform emits entity.expired (see the decommission-expired-environment workflow)
     schema:
       properties:
         type: { type: string, title: Type, enum: [development, staging, production], enumColors: { development: gray, staging: blue, production: red } }

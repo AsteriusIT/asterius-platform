@@ -63,6 +63,27 @@ actions:
           team: '{{ inputs.team }}'
           properties: { type: '{{ inputs.type }}', region: '{{ inputs.region }}', expiresAt: '{{ inputs.expiresAt }}' }
 
+  - identifier: decommission-expired-environment
+    title: Decommission expired environments
+    icon: trash
+    description: Deletes an environment once its expiry date has passed (event entity.expired, see ttlProperty of the environment blueprint).
+    trigger:
+      type: event
+      event: entity.expired
+      blueprint: environment
+      # Production environments are never removed automatically.
+      filter: 'event.entity.properties.type != "production"'
+      inputs: { name: '{{ event.entity.identifier }}' }
+    steps:
+      - id: run
+        name: Delete the environment
+        type: invoke
+        invoker:
+          type: catalog
+          operation: delete
+          blueprint: environment
+          identifier: '{{ inputs.name }}'
+
   - identifier: change-lifecycle
     title: Change lifecycle
     icon: refresh

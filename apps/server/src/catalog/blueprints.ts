@@ -19,6 +19,7 @@ interface Row {
   relations: string;
   computed?: string;
   permissions: string | null;
+  ttl_property?: string | null;
   managed: number;
   created_at: string;
   updated_at: string;
@@ -34,6 +35,7 @@ const toBlueprint = (r: Row): Blueprint => ({
   relations: json(r.relations, {}),
   computed: json(r.computed, {}),
   ...(r.permissions ? { permissions: json(r.permissions, {}) } : {}),
+  ...(r.ttl_property ? { ttlProperty: r.ttl_property } : {}),
   managed: bool(r.managed),
   createdAt: r.created_at,
   updatedAt: r.updated_at,
@@ -123,6 +125,11 @@ export async function upsertBlueprint(input: unknown, opts: WriteOpts = {}): Pro
   const def: BlueprintDef = blueprintDef.parse(input);
   validator(def.schema as never); // the property schemas must compile
   for (const r of def.schema.required ?? []) if (!def.schema.properties[r]) throw badRequest(`Required property "${r}" is not defined`);
+  if (def.ttlProperty) {
+    const t = def.schema.properties[def.ttlProperty] as { type?: string; format?: string } | undefined;
+    if (!t || t.type !== 'string' || !['date', 'date-time'].includes(t.format ?? ''))
+      throw badRequest(`ttlProperty "${def.ttlProperty}" must be a string property with format date or date-time`);
+  }
   for (const [name, rel] of Object.entries(def.relations)) {
     if (def.schema.properties[name]) throw badRequest(`"${name}" is both a property and a relation`);
     if (rel.target === def.identifier || opts.knownTargets?.has(rel.target)) continue;
@@ -155,11 +162,12 @@ export async function upsertBlueprint(input: unknown, opts: WriteOpts = {}): Pro
     JSON.stringify(def.relations),
     JSON.stringify(def.computed),
     def.permissions ? JSON.stringify(def.permissions) : null,
+    def.ttlProperty ?? null,
     opts.managed ? 1 : 0,
   ];
   if (existing)
     await run(
-      'UPDATE blueprints SET title = ?, description = ?, icon = ?, schema = ?, relations = ?, computed = ?, permissions = ?, managed = ?, updated_at = ? WHERE org_id = ? AND identifier = ?',
+      'UPDATE blueprints SET title = ?, description = ?, icon = ?, schema = ?, relations = ?, computed = ?, permissions = ?, ttl_property = ?, managed = ?, updated_at = ? WHERE org_id = ? AND identifier = ?',
       ...values,
       t,
       org,
@@ -167,7 +175,7 @@ export async function upsertBlueprint(input: unknown, opts: WriteOpts = {}): Pro
     );
   else
     await run(
-      'INSERT INTO blueprints (title, description, icon, schema, relations, computed, permissions, managed, created_at, updated_at, org_id, identifier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO blueprints (title, description, icon, schema, relations, computed, permissions, ttl_property, managed, created_at, updated_at, org_id, identifier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       ...values,
       t,
       t,

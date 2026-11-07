@@ -203,6 +203,8 @@ export interface Blueprint {
   computed?: Record<string, ComputedProperty>;
   /** Who may read / write / delete entities and run actions on them. Unset: read and run by everyone, write by the owner team. */
   permissions?: BlueprintPermissions;
+  /** Date / date-time property after which `entity.expired` is emitted (ephemeral entities). */
+  ttlProperty?: string | null;
   managed: boolean;
   entityCount?: number;
   createdAt: string;
@@ -534,7 +536,7 @@ export interface ScheduleTrigger {
 
 export interface EventTrigger {
   type: 'event';
-  event: 'entity.created' | 'entity.updated' | 'entity.deleted' | 'scorecard.changed' | 'run.finished';
+  event: 'entity.created' | 'entity.updated' | 'entity.deleted' | 'entity.expired' | 'scorecard.changed' | 'run.finished';
   blueprint?: string | null;
   /** run.finished: only runs of this action. */
   action?: string | null;

@@ -91,7 +91,7 @@ export function TriggerEditor(props: {
   );
 }
 
-const EVENTS = ['entity.created', 'entity.updated', 'entity.deleted', 'scorecard.changed', 'run.finished'] as const;
+const EVENTS = ['entity.created', 'entity.updated', 'entity.deleted', 'entity.expired', 'scorecard.changed', 'run.finished'] as const;
 
 /** Schedule, event and webhook triggers: settings plus the mapping of the context to the run inputs. */
 function AutomaticTriggerEditor({ trigger, onChange }: { trigger: Exclude<WorkflowTrigger, FormLikeTrigger>; onChange: (t: WorkflowTrigger) => void }) {

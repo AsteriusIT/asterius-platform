@@ -93,7 +93,7 @@ trigger:                                           # cron (5 fields) in an IANA 
   inputs: { day: "{{ schedule.at }}" }
 trigger:                                           # catalog events and finished runs; JSONata filter over { event }
   type: event
-  event: entity.created                            # entity.created | entity.updated | entity.deleted | scorecard.changed | run.finished
+  event: entity.created                            # entity.created | entity.updated | entity.deleted | entity.expired | scorecard.changed | run.finished
   blueprint: service
   filter: 'event.entity.properties.tier = "gold"'
   inputs: { name: "{{ event.entity.identifier }}" }   # the entity of the event is the run's entity
@@ -265,9 +265,20 @@ scorecards:
 
 **Dashboards.** Widgets: `count` (optionally `groupBy` a property, `team` or `source`), `scorecard`, `runs`, `approvals`, `table` (a saved view), `markdown`. A dashboard with `default: true` is the home page; with `team:` it is the home page of that team; with `blueprint:` it appears on that blueprint's catalog page.
 
+## Ephemeral entities (expiry)
+
+A blueprint can name a date or date-time property as its `ttlProperty` (also in the blueprint editor, "Expiry property"). Once that value is in the past, the maintenance pass (every 5 minutes, on every replica) emits `entity.expired` with `data: { entity, property, expiresAt }`, in the entity's organization. It is announced **once per expiry value**: the announced value is stored in `entity_expiry` and claimed with a conditional upsert, so replicas never double-emit; changing the date re-arms it. A date without a time expires at the end of that day (UTC). The entity is *not* deleted: subscribe a webhook or a workflow event trigger (`event: entity.expired`, see `decommission-expired-environment` in `examples/demo-config`) to act on it.
+
+```yaml
+blueprints:
+  - identifier: environment
+    ttlProperty: expiresAt        # a property with format date / date-time
+    schema: { properties: { expiresAt: { type: string, format: date } } }
+```
+
 ## Outbound webhooks
 
-The payload has the form `{ id, type, at, blueprint, actor, data }`. Event types are `entity.created`, `entity.updated` (with `data.before`), `entity.deleted`, `run.created`, `run.updated` and `scorecard.changed` (`data: { scorecard, entity, from, to, passed, total }`). Requests carry the headers `X-Asterius-Event`, `X-Asterius-Delivery` and `X-Asterius-Signature: t=<unix seconds>,v1=<hex>`, where `v1 = HMAC-SHA256(secret, "<t>.<body>")`. Receivers must recompute it over the raw body, compare in constant time, and reject timestamps more than **5 minutes** from their clock (replay protection); the timestamp is refreshed on every retry. `secret` and `secondarySecret` must be references (`${secret:NAME}` / `${env:NAME}`); literal values are rejected.
+The payload has the form `{ id, type, at, blueprint, actor, data }`. Event types are `entity.created`, `entity.updated` (with `data.before`), `entity.deleted`, `entity.expired` (`data: { entity, property, expiresAt }`), `run.created`, `run.updated` and `scorecard.changed` (`data: { scorecard, entity, from, to, passed, total }`). Requests carry the headers `X-Asterius-Event`, `X-Asterius-Delivery` and `X-Asterius-Signature: t=<unix seconds>,v1=<hex>`, where `v1 = HMAC-SHA256(secret, "<t>.<body>")`. Receivers must recompute it over the raw body, compare in constant time, and reject timestamps more than **5 minutes** from their clock (replay protection); the timestamp is refreshed on every retry. `secret` and `secondarySecret` must be references (`${secret:NAME}` / `${env:NAME}`); literal values are rejected.
 
 **Rotating a signing secret without downtime:** (1) create the new secret and set it as `secondarySecret`: deliveries now carry two `v1=` entries, one per secret; (2) make receivers accept either (any matching `v1`) and switch them to the new secret; (3) move the new secret to `secret` and remove `secondarySecret`.
 
