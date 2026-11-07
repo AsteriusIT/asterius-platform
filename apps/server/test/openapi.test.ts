@@ -31,6 +31,26 @@ describe('OpenAPI', () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
+  it('documents the entity docs, related, graph, insights and policy routes', async () => {
+    const spec = (await app.inject({ method: 'GET', url: '/api/openapi.json' })).json();
+    const schemaOf = (p: string) => spec.paths[p].get.responses['200'].content['application/json'].schema.$ref;
+    expect(schemaOf('/api/v1/blueprints/{bp}/entities/{id}/docs')).toBe('#/components/schemas/EntityDocs');
+    expect(schemaOf('/api/v1/blueprints/{bp}/entities/{id}/related')).toBe('#/components/schemas/RelatedEntities');
+    expect(schemaOf('/api/v1/blueprints/{bp}/entities/{id}/graph')).toBe('#/components/schemas/EntityGraph');
+    expect(schemaOf('/api/v1/entities/{bp}/{id}/graph')).toBe('#/components/schemas/EntityGraph');
+    expect(schemaOf('/api/v1/insights')).toBe('#/components/schemas/Insights');
+    expect(schemaOf('/api/v1/policies')).toBeUndefined();
+    expect(spec.paths['/api/v1/policies'].get.responses['200'].content['application/json'].schema.items.$ref).toBe('#/components/schemas/PolicyView');
+    const names = (p: string) => spec.paths[p].get.parameters.map((x: { name: string }) => x.name);
+    expect(names('/api/v1/insights')).toEqual(['days', 'team', 'service', 'deploymentBlueprint', 'incidentBlueprint', 'deploymentActions']);
+    expect(names('/api/v1/blueprints/{bp}/entities/{id}/docs')).toEqual(['bp', 'id', 'property']);
+    expect(spec.components.schemas.Insights.properties).toHaveProperty('mttr');
+    expect(spec.components.schemas.EntityDocs.required).toEqual(['property', 'url', 'markdown']);
+    // Every $ref resolves.
+    const refs = [...JSON.stringify(spec).matchAll(/#\/components\/schemas\/([A-Za-z0-9_]+)/g)].map((m) => m[1]!);
+    for (const r of refs) expect(spec.components.schemas).toHaveProperty(r);
+  });
+
   it('serves a reference page', async () => {
     const res = await app.inject({ method: 'GET', url: '/api/docs' });
     expect(res.statusCode).toBe(200);
