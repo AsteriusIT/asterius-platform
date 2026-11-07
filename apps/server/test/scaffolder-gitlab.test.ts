@@ -78,12 +78,15 @@ describe('gitlab new-repository', () => {
     await srv.close();
   });
 
-  const existing = (empty: boolean) =>
+  const existing = (empty: boolean, current = 'old') =>
     gitlab(({ method, url }, send) => {
       if (template(url, send) !== false) return;
       if (method === 'GET' && url === '/api/v4/projects/team%2Fsub%2Fsvc')
         return send({ id: 9, web_url: 'https://gl/team/sub/svc', empty_repo: empty, default_branch: empty ? null : 'main' });
       if (url.startsWith('/api/v4/projects/9/repository/tree')) return send([{ path: 'a.txt', type: 'blob' }]);
+      if (url.startsWith('/api/v4/projects/9/repository/files/a.txt?ref=main'))
+        return send({ encoding: 'base64', content: Buffer.from(current).toString('base64') });
+      if (url.startsWith('/api/v4/projects/9/repository/branches/main')) return send({ name: 'main', commit: { id: 'tip9' } });
       if (url === '/api/v4/projects/9/repository/commits') return send({ id: 'c2' }, 201);
       send({}, 404);
     });
@@ -108,11 +111,14 @@ describe('gitlab new-repository', () => {
 });
 
 describe('gitlab merge request re-runs', () => {
-  const mrServer = (branchExists: boolean, openMr: boolean) =>
+  const mrServer = (branchExists: boolean, openMr: boolean, current = 'old') =>
     gitlab(({ method, url }, send) => {
       if (template(url, send) !== false) return;
-      if (url.startsWith('/api/v4/projects/team%2Fsub%2Fsvc/repository/branches/')) return branchExists ? send({ name: 'b' }) : send({}, 404);
+      if (url.startsWith('/api/v4/projects/team%2Fsub%2Fsvc/repository/branches/'))
+        return branchExists ? send({ name: 'b', commit: { id: 'tip1' } }) : send({}, 404);
       if (url.startsWith('/api/v4/projects/team%2Fsub%2Fsvc/repository/tree')) return send([{ path: 'a.txt', type: 'blob' }]);
+      if (url.startsWith('/api/v4/projects/team%2Fsub%2Fsvc/repository/files/a.txt?ref='))
+        return send({ encoding: 'base64', content: Buffer.from(current).toString('base64') });
       if (url.endsWith('/repository/commits')) return send({ id: 'c3' }, 201);
       if (method === 'GET' && url.includes('/merge_requests?state=opened&source_branch=scaffold%2Fabcdef12&target_branch=main'))
         return send(openMr ? [{ web_url: 'https://gl/team/sub/svc/-/merge_requests/8', iid: 8 }] : []);
@@ -137,6 +143,33 @@ describe('gitlab merge request re-runs', () => {
     expect(commit.body?.start_branch).toBeUndefined();
     expect(commit.body).toMatchObject({ branch: 'scaffold/abcdef12', actions: [{ action: 'update' }] });
     expect(srv.calls.some((c) => c.method === 'POST' && c.url.endsWith('/merge_requests'))).toBe(false);
+    await srv.close();
+  });
+
+  it('re-run with identical content: no commit, branch tip returned, MR reused', async () => {
+    const srv = await mrServer(true, true, '"x"');
+    const out = await run(cfg(srv.url));
+    expect(out.result).toMatchObject({ number: 8, commit: 'tip1' });
+    expect(srv.calls.some((c) => c.method === 'POST' && c.url.endsWith('/commits'))).toBe(false);
+    await srv.close();
+  });
+});
+
+describe('gitlab new-repository re-run with identical content', () => {
+  it('skips the commit and returns the branch tip', async () => {
+    const srv = await gitlab(({ method, url }, send) => {
+      if (template(url, send) !== false) return;
+      if (method === 'GET' && url === '/api/v4/projects/team%2Fsub%2Fsvc')
+        return send({ id: 9, web_url: 'https://gl/team/sub/svc', empty_repo: false, default_branch: 'main' });
+      if (url.startsWith('/api/v4/projects/9/repository/tree')) return send([{ path: 'a.txt', type: 'blob' }]);
+      if (url.startsWith('/api/v4/projects/9/repository/files/a.txt?ref=main'))
+        return send({ encoding: 'base64', content: Buffer.from('"x"').toString('base64') });
+      if (url.startsWith('/api/v4/projects/9/repository/branches/main')) return send({ commit: { id: 'tip9' } });
+      send({}, 404);
+    });
+    const out = await run(cfg(srv.url, { mode: 'new-repository', reuseExisting: true }));
+    expect(out.result).toMatchObject({ commit: 'tip9', branch: 'main' });
+    expect(srv.calls.some((c) => c.method === 'POST')).toBe(false);
     await srv.close();
   });
 });

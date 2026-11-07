@@ -60,8 +60,42 @@ async function existingPaths(c: ScaffoldConfig, project: string, ref: string): P
   return out;
 }
 
-const actions = (files: PublishContext['files'], existing: Set<string>) =>
-  files.map((f) => ({ action: existing.has(f.path) ? 'update' : 'create', file_path: f.path, content: f.content, encoding: 'base64' }));
+/**
+ * Commit actions for the files that differ from the branch: `create` for new paths, `update` for existing ones whose
+ * content changed. Identical files are dropped (GitLab would otherwise record a no-change commit), so an empty result
+ * means the re-run has nothing to commit.
+ */
+async function actions(c: ScaffoldConfig, project: string, ref: string, files: PublishContext['files'], existing: Set<string>) {
+  const out: Array<{ action: string; file_path: string; content: string; encoding: string }> = [];
+  for (const f of files) {
+    if (existing.has(f.path)) {
+      const cur = await find<{ content?: string; encoding?: string }>(
+        `${api(c)}/projects/${project}/repository/files/${encodeURIComponent(f.path)}?ref=${encodeURIComponent(ref)}`,
+        c,
+      );
+      if (cur?.content && (cur.encoding ?? 'base64') === 'base64' && cur.content.replace(/\s/g, '') === f.content) continue;
+    }
+    out.push({ action: existing.has(f.path) ? 'update' : 'create', file_path: f.path, content: f.content, encoding: 'base64' });
+  }
+  return out;
+}
+
+/** Tip commit of a branch ('' when unknown). */
+async function tip(c: ScaffoldConfig, project: string, branch: string): Promise<string> {
+  const b = await find<{ commit?: { id?: string } }>(`${api(c)}/projects/${project}/repository/branches/${encodeURIComponent(branch)}`, c);
+  return b?.commit?.id ?? '';
+}
+
+/** Commits `changes` on `branch` unless there are none; returns the new commit id or the current branch tip. */
+async function commitOrTip(c: ScaffoldConfig, project: string, body: Record<string, unknown>, changes: Awaited<ReturnType<typeof actions>>): Promise<string> {
+  if (!changes.length) return tip(c, project, String(body.branch));
+  const res = await http<{ id?: string }>(`${api(c)}/projects/${project}/repository/commits`, {
+    method: 'POST',
+    headers: headers(c),
+    body: { ...body, actions: changes },
+  });
+  return res.data.id ?? '';
+}
 
 /**
  * mode: pull-request — one commit on the branch, then a merge request. Re-runs: an existing branch gets the commit
@@ -72,16 +106,12 @@ async function mergeRequest({ config: c, files, branch, title, body }: PublishCo
   const base = str(c.baseBranch || 'main');
   const branchExists = !!(await find(`${api(c)}/projects/${project}/repository/branches/${encodeURIComponent(branch)}`, c));
   const existing = branchExists ? await existingPaths(c, project, branch) : new Set<string>();
-  const commit = await http<{ id?: string }>(`${api(c)}/projects/${project}/repository/commits`, {
-    method: 'POST',
-    headers: headers(c),
-    body: {
-      branch,
-      ...(branchExists ? {} : { start_branch: base }),
-      commit_message: title,
-      actions: actions(files, existing),
-    },
-  });
+  const commit = await commitOrTip(
+    c,
+    project,
+    { branch, ...(branchExists ? {} : { start_branch: base }), commit_message: title },
+    await actions(c, project, branch, files, existing),
+  );
   const open = await http<Array<{ web_url: string; iid: number; sha?: string }>>(
     `${api(c)}/projects/${project}/merge_requests?state=opened&source_branch=${encodeURIComponent(branch)}&target_branch=${encodeURIComponent(base)}`,
     { headers: headers(c) },
@@ -100,7 +130,7 @@ async function mergeRequest({ config: c, files, branch, title, body }: PublishCo
     prUrl: mr.web_url,
     number: mr.iid,
     branch,
-    commit: commit.data.id ?? mr.sha ?? '',
+    commit: commit || mr.sha || '',
     provider: 'gitlab',
     files: files.map((f) => f.path),
   };
@@ -159,17 +189,13 @@ async function newProject({ config: c, files, title }: PublishContext): Promise<
       })
     ).data;
   }
-  const commit = await http<{ id?: string }>(`${api(c)}/projects/${project.id}/repository/commits`, {
-    method: 'POST',
-    headers: headers(c),
-    body: { branch, commit_message: title, actions: actions(files, existing) },
-  });
+  const commit = await commitOrTip(c, String(project.id), { branch, commit_message: title }, await actions(c, String(project.id), branch, files, existing));
   return {
     repoUrl: project.web_url,
     prUrl: null,
     number: null,
     branch,
-    commit: commit.data.id ?? '',
+    commit,
     provider: 'gitlab',
     files: files.map((f) => f.path),
   };

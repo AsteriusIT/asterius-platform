@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { getInvoker } from '../src/actions/invokers/index.js';
@@ -30,7 +31,7 @@ interface Req {
 }
 
 /** Minimal Azure DevOps Git API: template repo `tpl`, target repos in `repos` (name -> { refs, files }). */
-async function fakeAdo(repos: Record<string, { refs: Record<string, string>; files: Set<string> }> = {}) {
+async function fakeAdo(repos: Record<string, { refs: Record<string, string>; files: Set<string>; ids?: Record<string, string> }> = {}) {
   const calls: Req[] = [];
   const prs: Array<{ id: number; source: string; target: string }> = [];
   let origin = '';
@@ -83,11 +84,18 @@ async function fakeAdo(repos: Record<string, { refs: Record<string, string>; fil
         for (const u of body as unknown as Array<{ name: string; newObjectId: string }>) repo.refs[u.name] = u.newObjectId;
         return send({ value: [] });
       }
-      if (sub === 'items') return repo.files.has(url.searchParams.get('path')!) ? send({ path: url.searchParams.get('path') }) : send({}, 404);
+      if (sub === 'items')
+        return repo.files.has(url.searchParams.get('path')!)
+          ? send({ path: url.searchParams.get('path'), objectId: repo.ids?.[url.searchParams.get('path')!] ?? 'other' })
+          : send({}, 404);
       if (sub === 'pushes') {
         const u = body.refUpdates[0];
         expect(u.oldObjectId).toBe(repo.refs[u.name] ?? ZERO);
-        for (const ch of body.commits[0].changes) repo.files.add(ch.item.path);
+        for (const ch of body.commits[0].changes) {
+          repo.files.add(ch.item.path);
+          const buf = Buffer.from(ch.newContent.content, 'base64');
+          (repo.ids ??= {})[ch.item.path] = createHash('sha1').update(`blob ${buf.length}\0`).update(buf).digest('hex');
+        }
         repo.refs[u.name] = `c${Object.keys(repo.refs).length}${calls.length}`;
         return send({ commits: [{ commitId: repo.refs[u.name] }] }, 201);
       }
@@ -156,10 +164,23 @@ describe('scaffolder: azure-devops', () => {
     // re-run: branch exists -> pushes on top with edit, reuses the active PR
     const again = await inv.start({ ctx, config, log });
     expect(again.result).toMatchObject({ number: 41, prUrl: `${ado.origin}/org/P/_git/svc/pullrequest/41` });
+    // identical content: the unchanged files are skipped, so no second push
+    const pushes = ado.calls.filter((c) => c.url.includes('/pushes'));
+    expect(pushes).toHaveLength(1);
+    expect(again.result).toMatchObject({ commit: (out.result as { commit: string }).commit });
+    expect(ado.calls.filter((c) => c.method === 'POST' && c.url.includes('/pullrequests'))).toHaveLength(1);
+    await ado.close();
+  });
+
+  it('re-run with changed content pushes only the changed file as an edit', async () => {
+    const ado = await fakeAdo({ svc: { refs: { 'refs/heads/main': 'base1' }, files: new Set() } });
+    const config = base(ado.origin);
+    await inv.start({ ctx, config, log });
+    ado.repos.svc!.ids!['/src/api.txt'] = 'stale';
+    await inv.start({ ctx, config, log });
     const pushes = ado.calls.filter((c) => c.url.includes('/pushes'));
     expect(pushes).toHaveLength(2);
-    expect(pushes[1]!.body.commits[0].changes.map((c: { changeType: string }) => c.changeType)).toEqual(['edit', 'edit']);
-    expect(ado.calls.filter((c) => c.method === 'POST' && c.url.includes('/pullrequests'))).toHaveLength(1);
+    expect(pushes[1]!.body.commits[0].changes.map((c) => `${c.changeType}:${c.item.path}`)).toEqual(['edit:/src/api.txt']);
     await ado.close();
   });
 
