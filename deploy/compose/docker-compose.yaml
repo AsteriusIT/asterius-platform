@@ -117,6 +117,8 @@ services:
       KEYCLOAK_REALM: asterius
       KEYCLOAK_CLIENT_ID: asterius-platform
       KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET}
+      SMTP_URL: ${SMTP_URL:-} # notifications + email invoker (Keycloak mails are set in the realm)
+      SMTP_FROM: ${SMTP_FROM:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       NODE_OPTIONS: --enable-source-maps --max-old-space-size=512
@@ -125,6 +127,8 @@ services:
       keycloak: { condition: service_healthy }
     read_only: true
     tmpfs: [/tmp]
+    volumes:
+      - platform-data:/data # writable DATA_DIR: Git clones of configuration-as-code repositories
     healthcheck:
       test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:8080/readyz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
       interval: 15s
@@ -135,6 +139,7 @@ services:
     logging: *logging
 
 volumes:
+  platform-data:
   postgres-data:
   caddy-data:
   caddy-config:
