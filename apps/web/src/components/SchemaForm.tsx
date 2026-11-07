@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { Checkbox, JsonInput, MultiSelect, NumberInput, Select, Stack, TagsInput, Textarea, TextInput } from '@mantine/core';
+import { Checkbox, MultiSelect, NumberInput, Select, Stack, TagsInput, Textarea, TextInput } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { useQuery } from '@tanstack/react-query';
 import type { ObjectSchema, PropertySchema } from '@asterius/shared';
 import { api } from '../lib/api';
+import { CodeEditor } from './CodeEditor';
 
 /**
  * Form generated from a JSON Schema (action inputs, entity properties). Formats map to dedicated inputs:
@@ -199,11 +200,11 @@ function Field({
   }
   if (p.type === 'object')
     return (
-      <JsonInput
+      <CodeEditor
         {...common}
-        autosize
+        language="json"
         minRows={3}
-        formatOnBlur
+        maxRows={20}
         value={typeof value === 'string' ? value : value ? JSON.stringify(value, null, 2) : ''}
         onChange={(v) => {
           try {
@@ -218,17 +219,9 @@ function Field({
     return <EntitySelect {...common} blueprint={p.blueprint} value={value ? str(value) : null} onChange={(v) => onChange(v ?? undefined)} />;
   if (p.format === 'team') return <TeamSelect {...common} value={value ? str(value) : null} onChange={(v) => onChange(v ?? undefined)} />;
   if (p.format === 'user') return <UserSelect {...common} value={value ? str(value) : null} onChange={(v) => onChange(v ?? undefined)} />;
-  if (p.format === 'markdown' || p.format === 'yaml' || p.format === 'text')
-    return (
-      <Textarea
-        {...common}
-        autosize
-        minRows={3}
-        value={str(value)}
-        onChange={(e) => onChange(e.currentTarget.value)}
-        ff={p.format === 'yaml' ? 'monospace' : undefined}
-      />
-    );
+  if (p.format === 'yaml') return <CodeEditor {...common} language="yaml" minRows={3} maxRows={20} value={str(value)} onChange={(v) => onChange(v)} />;
+  if (p.format === 'markdown' || p.format === 'text')
+    return <Textarea {...common} autosize minRows={3} value={str(value)} onChange={(e) => onChange(e.currentTarget.value)} />;
   const type =
     p.format === 'date'
       ? 'date'

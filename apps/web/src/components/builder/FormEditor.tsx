@@ -1,8 +1,9 @@
 import { useState, type ReactNode } from 'react';
-import { Alert, Button, Group, Modal, Stack, Tabs, Text, Textarea } from '@mantine/core';
+import { Alert, Button, Group, Modal, Stack, Tabs, Text } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { parse, stringify } from 'yaml';
 import { errorText } from '../../lib/api';
+import { CodeEditor } from '../CodeEditor';
 
 export type Doc = Record<string, unknown>;
 
@@ -100,19 +101,7 @@ function Body(props: {
           </fieldset>
         </Tabs.Panel>
         <Tabs.Panel value="yaml">
-          <Textarea
-            aria-label="YAML document"
-            value={text}
-            onChange={(e) => setText(e.currentTarget.value)}
-            autosize
-            minRows={16}
-            maxRows={32}
-            ff="monospace"
-            fz="xs"
-            spellCheck={false}
-            readOnly={props.readOnly}
-            styles={{ input: { lineHeight: 1.5 } }}
-          />
+          <CodeEditor language="yaml" aria-label="YAML document" value={text} onChange={setText} minRows={16} maxRows={32} readOnly={props.readOnly} />
         </Tabs.Panel>
       </Tabs>
       {error && (

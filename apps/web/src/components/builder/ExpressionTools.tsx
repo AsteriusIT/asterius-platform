@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
-import { Alert, Badge, Button, Code, Group, Stack, Text, Textarea } from '@mantine/core';
+import { Alert, Badge, Button, Code, Group, Stack, Text } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { useQuery } from '@tanstack/react-query';
 import { IconPlayerPlay } from '@tabler/icons-react';
 import type { WorkflowStep } from '@asterius/shared';
 import { api, errorText, type SimulationResult } from '../../lib/api';
 import { useAppMutation } from '../../lib/queryClient';
+import { CodeEditor, JsonBlock } from '../CodeEditor';
 
 const short = (v: unknown) => {
   const t = typeof v === 'string' ? v : JSON.stringify(v);
@@ -59,15 +60,15 @@ export function DryRunPanel({ steps }: { steps: WorkflowStep[] }) {
   useEffect(() => setResult(null), [steps]);
   return (
     <Stack gap="xs">
-      <Textarea
+      <CodeEditor
+        language="json"
         label="Sample inputs (JSON)"
         description="Nothing is executed: conditions, transforms and templates are evaluated against these values."
         value={text}
-        onChange={(e) => setText(e.currentTarget.value)}
+        onChange={setText}
         error={inputs ? undefined : 'Must be a JSON object'}
-        autosize
         minRows={2}
-        styles={{ input: { fontFamily: 'var(--mantine-font-family-monospace)', fontSize: 12.5 } }}
+        maxRows={14}
       />
       <Group>
         <Button size="xs" leftSection={<IconPlayerPlay size={14} />} loading={run.isPending} disabled={!inputs || !steps.length} onClick={() => run.mutate()}>
@@ -92,11 +93,7 @@ export function DryRunPanel({ steps }: { steps: WorkflowStep[] }) {
                   {s.error}
                 </Text>
               ) : (
-                s.preview !== undefined && (
-                  <Code block fz="xs">
-                    {JSON.stringify(s.preview, null, 2)}
-                  </Code>
-                )
+                s.preview !== undefined && <JsonBlock value={s.preview} />
               )}
             </Alert>
           ))}

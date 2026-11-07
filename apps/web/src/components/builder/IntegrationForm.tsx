@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Alert, Button, Code, Group, Input, MultiSelect, NumberInput, Select, SimpleGrid, Stack, Switch, Text, TextInput } from '@mantine/core';
+import { Alert, Button, Group, Input, MultiSelect, NumberInput, Select, SimpleGrid, Stack, Switch, Text, TextInput } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { useQuery } from '@tanstack/react-query';
 import { IconPlugConnected, IconPlus, IconTrash } from '@tabler/icons-react';
@@ -8,6 +8,7 @@ import { api, errorText } from '../../lib/api';
 import { useAppMutation } from '../../lib/queryClient';
 import { JsonEditor, KeyValueEditor, MONO_INPUT, PluginFieldInput } from './blocks';
 import type { Doc } from './FormEditor';
+import { JsonBlock } from '../CodeEditor';
 
 interface Mapping {
   kind?: string;
@@ -48,11 +49,7 @@ export function MappingPreview({ mapping, item }: { mapping: Mapping; item: unkn
       <Text fz="xs" c="dimmed">
         Preview ({q.data.skipped ? 'item skipped by the filter' : `${q.data.mapped.length} entity`})
       </Text>
-      {q.data.mapped.length > 0 && (
-        <Code block fz="xs" aria-label="Mapping preview">
-          {JSON.stringify(q.data.mapped, null, 2)}
-        </Code>
-      )}
+      {q.data.mapped.length > 0 && <JsonBlock value={q.data.mapped} aria-label="Mapping preview" />}
     </div>
   );
 }

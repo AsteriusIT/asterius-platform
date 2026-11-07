@@ -3,6 +3,7 @@ import { Alert, Button, Card, Group, Modal, Stack, Text, Textarea, TextInput } f
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { IconSparkles } from '@tabler/icons-react';
 import { api, errorText } from '../lib/api';
+import { JsonBlock } from './CodeEditor';
 import { Markdown } from './ui';
 
 /** The AI helpers of the portal. They only render when the platform has a model configured. */
@@ -180,11 +181,7 @@ export function AiDraft<T>(props: {
 }
 
 /** Pretty JSON, for draft previews. */
-export const JsonPreview = ({ value }: { value: unknown }) => (
-  <Card withBorder style={{ maxHeight: 280, overflow: 'auto' }}>
-    <pre style={{ margin: 0, fontSize: 12 }}>{JSON.stringify(value, null, 2)}</pre>
-  </Card>
-);
+export const JsonPreview = ({ value }: { value: unknown }) => <JsonBlock value={value} maxHeight={280} />;
 
 /** Parse text as JSON when it looks like JSON, otherwise treat it as a description. */
 export function parseSample(text: string): { sample?: unknown; description?: string } {

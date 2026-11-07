@@ -49,6 +49,7 @@ import { Mono, PageHeader, QueryView, TimeAgo } from '../components/ui';
 import { slugify } from '../components/builder/shell';
 import { MONO_INPUT } from '../components/builder/blocks';
 import { BrandLogo } from '../components/Brand';
+import { CodeBlock } from '../components/CodeEditor';
 
 const SLUG = /^[a-z][a-z0-9_-]{0,63}$/;
 const notifyError = (e: unknown) => notifications.show({ color: 'red', message: errorText(e) });
@@ -902,9 +903,9 @@ function McpTab({ org }: { org: Organization }) {
             Or in an MCP client configuration that supports HTTP servers (Cursor, VS Code):
           </Text>
           <Group gap="xs" wrap="nowrap" align="flex-start">
-            <Code block style={{ flex: 1 }}>
-              {json}
-            </Code>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <CodeBlock code={json} />
+            </div>
             {copy(json)}
           </Group>
           <Text fz="xs" c="dimmed">
@@ -912,9 +913,9 @@ function McpTab({ org }: { org: Organization }) {
             Node 18+), then restart Claude Desktop:
           </Text>
           <Group gap="xs" wrap="nowrap" align="flex-start">
-            <Code block style={{ flex: 1 }}>
-              {desktopJson}
-            </Code>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <CodeBlock code={desktopJson} />
+            </div>
             {copy(desktopJson)}
           </Group>
         </Stack>

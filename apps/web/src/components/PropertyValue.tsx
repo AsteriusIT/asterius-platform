@@ -1,7 +1,8 @@
-import { Anchor, Badge, Code, Group, Text } from '@mantine/core';
+import { Anchor, Badge, Group, Text } from '@mantine/core';
 import { Link } from 'react-router';
 import { IconCheck, IconX } from '@tabler/icons-react';
 import type { PropertySchema } from '@asterius/shared';
+import { CodeBlock, InlineCode, JsonBlock } from './CodeEditor';
 import { Markdown, TimeAgo } from './ui';
 
 /** Display a property value according to its schema (format, enum colors, types). */
@@ -23,7 +24,7 @@ export function PropertyValue({ schema, value, compact }: { schema?: PropertySch
     );
   if (typeof value === 'boolean')
     return value ? <IconCheck size={16} color="var(--mantine-color-green-6)" /> : <IconX size={16} color="var(--mantine-color-gray-5)" />;
-  if (typeof value === 'object') return <Code block={!compact}>{JSON.stringify(value, null, compact ? 0 : 2)}</Code>;
+  if (typeof value === 'object') return compact ? <InlineCode code={JSON.stringify(value)} /> : <JsonBlock value={value} />;
   const s = String(value);
   if (schema?.enum || schema?.enumColors) return <Badge color={schema.enumColors?.[s] ?? 'gray'}>{s}</Badge>;
   if (format === 'url' || format === 'docs')
@@ -54,7 +55,7 @@ export function PropertyValue({ schema, value, compact }: { schema?: PropertySch
     ) : (
       <Markdown>{s}</Markdown>
     );
-  if (format === 'yaml') return <Code block>{s}</Code>;
+  if (format === 'yaml') return compact ? <InlineCode code={s.split('\n')[0] ?? ''} language="yaml" /> : <CodeBlock code={s} language="yaml" />;
   return (
     <Text span fz="sm" style={{ overflowWrap: 'anywhere' }}>
       {s}

@@ -10,6 +10,7 @@ import { downloadText } from '../../lib/catalogView';
 import { auditToCsv } from '../../lib/auditCsv';
 import { notifyError, useAppMutation } from '../../lib/queryClient';
 import { DataTable } from '../../components/DataTable';
+import { InlineCode } from '../../components/CodeEditor';
 import { Mono, PageHeader, QueryView, TimeAgo } from '../../components/ui';
 
 const PAGE = 50;
@@ -100,7 +101,7 @@ export function AuditAdmin() {
               </Text>
             ),
           },
-          { key: 'd', label: 'Detail', render: (a) => (Object.keys(a.detail).length ? <Code fz="xs">{JSON.stringify(a.detail)}</Code> : '') },
+          { key: 'd', label: 'Detail', render: (a) => (Object.keys(a.detail).length ? <InlineCode code={JSON.stringify(a.detail)} /> : '') },
         ]}
       />
       <Group justify="flex-end">

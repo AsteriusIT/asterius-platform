@@ -243,6 +243,14 @@ h4,
   color: transparent;
   background: color-mix(in srgb, var(--mantine-color-brand-6) 28%, transparent);
 }
+.code-inline {
+  font-family: var(--mantine-font-family-monospace);
+  font-size: 12px;
+  padding: 1px 5px;
+  border-radius: var(--mantine-radius-sm);
+  background: var(--code-bg);
+  overflow-wrap: anywhere;
+}
 .code-block {
   background: var(--code-bg);
   border-radius: var(--mantine-radius-md);

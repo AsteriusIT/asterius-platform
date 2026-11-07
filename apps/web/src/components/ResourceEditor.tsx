@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { Alert, Button, Group, Modal, Stack, Text, Textarea } from '@mantine/core';
+import { Alert, Button, Group, Modal, Stack, Text } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { parse, stringify } from 'yaml';
 import { errorText } from '../lib/api';
+import { CodeEditor } from './CodeEditor';
 
 /**
  * Edit any configurable resource as YAML (blueprints, actions, integrations, webhooks, teams): the same
@@ -76,18 +77,7 @@ function EditorBody<T>(props: {
         </Alert>
       )}
       {props.help}
-      <Textarea
-        value={text}
-        onChange={(e) => setText(e.currentTarget.value)}
-        autosize
-        minRows={16}
-        maxRows={32}
-        ff="monospace"
-        fz="xs"
-        spellCheck={false}
-        readOnly={props.readOnly}
-        styles={{ input: { lineHeight: 1.5 } }}
-      />
+      <CodeEditor language="yaml" aria-label="YAML document" value={text} onChange={setText} minRows={16} maxRows={32} readOnly={props.readOnly} />
       {error && (
         <Alert color="red" variant="light" style={{ whiteSpace: 'pre-wrap' }}>
           {error}

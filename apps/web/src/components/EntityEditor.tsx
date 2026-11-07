@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import { Alert, Button, Drawer, Group, Select, Stack, Tabs, Text, Textarea, TextInput } from '@mantine/core';
+import { Alert, Button, Drawer, Group, Select, Stack, Tabs, Text, TextInput } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { useQuery } from '@tanstack/react-query';
 import { parse, stringify } from 'yaml';
 import type { Blueprint, Entity, RelationValue } from '@asterius/shared';
 import { api, errorText } from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { CodeEditor } from './CodeEditor';
 import { EntityMultiSelect, EntitySelect, initialValues, SchemaForm, validateValues, type FormValues } from './SchemaForm';
 
 /** The editable part of an entity: what the API accepts in a PUT / POST. */
@@ -194,16 +195,7 @@ function EditorBody({
           </Stack>
         </Tabs.Panel>
         <Tabs.Panel value="yaml">
-          <Textarea
-            value={yaml}
-            onChange={(e) => setYaml(e.currentTarget.value)}
-            autosize
-            minRows={16}
-            maxRows={30}
-            ff="monospace"
-            fz="xs"
-            spellCheck={false}
-          />
+          <CodeEditor language="yaml" aria-label="YAML document" value={yaml} onChange={setYaml} minRows={16} maxRows={30} />
         </Tabs.Panel>
       </Tabs>
       {error && (

@@ -32,7 +32,8 @@ describe('DryRunPanel', () => {
     fireEvent.change(screen.getByLabelText(/Sample inputs/), { target: { value: '{"n":3}' } });
     fireEvent.click(screen.getByRole('button', { name: 'Test run' }));
     await waitFor(() => expect(dry).toHaveBeenCalledWith(expect.anything(), { n: 3 }));
-    await screen.findByText(/"double": 6/);
+    // Highlighted: the JSON is split into token spans, so match the block's whole text.
+    await waitFor(() => expect(document.querySelector('.code-block')?.textContent).toContain('"double": 6'));
   });
 
   it('rejects invalid JSON', () => {

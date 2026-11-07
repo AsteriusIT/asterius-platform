@@ -1,10 +1,10 @@
 import { useState } from 'react';
-import { Alert, Badge, Button, Code, Group, Modal, ScrollArea, Stack, Text, Textarea, TextInput } from '@mantine/core';
+import { Alert, Badge, Button, Code, Group, Modal, Stack, Text, TextInput } from '@mantine/core';
 import { useMutation } from '@tanstack/react-query';
 import { IconFlask } from '@tabler/icons-react';
 import type { DryRunResult } from '@asterius/shared';
 import { api, errorText } from '../../lib/api';
-import { MONO_INPUT } from './blocks';
+import { CodeEditor, JsonBlock } from '../CodeEditor';
 
 /**
  * "Test" button of the workflow editor: renders every template, evaluates every condition and expression and
@@ -41,16 +41,16 @@ export function DryRunModal({ identifier, body, onClose }: { identifier: string;
         <Text fz="sm" c="dimmed">
           Nothing is called and no run is created. Secrets are checked, never shown.
         </Text>
-        <Textarea label="Sample inputs (JSON)" autosize minRows={3} value={inputs} onChange={(e) => setInputs(e.currentTarget.value)} styles={MONO_INPUT} />
+        <CodeEditor language="json" label="Sample inputs (JSON)" minRows={3} maxRows={14} value={inputs} onChange={setInputs} />
         <TextInput label="Entity identifier (workflows on an entity)" value={entity} onChange={(e) => setEntity(e.currentTarget.value)} />
-        <Textarea
+        <CodeEditor
+          language="json"
           label="Mocked step outputs (JSON, optional)"
           description='e.g. {"call": {"id": "abc"}}: used by later steps instead of a generic sample'
-          autosize
           minRows={2}
+          maxRows={14}
           value={mock}
-          onChange={(e) => setMock(e.currentTarget.value)}
-          styles={MONO_INPUT}
+          onChange={setMock}
         />
         <Group>
           <Button leftSection={<IconFlask size={16} />} loading={test.isPending} onClick={() => test.mutate()}>
@@ -93,11 +93,7 @@ export function DryRunModal({ identifier, body, onClose }: { identifier: string;
                     {e}
                   </Text>
                 ))}
-                {s.rendered != null && (
-                  <ScrollArea.Autosize mah={180}>
-                    <Code block>{JSON.stringify(s.rendered, null, 2)}</Code>
-                  </ScrollArea.Autosize>
-                )}
+                {s.rendered != null && <JsonBlock value={s.rendered} maxHeight={180} />}
               </Stack>
             ))}
           </Stack>
