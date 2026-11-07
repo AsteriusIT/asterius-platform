@@ -14,6 +14,8 @@ import { createQueryClient } from './lib/queryClient';
 import { ErrorBoundary, RouteError } from './components/ErrorBoundary';
 import { AuthProvider, useAuth } from './lib/auth';
 import { useDocumentBrand } from './components/Brand';
+import { SectionTabs } from './components/SectionTabs';
+import { ADMIN_CATEGORIES } from './components/adminSections';
 import { Layout } from './components/Layout';
 import { Loading } from './components/ui';
 import { AuthCallback, Login } from './pages/Login';
@@ -54,7 +56,7 @@ function RequireAuth() {
 
 function RequireAdmin() {
   const { isAdmin } = useAuth();
-  return isAdmin ? <Outlet /> : <Navigate to="/" replace />;
+  return isAdmin ? <SectionTabs /> : <Navigate to="/" replace />;
 }
 
 function RequireSuperadmin() {
@@ -106,6 +108,7 @@ const router = createBrowserRouter([
                 path: '/admin',
                 element: <RequireAdmin />,
                 children: [
+                  ...ADMIN_CATEGORIES.map((c) => ({ path: c.id, element: <Navigate to={c.tabs[0].path} replace /> })),
                   { path: 'blueprints', element: page(definitions, 'BlueprintsAdmin') },
                   { path: 'actions', element: page(definitions, 'ActionsAdmin') },
                   { path: 'integrations', element: page(definitions, 'IntegrationsAdmin') },

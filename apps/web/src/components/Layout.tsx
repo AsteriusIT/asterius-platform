@@ -21,45 +21,30 @@ import {
 } from '@mantine/core';
 import { useDisclosure, useHotkeys, useLocalStorage, useMediaQuery } from '@mantine/hooks';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { ADMIN_CATEGORIES, tabIsActive } from './adminSections';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router';
 import {
   IconActivity,
-  IconBolt,
   IconCategory2,
   IconChecklist,
   IconDots,
-  IconBell,
-  IconHistory,
-  IconLayoutDashboard,
-  IconMedal,
-  IconTrashX,
   IconHome,
-  IconKey,
   IconLayoutSidebarLeftCollapse,
   IconLayoutSidebarLeftExpand,
-  IconLock,
   IconLogout,
   IconMoon,
-  IconPlugConnected,
-  IconRobot,
   IconRefresh,
   IconRocket,
-  IconSend,
-  IconSchema,
   IconSearch,
-  IconSettingsAutomation,
   IconSun,
   IconUser,
   IconHelpCircle,
-  IconUsersGroup,
   IconBuilding,
   IconBuildingCommunity,
   IconCheck,
   IconPlus,
   IconSelector,
   IconShieldLock,
-  IconWebhook,
-  IconShieldCheck,
 } from '@tabler/icons-react';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -109,7 +94,7 @@ export function Layout() {
   const approvals = useQuery({ queryKey: ['approvals'], queryFn: api.approvals, refetchInterval: 30_000 });
 
   const active = (to: string) => (to === '/' ? location.pathname === '/' : location.pathname === to || location.pathname.startsWith(`${to}/`));
-  const link = (to: string, label: string, icon: React.ReactNode, right?: React.ReactNode, tour?: string) => (
+  const link = (to: string, label: string, icon: React.ReactNode, right?: React.ReactNode, tour?: string, isActive?: boolean) => (
     <Tooltip key={to} label={label} position="right" disabled={!mini} openDelay={0}>
       <NavLink
         data-tour={tour}
@@ -120,7 +105,7 @@ export function Layout() {
         aria-label={label}
         leftSection={icon}
         rightSection={mini ? undefined : right}
-        active={active(to)}
+        active={isActive ?? active(to)}
         onClick={close}
       />
     </Tooltip>
@@ -347,23 +332,16 @@ export function Layout() {
           {isAdmin && (
             <div data-tour="admin">
               {section('Administration')}
-              {link('/admin/blueprints', 'Blueprints', <IconSchema size={18} stroke={1.6} />)}
-              {link('/admin/actions', 'Actions', <IconBolt size={18} stroke={1.6} />)}
-              {link('/admin/integrations', 'Integrations', <IconPlugConnected size={18} stroke={1.6} />)}
-              {link('/admin/dashboards', 'Dashboards', <IconLayoutDashboard size={18} stroke={1.6} />)}
-              {link('/admin/scorecards', 'Scorecards', <IconMedal size={18} stroke={1.6} />)}
-              {link('/admin/policies', 'Policies', <IconShieldCheck size={18} stroke={1.6} />)}
-              {link('/admin/webhooks', 'Webhooks', <IconWebhook size={18} stroke={1.6} />)}
-              {link('/admin/deliveries', 'Deliveries', <IconSend size={18} stroke={1.6} />)}
-              {link('/admin/teams', 'Teams', <IconUsersGroup size={18} stroke={1.6} />)}
-              {link('/admin/users', 'Users & service accounts', <IconKey size={18} stroke={1.6} />)}
-              {link('/admin/secrets', 'Secrets', <IconLock size={18} stroke={1.6} />)}
-              {link('/admin/deleted', 'Deleted entities', <IconTrashX size={18} stroke={1.6} />)}
-              {link('/admin/notifications', 'Notifications', <IconBell size={18} stroke={1.6} />)}
-              {link('/admin/audit', 'Audit log', <IconHistory size={18} stroke={1.6} />)}
-              {link('/admin/ai', 'AI usage', <IconRobot size={18} stroke={1.6} />)}
-              {link('/admin/config', 'Configuration', <IconSettingsAutomation size={18} stroke={1.6} />)}
-              {link('/admin/organization', 'Organization', <IconBuilding size={18} stroke={1.6} />)}
+              {ADMIN_CATEGORIES.map((c) =>
+                link(
+                  c.tabs[0].path,
+                  c.title,
+                  c.icon,
+                  undefined,
+                  undefined,
+                  c.tabs.some((t) => tabIsActive(location.pathname, t.path)),
+                ),
+              )}
             </div>
           )}
           {isSuperadmin && (

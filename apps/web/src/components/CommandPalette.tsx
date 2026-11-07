@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router';
 import { IconSearch } from '@tabler/icons-react';
 import { api } from '../lib/api';
+import { ADMIN_CATEGORIES } from './adminSections';
 
 export interface Command {
   id: string;
@@ -22,10 +23,10 @@ export function navCommands(isAdmin: boolean): Command[] {
     { id: 'approvals', label: 'Approvals', to: '/approvals' },
     { id: 'profile', label: 'Profile and API tokens', to: '/profile' },
   ];
-  const admin: Command[] = ['blueprints', 'actions', 'integrations', 'webhooks', 'deliveries', 'teams', 'users', 'secrets', 'audit', 'config'].map((k) => ({
-    id: `admin-${k}`,
-    label: `Admin: ${k}`,
-    to: `/admin/${k}`,
+  const admin: Command[] = ADMIN_CATEGORIES.flatMap((c) => c.tabs).map((t) => ({
+    id: `admin-${t.path.split('/').pop()}`,
+    label: `Admin: ${t.label}`,
+    to: t.path,
   }));
   return isAdmin ? [...base, ...admin] : base;
 }
