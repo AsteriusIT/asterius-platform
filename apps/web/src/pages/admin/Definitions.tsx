@@ -20,6 +20,7 @@ import { formOf } from '../../lib/permissions';
 import { triggerBadge, workflowSummary } from '../../lib/workflow';
 import { BlueprintBuilder } from '../../components/builder/BlueprintBuilder';
 import { PolicyBuilder, ScorecardBuilder } from '../../components/builder/GovernanceBuilders';
+import { DashboardBuilder } from '../../components/builder/DashboardBuilder';
 
 const meta = () => ({ queryKey: ['meta'], queryFn: api.meta, staleTime: Infinity });
 
@@ -352,6 +353,7 @@ export function DashboardsAdmin() {
       title="Dashboards"
       description="Widgets (counts, scorecard levels, runs, approvals, saved tables, DORA insights, markdown) shown on the home page, per team, or on a blueprint's page."
       queryKey="dashboards"
+      editor={(p) => <DashboardBuilder {...p} />}
       list={api.dashboards}
       columns={[
         {
