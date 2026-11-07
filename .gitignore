@@ -14,3 +14,8 @@ backups/
 data-*/
 test-results/
 playwright-report/
+
+# docker save exports
+*.tar
+*.tar.gz
+*.tgz
