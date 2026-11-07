@@ -173,7 +173,20 @@ h4,
   padding: 1px 5px;
   border-radius: 6px;
 }
+/* Refresh buttons: the icon turns while data loads. */
+.spin {
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation: none;
+  }
   .hover-card,
   .hover-card:hover {
     transition: none;

@@ -1,20 +1,45 @@
-import type { ReactNode } from 'react';
-import { Alert, Anchor, Badge, Box, Breadcrumbs, Center, Code, Group, Loader, Stack, Text, ThemeIcon, Title, Tooltip } from '@mantine/core';
+import { useState, type ReactNode } from 'react';
+import { ActionIcon, Alert, Anchor, Badge, Box, Breadcrumbs, Center, Code, Group, Loader, Stack, Text, ThemeIcon, Title, Tooltip } from '@mantine/core';
 import { Link } from 'react-router';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { IconAlertTriangle, IconInbox } from '@tabler/icons-react';
+import { IconAlertTriangle, IconInbox, IconRefresh } from '@tabler/icons-react';
 import type { RunStatus } from '@asterius/shared';
 import { errorText } from '../lib/api';
 import { EntityIcon } from './icons';
 
 /** Small building blocks shared by every page. */
 
+/** What a refresh button reloads: one or several queries (TanStack Query results). */
+export type Refreshable = { refetch: () => unknown };
+
+/** Reload the data of a page; the icon spins until the requests it started are done (not on background polls). */
+export function RefreshButton({ queries, label = 'Refresh' }: { queries: Refreshable | Refreshable[]; label?: string }) {
+  const [fetching, setFetching] = useState(false);
+  const refresh = async () => {
+    setFetching(true);
+    try {
+      await Promise.allSettled((Array.isArray(queries) ? queries : [queries]).map((q) => q.refetch()));
+    } finally {
+      setFetching(false);
+    }
+  };
+  return (
+    <Tooltip label={label}>
+      <ActionIcon variant="default" size={36} onClick={() => void refresh()} aria-label={label} aria-busy={fetching}>
+        <IconRefresh size={17} stroke={1.7} className={fetching ? 'spin' : undefined} />
+      </ActionIcon>
+    </Tooltip>
+  );
+}
+
 export function PageHeader(props: {
   title: ReactNode;
   description?: ReactNode;
   icon?: string | null;
   actions?: ReactNode;
+  /** Adds a refresh button reloading these queries. */
+  refresh?: Refreshable | Refreshable[];
   crumbs?: { label: string; to?: string }[];
 }) {
   return (
@@ -52,7 +77,12 @@ export function PageHeader(props: {
             )}
           </Box>
         </Group>
-        {props.actions && <Group gap="xs">{props.actions}</Group>}
+        {(props.actions || props.refresh) && (
+          <Group gap="xs">
+            {props.refresh && <RefreshButton queries={props.refresh} />}
+            {props.actions}
+          </Group>
+        )}
       </Group>
     </Stack>
   );

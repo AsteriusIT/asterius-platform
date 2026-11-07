@@ -11,6 +11,11 @@ export const azureDevOpsSource: Source = {
     title: 'Azure DevOps',
     description: 'Projects, Git repositories, pipelines and active pull requests.',
     kinds: ['project', 'repository', 'pipeline', 'pull-request'],
+    fields: [
+      { key: 'organization', label: 'Organization URL', kind: 'text', required: true, placeholder: 'https://dev.azure.com/my-org' },
+      { key: 'project', label: 'Project', kind: 'text', placeholder: 'Platform', help: 'Empty: the whole organization (pipelines need a project)' },
+      { key: 'token', label: 'Personal access token', kind: 'secret', required: true, help: 'Read access to Code, Build and Project' },
+    ],
     example: {
       type: 'azure-devops',
       config: { organization: 'https://dev.azure.com/my-org', project: 'Platform', token: '${secret:ADO_PAT}' },

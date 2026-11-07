@@ -1,10 +1,10 @@
 import { useState } from 'react';
-import { Alert, Badge, Button, Group, TagsInput, Modal, Select, SimpleGrid, Stack, Switch, Tabs, Text, Textarea, TextInput } from '@mantine/core';
+import { Alert, Badge, Button, TagsInput, Modal, SimpleGrid, Stack, Switch, Tabs, Text, Textarea, TextInput } from '@mantine/core';
 import { useQuery } from '@tanstack/react-query';
 import { IconFlask, IconHistory, IconInfoCircle, IconSettings, IconSitemap } from '@tabler/icons-react';
 import type { ActionTrigger, FormTrigger, InvokerConfig, ObjectSchema, PluginInfo, WorkflowStep, WorkflowTrigger } from '@asterius/shared';
 import { api } from '../../lib/api';
-import { EntityIcon, ICON_NAMES } from '../icons';
+import { IconPicker } from '../IconPicker';
 import { fieldProblems, fieldsToSchema, schemaToFields, type FieldDraft } from './fields';
 import { MONO_INPUT } from './blocks';
 import { stepProblems, WorkflowEditor } from './WorkflowEditor';
@@ -227,21 +227,7 @@ function GeneralFields({
         value={doc.description ?? ''}
         onChange={(e) => onChange({ description: e.currentTarget.value })}
       />
-      <Select
-        label="Icon"
-        searchable
-        clearable
-        data={ICON_NAMES}
-        value={doc.icon ?? null}
-        onChange={(i) => onChange({ icon: i })}
-        leftSection={<EntityIcon name={doc.icon} size={16} />}
-        renderOption={({ option }) => (
-          <Group gap="xs">
-            <EntityIcon name={option.value} size={16} />
-            {option.label}
-          </Group>
-        )}
-      />
+      <IconPicker value={doc.icon ?? null} onChange={(i) => onChange({ icon: i })} />
     </>
   );
 }

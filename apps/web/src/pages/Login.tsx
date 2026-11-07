@@ -5,10 +5,12 @@ import { Navigate, useLocation, useNavigate, useSearchParams } from 'react-route
 import { IconBrandGithub, IconBrandWindows, IconKey } from '@tabler/icons-react';
 import { api, errorText } from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { BrandLogo, useBrand } from '../components/Brand';
 
 export function Login() {
   const meta = useQuery({ queryKey: ['meta'], queryFn: api.meta });
   const { user, signIn } = useAuth();
+  const brand = useBrand();
   const [params] = useSearchParams();
   const location = useLocation();
   const [mode, setMode] = useState<'login' | 'register'>('login');
@@ -42,8 +44,10 @@ export function Login() {
       <Paper w="100%" maw={380} p="xl" shadow="none" bg="transparent">
         <Stack>
           <Stack gap={4} align="center">
-            <img src="/favicon.svg" width={44} height={44} alt="" />
-            <Title order={3}>Asterius Platform</Title>
+            <BrandLogo size={48} />
+            <Title order={3} ta="center">
+              {brand.name}
+            </Title>
             <Text c="dimmed" fz="sm">
               Catalog · Self-service · Automation
             </Text>

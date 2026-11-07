@@ -776,7 +776,10 @@ export interface ModelInfo {
 }
 
 export interface Meta {
+  /** Product name (BRAND_NAME). */
   name: string;
+  /** Custom logo URL / data URI (BRAND_LOGO); null: the built-in logo. */
+  logo: string | null;
   version: string;
   authProviders: ('local' | 'entra' | 'oidc' | 'github' | 'saml')[];
   /** Labels of the generic OIDC / SAML sign-in buttons. */

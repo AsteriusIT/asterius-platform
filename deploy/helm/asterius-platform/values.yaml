@@ -169,6 +169,11 @@ migrations:
   job:
     enabled: false
     timeoutSeconds: 600
+# Product name and logo shown in the UI (sidebar, sign-in page, browser tab and favicon).
+branding:
+  name: Asterius Platform
+  # https:// image URL or data:image/...;base64 URI (empty: the built-in logo).
+  logo: ""
 # Extra non-secret environment variables.
 extraEnv: {}
 

@@ -5,7 +5,7 @@ import { IconArrowDown, IconArrowUp, IconInfoCircle, IconLock, IconLink, IconLis
 import type { BlueprintPermissions, BlueprintRelation, EntityMigration, ObjectSchema } from '@asterius/shared';
 import { api, errorText, type ImpactReport } from '../../lib/api';
 import { ImpactDialog } from './ImpactDialog';
-import { EntityIcon, ICON_NAMES } from '../icons';
+import { IconPicker } from '../IconPicker';
 import { Empty } from '../ui';
 import { AiDraft, JsonPreview, parseSample } from '../AiAssistant';
 import { FIELD_NAME, fieldProblems, fieldsToSchema, nameFromLabel, newId, schemaToFields, type FieldDraft } from './fields';
@@ -289,22 +289,7 @@ function Builder({
                 onChange={(e) => set({ description: e.currentTarget.value })}
               />
               <SimpleGrid cols={{ base: 1, sm: 2 }}>
-                <Select
-                  label="Icon"
-                  description="Shown in the navigation and on entity pages"
-                  searchable
-                  clearable
-                  data={ICON_NAMES}
-                  value={doc.icon}
-                  onChange={(i) => set({ icon: i })}
-                  leftSection={<EntityIcon name={doc.icon} size={16} />}
-                  renderOption={({ option }) => (
-                    <Group gap="xs">
-                      <EntityIcon name={option.value} size={16} />
-                      {option.label}
-                    </Group>
-                  )}
-                />
+                <IconPicker value={doc.icon} onChange={(i) => set({ icon: i })} description="Shown in the navigation and on entity pages" />
               </SimpleGrid>
             </Stack>
           </Tabs.Panel>

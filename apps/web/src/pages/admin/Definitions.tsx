@@ -94,12 +94,6 @@ export function ActionsAdmin() {
       ]}
       templates={[{ label: 'Workflow', value: blankAction }]}
       editor={(p) => <ActionBuilder {...p} />}
-      help={
-        <Text fz="xs" c="dimmed">
-          Templates: <Code>{'{{ inputs.x }}'}</Code>, <Code>{'{{ entity.properties.x }}'}</Code>, <Code>{'{{ trigger.user.email }}'}</Code>,{' '}
-          <Code>{'{{ run.callback.url }}'}</Code> (JSONata). Secrets: <Code>{'${secret:NAME}'}</Code>.
-        </Text>
-      }
       toEditable={(a) => strip(a, ['managed', 'allowedForMe'])}
       save={api.saveAction}
       remove={(a) => api.deleteAction(a.identifier)}
@@ -165,8 +159,8 @@ export function IntegrationsAdmin() {
       templates={(m.data?.sources ?? []).map((s) => ({
         label: s.title,
         value: {
-          identifier: `my-${s.type}`,
-          title: s.title,
+          identifier: '',
+          title: '',
           enabled: true,
           intervalMinutes: s.type === 'webhook' ? 0 : 60,
           deleteMissing: false,
@@ -399,12 +393,12 @@ export function WebhooksAdmin() {
         {
           label: 'Webhook',
           value: {
-            identifier: 'my-webhook',
-            title: 'My webhook',
-            url: 'https://example.internal/hook',
+            identifier: '',
+            title: '',
+            url: '',
             events: ['entity.*', 'run.updated'],
             blueprints: [],
-            secret: '${secret:WEBHOOK_SIGNING_KEY}',
+            secret: null,
             enabled: true,
           },
         },

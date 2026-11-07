@@ -13,6 +13,7 @@ import { cssVariablesResolver, theme } from './theme';
 import { createQueryClient } from './lib/queryClient';
 import { ErrorBoundary, RouteError } from './components/ErrorBoundary';
 import { AuthProvider, useAuth } from './lib/auth';
+import { useDocumentBrand } from './components/Brand';
 import { Layout } from './components/Layout';
 import { Loading } from './components/ui';
 import { AuthCallback, Login } from './pages/Login';
@@ -54,6 +55,7 @@ function RequireAdmin() {
 }
 
 function Root() {
+  useDocumentBrand();
   return (
     <AuthProvider>
       <Outlet />

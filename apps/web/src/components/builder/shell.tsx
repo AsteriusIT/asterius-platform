@@ -22,13 +22,25 @@ export const slugify = (title: string) =>
     .replace(/-+$/, '')
     .slice(0, 64);
 
-export function BuilderModal({ opened, onClose, title, children }: { opened: boolean; onClose: () => void; title: string; children: ReactNode }) {
+export function BuilderModal({
+  opened,
+  onClose,
+  title,
+  children,
+  size = '76rem',
+}: {
+  opened: boolean;
+  onClose: () => void;
+  title: string;
+  children: ReactNode;
+  size?: string;
+}) {
   const mobile = useMediaQuery('(max-width: 48em)');
   return (
     <Modal
       opened={opened}
       onClose={onClose}
-      size="76rem"
+      size={size}
       fullScreen={mobile}
       title={<Text fw={600}>{title}</Text>}
       scrollAreaComponent={ScrollArea.Autosize}

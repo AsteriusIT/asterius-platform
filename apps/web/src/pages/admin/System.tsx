@@ -59,6 +59,7 @@ export function AuditAdmin() {
       <PageHeader
         title="Audit log"
         description="Who changed what: definitions, catalog writes, runs, approvals, tokens, secrets, sign-ins."
+        refresh={q}
         actions={
           <Button variant="default" leftSection={<IconDownload size={16} />} onClick={() => void exportCsv()}>
             Export CSV

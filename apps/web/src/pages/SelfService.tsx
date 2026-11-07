@@ -34,7 +34,7 @@ export function SelfService() {
 
   return (
     <Stack>
-      <PageHeader title="Self-service" description="Request infrastructure and changes through the platform's golden paths." />
+      <PageHeader title="Self-service" description="Request infrastructure and changes through the platform's golden paths." refresh={actions} />
       <TextInput
         placeholder="Filter actions"
         leftSection={<IconSearch size={16} />}

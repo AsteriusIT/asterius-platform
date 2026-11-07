@@ -9,6 +9,11 @@ export const gitlabSource: Source = {
     title: 'GitLab',
     description: 'Projects and open merge requests of a group, including subgroups.',
     kinds: ['project', 'merge-request'],
+    fields: [
+      { key: 'group', label: 'Group', kind: 'text', required: true, placeholder: 'my-group', help: 'Group path or id (subgroups included)' },
+      { key: 'token', label: 'Token', kind: 'secret', required: true, help: 'Access token with read_api' },
+      { key: 'baseUrl', label: 'Base URL', kind: 'text', placeholder: 'https://gitlab.com', help: 'Self-managed GitLab instance', advanced: true },
+    ],
     example: {
       type: 'gitlab',
       config: { baseUrl: 'https://gitlab.com', group: 'my-group', token: '${secret:GITLAB_TOKEN}' },

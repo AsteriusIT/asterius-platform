@@ -97,12 +97,22 @@ export const computedDef = z.discriminatedUnion('kind', [
   }),
 ]);
 export type ComputedDef = z.infer<typeof computedDef>;
+/**
+ * Icon of a blueprint or action: a built-in icon name (`rocket`, `brand-github`), an https URL of an image, or an
+ * uploaded image as a data URI (PNG, JPEG, GIF, WebP or SVG, at most ~48 KB). Images are only ever rendered with
+ * <img>, so an SVG cannot run scripts.
+ */
+export const ICON_REF = /^([a-z0-9][a-z0-9-]{0,63}|https:\/\/[^\s"'<>]{1,2000}|data:image\/(png|jpeg|gif|webp|svg\+xml);base64,[A-Za-z0-9+/]+=*)$/;
+export const iconRef = z
+  .string()
+  .max(65_536, 'Icon image too large (max ~48 KB)')
+  .regex(ICON_REF, 'Icon: a built-in icon name, an https:// image URL or an uploaded image (data:image/…;base64)');
 
 export const blueprintDef = z.object({
   identifier: slug,
   title: z.string().min(1).max(100),
   description: z.string().max(2000).default(''),
-  icon: z.string().max(64).nullish(),
+  icon: iconRef.nullish(),
   schema: objectSchema,
   relations: z
     .record(
@@ -475,7 +485,7 @@ export const actionDef = z.preprocess(
     identifier: slug,
     title: z.string().min(1).max(100),
     description: z.string().max(4000).default(''),
-    icon: z.string().max(64).nullish(),
+    icon: iconRef.nullish(),
     /** What starts the workflow. Null: a draft that cannot run yet. */
     trigger: workflowTrigger.nullable().default(null),
     /** Legacy form: one invoker (= a one-step workflow). */

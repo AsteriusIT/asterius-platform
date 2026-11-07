@@ -12,6 +12,10 @@ data:
   METRICS_PORT: {{ $v.metrics.port | quote }}
   {{- end }}
   LOG_LEVEL: {{ $v.settings.logLevel | quote }}
+  BRAND_NAME: {{ $v.branding.name | quote }}
+  {{- with $v.branding.logo }}
+  BRAND_LOGO: {{ . | quote }}
+  {{- end }}
   DATABASE_POOL_SIZE: {{ $v.database.poolSize | quote }}
   WORKER_CONCURRENCY: {{ $v.worker.concurrency | quote }}
   RUN_POLL_SECONDS: {{ $v.settings.runPollSeconds | quote }}

@@ -12,6 +12,18 @@ export const kubernetesSource: Source = {
     title: 'Kubernetes',
     description: 'Any resource of a cluster (workloads, namespaces, ingresses, CRDs such as Argo CD applications).',
     kinds: ['v1/Namespace', 'apps/v1/Deployment', 'apps/v1/StatefulSet', 'networking.k8s.io/v1/Ingress', 'batch/v1/CronJob'],
+    fields: [
+      {
+        key: 'cluster',
+        label: 'Cluster name',
+        kind: 'text',
+        placeholder: 'prod-weu',
+        help: 'Free label, available in mappings as $integration.config.cluster',
+      },
+      { key: 'namespaces', label: 'Namespaces', kind: 'list', help: 'Empty: every namespace (needs cluster-wide list RBAC)' },
+      { key: 'labelSelector', label: 'Label selector', kind: 'text', placeholder: 'app.kubernetes.io/part-of' },
+      { key: 'context', label: 'Kubeconfig context', kind: 'text', help: 'Empty: in-cluster service account', advanced: true },
+    ],
     example: {
       type: 'kubernetes',
       config: { cluster: 'prod-weu', namespaces: ['payments', 'checkout'], labelSelector: 'app.kubernetes.io/part-of' },

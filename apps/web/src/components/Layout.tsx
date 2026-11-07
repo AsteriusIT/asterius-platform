@@ -19,8 +19,7 @@ import {
   useMantineColorScheme,
 } from '@mantine/core';
 import { useDisclosure, useMediaQuery } from '@mantine/hooks';
-import { useQueryClient } from '@tanstack/react-query';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router';
 import {
   IconActivity,
@@ -39,6 +38,7 @@ import {
   IconMoon,
   IconPlugConnected,
   IconRobot,
+  IconRefresh,
   IconRocket,
   IconSend,
   IconSchema,
@@ -58,6 +58,7 @@ import { useT } from '../lib/i18n';
 import { CommandPalette } from './CommandPalette';
 import { NotificationCenter } from './NotificationCenter';
 import { EntityIcon } from './icons';
+import { BrandLogo, BrandMark } from './Brand';
 
 const initials = (name = '') =>
   name
@@ -80,6 +81,11 @@ export function Layout() {
   const location = useLocation();
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
+  const [refreshing, setRefreshing] = useState(false);
+  const refreshAll = () => {
+    setRefreshing(true);
+    void qc.refetchQueries({ type: 'active' }).finally(() => setRefreshing(false));
+  };
   const blueprints = useQuery({ queryKey: ['blueprints'], queryFn: api.blueprints, staleTime: 30_000 });
   const approvals = useQuery({ queryKey: ['approvals'], queryFn: api.approvals, refetchInterval: 30_000 });
 
@@ -136,7 +142,7 @@ export function Layout() {
           <Group gap="sm" wrap="nowrap">
             <Burger opened={opened} onClick={toggle} hiddenFrom="sm" size="sm" />
             <UnstyledButton component={Link} to="/" hiddenFrom="sm" aria-label="Home">
-              <img src="/favicon.svg" width={26} height={26} alt="" />
+              <BrandLogo size={26} />
             </UnstyledButton>
           </Group>
           <form
@@ -181,6 +187,11 @@ export function Layout() {
                 <IconActivity size={19} stroke={1.6} />
               </ActionIcon>
             </Tooltip>
+            <Tooltip label="Refresh data">
+              <ActionIcon variant="subtle" color="gray" size="lg" onClick={refreshAll} aria-label="Refresh data" aria-busy={refreshing}>
+                <IconRefresh size={19} stroke={1.6} className={refreshing ? 'spin' : undefined} />
+              </ActionIcon>
+            </Tooltip>
             <Tooltip label={colorScheme === 'dark' ? 'Light theme' : 'Dark theme'}>
               <ActionIcon
                 variant="subtle"
@@ -198,13 +209,8 @@ export function Layout() {
 
       <AppShell.Navbar className="app-navbar" p="sm">
         <AppShell.Section>
-          <UnstyledButton component={Link} to="/" onClick={close} px={10} py={6} visibleFrom="sm">
-            <Group gap={10} wrap="nowrap">
-              <img src="/favicon.svg" width={28} height={28} alt="" />
-              <Text fw={600} fz={16} style={{ letterSpacing: '-0.015em' }}>
-                Asterius Platform
-              </Text>
-            </Group>
+          <UnstyledButton component={Link} to="/" onClick={close} px={10} py={6} visibleFrom="sm" display="block" aria-label="Home">
+            <BrandMark />
           </UnstyledButton>
         </AppShell.Section>
 

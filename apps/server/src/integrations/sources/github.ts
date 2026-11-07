@@ -10,6 +10,18 @@ export const githubSource: Source = {
     title: 'GitHub',
     description: 'Repositories, open pull requests and teams of an organization.',
     kinds: ['repository', 'pull-request', 'team'],
+    fields: [
+      { key: 'org', label: 'Organization', kind: 'text', required: true, placeholder: 'my-org' },
+      { key: 'token', label: 'Token', kind: 'secret', required: true, help: 'Fine-grained or classic token that can read the organization' },
+      {
+        key: 'apiUrl',
+        label: 'API URL',
+        kind: 'text',
+        placeholder: 'https://api.github.com',
+        help: 'GitHub Enterprise Server: https://<host>/api/v3',
+        advanced: true,
+      },
+    ],
     example: {
       type: 'github',
       config: { org: 'my-org', token: '${secret:GITHUB_TOKEN}' },

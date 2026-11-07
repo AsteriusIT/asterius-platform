@@ -92,7 +92,7 @@ export function Runs() {
   });
   return (
     <Stack>
-      <PageHeader title="Runs" description="Every self-service request and its execution." />
+      <PageHeader title="Runs" description="Every self-service request and its execution." refresh={q} />
       <Group>
         <SegmentedControl
           value={scope}
@@ -185,7 +185,7 @@ export function Approvals() {
   });
   return (
     <Stack>
-      <PageHeader title="Approvals" description="Requests and workflow steps waiting for a decision you can make." />
+      <PageHeader title="Approvals" description="Requests and workflow steps waiting for a decision you can make." refresh={q} />
       {selected.size > 0 && (
         <Group align="flex-end">
           <Text fz="sm">{selected.size} selected</Text>

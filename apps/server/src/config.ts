@@ -57,6 +57,15 @@ const schema = z.object({
   /** json (default, one object per line) | pretty (human readable, local development; needs pino-pretty). */
   LOG_FORMAT: z.enum(['json', 'pretty']).default('json'),
 
+  // ---- branding ----
+  /** Product name shown in the sidebar, the sign-in page and the browser tab. */
+  BRAND_NAME: z.string().min(1).max(60).default('Asterius Platform'),
+  /** Logo (sidebar, sign-in, favicon): an https:// or same-origin (/…) image URL, or a data:image/… URI. Default: the built-in logo. */
+  BRAND_LOGO: z
+    .string()
+    .regex(/^(https:\/\/|\/|data:image\/(png|jpeg|gif|webp|svg\+xml);base64,)/, 'BRAND_LOGO must be an https:// or /path image URL, or a data:image/… URI')
+    .optional(),
+
   // ---- sign-in ----
   AUTH_PROVIDERS: z
     .string()

@@ -17,6 +17,20 @@ export const httpSource: Source = {
     title: 'HTTP / JSON API',
     description: 'Pull items from any JSON API, with optional pagination.',
     kinds: ['item'],
+    fields: [
+      { key: 'url', label: 'URL', kind: 'text', required: true, placeholder: 'https://cmdb.internal/api/applications' },
+      { key: 'method', label: 'Method', kind: 'select', options: ['GET', 'POST'] },
+      { key: 'headers', label: 'Headers', kind: 'keyvalue', help: 'e.g. Authorization: Bearer ${secret:TOKEN}' },
+      { key: 'itemsPath', label: 'Items path', kind: 'text', placeholder: 'data', help: 'JSONata selecting the item array (empty: the response itself)' },
+      {
+        key: 'pagination',
+        label: 'Pagination',
+        kind: 'json',
+        help: '{ "type": "link" } (Link header) or { "type": "next", "nextUrl": "links.next" }',
+        advanced: true,
+      },
+      { key: 'body', label: 'Body', kind: 'json', advanced: true },
+    ],
     example: {
       type: 'http',
       config: {
@@ -209,6 +223,23 @@ export const webhookSource: Source = {
     title: 'Inbound webhook',
     description: 'Receive events from any system (GitHub, ArgoCD, Jira, custom) and map them to entities.',
     kinds: ['event'],
+    fields: [
+      { key: 'secret', label: 'Secret', kind: 'secret', help: 'Callers send it as X-Asterius-Token / Bearer, or sign the body with it (see signature header)' },
+      {
+        key: 'signatureHeader',
+        label: 'Signature header',
+        kind: 'text',
+        placeholder: 'x-hub-signature-256',
+        help: 'HMAC-SHA256 of the body in this header instead of a token',
+      },
+      {
+        key: 'allowUnauthenticated',
+        label: 'Accept anonymous calls',
+        kind: 'boolean',
+        help: 'Only when no secret can be configured on the sender',
+        advanced: true,
+      },
+    ],
     example: {
       type: 'webhook',
       config: { secret: '${secret:INGEST_TOKEN}', preset: 'github' }, // github | gitlab | azure-devops | slack; sync: true answers with the stats

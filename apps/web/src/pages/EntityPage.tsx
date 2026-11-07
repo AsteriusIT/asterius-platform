@@ -85,6 +85,7 @@ function EntityView({ bp, e }: { bp: Blueprint; e: Entity }) {
         crumbs={[{ label: bp.title, to: `/catalog/${bp.identifier}` }, { label: e.identifier }]}
         title={e.title}
         icon={bp.icon}
+        refresh={[related, actions, runs, { refetch: () => qc.refetchQueries({ queryKey: ['entity', bp.identifier, e.identifier] }) }]}
         description={
           <Group gap="xs" component="span">
             {e.team && <Badge color="gray">{e.team}</Badge>}

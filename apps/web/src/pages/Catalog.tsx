@@ -234,6 +234,7 @@ function CatalogTable({ bp }: { bp: Blueprint }) {
       <PageHeader
         title={bp.title}
         icon={bp.icon}
+        refresh={entities}
         description={bp.description ? <Markdown>{bp.description}</Markdown> : undefined}
         actions={
           <>
@@ -358,7 +359,7 @@ export function Search() {
   const res = useQuery({ queryKey: ['search', q], queryFn: () => api.entities({ search: q, limit: 100 }) });
   return (
     <Stack>
-      <PageHeader title={`Results for “${q}”`} description={res.data ? `${res.data.total} entities` : undefined} />
+      <PageHeader title={`Results for “${q}”`} description={res.data ? `${res.data.total} entities` : undefined} refresh={res} />
       <DataTable
         rows={res.data?.items}
         loading={res.isPending}

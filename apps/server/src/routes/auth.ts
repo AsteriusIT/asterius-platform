@@ -46,7 +46,8 @@ async function localSession(req: FastifyRequest, reply: FastifyReply, user: User
 
 export async function authRoutes(app: FastifyInstance) {
   app.get('/api/meta', async (): Promise<Meta> => ({
-    name: 'Asterius Platform',
+    name: config.BRAND_NAME,
+    logo: config.BRAND_LOGO ?? null,
     version: VERSION,
     authProviders: config.AUTH_PROVIDERS,
     ...(config.AUTH_PROVIDERS.includes('oidc') ? { oidcTitle: config.OIDC_TITLE } : {}),

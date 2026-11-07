@@ -7,8 +7,9 @@ import { IconChevronDown, IconPencil, IconPlus, IconTrash } from '@tabler/icons-
 import { errorText } from '../../lib/api';
 import { notifyError } from '../../lib/queryClient';
 import { DataTable, type Column } from '../../components/DataTable';
-import { ResourceEditor } from '../../components/ResourceEditor';
 import { ManagedBadge, PageHeader } from '../../components/ui';
+import { ResourceEditor } from '../../components/ResourceEditor';
+import type { EditorProps } from '../../components/builder/FormBuilder';
 
 interface Resource {
   identifier: string;
@@ -17,7 +18,8 @@ interface Resource {
 }
 
 /**
- * Admin page for one kind of configurable resource: list, create from templates, edit as YAML, delete.
+ * Admin page for one kind of configurable resource: list, create from templates, edit in a form dialog
+ * (with JSON / YAML views), delete.
  * Managed (configuration-as-code) resources open read-only.
  */
 export function ResourceAdmin<T extends Resource>(props: {
@@ -36,14 +38,8 @@ export function ResourceAdmin<T extends Resource>(props: {
   onRowClick?: (item: T) => void;
   help?: ReactNode;
   children?: ReactNode;
-  /** Replace the YAML editor (e.g. the action builder). Same contract as ResourceEditor. */
-  editor?: (p: {
-    value: Record<string, unknown> | null;
-    isNew: boolean;
-    readOnly?: boolean;
-    onSave: (id: string, body: Record<string, unknown>) => Promise<unknown>;
-    onClose: () => void;
-  }) => ReactNode;
+  /** Form dialog editing one resource (builders in components/builder). Without it: the YAML editor. */
+  editor?: (p: EditorProps) => ReactNode;
 }) {
   const qc = useQueryClient();
   const q = useQuery({ queryKey: [props.queryKey], queryFn: props.list });
@@ -51,6 +47,7 @@ export function ResourceAdmin<T extends Resource>(props: {
 
   const onSave = async (id: string, body: Record<string, unknown>) => {
     const r = await props.save(id, body);
+    notifications.show({ color: 'green', message: `${id} saved` });
     void qc.invalidateQueries({ queryKey: [props.queryKey] });
     void qc.invalidateQueries({ queryKey: ['blueprints'] });
     void qc.invalidateQueries({ queryKey: ['actions'] });
@@ -150,7 +147,7 @@ export function ResourceAdmin<T extends Resource>(props: {
 
   return (
     <Stack>
-      <PageHeader title={props.title} description={props.description} actions={newButton} />
+      <PageHeader title={props.title} description={props.description} actions={newButton} refresh={q} />
       {props.children}
       <DataTable
         rows={q.data}
