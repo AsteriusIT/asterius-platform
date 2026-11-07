@@ -75,7 +75,10 @@ describe('claims (ap-na0.4)', () => {
     // The same holds for run claims and polls: a limit is a limit.
     for (let i = 0; i < 4; i++) await trigger('noop');
     const [r1, r2] = await Promise.all([claimRuns('w1', 3, noSpawn), claimRuns('w2', 3, noSpawn)]);
-    expect([r1, r2].sort()).toEqual([1, 3]); // which worker wins the race is up to the database
+    // Every queued run is claimed exactly once and no worker exceeds its limit; how the 4 runs split between the two
+    // (3+1 or 2+2 with SKIP LOCKED on Postgres) is up to the database.
+    expect(r1 + r2).toBe(4);
+    expect(Math.max(r1, r2)).toBeLessThanOrEqual(3);
     expect(await claimPolls(0, noSpawn)).toBe(0);
     await sql("UPDATE run_steps SET status = 'CANCELLED' WHERE status IN ('RUNNING', 'QUEUED')");
     await sql("UPDATE runs SET status = 'CANCELLED' WHERE status IN ('IN_PROGRESS', 'QUEUED')");

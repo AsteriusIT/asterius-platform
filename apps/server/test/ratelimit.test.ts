@@ -22,11 +22,13 @@ const incr = (s: DatabaseRateLimitStore, key: string, window: number) =>
 describe('database rate-limit store', () => {
   it('counts atomically across concurrent callers and resets after the window', async () => {
     const s = new DatabaseRateLimitStore();
-    const rs = await Promise.all(Array.from({ length: 8 }, () => incr(s, 'ip-1', 200)));
+    // The window must outlast the 8 concurrent increments even on a loaded machine (a 200 ms window reset mid-way).
+    const W = 1500;
+    const rs = await Promise.all(Array.from({ length: 8 }, () => incr(s, 'ip-1', W)));
     expect(rs.map((r) => r.current).sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
-    expect((await incr(s.child({ max: 1, timeWindow: 200 }), 'ip-1', 200)).current).toBe(1); // separate scope
-    await new Promise((r) => setTimeout(r, 250));
-    expect((await incr(s, 'ip-1', 200)).current).toBe(1);
+    expect((await incr(s.child({ max: 1, timeWindow: W }), 'ip-1', W)).current).toBe(1); // separate scope
+    await new Promise((r) => setTimeout(r, W + 100));
+    expect((await incr(s, 'ip-1', W)).current).toBe(1);
   });
 
   it('limits logins across the whole app and locks accounts after repeated failures', async () => {

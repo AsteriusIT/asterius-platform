@@ -21,5 +21,7 @@ export default defineConfig({
     },
     pool: 'forks',
     testTimeout: 20_000,
+    // On Postgres every file boots and migrates its own schema in parallel against one server.
+    hookTimeout: process.env.TEST_DATABASE_URL ? 60_000 : 10_000,
   },
 });

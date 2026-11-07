@@ -4,17 +4,22 @@ import { exportJWK, generateKeyPair, SignJWT, type JWK } from 'jose';
 import type { FastifyInstance } from 'fastify';
 import { client, register, testApp } from './helpers.js';
 
-// The issuer URL must be known before the config module loads.
-const port = vi.hoisted(() => {
-  const p = 20000 + Math.floor(Math.random() * 20000);
+// The fake server binds an OS-assigned port (no random-port collisions with other suites); the URL must be known
+// before config.ts is imported, so the socket is opened here and the request handler attached in beforeAll.
+const hoisted = await vi.hoisted(async () => {
+  const http = await import('node:http');
+  const srv = http.createServer();
+  await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
+  const p = (srv.address() as { port: number }).port;
   process.env.AUTH_PROVIDERS = 'local,oidc';
   process.env.OIDC_ISSUER = `http://127.0.0.1:${p}`;
   process.env.OIDC_CLIENT_ID = 'asterius';
   process.env.OIDC_CLIENT_SECRET = 'shh';
   process.env.OIDC_TITLE = 'Keycloak';
   process.env.OIDC_ADMIN_GROUPS = 'platform-admins';
-  return p;
+  return { srv, port: p };
 });
+const port = hoisted.port;
 const issuer = `http://127.0.0.1:${port}`;
 
 let idp: http.Server;
@@ -29,7 +34,8 @@ beforeAll(async () => {
   const { publicKey, privateKey } = await generateKeyPair('RS256');
   signKey = privateKey as CryptoKey;
   jwk = { ...(await exportJWK(publicKey)), kid: 'k1', alg: 'RS256', use: 'sig' };
-  idp = http.createServer((req, res) => {
+  idp = hoisted.srv;
+  idp.on('request', (req, res) => {
     const send = (body: unknown) => {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify(body));
@@ -54,7 +60,6 @@ beforeAll(async () => {
     }
     res.writeHead(404).end();
   });
-  await new Promise<void>((r) => idp.listen(port, '127.0.0.1', r));
   app = await testApp();
 });
 afterAll(async () => {

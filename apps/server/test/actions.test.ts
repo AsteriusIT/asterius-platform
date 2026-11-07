@@ -239,8 +239,12 @@ describe('outbound webhooks', () => {
     const t = /t=(\d+)/.exec(sig)![1]!;
     expect(Math.abs(Date.now() / 1000 - Number(t))).toBeLessThan(60);
     expect(sig).toBe(`t=${t},v1=${createHmac('sha256', 'signing-key-123').update(`${t}.${got.body}`).digest('hex')}`);
-    const deliveries = await admin.get('/api/v1/webhooks/sink/deliveries');
-    expect(deliveries.data.some((d: { status: string }) => d.status === 'success')).toBe(true);
+    // The delivery row is marked successful after the response is read, so the sink may see the request first.
+    const delivered = await waitFor(async () => {
+      const deliveries = await admin.get('/api/v1/webhooks/sink/deliveries');
+      return deliveries.data.some((d: { status: string }) => d.status === 'success') || undefined;
+    }, 10_000);
+    expect(delivered).toBe(true);
     await sink.close();
   });
 

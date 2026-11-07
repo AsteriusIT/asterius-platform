@@ -1,5 +1,5 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
-import { all, dialect, json, newId, now, one, run, tx, type SqlValue } from './db.js';
+import { SCHEMA_KEY, all, dialect, json, newId, now, one, run, tx, type SqlValue } from './db.js';
 import { config } from './config.js';
 import { likeEscape } from './db.js';
 import { metrics } from './metrics.js';
@@ -75,7 +75,7 @@ async function insert(actor: Actor, action: string, target: string | null, detai
   }
   // Chained: serialize across replicas, read the tip, append.
   await tx(async (d) => {
-    if (dialect === 'postgres') await d.query('SELECT pg_advisory_xact_lock(?)', [CHAIN_LOCK]);
+    if (dialect === 'postgres') await d.query(`SELECT pg_advisory_xact_lock(${SCHEMA_KEY}, ?)`, [CHAIN_LOCK]);
     const tip = (
       await d.query<{ chain_seq: number; hash: string }>('SELECT chain_seq, hash FROM audit_log WHERE chain_seq IS NOT NULL ORDER BY chain_seq DESC LIMIT 1')
     ).rows[0];

@@ -7,8 +7,13 @@ import type { FastifyInstance } from 'fastify';
 import { client, register, testApp } from './helpers.js';
 import { inDefaultOrg } from './helpers.js';
 
+// The fake server binds an OS-assigned port (no random-port collisions with other suites); the URL must be known
+// before config.ts is imported, so the socket is opened here and the request handler attached in beforeAll.
 const base = await vi.hoisted(async () => {
-  const p = 20000 + Math.floor(Math.random() * 20000);
+  const http = await import('node:http');
+  const srv = http.createServer();
+  await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
+  const p = (srv.address() as { port: number }).port;
   const u = `http://127.0.0.1:${p}`;
   const os = await import('node:os');
   const fs = await import('node:fs');
@@ -37,15 +42,17 @@ const base = await vi.hoisted(async () => {
     GCP_METADATA_URL: `${u}/gcpmeta`,
     SECRET_CACHE_SECONDS: '0',
   });
-  return { port: p, url: u };
+  return { srv, port: p, url: u };
 });
+const hoisted = base;
 
 let server: http.Server;
 let app: FastifyInstance;
 const hits: { url: string; headers: http.IncomingHttpHeaders; body: string }[] = [];
 
 beforeAll(async () => {
-  server = http.createServer((req, res) => {
+  server = hoisted.srv;
+  server.on('request', (req, res) => {
     let body = '';
     req.on('data', (c) => (body += c));
     req.on('end', () => {
@@ -89,7 +96,6 @@ beforeAll(async () => {
       send({ error: 'nope' }, 404);
     });
   });
-  await new Promise<void>((r) => server.listen(base.port, '127.0.0.1', r));
   app = await testApp();
 });
 afterAll(async () => {

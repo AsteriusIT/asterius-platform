@@ -3,8 +3,13 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { client, register, testApp } from './helpers.js';
 
-const port = vi.hoisted(() => {
-  const p = 20000 + Math.floor(Math.random() * 20000);
+// The fake server binds an OS-assigned port (no random-port collisions with other suites); the URL must be known
+// before config.ts is imported, so the socket is opened here and the request handler attached in beforeAll.
+const hoisted = await vi.hoisted(async () => {
+  const http = await import('node:http');
+  const srv = http.createServer();
+  await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
+  const p = (srv.address() as { port: number }).port;
   process.env.AUTH_PROVIDERS = 'local,github';
   process.env.GITHUB_CLIENT_ID = 'cid';
   process.env.GITHUB_CLIENT_SECRET = 'csecret';
@@ -12,7 +17,7 @@ const port = vi.hoisted(() => {
   process.env.GITHUB_ADMIN_TEAMS = 'acme/platform';
   process.env.GITHUB_URL = `http://127.0.0.1:${p}`;
   process.env.GITHUB_API_URL = `http://127.0.0.1:${p}/api`;
-  return p;
+  return { srv, port: p };
 });
 
 let gh: http.Server;
@@ -20,7 +25,8 @@ let app: FastifyInstance;
 let account: { id: number; login: string; orgs: string[]; teams: string[]; verified: boolean };
 
 beforeAll(async () => {
-  gh = http.createServer((req, res) => {
+  gh = hoisted.srv;
+  gh.on('request', (req, res) => {
     const send = (body: unknown) => {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify(body));
@@ -34,7 +40,6 @@ beforeAll(async () => {
     if (url.startsWith('/api/user/teams')) return send(account.teams.map((t) => ({ slug: t.split('/')[1], organization: { login: t.split('/')[0] } })));
     res.writeHead(404).end();
   });
-  await new Promise<void>((r) => gh.listen(port, '127.0.0.1', r));
   app = await testApp();
 });
 afterAll(async () => {

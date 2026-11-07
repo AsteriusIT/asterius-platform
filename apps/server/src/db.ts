@@ -487,6 +487,9 @@ export const MIGRATIONS: Migration[] = [
       await d.exec('CREATE INDEX entities_search_tsv ON entities USING gin (search_tsv)');
       await d.exec('CREATE INDEX entities_properties_gin ON entities USING gin ((properties::jsonb) jsonb_path_ops)');
       try {
+        // Extensions are per database while the other migration locks are per schema: serialize this statement
+        // database-wide (one-key lock space, released at COMMIT) so concurrent schemas do not race on pg_extension.
+        await d.exec('SELECT pg_advisory_xact_lock(726209)');
         await d.exec('CREATE EXTENSION IF NOT EXISTS pg_trgm');
         const ns = (
           await d.query<{ nspname: string }>("SELECT n.nspname FROM pg_extension e JOIN pg_namespace n ON n.oid = e.extnamespace WHERE e.extname = 'pg_trgm'")
@@ -832,15 +835,22 @@ async function open(): Promise<Driver> {
   try {
     // MIGRATE_ON_START=false: a pre-upgrade job (`npm run migrate`) owns the schema, pods only verify nothing is pending.
     if (config.MIGRATE_ON_START) {
-      await client.query('SELECT pg_advisory_lock(726201)');
+      await client.query(`SELECT pg_advisory_lock(${SCHEMA_KEY}, 726201)`);
       await migrate(postgresDriver(client));
     } else await assertMigrated(postgresDriver(client)); // no lock held while waiting
   } finally {
-    await client.query('SELECT pg_advisory_unlock(726201)').catch(() => undefined);
+    await client.query(`SELECT pg_advisory_unlock(${SCHEMA_KEY}, 726201)`).catch(() => undefined);
     client.release();
   }
   return postgresDriver(pool);
 }
+
+/**
+ * Postgres advisory locks are per database, not per schema: the first key is the current schema, so two installations
+ * (or test files) in different schemas of one database never wait on each other. Replicas of one installation share
+ * the schema, hence the lock.
+ */
+export const SCHEMA_KEY = 'hashtext(current_schema())';
 
 /** Connection pool occupancy (Postgres only), for the metrics endpoint. */
 export const poolStats = () => (pool ? { total: pool.totalCount, idle: pool.idleCount, waiting: pool.waitingCount } : undefined);
@@ -891,10 +901,10 @@ export async function withAdvisoryLock<T>(key: number, fn: () => Promise<T>): Pr
   if (!pool) return fn();
   const client = await pool.connect();
   try {
-    await client.query('SELECT pg_advisory_lock($1)', [key]);
+    await client.query(`SELECT pg_advisory_lock(${SCHEMA_KEY}, $1)`, [key]);
     return await fn();
   } finally {
-    await client.query('SELECT pg_advisory_unlock($1)', [key]).catch(() => undefined);
+    await client.query(`SELECT pg_advisory_unlock(${SCHEMA_KEY}, $1)`, [key]).catch(() => undefined);
     client.release();
   }
 }
@@ -916,12 +926,12 @@ export async function tryAdvisoryLock<T>(key: number, fn: () => Promise<T>): Pro
   }
   const client = await pool.connect();
   try {
-    const { rows } = await client.query<{ ok: boolean }>('SELECT pg_try_advisory_lock($1) AS ok', [key]);
+    const { rows } = await client.query<{ ok: boolean }>(`SELECT pg_try_advisory_lock(${SCHEMA_KEY}, $1) AS ok`, [key]);
     if (!rows[0]?.ok) return undefined;
     try {
       return await fn();
     } finally {
-      await client.query('SELECT pg_advisory_unlock($1)', [key]).catch(() => undefined);
+      await client.query(`SELECT pg_advisory_unlock(${SCHEMA_KEY}, $1)`, [key]).catch(() => undefined);
     }
   } finally {
     client.release();

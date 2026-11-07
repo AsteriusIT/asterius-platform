@@ -66,6 +66,8 @@ npm install
 npm run dev                      # server :8080 (SQLite in ./data, config from ./config) + web :5173
 npm test                         # server (vitest, SQLite) + web (vitest, jsdom)
 TEST_DATABASE_URL=postgres://… npm test -w apps/server   # same suite on Postgres
+# Postgres for the suite (~80 files migrate their own schema in parallel):
+# docker run -d --shm-size=1g -e POSTGRES_PASSWORD=pg -p 127.0.0.1:55432:5432 postgres:16 -c max_locks_per_transaction=1024 -c max_connections=500
 npm run lint && npm run typecheck
 npm run build && docker build -t asterius-platform .
 helm lint deploy/helm/asterius-platform --set database.url=postgres://x --set auth.providers=local

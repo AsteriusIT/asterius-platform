@@ -1,10 +1,6 @@
 import { createCipheriv, randomBytes } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-// Every load re-opens the database; on Postgres the migration lock is shared by all test files (one schema each), so the
-// first loads can queue behind the other files' initial migrations.
-vi.setConfig({ testTimeout: 120_000 });
-
 const hex = () => randomBytes(32).toString('hex');
 const A = hex();
 const B = hex();

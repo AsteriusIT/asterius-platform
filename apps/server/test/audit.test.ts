@@ -3,14 +3,19 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { client, register, testApp, type Api } from './helpers.js';
 
-const port = vi.hoisted(() => {
-  const p = 20000 + Math.floor(Math.random() * 20000);
+// The fake server binds an OS-assigned port (no random-port collisions with other suites); the URL must be known
+// before config.ts is imported, so the socket is opened here and the request handler attached in beforeAll.
+const hoisted = await vi.hoisted(async () => {
+  const http = await import('node:http');
+  const srv = http.createServer();
+  await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
+  const p = (srv.address() as { port: number }).port;
   process.env.AUDIT_HASH_CHAIN = 'true';
   process.env.AUDIT_CHAIN_KEY = 'test-chain-key';
   process.env.AUDIT_STREAM_URL = `http://127.0.0.1:${p}/events`;
   process.env.AUDIT_STREAM_TOKEN = 'siem-token';
   process.env.AUDIT_STREAM_SECRET = 'siem-secret';
-  return p;
+  return { srv, port: p };
 });
 
 let app: FastifyInstance;
@@ -20,7 +25,8 @@ let siem: http.Server;
 const received: { headers: http.IncomingHttpHeaders; body: string }[] = [];
 
 beforeAll(async () => {
-  siem = http.createServer((req, res) => {
+  siem = hoisted.srv;
+  siem.on('request', (req, res) => {
     let body = '';
     req.on('data', (c) => (body += c));
     req.on('end', () => {
@@ -28,7 +34,6 @@ beforeAll(async () => {
       res.writeHead(200).end('{}');
     });
   });
-  await new Promise<void>((r) => siem.listen(port, '127.0.0.1', r));
   app = await testApp();
   adminToken = (await register(app, 'admin@example.com')).token;
   admin = client(app, adminToken);
