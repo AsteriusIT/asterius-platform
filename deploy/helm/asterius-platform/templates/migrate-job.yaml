@@ -20,7 +20,7 @@ spec:
       labels: {{- include "ap.selector" (dict "root" . "component" "migrate") | nindent 8 }}
     spec:
       restartPolicy: Never
-      serviceAccountName: {{ include "ap.serviceAccountName" . }}
+      serviceAccountName: {{ include "ap.serviceAccountName" (dict "root" . "role" "api") }}
       automountServiceAccountToken: false
       {{- with $v.imagePullSecrets }}
       imagePullSecrets: {{- toYaml . | nindent 8 }}

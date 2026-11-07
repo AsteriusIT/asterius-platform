@@ -137,7 +137,11 @@ spec:
     - host: {{ $kc.host | quote }}
       http:
         paths:
-          # The admin console stays reachable in-cluster only (port-forward); people use /realms and /resources.
+          # People use /realms and /resources. The admin console is off the ingress unless keycloak.ingress.exposeAdmin
+          # (a port-forward does not help: Keycloak redirects to KC_HOSTNAME).
           - { path: /realms, pathType: Prefix, backend: { service: { name: {{ $name }}, port: { name: http } } } }
           - { path: /resources, pathType: Prefix, backend: { service: { name: {{ $name }}, port: { name: http } } } }
+          {{- if $kc.ingress.exposeAdmin }}
+          - { path: /admin, pathType: Prefix, backend: { service: { name: {{ $name }}, port: { name: http } } } }
+          {{- end }}
 {{- end }}

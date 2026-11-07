@@ -142,6 +142,8 @@ keycloak:
     annotations:
       cert-manager.io/cluster-issuer: letsencrypt
     tlsSecretName: asterius-keycloak-tls
+    # Route the admin console (/admin) through the ingress. Off: administer Keycloak from inside the cluster only.
+    exposeAdmin: false
 
 # ---------- MCP OAuth 2.1 (remote MCP clients) ----------
 # The Keycloak realm (else OIDC_ISSUER) is the advertised authorization server; see docs/MCP.md.
