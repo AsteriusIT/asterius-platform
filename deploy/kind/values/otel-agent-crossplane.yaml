@@ -1,0 +1,8 @@
+# Crossplane profile overlay of values/otel-agent.yaml: also read the logs of crossplane-system (Crossplane core,
+# providers, functions → source=provider). Helm replaces lists, so the lean include is repeated here.
+alternateConfig:
+  receivers:
+    file_log:
+      include:
+        - /var/log/pods/asterius-jobs_*/*/*.log
+        - /var/log/pods/crossplane-system_*/*/*.log

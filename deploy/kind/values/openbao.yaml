@@ -1,0 +1,46 @@
+# OpenBao (Vault API) in standalone mode, namespace openbao, UI at http://openbao.localtest.me:18080.
+# Static auto-unseal: the key lives in the Secret openbao-unseal-key (created by install.sh), so OpenBao unseals
+# itself after a node restart and keeps its data (pebbledb on a PVC). Local trial only: in production use a KMS seal.
+injector:
+  enabled: false
+ui:
+  enabled: true
+server:
+  resources:
+    requests: { cpu: 20m, memory: 64Mi }
+  standalone:
+    enabled: true
+    config: |
+      ui = true
+      listener "tcp" {
+        tls_disable = 1
+        address = "[::]:8200"
+        cluster_address = "[::]:8201"
+        telemetry {
+          unauthenticated_metrics_access = "true"
+        }
+      }
+      storage "pebbledb" {
+        path = "/openbao/data/pebbledb"
+      }
+      seal "static" {
+        current_key_id = "kind-1"
+        current_key = "file:///openbao/unseal/key"
+      }
+      telemetry {
+        prometheus_retention_time = "30s"
+        disable_hostname = true
+      }
+  volumes:
+    - name: unseal
+      secret: { secretName: openbao-unseal-key }
+  volumeMounts:
+    - { name: unseal, mountPath: /openbao/unseal, readOnly: true }
+  dataStorage:
+    size: 1Gi
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    hosts:
+      - host: openbao.localtest.me
+        paths: []

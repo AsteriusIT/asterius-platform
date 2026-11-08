@@ -1,0 +1,100 @@
+# Asterius Platform (portal) on the kind management cluster, namespace asterius-platform.
+# Image built from the repository's root Dockerfile: docker build -t asterius-platform:v2-dev . && kind load docker-image.
+# Secrets are not here: Secret asterius-platform-secrets is an ExternalSecret (bootstrap/secrets.yaml) holding
+# DATABASE_URL, SECRETS_KEY, METRICS_TOKEN, BOOTSTRAP_TOKEN, ADO_PAT, ARGOCD_TOKEN, plus CROSSPLANE_WATCHER_SECRET in
+# the crossplane profile (bootstrap/crossplane/secrets.yaml); all from OpenBao. Same values for both profiles.
+
+image:
+  repository: asterius-platform
+  tag: v2-dev
+  pullPolicy: Never # loaded into the node with `kind load docker-image`
+
+publicUrl: http://portal.localtest.me:18080
+
+api:
+  replicas: 1
+  autoscaling: { enabled: false }
+worker:
+  replicas: 1
+  concurrency: 4
+
+# DATABASE_URL in the existing Secret (plain PostgreSQL StatefulSet `postgres`, bootstrap/postgres.yaml).
+secrets:
+  existingSecret: asterius-platform-secrets
+
+auth:
+  # First admin: sign up with a local account and the BOOTSTRAP_TOKEN (see README).
+  providers: local
+  allowRegistration: true
+
+config:
+  # config/*.yaml + examples/v2/config/* (prefixed v2-) [+ examples/v2/crossplane/config/* (prefixed v2cp-) in the
+  # crossplane profile], built by install.sh at every run.
+  existingConfigMap: asterius-platform-config-files
+
+# Contract URL: http://asterius-platform.asterius-platform.svc:8080
+service:
+  port: 8080
+
+ingress:
+  enabled: true
+  className: nginx
+  host: portal.localtest.me
+  annotations: {}
+  tls:
+    enabled: false
+
+# OPA, the plan service, Job pods (and the catalog watcher of the crossplane profile) talk to the API pod to pod: no
+# NetworkPolicy locally (kindnet enforces them).
+networkPolicy:
+  enabled: false
+
+# Invokers and integrations may call in-cluster services (Argo CD, OPA, the plan service, OpenBao...).
+outbound:
+  allow: ["*.svc", "*.svc.cluster.local", "10.96.0.0/12", "10.244.0.0/16"]
+
+metrics:
+  tokenInExistingSecret: true
+  serviceMonitor:
+    enabled: true
+  prometheusRule:
+    enabled: true
+  dashboard:
+    enabled: true
+
+# Kubernetes Job invoker (one-shot operations, e.g. rotate-secret): Role asterius-platform-jobs in asterius-jobs
+# (create/get/delete Jobs, per-run Secrets, read pods and logs) bound to the worker's ServiceAccount. Jobs may run as
+# any ServiceAccount of the namespace (rotate-secret is the one bound to OpenBao role asterius-jobs).
+rbac:
+  jobNamespaces: [asterius-jobs]
+
+tracing:
+  otlpEndpoint: http://otel-collector.otel.svc:4318
+
+extraEnv:
+  # V2 endpoints (docs/V2-KIND.md "In-cluster endpoints")
+  LOKI_URL: http://loki.observability.svc:3100
+  TEMPO_URL: http://tempo.observability.svc:3200
+  PROMETHEUS_URL: http://prometheus.observability.svc:9090
+  OPA_URL: http://opa.asterius-platform.svc:8181
+  RENDER_URL: http://render.asterius-platform.svc:8080
+  ARGOCD_URL: http://argocd-server.argocd.svc
+  ARGOCD_APP: asterius-root
+  GRAFANA_URL: http://grafana.localtest.me:18080
+  # Portal repo (Azure DevOps)
+  ADO_ORG_URL: https://dev.azure.com/AsteriusIT
+  ADO_PROJECT: Platform
+  PORTAL_REPO_URL: https://dev.azure.com/AsteriusIT/Platform/_git/portal-resources
+  PORTAL_REPO_BRANCH: main
+  # ${vault:secret/apps/...#key} references: OpenBao with Kubernetes auth (role asterius-platform).
+  VAULT_ADDR: http://openbao.openbao.svc:8200
+  VAULT_K8S_ROLE: asterius-platform
+  VAULT_K8S_JWT_PATH: /var/run/secrets/openbao/token
+  OTEL_RESOURCE_ATTRIBUTES: k8s.cluster.name=asterius-v2
+extraVolumes:
+  - name: openbao-token
+    projected:
+      sources:
+        - serviceAccountToken: { path: token, expirationSeconds: 3600 }
+extraVolumeMounts:
+  - { name: openbao-token, mountPath: /var/run/secrets/openbao, readOnly: true }

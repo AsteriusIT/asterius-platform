@@ -1,0 +1,123 @@
+# OTel Collector gateway (namespace otel): Deployment + Service `otel-collector` (OTLP gRPC :4317, HTTP :4318).
+# Receives OTLP from the portal and the agent DaemonSet (Job pod logs; provider logs in the crossplane profile), and
+# watches Kubernetes events. Logs → Loki (OTLP), traces → Tempo, metrics → Prometheus (remote write).
+# Labels promoted in Loki: run_id, service, source, namespace, step, provider (docs/V2-KIND.md "Telemetry").
+fullnameOverride: otel-collector
+mode: deployment
+replicaCount: 1
+image:
+  repository: otel/opentelemetry-collector-contrib
+command:
+  name: otelcol-contrib
+resources:
+  requests: { cpu: 50m, memory: 128Mi }
+  limits: { memory: 512Mi }
+
+# k8s_attributes (pods, namespaces, replicasets) and k8s_events (events).
+clusterRole:
+  create: true
+  rules:
+    - apiGroups: [""]
+      resources: [pods, namespaces, nodes, events]
+      verbs: [get, list, watch]
+    - apiGroups: [apps]
+      resources: [replicasets, deployments]
+      verbs: [get, list, watch]
+    - apiGroups: [events.k8s.io]
+      resources: [events]
+      verbs: [get, list, watch]
+
+ports:
+  jaeger-compact: { enabled: false }
+  jaeger-thrift: { enabled: false }
+  jaeger-grpc: { enabled: false }
+  zipkin: { enabled: false }
+
+alternateConfig:
+  extensions:
+    health_check:
+      endpoint: ${env:MY_POD_IP}:13133
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: ${env:MY_POD_IP}:4317
+        http:
+          endpoint: ${env:MY_POD_IP}:4318
+    k8s_events:
+      auth_type: serviceAccount
+  processors:
+    memory_limiter:
+      check_interval: 5s
+      limit_percentage: 80
+      spike_limit_percentage: 25
+    k8s_attributes:
+      auth_type: serviceAccount
+      passthrough: false
+      extract:
+        metadata: [k8s.namespace.name, k8s.pod.name, k8s.pod.uid, k8s.deployment.name, k8s.node.name]
+        labels:
+          - { tag_name: run_id, key: portal.asterius.io/run-id, from: pod }
+          - { tag_name: service, key: portal.asterius.io/service, from: pod }
+          - { tag_name: step, key: portal.asterius.io/step, from: pod }
+      pod_association:
+        - sources: [{ from: resource_attribute, name: k8s.pod.uid }]
+        - sources: [{ from: resource_attribute, name: k8s.pod.ip }]
+        - sources: [{ from: connection }]
+    # Record attributes run_id/service/source/namespace/step/provider → resource attributes (Loki labels).
+    groupbyattrs:
+      keys: [run_id, service, source, namespace, step, provider]
+    transform/logs:
+      error_mode: ignore
+      log_statements:
+        # Kubernetes events: source=k8s_events (argocd for Argo CD objects), service from the involved Service XR.
+        - context: resource
+          conditions:
+            - 'resource.attributes["k8s.object.kind"] != nil and resource.attributes["source"] == nil'
+          statements:
+            - set(resource.attributes["source"], "k8s_events")
+            - set(resource.attributes["source"], "argocd") where IsMatch(resource.attributes["k8s.object.api_version"], "^argoproj\\.io/")
+            - set(resource.attributes["service"], resource.attributes["k8s.object.name"]) where IsMatch(resource.attributes["k8s.object.api_version"], "^platform\\.asterius\\.io/")
+        - context: resource
+          statements:
+            - set(resource.attributes["namespace"], resource.attributes["k8s.namespace.name"]) where resource.attributes["namespace"] == nil and resource.attributes["k8s.namespace.name"] != nil
+            - set(resource.attributes["service"], resource.attributes["service.name"]) where resource.attributes["service"] == nil and resource.attributes["service.name"] != nil and resource.attributes["source"] != nil
+    transform/traces:
+      error_mode: ignore
+      trace_statements:
+        - context: resource
+          statements:
+            - set(resource.attributes["namespace"], resource.attributes["k8s.namespace.name"]) where resource.attributes["namespace"] == nil and resource.attributes["k8s.namespace.name"] != nil
+    batch:
+      send_batch_size: 1024
+      timeout: 2s
+  exporters:
+    otlp_http/loki:
+      endpoint: http://loki.observability.svc:3100/otlp
+    otlp_grpc/tempo:
+      endpoint: tempo.observability.svc:4317
+      tls: { insecure: true }
+    prometheus_remote_write:
+      endpoint: http://prometheus.observability.svc:9090/api/v1/write
+      resource_to_telemetry_conversion: { enabled: true }
+  service:
+    extensions: [health_check]
+    telemetry:
+      metrics:
+        readers:
+          - pull:
+              exporter:
+                prometheus: { host: "${env:MY_POD_IP}", port: 8888 }
+    pipelines:
+      logs:
+        receivers: [otlp, k8s_events]
+        processors: [memory_limiter, k8s_attributes, groupbyattrs, transform/logs, batch]
+        exporters: [otlp_http/loki]
+      traces:
+        receivers: [otlp]
+        processors: [memory_limiter, k8s_attributes, transform/traces, batch]
+        exporters: [otlp_grpc/tempo]
+      metrics:
+        receivers: [otlp]
+        processors: [memory_limiter, batch]
+        exporters: [prometheus_remote_write]

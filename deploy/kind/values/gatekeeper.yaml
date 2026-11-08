@@ -1,0 +1,14 @@
+# OPA Gatekeeper (namespace gatekeeper-system). DELETE requests reach the webhook so the protected-delete policy can
+# deny deleting a protected XR without portal.asterius.io/decommission-run-id. Constraints come from portal-resources.
+replicas: 1
+auditInterval: 60
+enableDeleteOperations: true
+constraintViolationsLimit: 50
+controllerManager:
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { memory: 512Mi }
+audit:
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { memory: 512Mi }

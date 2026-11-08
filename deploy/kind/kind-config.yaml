@@ -1,0 +1,20 @@
+# kind cluster `asterius-v2` — the V2 management cluster (docs/V2-KIND.md).
+# One node: ingress-nginx binds its hostPorts 80/443 on it, published on the host as 18080/18443 (127.0.0.1 only;
+# *.localtest.me resolves to 127.0.0.1).
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: asterius-v2
+nodes:
+  - role: control-plane
+    kubeadmConfigPatches:
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "ingress-ready=true"
+      - |
+        kind: KubeletConfiguration
+        maxPods: 250
+    extraPortMappings:
+      - { containerPort: 80, hostPort: 18080, listenAddress: "127.0.0.1", protocol: TCP }
+      - { containerPort: 443, hostPort: 18443, listenAddress: "127.0.0.1", protocol: TCP }

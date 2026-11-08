@@ -1,0 +1,88 @@
+# Plan service (V2 lean preview, docs/V2-KIND.md "Portal" → Preview, docs/V2-WRITE-SIDE.md): POST /render {service}
+# runs a read-only `tofu plan` of the Portal repo's root module tofu/service against Azure DevOps with a throwaway local
+# state (image asterius-render:dev built from apps/render-service, RENDER_MODE=tofu). It never applies.
+# The Portal repo is a cached shallow clone (HTTPS, ADO_PAT as an extra header, refreshed at most every 60 s) in an
+# emptyDir; provider plugins are cached in another emptyDir. The crossplane profile replaces this Deployment with
+# manifests/crossplane/render-crossplane.yaml (RENDER_MODE=crossplane + function sidecars), same Service name.
+apiVersion: v1
+kind: Service
+metadata:
+  name: render
+  namespace: asterius-platform
+  labels: { app.kubernetes.io/name: render, app.kubernetes.io/part-of: asterius-platform }
+spec:
+  selector: { app.kubernetes.io/name: render }
+  ports:
+    - { name: http, port: 8080, targetPort: http }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: render
+  namespace: asterius-platform
+  labels: { app.kubernetes.io/name: render, app.kubernetes.io/part-of: asterius-platform }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: render }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: render, app.kubernetes.io/part-of: asterius-platform }
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: render
+          image: asterius-render:dev
+          imagePullPolicy: IfNotPresent
+          ports:
+            - { name: http, containerPort: 8080 }
+          env:
+            - { name: RENDER_MODE, value: tofu }
+            - { name: HOME, value: /tmp }
+            # Portal repo (docs/V2-KIND.md "Names") and the root module the apply pipeline runs.
+            - { name: REPO_URL, value: https://dev.azure.com/AsteriusIT/Platform/_git/portal-resources }
+            - { name: REPO_BRANCH, value: main }
+            - { name: REPO_CACHE_DIR, value: /work/portal-resources }
+            - { name: REPO_REFRESH_SECONDS, value: "60" }
+            - { name: TOFU_ROOT, value: tofu/service }
+            - { name: TOFU_SPEC_VAR, value: spec_path }
+            - { name: SCHEMA_PATH, value: schema/service-xrd.yaml }
+            - { name: TF_PLUGIN_CACHE_DIR, value: /cache/plugins }
+            - { name: PLAN_TIMEOUT_SECONDS, value: "120" }
+            - { name: RENDER_MAX_CONCURRENCY, value: "2" }
+            # azuredevops provider: AZDO_PERSONAL_ACCESS_TOKEN / AZDO_ORG_SERVICE_URL are derived from these.
+            - { name: ADO_ORG_URL, value: https://dev.azure.com/AsteriusIT }
+            - name: ADO_PAT
+              valueFrom: { secretKeyRef: { name: asterius-platform-secrets, key: ADO_PAT } }
+            # root module variable ado_token (lookups + template import), never on the command line
+            - name: TF_VAR_ado_token
+              valueFrom: { secretKeyRef: { name: asterius-platform-secrets, key: ADO_PAT } }
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 20
+          resources:
+            requests: { cpu: 100m, memory: 192Mi }
+            limits: { cpu: "2", memory: 1Gi }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+            - { name: work, mountPath: /work }
+            - { name: plugins, mountPath: /cache }
+      volumes:
+        - name: tmp
+          emptyDir: { sizeLimit: 512Mi }
+        - name: work
+          emptyDir: { sizeLimit: 256Mi }
+        # azuredevops provider binaries (≈ 30 MB each version), kept for the pod's lifetime.
+        - name: plugins
+          emptyDir: { sizeLimit: 1Gi }

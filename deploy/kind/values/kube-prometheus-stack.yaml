@@ -1,0 +1,86 @@
+# Prometheus Operator + Prometheus + Grafana (namespace observability). Alias Service `prometheus` (:9090) in
+# bootstrap/aliases.yaml. Prometheus accepts remote write (the OTel Collector's prometheusremotewrite exporter) and
+# OTLP metrics. Grafana at http://grafana.localtest.me:18080 with Prometheus, Loki and Tempo data sources.
+fullnameOverride: kps
+
+# Control-plane components of kind are not reachable for scraping (bound to 127.0.0.1): not scraped.
+kubeEtcd: { enabled: false }
+kubeControllerManager: { enabled: false }
+kubeScheduler: { enabled: false }
+kubeProxy: { enabled: false }
+
+alertmanager:
+  enabled: false
+
+prometheus:
+  prometheusSpec:
+    # Pick up every ServiceMonitor / PodMonitor / PrometheusRule of the cluster.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    probeSelectorNilUsesHelmValues: false
+    enableRemoteWriteReceiver: true
+    enableOTLPReceiver: true
+    retention: 3d
+    resources:
+      requests: { cpu: 100m, memory: 512Mi }
+
+prometheusOperator:
+  resources:
+    requests: { cpu: 20m, memory: 64Mi }
+
+grafana:
+  # Admin credentials come from OpenBao (secret/observability/grafana) through External Secrets.
+  admin:
+    existingSecret: grafana-admin
+    userKey: admin-user
+    passwordKey: admin-password
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    hosts: [grafana.localtest.me]
+  grafana.ini:
+    server:
+      root_url: http://grafana.localtest.me:18080
+  resources:
+    requests: { cpu: 20m, memory: 128Mi }
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      labelValue: "1"
+      searchNamespace: ALL
+    datasources:
+      defaultDatasourceEnabled: true
+      uid: prometheus
+  additionalDataSources:
+    - name: Loki
+      uid: loki
+      type: loki
+      access: proxy
+      url: http://loki.observability.svc:3100
+      jsonData:
+        maxLines: 1000
+        derivedFields:
+          - name: trace_id
+            matcherType: label
+            matcherRegex: trace_id
+            datasourceUid: tempo
+            url: "$${__value.raw}"
+    - name: Tempo
+      uid: tempo
+      type: tempo
+      access: proxy
+      url: http://tempo.observability.svc:3200
+      jsonData:
+        tracesToLogsV2:
+          datasourceUid: loki
+          spanStartTimeShift: -5m
+          spanEndTimeShift: 5m
+          filterByTraceID: true
+          customQuery: true
+          query: '{run_id="$${__span.tags.run_id}"}'
+        serviceMap:
+          datasourceUid: prometheus
+        nodeGraph:
+          enabled: true

@@ -1,0 +1,19 @@
+# Tempo, single binary (namespace observability). Service `tempo`: HTTP API :3200, OTLP gRPC :4317, OTLP HTTP :4318.
+# Local storage on a PVC, 3-day retention. The run page searches traces by the span/resource attribute run_id.
+fullnameOverride: tempo
+tempo:
+  retention: 72h
+  reportingEnabled: false
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { memory: 1Gi }
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: "0.0.0.0:4317"
+        http:
+          endpoint: "0.0.0.0:4318"
+persistence:
+  enabled: true
+  size: 5Gi

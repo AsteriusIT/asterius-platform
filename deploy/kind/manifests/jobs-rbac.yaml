@@ -1,0 +1,20 @@
+# Identity of the one-shot Jobs the portal's Kubernetes Job invoker creates in asterius-jobs (action rotate-secret,
+# examples/v2/config/actions.yaml). Same object as bootstrap/jobs.yaml (both applies agree).
+#
+# Expected from the kind install (deploy/kind/install.sh):
+#   - Namespace asterius-jobs (bootstrap/namespaces.yaml).
+#   - The invoker's own RBAC: the chart's Role asterius-platform-jobs in asterius-jobs (values rbac.jobNamespaces:
+#     [asterius-jobs]): create/get/delete jobs, create/patch/delete secrets (per-run env), list/get pods, get pods/log,
+#     bound to the portal's worker ServiceAccount. KUBE_JOB_SERVICE_ACCOUNTS empty (or containing rotate-secret).
+#   - OpenBao Kubernetes auth (mount auth/kubernetes) role `asterius-jobs`:
+#       bound_service_account_names=rotate-secret bound_service_account_namespaces=asterius-jobs
+#       token_policies=asterius-jobs token_ttl=10m
+#     policy `asterius-jobs`:
+#       path "secret/data/teams/*"     { capabilities = ["create", "update", "read", "patch"] }
+#       path "secret/metadata/teams/*" { capabilities = ["read", "list"] }
+#   - Image quay.io/openbao/openbao:2.7.2 pullable by the node (same version as the OpenBao server; has sh and bao).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: rotate-secret
+  namespace: asterius-jobs

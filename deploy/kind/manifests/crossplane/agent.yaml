@@ -1,0 +1,147 @@
+# Catalog watcher (apps/agent, docs/V2-READ-SIDE.md): mirrors Service XRs, managed resources, Gatekeeper audit
+# results and Argo CD sync failures into the portal (POST /api/v1/ingest/crossplane-watcher, HMAC from Secret
+# portal-agent/watcher), exports Kubernetes events as OTLP logs with run_id, and serves the platform SLO metrics.
+# Image asterius-agent:dev is built from apps/agent and loaded into the kind node by install.sh.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: catalog-watcher
+  namespace: portal-agent
+  labels: { app.kubernetes.io/name: catalog-watcher, app.kubernetes.io/part-of: asterius-platform }
+---
+# Read-only. Managed resources come from the Crossplane `crossplane-view` aggregate (every provider's MR kinds,
+# Compositions, XRs through the RBAC manager) bound below; the rules here add what Crossplane does not cover.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: asterius-catalog-watcher
+  labels: { app.kubernetes.io/name: catalog-watcher }
+rules:
+  - apiGroups: [apiextensions.k8s.io]
+    resources: [customresourcedefinitions] # discovery of MR kinds (category `managed`) and Gatekeeper constraint kinds
+    verbs: [get, list, watch]
+  - apiGroups: [platform.asterius.io]
+    resources: ["*"]
+    verbs: [get, list, watch]
+  - apiGroups: [apiextensions.crossplane.io]
+    resources: [compositions, compositionrevisions]
+    verbs: [get, list, watch]
+  - apiGroups: [constraints.gatekeeper.sh]
+    resources: ["*"]
+    verbs: [get, list, watch]
+  - apiGroups: [argoproj.io]
+    resources: [applications]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: asterius-catalog-watcher
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: asterius-catalog-watcher }
+subjects:
+  - { kind: ServiceAccount, name: catalog-watcher, namespace: portal-agent }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: asterius-catalog-watcher-crossplane-view
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: crossplane-view }
+subjects:
+  - { kind: ServiceAccount, name: catalog-watcher, namespace: portal-agent }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: catalog-watcher
+  namespace: portal-agent
+  labels: { app.kubernetes.io/name: catalog-watcher, app.kubernetes.io/part-of: asterius-platform }
+spec:
+  replicas: 1 # one watcher per cluster (deliveries are idempotent, a second replica would only double the traffic)
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app.kubernetes.io/name: catalog-watcher }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: catalog-watcher, app.kubernetes.io/part-of: asterius-platform }
+    spec:
+      serviceAccountName: catalog-watcher
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: watcher
+          image: asterius-agent:dev
+          imagePullPolicy: Never
+          env:
+            - { name: PORTAL_URL, value: http://asterius-platform.asterius-platform.svc:8080 }
+            - name: CROSSPLANE_WATCHER_SECRET
+              valueFrom: { secretKeyRef: { name: watcher, key: secret } }
+            - { name: OTEL_EXPORTER_OTLP_ENDPOINT, value: http://otel-collector.otel.svc:4318 }
+            # fetch has no per-request CA: trust the cluster CA for the API server through Node's extra CA bundle.
+            - { name: NODE_EXTRA_CA_CERTS, value: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt }
+            - { name: RESYNC_MINUTES, value: "5" }
+            - { name: DEBOUNCE_MS, value: "2000" }
+            - { name: METRICS_PORT, value: "9464" }
+            - name: POD_NAMESPACE
+              valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
+          ports:
+            - { name: metrics, containerPort: 9464 }
+          readinessProbe:
+            httpGet: { path: /readyz, port: metrics }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: metrics }
+            periodSeconds: 20
+          resources:
+            requests: { cpu: 20m, memory: 64Mi }
+            limits: { memory: 256Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+---
+# kube-prometheus-stack picks up every PodMonitor of the cluster (deploy/kind/values/kube-prometheus-stack.yaml).
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: catalog-watcher
+  namespace: portal-agent
+  labels: { app.kubernetes.io/name: catalog-watcher }
+spec:
+  selector:
+    matchLabels: { app.kubernetes.io/name: catalog-watcher }
+  podMetricsEndpoints:
+    - { port: metrics, path: /metrics, interval: 30s }
+---
+# Platform SLOs (V2.md §9).
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: catalog-watcher
+  namespace: portal-agent
+  labels: { app.kubernetes.io/name: catalog-watcher }
+spec:
+  groups:
+    - name: asterius-platform-slo
+      rules:
+        - record: asterius:time_to_ready_seconds:p90
+          expr: histogram_quantile(0.9, sum by (le, golden_path, version) (rate(asterius_watcher_time_to_ready_seconds_bucket[1h])))
+        - record: asterius:reconcile_errors:rate5m
+          expr: sum by (provider, kind) (rate(asterius_watcher_reconcile_errors_total[5m]))
+        - alert: CatalogWatcherNotResyncing
+          expr: time() - asterius_watcher_last_full_resync_timestamp_seconds > 900
+          for: 5m
+          labels: { severity: warning }
+          annotations:
+            summary: The catalog watcher has not delivered a full resync to the portal for 15 minutes
+        - alert: ServicesDegraded
+          expr: sum(asterius_watcher_services{lifecycle="Degraded"}) > 0
+          for: 30m
+          labels: { severity: warning }
+          annotations:
+            summary: "{{ $value }} platform service(s) Degraded for 30 minutes"

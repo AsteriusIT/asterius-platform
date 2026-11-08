@@ -1,0 +1,52 @@
+# Argo CD (namespace argocd). Polls the Portal repo every 30 s (ADO cloud cannot call a webhook on kind).
+# Lean profile: syncs only the app of apps asterius-root (portal-resources, path argocd/).
+# Crossplane profile: install.sh adds the health of Crossplane objects (values/crossplane-health.lua, as the
+# `resource.customizations` block, the only form accepting wildcards) and hides ProviderConfigUsage objects.
+global:
+  domain: argocd.localtest.me
+
+configs:
+  params:
+    server.insecure: true # TLS ends at the ingress (plain HTTP locally)
+  cm:
+    url: http://argocd.localtest.me:18080
+    timeout.reconciliation: 30s
+    timeout.reconciliation.jitter: 5s
+    # Local account of the portal: API token only (asks Argo CD to refresh asterius-root after a commit).
+    accounts.portal: apiKey
+  rbac:
+    policy.csv: |
+      p, role:portal, applications, get, */*, allow
+      p, role:portal, applications, sync, */*, allow
+      g, portal, role:portal
+
+server:
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    hostname: argocd.localtest.me
+  resources:
+    requests: { cpu: 20m, memory: 64Mi }
+
+controller:
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+
+repoServer:
+  resources:
+    requests: { cpu: 20m, memory: 64Mi }
+
+redis:
+  resources:
+    requests: { cpu: 10m, memory: 32Mi }
+
+dex:
+  enabled: false
+
+applicationSet:
+  resources:
+    requests: { cpu: 10m, memory: 32Mi }
+
+notifications:
+  resources:
+    requests: { cpu: 10m, memory: 32Mi }

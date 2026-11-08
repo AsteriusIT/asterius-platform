@@ -1,0 +1,10 @@
+# Identity of the one-shot Jobs created by the portal's Kubernetes Job invoker in asterius-jobs (rotate-secret).
+# OpenBao Kubernetes auth role `asterius-jobs` is bound to this ServiceAccount (policy `asterius-jobs`: write under
+# secret/teams/*). Also declared by manifests/jobs-rbac.yaml when present: kept minimal so both applies agree.
+# The invoker's own RBAC (create Jobs / per-run Secrets, read pods and logs) is the chart's Role
+# asterius-platform-jobs in this namespace (values: rbac.jobNamespaces).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: rotate-secret
+  namespace: asterius-jobs

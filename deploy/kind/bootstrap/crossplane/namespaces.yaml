@@ -1,0 +1,16 @@
+# Namespaces added by the crossplane profile (docs/V2-CROSSPLANE.md "Names"). team-<team> namespaces are written by
+# the portal in portal-resources.
+apiVersion: v1
+kind: Namespace
+metadata: { name: crossplane-system }
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gatekeeper-system
+  labels:
+    admission.gatekeeper.sh/ignore: no-self-managing
+---
+apiVersion: v1
+kind: Namespace
+metadata: { name: portal-agent }

@@ -1,0 +1,29 @@
+# Namespaces of the lean profile (docs/V2-KIND.md "Names"). The crossplane profile adds bootstrap/crossplane/namespaces.yaml.
+apiVersion: v1
+kind: Namespace
+metadata: { name: argocd }
+---
+apiVersion: v1
+kind: Namespace
+metadata: { name: external-secrets }
+---
+apiVersion: v1
+kind: Namespace
+metadata: { name: observability }
+---
+apiVersion: v1
+kind: Namespace
+metadata: { name: otel }
+---
+apiVersion: v1
+kind: Namespace
+metadata: { name: openbao }
+---
+apiVersion: v1
+kind: Namespace
+metadata: { name: asterius-platform }
+---
+# Target namespace of the portal's Kubernetes Job invoker (one-shot operations such as rotate-secret).
+apiVersion: v1
+kind: Namespace
+metadata: { name: asterius-jobs }
