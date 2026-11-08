@@ -1,0 +1,18 @@
+{
+  "name": "@asterius/render-service",
+  "private": true,
+  "version": "0.1.0",
+  "description": "V2 preview (plan service): POST /render runs a read-only `tofu plan` of the Portal repo (RENDER_MODE=tofu, default) or `crossplane render` of the golden path (RENDER_MODE=crossplane).",
+  "type": "module",
+  "main": "src/server.mjs",
+  "scripts": {
+    "start": "node src/server.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "yaml": "^2.9.1"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

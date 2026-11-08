@@ -1,0 +1,19 @@
+{
+  "name": "@asterius/agent",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Catalog watcher: mirrors Crossplane Service XRs, managed resources, Gatekeeper violations and Argo CD sync failures into the portal; exports Kubernetes events as OTLP logs; platform SLO metrics.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "start": "node src/index.ts",
+    "test": "node --test \"test/**/*.test.ts\"",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "~6.0.3"
+  }
+}
