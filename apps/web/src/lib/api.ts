@@ -198,6 +198,54 @@ export interface ImpactReport {
 
 export type ActionView = Action & { allowedForMe?: boolean };
 
+/** V2 run timeline (GET /runs/:id/timeline): the run, the catalog transitions, Loki logs and Tempo traces in one list. */
+export interface TimelineEvent {
+  time: string;
+  step: string;
+  status: 'success' | 'failure' | 'running' | 'info';
+  symbol: string;
+  message?: string;
+  source: string;
+  traceId?: string;
+}
+export interface RunTimeline {
+  runId: string;
+  events: TimelineEvent[];
+  sources: { name: string; status: 'ok' | 'unconfigured' | 'error'; count: number; error?: string }[];
+  entity: { blueprint: string; identifier: string; lifecycle?: string } | null;
+  terminal: boolean;
+  cached: boolean;
+  cachedAt?: string;
+}
+
+/** V2 form preview (POST /actions/:id/preview): the Service spec, the policy result and the resources to be created. */
+export interface ServicePreview {
+  supported: boolean;
+  step?: string;
+  inputErrors?: string[];
+  canSubmit?: boolean;
+  operation?: string;
+  specPath?: string;
+  specYaml?: string | null;
+  allowed?: boolean | null;
+  error?: string;
+  policy?: { status: 'allowed' | 'denied' | 'unavailable'; allowed: boolean | null; violations: { policy: string; msg: string }[]; error?: string };
+  render?: {
+    status: 'ok' | 'unavailable' | 'error' | 'skipped';
+    /** Plan service (`tofu plan`): kind = resource type, name = address, action = create | import | update | delete | no-op. */
+    resources: { apiVersion?: string; kind: string; name: string; externalName?: string | null; action?: string; replace?: boolean }[];
+    error?: string;
+  };
+  /** The spec validated against the Service schema of the Portal repo (violations are also in `policy`). */
+  schema?: {
+    status: 'valid' | 'invalid' | 'unavailable' | 'skipped';
+    violations: { policy: string; msg: string }[];
+    version?: string;
+    source?: string;
+    error?: string;
+  };
+}
+
 export const api = {
   checkExpression: (expression: string, context?: unknown) =>
     request<{ ok: boolean; value?: unknown; error?: string }>('POST', v1('/expressions/check'), { expression, context }),
@@ -284,7 +332,10 @@ export const api = {
   saveAction: (id: string, body: unknown) => request<Action>('PUT', v1(`/actions/${enc(id)}`), body),
   deleteAction: (id: string) => request('DELETE', v1(`/actions/${enc(id)}`)),
   trigger: (id: string, body: { entity?: string | null; inputs: Record<string, unknown> }) => request<Run>('POST', v1(`/actions/${enc(id)}/runs`), body),
+  previewAction: (id: string, body: { entity?: string | null; inputs: Record<string, unknown> }) =>
+    request<ServicePreview>('POST', v1(`/actions/${enc(id)}/preview`), body),
 
+  runTimeline: (id: string) => request<RunTimeline>('GET', v1(`/runs/${enc(id)}/timeline`)),
   runs: (q: { mine?: boolean; status?: string; action?: string; blueprint?: string; entity?: string; limit?: number; offset?: number }) =>
     request<RunPage>('GET', v1(`/runs${qs(q)}`)),
   /** `after`: only log lines past this sequence number (incremental polling). */

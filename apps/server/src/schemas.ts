@@ -483,13 +483,56 @@ const approvalPolicy = z
  *    by a shared secret or HMAC signature.
  * `inputs` of the last three map the context (`event`, `body`, `headers`, `schedule`) to the run inputs with `{{ }}` templates.
  */
+/**
+ * V2: generate (part of) a form from the Service XRD (apps/server/src/v2/xrd.ts). The declared `properties` are the
+ * fallback while the XRD cannot be read and hold the fields the XRD does not (team, name…).
+ */
+export const xrdFormSource = z
+  .object({
+    /** ado: a file of the Portal repo (Azure DevOps Git REST) · url: an HTTP endpoint (the render service's /xrd) · file: a mounted file. */
+    source: z.enum(['ado', 'url', 'file']).default('ado'),
+    repository: z.string().url().optional(),
+    branch: z.string().min(1).max(200).default('main'),
+    path: z.string().min(1).max(500).default('schema/service-xrd.yaml'),
+    /** ado / url: `${secret:…}` / `${env:…}` reference (never a literal token). */
+    token: z.string().max(500).optional(),
+    url: z.string().url().optional(),
+    file: z.string().min(1).max(1000).optional(),
+    /** Composite kind and XRD version (default: the referenceable, else the first served version). */
+    kind: z.string().min(1).max(100).default('Service'),
+    version: z.string().max(100).optional(),
+    /** Input name → spec path (default: the V2 contract mapping). */
+    fields: z.record(fieldName, z.string().min(1).max(300)).optional(),
+    /** Also add the XRD fields `fields` does not name, as `spec__<path>` inputs. */
+    others: z.boolean().default(true),
+    /** Spec paths left out of the form (`owner` and `crossplane` always are). */
+    exclude: z.array(z.string().max(300)).max(100).default([]),
+    ttlSeconds: z.number().int().min(10).max(86_400).default(300),
+  })
+  .superRefine((s, ctx) => {
+    if (s.source === 'ado' && !s.repository) ctx.addIssue({ code: 'custom', message: 'fromXrd: source ado needs "repository"' });
+    if (s.source === 'url' && !s.url) ctx.addIssue({ code: 'custom', message: 'fromXrd: source url needs "url"' });
+    if (s.source === 'file' && !s.file) ctx.addIssue({ code: 'custom', message: 'fromXrd: source file needs "file"' });
+    if (s.token && !/^\$\{(secret|env|vault|awssm|azkv|gcpsm|k8s):[^}\s]+\}$/.test(s.token.trim()))
+      ctx.addIssue({ code: 'custom', message: 'fromXrd: token must be a ${secret:NAME} / ${env:NAME} reference' });
+  });
+export type XrdFormSource = z.infer<typeof xrdFormSource>;
+const formInputs = z
+  .object({
+    properties: z.record(fieldName, propertySchema).default({}),
+    required: z.array(z.string()).optional(),
+    order: z.array(z.string()).optional(),
+    fromXrd: xrdFormSource.optional(),
+  })
+  .default({ properties: {} });
+
 const formFields = {
   /** create: the self-service page · day-2 / delete: on an existing entity of `blueprint`. */
   on: z.enum(['create', 'day-2', 'delete']).default('create'),
   /** The kind of entity it creates or acts on (null: a general workflow). */
   blueprint: slug.nullish(),
-  /** The form fields. */
-  inputs: objectSchema,
+  /** The form fields (`fromXrd`: generated from the Service XRD, V2). */
+  inputs: formInputs,
   /** Who may submit it (empty: everyone). */
   allowed: subjects,
   /** Approval before the workflow starts (approval steps cover approvals in the middle). */
@@ -599,27 +642,37 @@ export const notificationPrefs = z.object({
 });
 export type NotificationPrefs = z.infer<typeof notificationPrefs>;
 
-export const mappingDef = z.object({
-  kind: z.string().default('item'),
-  filter: z.string().optional(),
-  items: z.string().optional(),
-  delete: z.string().optional(),
-  merge: z.boolean().default(false),
-  /**
-   * Webhook deliveries only: the delivery is the complete set of entities pointing at `value` through `relation`, so the
-   * entities of this blueprint written by this integration with that relation target that it did not emit are deleted.
-   * `value` is evaluated against the delivered item (not each `items` element).
-   */
-  prune: z.object({ relation: z.string().min(1).max(100), value: z.string().min(1) }).optional(),
-  entity: z.object({
-    blueprint: slug,
-    identifier: z.string().min(1),
-    title: z.string().optional(),
-    team: z.string().optional(),
-    properties: z.record(z.string(), z.string()).default({}),
-    relations: z.record(z.string(), z.string()).default({}),
-  }),
-});
+export const mappingDef = z
+  .object({
+    kind: z.string().default('item'),
+    filter: z.string().optional(),
+    items: z.string().optional(),
+    delete: z.string().optional(),
+    merge: z.boolean().default(false),
+    /**
+     * With `merge`: properties this mapping only fills in while the entity has no value for them, whoever wrote it
+     * (e.g. a `managedBy: legacy` default that must never overwrite the `crossplane` written by another feed).
+     */
+    setOnce: z.array(fieldName).max(100).default([]),
+    /**
+     * Webhook deliveries only: the delivery is the complete set of entities pointing at `value` through `relation`, so the
+     * entities of this blueprint written by this integration with that relation target that it did not emit are deleted.
+     * `value` is evaluated against the delivered item (not each `items` element).
+     */
+    prune: z.object({ relation: z.string().min(1).max(100), value: z.string().min(1) }).optional(),
+    entity: z.object({
+      blueprint: slug,
+      identifier: z.string().min(1),
+      title: z.string().optional(),
+      team: z.string().optional(),
+      properties: z.record(z.string(), z.string()).default({}),
+      relations: z.record(z.string(), z.string()).default({}),
+    }),
+  })
+  .superRefine((m, ctx) => {
+    if (m.setOnce.length && !m.merge)
+      ctx.addIssue({ code: 'custom', message: 'setOnce needs merge: true (a full write would drop the kept values)', path: ['setOnce'] });
+  });
 export type MappingDef = z.infer<typeof mappingDef>;
 
 /** Authentication block of HTTP-based sources and invokers (`config.auth`). Secrets are `${secret:NAME}` references. */

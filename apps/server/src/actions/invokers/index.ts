@@ -14,6 +14,7 @@ import { argoWorkflowsInvoker, jenkinsInvoker, terraformCloudInvoker } from './o
 import { scaffolderInvoker } from './scaffolder.js';
 import { tektonInvoker } from './tekton.js';
 import { jiraInvoker, lambdaInvoker, stepFunctionsInvoker } from './services.js';
+import { servicePrecheckInvoker, serviceSpecInvoker } from './service-spec.js';
 
 const registry = new Map<string, Invoker>();
 
@@ -41,6 +42,8 @@ for (const inv of [
   stepFunctionsInvoker,
   tektonInvoker,
   scaffolderInvoker,
+  serviceSpecInvoker,
+  servicePrecheckInvoker,
 ])
   registerInvoker(inv);
 

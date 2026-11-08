@@ -11,6 +11,7 @@ import { validator } from '../catalog/validation.js';
 import { stepsOf, validateWorkflow } from './workflow.js';
 import { isAdmin, matchesSubjects, type Principal } from '../auth/users.js';
 import { orgId } from '../orgs/context.js';
+import { withXrdInputs } from '../v2/xrd.js';
 
 interface Row {
   identifier: string;
@@ -83,7 +84,8 @@ export const forViewer = (a: Action, p: Principal): Action => {
 };
 
 export async function listActions(): Promise<Action[]> {
-  return (await all<Row>('SELECT * FROM actions WHERE org_id = ? ORDER BY title', orgId())).map(toAction);
+  // V2: forms with `inputs.fromXrd` follow the Service XRD (cached; a no-op for other actions).
+  return Promise.all((await all<Row>('SELECT * FROM actions WHERE org_id = ? ORDER BY title', orgId())).map((r) => withXrdInputs(toAction(r))));
 }
 
 /** The blueprint a trigger targets (null: none). */
@@ -99,7 +101,7 @@ export const canTrigger = (a: Action, p: Principal, ownerTeam: string | null) =>
 export async function getAction(id: string): Promise<Action> {
   const r = await one<Row>('SELECT * FROM actions WHERE org_id = ? AND identifier = ?', orgId(), id);
   if (!r) throw notFound(`Action ${id}`);
-  return toAction(r);
+  return withXrdInputs(toAction(r));
 }
 
 export async function upsertAction(

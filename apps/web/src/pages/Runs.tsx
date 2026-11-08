@@ -23,7 +23,17 @@ import {
 import { notifications } from '@mantine/notifications';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, Navigate, useLocation, useNavigate, useParams, useSearchParams } from 'react-router';
-import { IconCheck, IconExternalLink, IconFileText, IconInfoCircle, IconPlayerPlay, IconPlayerStop, IconRepeat, IconX } from '@tabler/icons-react';
+import {
+  IconCheck,
+  IconExternalLink,
+  IconFileText,
+  IconInfoCircle,
+  IconPlayerPlay,
+  IconPlayerStop,
+  IconRepeat,
+  IconTimeline,
+  IconX,
+} from '@tabler/icons-react';
 import type { Run, RunStatus, RunStep } from '@asterius/shared';
 import { api, errorText } from '../lib/api';
 import { DataTable } from '../components/DataTable';
@@ -38,6 +48,7 @@ import { splitJobLog, STEP_STATUS_COLORS, STEP_STATUS_LABELS, STEP_TYPES, stepTo
 import { PropertyValue } from '../components/PropertyValue';
 import { initialValues, SchemaForm, validateValues, type FormValues } from '../components/SchemaForm';
 import { UserChip } from '../components/UserChip';
+import { RunTimeline } from '../components/RunTimeline';
 
 const PAGE = 30;
 const onError = (e: unknown) => notifications.show({ color: 'red', message: errorText(e) });
@@ -435,7 +446,7 @@ function ApprovalTimeline({ approvals }: { approvals: Run['approvals'] }) {
   );
 }
 
-type Panel = { kind: 'request' } | { kind: 'logs' } | { kind: 'step'; id: string } | null;
+type Panel = { kind: 'request' } | { kind: 'logs' } | { kind: 'timeline' } | { kind: 'step'; id: string } | null;
 
 function RunFlow({ r }: { r: Run }) {
   const refresh = useRunRefresh(r.id);
@@ -478,6 +489,9 @@ function RunFlow({ r }: { r: Run }) {
             <Button size="xs" variant="default" leftSection={<IconFileText size={14} />} onClick={() => setPanel({ kind: 'logs' })}>
               All logs
             </Button>
+            <Button size="xs" variant="default" leftSection={<IconTimeline size={14} />} onClick={() => setPanel({ kind: 'timeline' })}>
+              Timeline
+            </Button>
             <RunActions r={r} onDone={refresh} size="xs" />
           </>
         }
@@ -516,7 +530,11 @@ function RunFlow({ r }: { r: Run }) {
         // No overlay: the graph stays visible (and live) next to the details.
         withOverlay={false}
         shadow="xl"
-        title={<Text fw={600}>{panel?.kind === 'request' ? 'Request' : panel?.kind === 'logs' ? 'All logs' : (step?.name ?? '')}</Text>}
+        title={
+          <Text fw={600}>
+            {panel?.kind === 'request' ? 'Request' : panel?.kind === 'logs' ? 'All logs' : panel?.kind === 'timeline' ? 'Timeline' : (step?.name ?? '')}
+          </Text>
+        }
       >
         {panel?.kind === 'request' && (
           <Stack>
@@ -569,6 +587,7 @@ function RunFlow({ r }: { r: Run }) {
             )}
           </Stack>
         )}
+        {panel?.kind === 'timeline' && <RunTimeline runId={r.id} />}
         {panel?.kind === 'logs' && (
           <LogsCard
             lines={allLogs.filter((l) => !job || splitJobLog(l.message).job === job)}

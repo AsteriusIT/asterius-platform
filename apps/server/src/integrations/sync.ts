@@ -187,6 +187,22 @@ interface Pending {
   kind: string;
   m: Mapped;
   merge: boolean;
+  /** `MappingDef.setOnce`: properties written only while the entity has no value for them. */
+  setOnce?: string[];
+}
+
+/** Drop the set-once properties the stored entity already has a value for. */
+async function dropSetOnce(m: Mapped, keys: string[]) {
+  if (!keys.some((k) => k in m.properties)) return;
+  const row = await one<{ properties: string }>(
+    'SELECT properties FROM entities WHERE org_id = ? AND blueprint = ? AND identifier = ?',
+    orgId(),
+    m.blueprint,
+    m.identifier,
+  );
+  if (!row) return;
+  const have = json<Record<string, unknown>>(row.properties, {});
+  for (const k of keys) if (have[k] !== undefined && have[k] !== null && have[k] !== '') delete m.properties[k];
 }
 interface Batch {
   upserts: Pending[];
@@ -209,6 +225,7 @@ async function applyBatch(integration: string, me: Me, batch: Batch, stats: Sync
   for (const p of batch.upserts) {
     const { m, merge } = p;
     try {
+      if (p.setOnce?.length) await dropSetOnce(m, p.setOnce);
       const own = await resolveOwnership(integration, me, m, merge);
       if (own.action === 'skip') {
         log.conflict(`CONFLICT ${m.blueprint}/${m.identifier} is owned by ${own.owner} (higher or equal priority): not written`);
@@ -284,7 +301,7 @@ async function processItem(mapping: MappingDef, item: unknown, bindings: Binding
     if (prune) prunes?.push(prune);
     for (const m of mapped) {
       if (m.delete) batch.deletes.push(m);
-      else batch.upserts.push({ kind: mapping.kind, m, merge: mapping.merge });
+      else batch.upserts.push({ kind: mapping.kind, m, merge: mapping.merge, setOnce: mapping.setOnce });
     }
   } catch (err) {
     stats.failed++;

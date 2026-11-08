@@ -5,11 +5,12 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router';
 import { IconShieldCheck } from '@tabler/icons-react';
 import type { Action, ApprovalPolicy, ObjectSchema } from '@asterius/shared';
-import { api, errorText } from '../lib/api';
+import { api, errorText, type ServicePreview as Preview } from '../lib/api';
 import { formOf } from '../lib/permissions';
 import { clearDraft, loadDraft, pushRecent, saveDraft } from '../lib/drafts';
 import { initialValues, SchemaForm, validateValues, type FormValues } from './SchemaForm';
 import { Markdown } from './ui';
+import { hasServicePreview, ServicePreview } from './ServicePreview';
 
 function approvalText(approval: ApprovalPolicy) {
   const ap = approval.approvers ?? {};
@@ -69,6 +70,13 @@ function RunForm({
     return () => clearTimeout(t);
   }, [action.identifier, entityId, values]);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  // V2 actions (a service-precheck step): preview the spec, the policy result and the resources, then confirm.
+  const withPreview = hasServicePreview(action);
+  const [preview, setPreview] = useState<Preview | null>(null);
+  const edit = (v: FormValues) => {
+    setValues(v);
+    setPreview(null);
+  };
   const navigate = useNavigate();
   const qc = useQueryClient();
   const run = useMutation({
@@ -87,10 +95,17 @@ function RunForm({
     },
   });
 
+  const previewRun = useMutation({
+    mutationFn: () => api.previewAction(action.identifier, { entity: entity?.identifier ?? null, inputs: values }),
+    onSuccess: (p) => (p.supported ? setPreview(p) : run.mutate()),
+  });
+
   const submit = () => {
     const e = validateValues(inputs, values);
     setErrors(e);
-    if (!Object.keys(e).length) run.mutate();
+    if (Object.keys(e).length) return;
+    if (withPreview && !preview) previewRun.mutate();
+    else run.mutate();
   };
 
   return (
@@ -106,18 +121,29 @@ function RunForm({
           {approvalText(approval)}
         </Alert>
       )}
-      {Object.keys(inputs.properties ?? {}).length > 0 && <SchemaForm schema={inputs} values={values} onChange={setValues} errors={errors} />}
-      {run.error && (
+      {Object.keys(inputs.properties ?? {}).length > 0 && <SchemaForm schema={inputs} values={values} onChange={edit} errors={errors} />}
+      {preview && <ServicePreview preview={preview} />}
+      {(run.error || previewRun.error) && (
         <Alert color="red" variant="light">
-          {errorText(run.error)}
+          {errorText(run.error ?? previewRun.error)}
         </Alert>
       )}
       <Group justify="flex-end">
         <Button variant="default" onClick={onClose}>
           Cancel
         </Button>
-        <Button onClick={submit} loading={run.isPending} color={formOf(action)?.on === 'delete' ? 'red' : undefined}>
-          {approval.required ? 'Request' : 'Run'}
+        {preview && (
+          <Button variant="default" onClick={() => setPreview(null)}>
+            Edit
+          </Button>
+        )}
+        <Button
+          onClick={submit}
+          loading={run.isPending || previewRun.isPending}
+          disabled={!!preview && preview.canSubmit === false}
+          color={formOf(action)?.on === 'delete' ? 'red' : undefined}
+        >
+          {withPreview && !preview ? 'Preview' : preview ? 'Confirm' : approval.required ? 'Request' : 'Run'}
         </Button>
       </Group>
     </Stack>

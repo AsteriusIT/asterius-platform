@@ -92,6 +92,7 @@ export const argoWorkflowsInvoker: Invoker = {
       { key: 'template', label: 'WorkflowTemplate', kind: 'text', required: true },
       { key: 'token', label: 'Token', kind: 'secret' },
       { key: 'parameters', label: 'Parameters', kind: 'keyvalue' },
+      { key: 'labels', label: 'Workflow labels', kind: 'keyvalue', advanced: true },
     ],
     example: {
       type: 'argo-workflows',
@@ -108,11 +109,20 @@ export const argoWorkflowsInvoker: Invoker = {
   },
   async start({ config, log }) {
     const parameters = Object.entries(stringValues(config.parameters)).map(([k, v]) => `${k}=${v}`);
+    // Labels on the Workflow (e.g. portal.asterius.io/run-id), as the submit API takes them: "k1=v1,k2=v2".
+    const labels = Object.entries(stringValues(config.labels))
+      .map(([k, v]) => `${k}=${v}`)
+      .join(',');
     const res = await http<{ metadata: { name: string } }>(`${argoBase(config)}/submit`, {
       method: 'POST',
       headers: argoHeaders(config),
       auth: config.auth,
-      body: { namespace: str(config.namespace || 'argo'), resourceKind: 'WorkflowTemplate', resourceName: str(config.template), submitOptions: { parameters } },
+      body: {
+        namespace: str(config.namespace || 'argo'),
+        resourceKind: 'WorkflowTemplate',
+        resourceName: str(config.template),
+        submitOptions: { parameters, ...(labels ? { labels } : {}) },
+      },
     });
     const name = res.data.metadata.name;
     await log(`Workflow ${name} submitted`);

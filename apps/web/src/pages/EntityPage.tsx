@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Anchor, Badge, Button, Card, Grid, Group, Menu, SegmentedControl, SimpleGrid, Stack, Table, Tabs, Text, Tooltip } from '@mantine/core';
+import { Anchor, Badge, Box, Button, Card, Grid, Group, Menu, SegmentedControl, SimpleGrid, Stack, Table, Tabs, Text, Tooltip } from '@mantine/core';
 import { modals } from '@mantine/modals';
 import { notifications } from '@mantine/notifications';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -20,6 +20,8 @@ import { EntityIcon } from '../components/icons';
 import { RelationGraph } from '../components/RelationGraph';
 import { Empty, LevelBadge, Markdown, Mono, PageHeader, QueryView, StatusBadge, TimeAgo } from '../components/ui';
 import { UserChip } from '../components/UserChip';
+import { isObjectList, ObjectListCard } from '../components/ObjectList';
+import { RunTimeline } from '../components/RunTimeline';
 
 export function EntityPage() {
   const { bp = '', id = '' } = useParams();
@@ -56,6 +58,9 @@ function EntityView({ bp, e }: { bp: Blueprint; e: Entity }) {
     queryFn: () => api.entityScorecards(bp.identifier, e.identifier),
   });
   const canEdit = (isAdmin || (!!e.team && user?.teams.some((t) => t.identifier === e.team))) && !e.source.startsWith('integration:');
+  // Lists of objects (managed resources, violations, conditions…) get a table of their own below the properties.
+  const objectLists = orderedFields(bp.schema).filter((k) => isObjectList(bp.schema.properties[k], e.properties[k]));
+  const latestRun = typeof e.properties.lastRunId === 'string' && e.properties.lastRunId ? e.properties.lastRunId : null;
 
   const day2 = (actions.data ?? []).filter((a) => formOf(a)?.on === 'day-2');
   const deletes = (actions.data ?? []).filter((a) => formOf(a)?.on === 'delete');
@@ -176,16 +181,18 @@ function EntityView({ bp, e }: { bp: Blueprint; e: Entity }) {
                 </Text>
                 <Table withRowBorders={false} verticalSpacing={6} highlightOnHover={false}>
                   <Table.Tbody>
-                    {orderedFields(bp.schema).map((k) => (
-                      <Table.Tr key={k}>
-                        <Table.Td w="35%" c="dimmed" fz="sm" style={{ verticalAlign: 'top' }}>
-                          {bp.schema.properties[k].title ?? k}
-                        </Table.Td>
-                        <Table.Td>
-                          <PropertyValue schema={bp.schema.properties[k]} value={e.properties[k]} />
-                        </Table.Td>
-                      </Table.Tr>
-                    ))}
+                    {orderedFields(bp.schema)
+                      .filter((k) => !objectLists.includes(k))
+                      .map((k) => (
+                        <Table.Tr key={k}>
+                          <Table.Td w="35%" c="dimmed" fz="sm" style={{ verticalAlign: 'top' }}>
+                            {bp.schema.properties[k].title ?? k}
+                          </Table.Td>
+                          <Table.Td>
+                            <PropertyValue schema={bp.schema.properties[k]} value={e.properties[k]} />
+                          </Table.Td>
+                        </Table.Tr>
+                      ))}
                     {Object.entries(bp.computed ?? {}).map(([k, c]) => (
                       <Table.Tr key={`computed-${k}`}>
                         <Table.Td w="35%" c="dimmed" fz="sm" style={{ verticalAlign: 'top' }}>
@@ -213,6 +220,22 @@ function EntityView({ bp, e }: { bp: Blueprint; e: Entity }) {
                   </Table.Tbody>
                 </Table>
               </Card>
+              {objectLists.map((k) => (
+                <Box key={k} mt="md">
+                  <ObjectListCard title={bp.schema.properties[k].title ?? k} value={e.properties[k]} />
+                </Box>
+              ))}
+              {latestRun && (
+                <Card mt="md">
+                  <Group justify="space-between" mb="sm">
+                    <Text fw={600}>Latest run</Text>
+                    <Anchor component={Link} to={`/runs/${encodeURIComponent(latestRun)}`} fz="sm">
+                      Open the run
+                    </Anchor>
+                  </Group>
+                  <RunTimeline runId={latestRun} limit={15} />
+                </Card>
+              )}
             </Grid.Col>
             <Grid.Col span={{ base: 12, md: 5 }}>
               <Stack>

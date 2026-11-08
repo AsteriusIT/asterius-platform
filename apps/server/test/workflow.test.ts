@@ -403,6 +403,7 @@ describe('azure pipelines and catalog cascade', () => {
       url: 'https://ado/run/7',
       organization: `${ado.url}/org`,
       project: 'Platform',
+      pipelineId: 3,
     });
     expect(JSON.parse(ado.received[0].body).templateParameters).toEqual({ project: 'P1' });
     expect((await admin.get('/api/v1/blueprints/proj/entities/P1')).data.properties.url).toBe(`${ado.url}/org/P1`);
