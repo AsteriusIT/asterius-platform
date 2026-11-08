@@ -1,0 +1,66 @@
+# V2 read side, both profiles (docs/V2-READ-SIDE.md, docs/V2.md §7): the Azure DevOps feed of `platform-service`.
+# The crossplane profile adds the catalog watcher feed (examples/v2/crossplane/config/watcher.yaml); the drift feed is
+# in drift.yaml.
+#
+# Ownership. Every feed writes its own properties only, with `merge: true` (properties a mapping does not map are kept),
+# so the intent and apply outcome written by the portal (lifecycle, managedBy opentofu, owner, golden path…) survive
+# every sync. `setOnce` fields are defaults: written only while the entity has no value, so `managedBy: legacy` never
+# overwrites the portal's `opentofu` (or the watcher's `crossplane`).
+
+integrations:
+  # ── Feed 1: tool integration — Azure DevOps projects named <team>-<service> (deterministic names, V2-KIND.md) ──
+  # Repositories and pipelines of every project of the organization; services without a Service spec (no XR) appear
+  # as `managedBy: legacy` (V2.md §13). managedBy is set-once here: it never overwrites the portal's `opentofu` (or the watcher's `crossplane`).
+  - identifier: ado-services
+    title: Azure DevOps (service projects)
+    type: azure-devops
+    intervalMinutes: 15
+    priority: 50
+    config:
+      organization: https://dev.azure.com/AsteriusIT
+      token: ${env:ADO_PAT}
+      excludeProjects: [Platform] # the Portal repo's project, not a service
+    mappings:
+      # Repository <service> in project <team>-<service>.
+      - kind: repository
+        filter: >-
+          $not(project.name in $integration.config.excludeProjects) and $length(project.name) > $length(name) + 1
+          and $substring(project.name, -($length(name) + 1)) = "-" & name
+        merge: true
+        setOnce: [managedBy, team]
+        entity:
+          blueprint: platform-service
+          identifier: $substring(project.name, 0, $length(project.name) - $length(name) - 1) & "/" & name
+          properties:
+            repoUrl: webUrl
+            adoProjectUrl: $integration.config.organization & "/" & $encodeUrlComponent(project.name)
+            managedBy: '"legacy"'
+            team: $substring(project.name, 0, $length(project.name) - $length(name) - 1)
+      # Legacy projects that do not follow the naming convention: one entity per repository, team = project.
+      - kind: repository
+        filter: >-
+          $not(project.name in $integration.config.excludeProjects) and $not($length(project.name) > $length(name) + 1
+          and $substring(project.name, -($length(name) + 1)) = "-" & name)
+        merge: true
+        setOnce: [managedBy, team]
+        entity:
+          blueprint: platform-service
+          identifier: $lowercase(project.name) & "/" & name
+          properties:
+            repoUrl: webUrl
+            adoProjectUrl: $integration.config.organization & "/" & $encodeUrlComponent(project.name)
+            managedBy: '"legacy"'
+            team: $lowercase(project.name)
+      # Pipeline <service>-ci in project <team>-<service> (the pipeline list carries its project, see the source).
+      - kind: pipeline
+        filter: >-
+          $not(project.name in $integration.config.excludeProjects) and $substring(name, -3) = "-ci"
+          and $substring(project.name, -($length(name) - 2)) = "-" & $substring(name, 0, $length(name) - 3)
+        merge: true
+        entity:
+          blueprint: platform-service
+          identifier: >-
+            ($svc := $substring(name, 0, $length(name) - 3); $substring(project.name, 0, $length(project.name) - $length($svc) - 1) & "/" & $svc)
+          properties:
+            pipelineId: $string(id)
+            pipelineUrl: _links.web.href

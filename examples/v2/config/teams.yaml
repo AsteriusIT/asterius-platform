@@ -1,0 +1,6 @@
+# Teams owning V2 services. Each team <t> maps to namespace team-<t> and folder services/team-<t>/ in the Portal repo;
+# the self-service form only offers existing teams. Max 20 characters (XRD limit).
+teams:
+  - identifier: v2test
+    title: V2 test
+    description: Demo team used by the V2 end-to-end tests on kind (services/team-v2test/).

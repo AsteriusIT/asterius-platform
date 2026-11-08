@@ -1,0 +1,60 @@
+# V2 drift feed (docs/V2-KIND.md "Pipelines", docs/V2-READ-SIDE.md): the nightly pipeline portal-services-drift runs
+# `tofu plan -detailed-exitcode` per service and reports the result as build tags. This integration reads the latest
+# completed runs of that pipeline and sets `drift` (true | false) and `driftCheckedAt` on the platform-service entities,
+# with merge semantics (nothing else is touched; drift never changes the lifecycle).
+#
+# Tag formats (both supported, also mixed):
+#   one run per service    service:<team>/<service>  +  drift:yes | drift:no
+#   one run for many       drift:<team>/<service>=yes | drift:<team>/<service>=no   (one tag per service)
+# Runs are read oldest first, so the newest check of a service wins.
+
+integrations:
+  - identifier: ado-drift
+    title: Drift (portal-services-drift)
+    type: azure-devops
+    intervalMinutes: 60
+    priority: 50
+    config:
+      organization: https://dev.azure.com/AsteriusIT
+      project: Platform
+      pipeline: portal-services-drift
+      buildsTop: 50
+      token: ${env:ADO_PAT}
+    mappings:
+      - kind: build
+        filter: $count(tags) > 0
+        # One element per service the run reports on: { identifier, drift, checkedAt, url }.
+        items: >-
+          (
+            $b := $;
+            $tags := $append([], $b.tags);
+            $at := $exists($b.finishTime) ? $b.finishTime : $b.startTime;
+            $url := $b._links.web.href;
+            $single := $tags[$ = "drift:yes" or $ = "drift:no"];
+            $one := $count($single) > 0
+              ? $map($tags[$substring($, 0, 8) = "service:"], function($t) {
+                  { "identifier": $substring($t, 8), "drift": $single[-1] = "drift:yes", "checkedAt": $at, "url": $url }
+                })
+              : [];
+            $many := $map($tags[$substring($, 0, 6) = "drift:" and $contains($, "=")], function($t) {
+              (
+                $kv := $substring($t, 6);
+                $eq := $length($substringBefore($kv, "="));
+                {
+                  "identifier": $substring($kv, 0, $eq),
+                  "drift": $lowercase($substring($kv, $eq + 1)) in ["yes", "true"],
+                  "checkedAt": $at,
+                  "url": $url
+                }
+              )
+            });
+            $filter($append($one, $many), function($i) { $contains($i.identifier, "/") })
+          )
+        merge: true
+        entity:
+          blueprint: platform-service
+          identifier: identifier
+          properties:
+            drift: drift
+            driftCheckedAt: checkedAt
+            driftRunUrl: url

@@ -1,0 +1,59 @@
+# V2 scorecards on platform-service (docs/V2.md §7 "Derived"). Rules are JSONata over the entity; the properties
+# come from the portal (intent and apply outcome), the drift feed, the tool integrations and, in the crossplane
+# profile, the catalog watcher. Every rule can pass on the lean path (no Crossplane-only property is required).
+
+# ── EDIT: the latest version of each golden path (OpenTofu module golden-paths/<name>/v<version>) ─────────────────
+# The `$latest` object is the configuration value; the rule "On current golden path" reuses this expression through
+# the YAML alias *current-golden-path (unknown top-level keys are ignored by the config loader).
+x-current-golden-path: &current-golden-path >-
+  ($latest := {"java-api": "3"};
+  $exists(properties.goldenPathVersion) and properties.goldenPathVersion = $lookup($latest, properties.goldenPath))
+# ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+scorecards:
+  - identifier: platform-service-health
+    title: Platform readiness
+    description: Is the service on the platform, current, compliant and operable? Bronze is on the platform and owned, Silver is current and compliant, Gold also passes its quality gate.
+    blueprint: platform-service
+    levels:
+      - { name: Bronze, color: orange }
+      - { name: Silver, color: gray }
+      - { name: Gold, color: yellow }
+    rules:
+      - identifier: managedByPlatform
+        title: Managed by platform
+        description: Applied from a Service spec, by OpenTofu (lean) or Crossplane (legacy services are only ingested, V2.md §13).
+        level: Bronze
+        expression: properties.managedBy in ["opentofu", "crossplane"]
+      - identifier: ownerAndOnCall
+        title: Has owner and on-call
+        description: An owner team and an on-call group.
+        level: Bronze
+        expression: (team != null or $length(properties.team) > 0) and $length(properties.onCall) > 0
+      - identifier: currentGoldenPath
+        title: On current golden path
+        description: The applied golden-path version (apply pipeline, or the Composition observed in the cluster) is the latest of its golden path (x-current-golden-path).
+        level: Silver
+        expression: *current-golden-path
+      - identifier: noPolicyViolations
+        title: No policy violations
+        description: Not rejected by the pre-check, and (crossplane profile) no Gatekeeper audit violation nor denied sync.
+        level: Silver
+        expression: $count(properties.violations) = 0 and properties.lifecycle != "Rejected"
+      - identifier: noDrift
+        title: Up to date (no drift)
+        description: The last nightly drift check (portal-services-drift, tofu plan) found no change made outside the spec, within the last 3 days.
+        level: Silver
+        expression: >-
+          properties.drift = false and $exists(properties.driftCheckedAt)
+          and $toMillis(properties.driftCheckedAt) > $millis() - 3 * 86400000
+      - identifier: secretsFromVault
+        title: Secrets from Vault
+        description: The service reads its secrets from Vault (OpenBao) through External Secrets.
+        level: Silver
+        expression: properties.vaultSecrets = true
+      - identifier: qualityGatePasses
+        title: Quality gate passes
+        description: The SonarQube quality gate status reported by the tool integration is OK.
+        level: Gold
+        expression: properties.qualityGate in ["OK", "PASSED", "passed"]

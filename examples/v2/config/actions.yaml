@@ -1,0 +1,677 @@
+# V2 lean path (docs/V2-KIND.md, docs/V2-WRITE-SIDE.md): self-service on blueprint `platform-service`.
+#
+# "Should exist" → a Service spec committed to the Portal repo (invoker `service-spec`, serialized commit queue), then
+# the Azure DevOps pipeline `portal-services-apply` (OpenTofu) is queued and followed by the portal, which records the
+# outcome (lifecycle Ready / Degraded). "Should happen once" → an ADO pipeline (`portal-operations`, `<service>-ci`) or a
+# Kubernetes Job in namespace asterius-jobs. No Argo Workflows, no Crossplane needed.
+# The run id travels in the spec (annotation + label portal.asterius.io/run-id), the commit trailer Run-Id, the
+# pipeline parameter runId (and build tag run:<id>) and the entity property lastRunId.
+#
+# Environment (portal pod): ADO_PAT, OPA_URL, RENDER_URL (the plan service). See deploy/kind/values/asterius-platform.yaml.
+#
+# Shared settings (YAML anchors; the config loader resolves `<<:` merge keys, unknown top-level keys are ignored).
+# ── EDIT: where the Service schema lives in the Portal repo (form fields and pre-check validation) ────────────────
+x-schema-path: &schema-path schema/service-xrd.yaml
+# ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+x-portal-repo: &portal-repo
+  repository: https://dev.azure.com/AsteriusIT/Platform/_git/portal-resources
+  branch: main
+  token: ${env:ADO_PAT}
+x-apply: &apply
+  type: azure-pipeline
+  organization: https://dev.azure.com/AsteriusIT
+  project: Platform
+  pipeline: portal-services-apply # resolved to its id by name (cached)
+  branch: main
+  token: ${env:ADO_PAT}
+  # outputs.json published by the apply run (projectId, projectUrl, repoUrl, pipelineId, pipelineUrl, environments)
+  outputs: { artifact: outputs, file: outputs.json }
+# Catalog properties written when the apply pipeline succeeded (the run's spec is applied: managed by OpenTofu).
+x-ready: &ready-properties
+  lifecycle: Ready
+  managedBy: opentofu
+  goldenPathVersion: '{{ steps.commit.output.goldenPath.version }}'
+  lastRunId: '{{ run.id }}'
+  lastApplyUrl: '{{ steps.apply.link }}'
+  lastApplyResult: '{{ steps.apply.output.result }}'
+  adoProjectUrl: '{{ steps.apply.output.outputs.projectUrl }}'
+  repoUrl: '{{ steps.apply.output.outputs.repoUrl }}'
+  pipelineId: '{{ $string(steps.apply.output.outputs.pipelineId) }}'
+  pipelineUrl: '{{ steps.apply.output.outputs.pipelineUrl }}'
+# … and when it did not (failed, cancelled in ADO, could not be queued): the run fails after recording it.
+x-degraded: &degraded-properties
+  lifecycle: Degraded
+  lastRunId: '{{ run.id }}'
+  lastApplyUrl: '{{ steps.apply.link }}'
+  lastApplyResult: '{{ $exists(steps.apply.output.result) ? steps.apply.output.result : "failed" }}'
+x-outcome: &apply-outcome
+  id: outcome
+  name: Apply outcome
+  type: transform
+  needs: [ready, degraded]
+  if: steps.apply.status != "SUCCESS"
+  output:
+    failed: '$error("The apply pipeline did not succeed (" & ($exists(steps.apply.output.result) ? steps.apply.output.result : steps.apply.status) & "): the service is Degraded. " & ($exists(steps.apply.link) ? steps.apply.link : ""))'
+
+actions:
+  # ── Create a service: pre-check (schema + OPA + tofu plan) → Requested → approval when prod → commit → apply ───
+  - identifier: create-platform-service
+    title: Create a service
+    icon: rocket
+    description: |
+      Create a service from a golden path. The form follows the Service schema of the Portal repo. Before you confirm,
+      the portal shows the spec it will commit, the platform policies' verdict and the OpenTofu plan (what will be
+      created, and what already exists and will be adopted). Services that run in **prod** are approved by the platform
+      team. The portal then queues the apply pipeline and follows it until the service is Ready.
+    secrets: [env:ADO_PAT, env:OPA_URL, env:RENDER_URL]
+    trigger:
+      type: form
+      on: create
+      blueprint: platform-service
+      inputs:
+        # Generated from the Service schema (types, enums, defaults, descriptions, bounds); the properties below are
+        # the fallback while it cannot be read, plus the fields it does not hold (name, team).
+        fromXrd:
+          source: ado
+          repository: https://dev.azure.com/AsteriusIT/Platform/_git/portal-resources
+          branch: main
+          path: *schema-path
+          token: ${env:ADO_PAT}
+        properties:
+          # Limits of the deterministic names (ADO project <team>-<service>, pipeline <service>-ci): service 2–30, team 2–20.
+          name: { type: string, title: Service name, pattern: '^[a-z][a-z0-9-]{0,28}[a-z0-9]$', maxLength: 30, description: '2–30 lowercase letters, digits and dashes' }
+          team: { type: string, title: Team, format: team, pattern: '^[a-z][a-z0-9-]{1,19}$', maxLength: 20, description: The owning team (at most 20 characters). }
+          goldenPath: { type: string, title: Golden path, enum: [java-api], default: java-api }
+          goldenPathVersion: { type: string, title: Golden-path version, enum: ['3'], default: '3' }
+          repositoryTemplate: { type: string, title: Repository template, enum: [java-spring-api], default: java-spring-api }
+          sonarqube: { type: boolean, title: SonarQube project, default: false }
+          qualityGate: { type: string, title: Quality gate, enum: [acme-default, acme-strict], default: acme-default }
+          vaultSecrets: { type: boolean, title: Secrets from Vault (OpenBao), default: true }
+          environments: { type: array, title: Environments, items: { type: string, enum: [dev, staging, prod] }, default: [dev] }
+          costCenter: { type: string, title: Cost centre, pattern: '^CC-[0-9]+$', description: e.g. CC-4711 }
+          onCall: { type: string, title: On-call group, description: Required when prod is in environments. }
+        required: [name, team, goldenPath, goldenPathVersion, environments]
+        order: [name, team, goldenPath, goldenPathVersion, environments, costCenter, onCall, repositoryTemplate, sonarqube, qualityGate, vaultSecrets]
+    steps:
+      - id: precheck
+        name: Pre-check (schema, policies, plan)
+        type: invoke
+        invoker:
+          type: service-precheck
+          <<: *portal-repo
+          operation: create
+          team: '{{ inputs.team }}'
+          service: '{{ inputs.name }}'
+          inputs: '{{ inputs }}'
+          opaUrl: ${env:OPA_URL}
+          renderUrl: ${env:RENDER_URL}
+          schema: { path: *schema-path }
+          rejectEntity: { blueprint: platform-service, identifier: '{{ inputs.team }}/{{ inputs.name }}', team: '{{ inputs.team }}' }
+      - id: requested
+        name: Catalog — Requested
+        type: invoke
+        invoker:
+          type: catalog
+          operation: upsert
+          blueprint: platform-service
+          identifier: '{{ inputs.team }}/{{ inputs.name }}'
+          title: '{{ inputs.name }}'
+          team: '{{ inputs.team }}'
+          merge: true
+          properties:
+            lifecycle: Requested
+            team: '{{ inputs.team }}'
+            goldenPath: '{{ inputs.goldenPath }}'
+            goldenPathRequested: '{{ inputs.goldenPathVersion }}'
+            environments: '{{ inputs.environments }}'
+            costCenter: '{{ inputs.costCenter }}'
+            onCall: '{{ inputs.onCall }}'
+            repositoryTemplate: '{{ inputs.repositoryTemplate }}'
+            sonarqube: '{{ inputs.sonarqube }}'
+            qualityGateRequested: '{{ inputs.qualityGate }}'
+            vaultSecrets: '{{ inputs.vaultSecrets }}'
+            requestedBy: '{{ trigger.user.email }}'
+            lastRunId: '{{ run.id }}'
+      - id: approval
+        name: Approval (prod)
+        type: approval
+        if: '"prod" in inputs.environments'
+        approvers: { teams: [platform], roles: [admin] }
+        minApprovals: 1
+        message: |
+          **{{ trigger.user.name }}** requests **{{ inputs.team }}/{{ inputs.name }}** with prod
+          (golden path {{ inputs.goldenPath }} v{{ inputs.goldenPathVersion }}, cost centre {{ inputs.costCenter }}, on-call {{ inputs.onCall }}).
+      - id: commit
+        name: Commit the spec
+        type: invoke
+        retries: 2
+        retryDelaySeconds: 15
+        invoker:
+          type: service-spec
+          <<: *portal-repo
+          operation: create
+          team: '{{ inputs.team }}'
+          service: '{{ inputs.name }}'
+          inputs: '{{ inputs }}'
+      - id: committed
+        name: Catalog — Committed
+        type: invoke
+        invoker:
+          type: catalog
+          operation: upsert
+          blueprint: platform-service
+          identifier: '{{ inputs.team }}/{{ inputs.name }}'
+          merge: true
+          properties:
+            lifecycle: Committed
+            lastRunId: '{{ run.id }}'
+            specPath: '{{ steps.commit.output.specPath }}'
+            specUrl: '{{ steps.commit.output.specUrl }}'
+            lastCommit: '{{ steps.commit.output.commitId }}'
+      - id: reconciling
+        name: Catalog — Reconciling
+        type: invoke
+        invoker:
+          { type: catalog, operation: upsert, blueprint: platform-service, identifier: '{{ inputs.team }}/{{ inputs.name }}', merge: true, properties: { lifecycle: Reconciling, lastRunId: '{{ run.id }}' } }
+      - id: apply
+        name: Apply (portal-services-apply)
+        type: invoke
+        continueOnError: true # the outcome is recorded below (Ready / Degraded), then the run fails if it did not succeed
+        timeoutMinutes: 60
+        invoker:
+          <<: *apply
+          templateParameters: { service: '{{ inputs.team }}/{{ inputs.name }}', runId: '{{ run.id }}', operation: apply }
+      - id: ready
+        name: Catalog — Ready
+        type: invoke
+        if: steps.apply.status = "SUCCESS"
+        invoker: { type: catalog, operation: upsert, blueprint: platform-service, identifier: '{{ inputs.team }}/{{ inputs.name }}', merge: true, properties: *ready-properties }
+      - id: degraded
+        name: Catalog — Degraded
+        type: invoke
+        needs: [apply]
+        if: steps.apply.status != "SUCCESS"
+        invoker: { type: catalog, operation: upsert, blueprint: platform-service, identifier: '{{ inputs.team }}/{{ inputs.name }}', merge: true, properties: *degraded-properties }
+      - *apply-outcome
+
+  # ── Update (day-2): environments, cost centre, on-call, quality gate; empty fields keep their current value ────
+  - identifier: update-platform-service
+    title: Update the service
+    icon: edit
+    description: Change the service's environments, cost centre, on-call group or quality gate. Fields left empty keep their current value. The preview shows the policy verdict and the OpenTofu plan of the change.
+    secrets: [env:ADO_PAT, env:OPA_URL, env:RENDER_URL]
+    trigger:
+      type: form
+      on: day-2
+      blueprint: platform-service
+      allowed: { ownerTeam: true, roles: [admin] }
+      inputs:
+        properties:
+          environments: { type: array, title: Environments, items: { type: string, enum: [dev, staging, prod] }, minItems: 1, maxItems: 3 }
+          costCenter: { type: string, title: Cost centre, pattern: '^CC-[0-9]+$', description: e.g. CC-4711 }
+          onCall: { type: string, title: On-call group, pattern: '^[a-z0-9][a-z0-9-]{1,62}$', description: Required when prod is in environments. }
+          qualityGate: { type: string, title: Quality gate, enum: [acme-default, acme-strict] }
+        order: [environments, costCenter, onCall, qualityGate]
+    steps:
+      - id: precheck
+        name: Pre-check (schema, policies, plan)
+        type: invoke
+        invoker:
+          type: service-precheck
+          <<: *portal-repo
+          operation: update
+          team: '{{ $substringBefore(entity.identifier, "/") }}'
+          service: '{{ $substringAfter(entity.identifier, "/") }}'
+          inputs: '{{ inputs }}'
+          opaUrl: ${env:OPA_URL}
+          renderUrl: ${env:RENDER_URL}
+          schema: { path: *schema-path }
+      - id: commit
+        name: Commit the change
+        type: invoke
+        retries: 2
+        retryDelaySeconds: 15
+        invoker:
+          type: service-spec
+          <<: *portal-repo
+          operation: update
+          team: '{{ $substringBefore(entity.identifier, "/") }}'
+          service: '{{ $substringAfter(entity.identifier, "/") }}'
+          inputs: '{{ inputs }}'
+      - id: committed
+        name: Catalog — Committed
+        type: invoke
+        invoker:
+          type: catalog
+          operation: upsert
+          blueprint: platform-service
+          identifier: '{{ entity.identifier }}'
+          merge: true
+          properties:
+            lifecycle: Committed
+            environments: '{{ inputs.environments }}'
+            costCenter: '{{ inputs.costCenter }}'
+            onCall: '{{ inputs.onCall }}'
+            qualityGateRequested: '{{ inputs.qualityGate }}'
+            lastRunId: '{{ run.id }}'
+            lastCommit: '{{ steps.commit.output.commitId }}'
+      - id: reconciling
+        name: Catalog — Reconciling
+        type: invoke
+        invoker: { type: catalog, operation: upsert, blueprint: platform-service, identifier: '{{ entity.identifier }}', merge: true, properties: { lifecycle: Reconciling, lastRunId: '{{ run.id }}' } }
+      - id: apply
+        name: Apply (portal-services-apply)
+        type: invoke
+        continueOnError: true
+        timeoutMinutes: 60
+        invoker:
+          <<: *apply
+          templateParameters: { service: '{{ entity.identifier }}', runId: '{{ run.id }}', operation: apply }
+      - id: ready
+        name: Catalog — Ready
+        type: invoke
+        if: steps.apply.status = "SUCCESS"
+        invoker: { type: catalog, operation: upsert, blueprint: platform-service, identifier: '{{ entity.identifier }}', merge: true, properties: *ready-properties }
+      - id: degraded
+        name: Catalog — Degraded
+        type: invoke
+        needs: [apply]
+        if: steps.apply.status != "SUCCESS"
+        invoker: { type: catalog, operation: upsert, blueprint: platform-service, identifier: '{{ entity.identifier }}', merge: true, properties: *degraded-properties }
+      - *apply-outcome
+
+  # ── Pause / resume (day-2): while paused the apply pipeline only plans (V2.md §10.3, break-glass) ───────────────
+  - identifier: pause-platform-service
+    title: Pause reconciliation
+    icon: player-pause
+    description: Stop applying the service's spec until the expiry (break-glass); the apply pipeline only plans meanwhile. Manual changes made meanwhile show up as drift when it ends.
+    secrets: [env:ADO_PAT]
+    trigger:
+      type: form
+      on: day-2
+      blueprint: platform-service
+      allowed: { ownerTeam: true, roles: [admin] }
+      inputs:
+        properties:
+          duration: { type: string, title: Pause for, enum: [1h, 4h, 8h, 24h, 3d, 7d], default: 4h }
+          until: { type: string, title: Or until, format: date-time, description: Overrides the duration (at most 30 days). }
+          reason: { type: string, title: Reason, maxLength: 500 }
+        required: [duration, reason]
+    steps:
+      - id: commit
+        name: Commit the pause
+        type: invoke
+        retries: 2
+        retryDelaySeconds: 15
+        invoker:
+          type: service-spec
+          <<: *portal-repo
+          operation: pause
+          team: '{{ $substringBefore(entity.identifier, "/") }}'
+          service: '{{ $substringAfter(entity.identifier, "/") }}'
+          pause: { until: '{{ $exists(inputs.until) ? inputs.until : inputs.duration }}', reason: '{{ inputs.reason }}' }
+      - id: catalog
+        name: Catalog — paused
+        type: invoke
+        invoker:
+          type: catalog
+          operation: upsert
+          blueprint: platform-service
+          identifier: '{{ entity.identifier }}'
+          merge: true
+          properties:
+            paused: '{{ steps.commit.output.pausedUntil }}'
+            pausedReason: '{{ steps.commit.output.pausedReason }}'
+            lastRunId: '{{ run.id }}'
+            lastCommit: '{{ steps.commit.output.commitId }}'
+      - id: apply
+        name: Apply (plan only while paused)
+        type: invoke
+        timeoutMinutes: 60
+        invoker:
+          <<: *apply
+          templateParameters: { service: '{{ entity.identifier }}', runId: '{{ run.id }}', operation: apply }
+      - id: applied
+        name: Catalog — last apply
+        type: invoke
+        invoker:
+          { type: catalog, operation: upsert, blueprint: platform-service, identifier: '{{ entity.identifier }}', merge: true, properties: { lastApplyUrl: '{{ steps.apply.link }}', lastApplyResult: '{{ steps.apply.output.result }}' } }
+
+  - identifier: resume-platform-service
+    title: Resume reconciliation
+    icon: player-play
+    description: End a pause now (it also ends by itself at its expiry) and apply the spec again.
+    secrets: [env:ADO_PAT]
+    trigger:
+      type: form
+      on: day-2
+      blueprint: platform-service
+      allowed: { ownerTeam: true, roles: [admin] }
+      inputs: { properties: {} }
+    steps:
+      - id: commit
+        name: Commit the resume
+        type: invoke
+        retries: 2
+        retryDelaySeconds: 15
+        invoker:
+          type: service-spec
+          <<: *portal-repo
+          operation: resume
+          team: '{{ $substringBefore(entity.identifier, "/") }}'
+          service: '{{ $substringAfter(entity.identifier, "/") }}'
+      - id: reconciling
+        name: Catalog — resumed, Reconciling
+        type: invoke
+        invoker:
+          type: catalog
+          operation: upsert
+          blueprint: platform-service
+          identifier: '{{ entity.identifier }}'
+          merge: true
+          # '' removes the property on a merge
+          properties: { paused: '', pausedReason: '', lifecycle: Reconciling, lastRunId: '{{ run.id }}', lastCommit: '{{ steps.commit.output.commitId }}' }
+      - id: apply
+        name: Apply (portal-services-apply)
+        type: invoke
+        continueOnError: true
+        timeoutMinutes: 60
+        invoker:
+          <<: *apply
+          templateParameters: { service: '{{ entity.identifier }}', runId: '{{ run.id }}', operation: apply }
+      - id: ready
+        name: Catalog — Ready
+        type: invoke
+        if: steps.apply.status = "SUCCESS"
+        invoker: { type: catalog, operation: upsert, blueprint: platform-service, identifier: '{{ entity.identifier }}', merge: true, properties: *ready-properties }
+      - id: degraded
+        name: Catalog — Degraded
+        type: invoke
+        needs: [apply]
+        if: steps.apply.status != "SUCCESS"
+        invoker: { type: catalog, operation: upsert, blueprint: platform-service, identifier: '{{ entity.identifier }}', merge: true, properties: *degraded-properties }
+      - *apply-outcome
+
+  # ── Golden-path upgrade (day-2): one value in one file (V2.md §5.2); the version list follows the schema ───────
+  - identifier: upgrade-platform-service
+    title: Upgrade the golden path
+    icon: arrow-big-up-lines
+    description: Move the service to another golden-path version (OpenTofu module `golden-paths/<name>/v<version>`). The preview shows the policy verdict and the OpenTofu plan of the new version.
+    secrets: [env:ADO_PAT, env:OPA_URL, env:RENDER_URL]
+    trigger:
+      type: form
+      on: day-2
+      blueprint: platform-service
+      allowed: { ownerTeam: true, roles: [admin] }
+      inputs:
+        fromXrd:
+          source: ado
+          repository: https://dev.azure.com/AsteriusIT/Platform/_git/portal-resources
+          path: *schema-path
+          token: ${env:ADO_PAT}
+          fields: { goldenPathVersion: goldenPath.version }
+          others: false
+        properties:
+          goldenPathVersion: { type: string, title: Target version, enum: ['3'] }
+        required: [goldenPathVersion]
+    steps:
+      - id: precheck
+        name: Pre-check (schema, policies, plan)
+        type: invoke
+        invoker:
+          type: service-precheck
+          <<: *portal-repo
+          operation: upgrade
+          team: '{{ $substringBefore(entity.identifier, "/") }}'
+          service: '{{ $substringAfter(entity.identifier, "/") }}'
+          goldenPath: { version: '{{ inputs.goldenPathVersion }}' }
+          opaUrl: ${env:OPA_URL}
+          renderUrl: ${env:RENDER_URL}
+          schema: { path: *schema-path }
+      - id: commit
+        name: Commit the upgrade
+        type: invoke
+        retries: 2
+        retryDelaySeconds: 15
+        invoker:
+          type: service-spec
+          <<: *portal-repo
+          operation: upgrade
+          team: '{{ $substringBefore(entity.identifier, "/") }}'
+          service: '{{ $substringAfter(entity.identifier, "/") }}'
+          goldenPath: { version: '{{ inputs.goldenPathVersion }}' }
+      - id: committed
+        name: Catalog — Committed
+        type: invoke
+        invoker:
+          type: catalog
+          operation: upsert
+          blueprint: platform-service
+          identifier: '{{ entity.identifier }}'
+          merge: true
+          properties:
+            lifecycle: Committed
+            goldenPathRequested: '{{ inputs.goldenPathVersion }}'
+            lastRunId: '{{ run.id }}'
+            lastCommit: '{{ steps.commit.output.commitId }}'
+      - id: reconciling
+        name: Catalog — Reconciling
+        type: invoke
+        invoker: { type: catalog, operation: upsert, blueprint: platform-service, identifier: '{{ entity.identifier }}', merge: true, properties: { lifecycle: Reconciling, lastRunId: '{{ run.id }}' } }
+      - id: apply
+        name: Apply (portal-services-apply)
+        type: invoke
+        continueOnError: true
+        timeoutMinutes: 60
+        invoker:
+          <<: *apply
+          templateParameters: { service: '{{ entity.identifier }}', runId: '{{ run.id }}', operation: apply }
+      - id: ready
+        name: Catalog — Ready
+        type: invoke
+        if: steps.apply.status = "SUCCESS"
+        invoker: { type: catalog, operation: upsert, blueprint: platform-service, identifier: '{{ entity.identifier }}', merge: true, properties: *ready-properties }
+      - id: degraded
+        name: Catalog — Degraded
+        type: invoke
+        needs: [apply]
+        if: steps.apply.status != "SUCCESS"
+        invoker: { type: catalog, operation: upsert, blueprint: platform-service, identifier: '{{ entity.identifier }}', merge: true, properties: *degraded-properties }
+      - *apply-outcome
+
+  # ── Decommission (delete): approval → annotation → apply operation decommission → spec removed → entity removed ─
+  - identifier: decommission-platform-service
+    title: Decommission
+    icon: trash
+    description: |
+      Remove the service. After approval the spec is annotated with `portal.asterius.io/decommission-run-id`, the apply
+      pipeline runs the `decommission` operation (the pipeline and environments are destroyed; the Azure DevOps project
+      and repository are archived — kept in Azure DevOps, no longer managed — unless you choose to delete the data),
+      then the spec is removed and the service leaves the catalog. An archived project shows up again as a legacy service.
+    secrets: [env:ADO_PAT]
+    trigger:
+      type: form
+      on: delete
+      blueprint: platform-service
+      allowed: { ownerTeam: true, roles: [admin] }
+      approval: { required: true, approvers: { teams: [platform], roles: [admin] }, minApprovals: 1 }
+      inputs:
+        properties:
+          reason: { type: string, title: Reason, maxLength: 500 }
+          deleteData:
+            type: boolean
+            title: Delete the project and repository
+            default: false
+            description: Off (default) archives the project and repository (kept in Azure DevOps, no longer managed). On deletes them and their data.
+        required: [reason]
+    steps:
+      - id: mark
+        name: Annotate the spec
+        type: invoke
+        retries: 2
+        retryDelaySeconds: 15
+        invoker:
+          type: service-spec
+          <<: *portal-repo
+          operation: mark-decommission
+          team: '{{ $substringBefore(entity.identifier, "/") }}'
+          service: '{{ $substringAfter(entity.identifier, "/") }}'
+      - id: deleting
+        name: Catalog — Deleting
+        type: invoke
+        invoker:
+          { type: catalog, operation: upsert, blueprint: platform-service, identifier: '{{ entity.identifier }}', merge: true, properties: { lifecycle: Deleting, lastRunId: '{{ run.id }}', lastCommit: '{{ steps.mark.output.commitId }}' } }
+      - id: apply
+        name: Decommission (portal-services-apply)
+        type: invoke
+        continueOnError: true
+        timeoutMinutes: 60
+        invoker:
+          <<: *apply
+          outputs: null
+          templateParameters:
+            service: '{{ entity.identifier }}'
+            runId: '{{ run.id }}'
+            operation: decommission
+            deleteData: '{{ inputs.deleteData = true ? "true" : "false" }}'
+      - id: remove
+        name: Remove the spec
+        type: invoke
+        if: steps.apply.status = "SUCCESS"
+        retries: 2
+        retryDelaySeconds: 15
+        invoker:
+          type: service-spec
+          <<: *portal-repo
+          operation: decommission
+          team: '{{ $substringBefore(entity.identifier, "/") }}'
+          service: '{{ $substringAfter(entity.identifier, "/") }}'
+      - id: drop
+        name: Catalog — remove the service
+        type: invoke
+        if: steps.remove.status = "SUCCESS"
+        invoker: { type: catalog, operation: delete, blueprint: platform-service, identifier: '{{ entity.identifier }}' }
+      - id: degraded
+        name: Catalog — Degraded
+        type: invoke
+        needs: [apply]
+        if: steps.apply.status != "SUCCESS"
+        invoker: { type: catalog, operation: upsert, blueprint: platform-service, identifier: '{{ entity.identifier }}', merge: true, properties: *degraded-properties }
+      - <<: *apply-outcome
+        needs: [drop, degraded]
+        output:
+          failed: '$error("The decommission pipeline did not succeed (" & ($exists(steps.apply.output.result) ? steps.apply.output.result : steps.apply.status) & "): the spec is kept, the service is Degraded. " & ($exists(steps.apply.link) ? steps.apply.link : ""))'
+
+  # ── One-shot operations (V2.md §11): ADO pipelines and a Kubernetes Job; the spec is untouched ─────────────────
+  - identifier: rerun-pipeline
+    title: Re-run the CI pipeline
+    icon: player-play
+    description: Queue the service's `<service>-ci` pipeline (project `<team>-<service>`) again.
+    secrets: [env:ADO_PAT]
+    trigger:
+      type: form
+      on: day-2
+      blueprint: platform-service
+      allowed: { ownerTeam: true, roles: [admin] }
+      inputs:
+        properties:
+          branch: { type: string, title: Branch, default: main, pattern: '^[A-Za-z0-9._/-]{1,200}$' }
+    steps:
+      - id: pipeline
+        name: Queue <service>-ci
+        type: invoke
+        timeoutMinutes: 120
+        invoker:
+          type: azure-pipeline
+          organization: https://dev.azure.com/AsteriusIT
+          project: '{{ $substringBefore(entity.identifier, "/") }}-{{ $substringAfter(entity.identifier, "/") }}'
+          pipeline: '{{ $substringAfter(entity.identifier, "/") }}-ci'
+          branch: '{{ inputs.branch }}'
+          token: ${env:ADO_PAT}
+          # No queue-time variables: ADO refuses variables a pipeline does not declare as settable at queue time.
+
+  - identifier: rotate-secret
+    title: Rotate a secret
+    icon: key
+    description: Generate a new value for a secret of the service in OpenBao (`secret/teams/<team>/<service>`, key of your choice). A Kubernetes Job in asterius-jobs logs in to OpenBao with its ServiceAccount (role asterius-jobs) and writes it; the value is never shown.
+    trigger:
+      type: form
+      on: day-2
+      blueprint: platform-service
+      allowed: { ownerTeam: true, roles: [admin] }
+      inputs:
+        properties:
+          secret: { type: string, title: Secret key, pattern: '^[a-z0-9][a-z0-9_-]{0,62}$', description: 'Key in secret/teams/<team>/<service>' }
+          length: { type: integer, title: Length, minimum: 16, maximum: 128, default: 32 }
+        required: [secret]
+    steps:
+      - id: job
+        name: Rotate in OpenBao (Kubernetes Job)
+        type: invoke
+        timeoutMinutes: 10
+        invoker:
+          type: kubernetes-job
+          namespace: asterius-jobs
+          serviceAccountName: rotate-secret # bound to OpenBao Kubernetes auth role asterius-jobs
+          image: quay.io/openbao/openbao:2.7.2
+          securityContext: { runAsUser: 65534, runAsGroup: 65534 }
+          activeDeadlineSeconds: 300
+          env:
+            BAO_ADDR: http://openbao.openbao.svc:8200
+            BAO_ROLE: asterius-jobs
+            KV_PATH: 'teams/{{ $substringBefore(entity.identifier, "/") }}/{{ $substringAfter(entity.identifier, "/") }}'
+            SECRET_KEY: '{{ inputs.secret }}'
+            SECRET_LENGTH: '{{ $string($exists(inputs.length) ? inputs.length : 32) }}'
+            PORTAL_RUN_ID: '{{ run.id }}'
+            HOME: /tmp
+          command: [/bin/sh, -ec]
+          args:
+            - |
+              jwt="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)"
+              BAO_TOKEN="$(bao write -field=token auth/kubernetes/login role="$BAO_ROLE" jwt="$jwt")"
+              export BAO_TOKEN
+              value="$(head -c 256 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | cut -c "1-$SECRET_LENGTH")"
+              if bao kv get -mount=secret "$KV_PATH" >/dev/null 2>&1; then
+                bao kv patch -mount=secret -method=rw "$KV_PATH" "$SECRET_KEY=$value" >/dev/null
+              else
+                bao kv put -mount=secret "$KV_PATH" "$SECRET_KEY=$value" >/dev/null
+              fi
+              version="$(bao kv metadata get -mount=secret -format=json "$KV_PATH" | sed -n 's/.*"current_version": *\([0-9]*\).*/\1/p' | head -1)"
+              echo "Rotated $SECRET_KEY at secret/$KV_PATH (version ${version:-?}, run $PORTAL_RUN_ID)"
+
+  - identifier: grant-temporary-access
+    title: Grant temporary access
+    icon: lock-open
+    description: Give a person temporary access to the service's Azure DevOps project (pipeline portal-operations, removed at the end of the duration). Approved by the owning team.
+    secrets: [env:ADO_PAT]
+    trigger:
+      type: form
+      on: day-2
+      blueprint: platform-service
+      inputs:
+        properties:
+          user: { type: string, title: Person, format: user }
+          group: { type: string, title: Project group, enum: [Readers, Contributors, Build Administrators], default: Contributors }
+          duration: { type: string, title: Duration, enum: [1h, 4h, 8h, 24h], default: 4h }
+          justification: { type: string, title: Justification, maxLength: 500 }
+        required: [user, group, duration, justification]
+      approval: { required: true, approvers: { ownerTeam: true, roles: [admin] }, minApprovals: 1 }
+    steps:
+      - id: pipeline
+        name: Grant (portal-operations)
+        type: invoke
+        timeoutMinutes: 30
+        invoker:
+          type: azure-pipeline
+          organization: https://dev.azure.com/AsteriusIT
+          project: Platform
+          pipeline: portal-operations
+          branch: main
+          token: ${env:ADO_PAT}
+          templateParameters:
+            operation: grant-temporary-access
+            service: '{{ entity.identifier }}'
+            runId: '{{ run.id }}'
+            user: '{{ inputs.user }}'
+            group: '{{ inputs.group }}'
+            duration: '{{ inputs.duration }}'

@@ -1,0 +1,61 @@
+# V2: services described by a Service spec in the Portal repo, applied by the OpenTofu pipeline portal-services-apply
+# (lean path, docs/V2-KIND.md) or reconciled by Crossplane (optional profile, docs/V2-CROSSPLANE.md).
+# Identifier: <team>/<service>. Intent and apply outcome are written by the portal; observed properties by the feeds
+# (Azure DevOps, drift pipeline, and the catalog watcher in the crossplane profile). No feed writes another feed's properties.
+
+blueprints:
+  - identifier: platform-service
+    title: Platform service
+    icon: brand-kubernetes
+    description: A service created from a golden path; its spec lives in the Portal repo (services/<team>/<service>.yaml).
+    schema:
+      properties:
+        # ── intent (portal) ─────────────────────────────────────────────
+        lifecycle:
+          type: string
+          title: Lifecycle
+          enum: [Requested, Committed, Synced, Reconciling, Ready, Degraded, Rejected, Deleting]
+          enumColors: { Requested: gray, Committed: blue, Synced: cyan, Reconciling: yellow, Ready: green, Degraded: orange, Rejected: red, Deleting: grape }
+        team: { type: string, title: Team }
+        goldenPath: { type: string, title: Golden path }
+        goldenPathRequested: { type: string, title: Requested golden-path version }
+        environments: { type: array, title: Environments, items: { type: string } }
+        costCenter: { type: string, title: Cost centre }
+        onCall: { type: string, title: On-call group }
+        repositoryTemplate: { type: string, title: Repository template }
+        sonarqube: { type: boolean, title: SonarQube }
+        qualityGateRequested: { type: string, title: Requested quality gate }
+        vaultSecrets: { type: boolean, title: Secrets from Vault }
+        requestedBy: { type: string, title: Requested by, format: email }
+        lastRunId: { type: string, title: Last run }
+        specPath: { type: string, title: Spec path }
+        specUrl: { type: string, title: Spec, format: url }
+        lastCommit: { type: string, title: Last commit }
+        paused: { type: string, title: Paused until, format: date-time }
+        pausedReason: { type: string, title: Pause reason }
+        # ── apply outcome (portal, lean path) ───────────────────────────
+        managedBy: { type: string, title: Managed by, enum: [opentofu, crossplane, legacy], enumColors: { opentofu: green, crossplane: green, legacy: gray } }
+        lastApplyUrl: { type: string, title: Last apply run, format: url }
+        lastApplyResult: { type: string, title: Last apply result }
+        # ── observed: drift pipeline portal-services-drift (examples/v2/config/drift.yaml) ──
+        drift: { type: boolean, title: Drift, description: The nightly tofu plan found changes made outside the spec. }
+        driftCheckedAt: { type: string, title: Drift checked at, format: date-time }
+        driftRunUrl: { type: string, title: Drift check run, format: url }
+        # ── observed: catalog watcher (crossplane profile) ──────────────
+        xrReady: { type: boolean, title: XR ready }
+        xrSynced: { type: boolean, title: XR synced }
+        goldenPathVersion: { type: string, title: Golden-path version (observed) }
+        conditions: { type: array, title: Conditions, items: { type: object } }
+        resources: { type: array, title: Managed resources, items: { type: object } }
+        violations: { type: array, title: Policy violations, items: { type: object } }
+        observedRunId: { type: string, title: Observed run }
+        observedAt: { type: string, title: Observed at, format: date-time }
+        # ── observed: tool integrations (Azure DevOps, SonarQube) ───────
+        adoProjectUrl: { type: string, title: Azure DevOps project, format: url }
+        repoUrl: { type: string, title: Repository, format: url }
+        pipelineId: { type: string, title: Pipeline id }
+        pipelineUrl: { type: string, title: Pipeline, format: url }
+        sonarKey: { type: string, title: Sonar key }
+        qualityGate: { type: string, title: Quality gate }
+        rbacGroups: { type: array, title: RBAC groups, items: { type: string } }
+      order: [lifecycle, team, goldenPath, goldenPathVersion, environments, managedBy, drift, driftCheckedAt, repoUrl, pipelineUrl, lastApplyUrl, costCenter, onCall, lastRunId]

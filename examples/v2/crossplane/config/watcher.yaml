@@ -1,0 +1,41 @@
+# V2 crossplane profile only (docs/V2-CROSSPLANE.md, docs/V2-READ-SIDE.md): the catalog watcher feed (apps/agent).
+# Mounted with examples/v2/config/*.yaml by `deploy/kind/install.sh --profile crossplane` (prefixed v2cp-).
+#
+# Ownership. Every feed writes its own properties only, with `merge: true` (properties a mapping does not map are kept),
+# so the intent written by the portal and the other feeds' properties survive every delivery. The watcher (priority 100)
+# outranks Azure DevOps (50) on the fields both could write (managedBy). `setOnce` fields are defaults.
+
+integrations:
+  # ── Feed 2 + 3: catalog watcher (apps/agent) — Service XRs, managed resources, Gatekeeper audit, Argo CD denials ──
+  # The agent POSTs { source, sentAt, mode, services: [ServiceStatus…] } to /api/v1/ingest/crossplane-watcher,
+  # signed with HMAC-SHA256 of the raw body in X-Watcher-Signature (sha256=<hex>), one X-Asterius-Delivery id per POST.
+  - identifier: crossplane-watcher
+    title: Catalog watcher (Crossplane)
+    type: webhook
+    priority: 100
+    config:
+      secret: ${env:CROSSPLANE_WATCHER_SECRET}
+      signatureHeader: x-watcher-signature
+    mappings:
+      - kind: service-status
+        # Only the watcher's documents, and never a stale one (a replayed or long-queued delivery cannot roll the state
+        # back; the agent re-sends everything every few minutes anyway).
+        filter: source = "crossplane-watcher" and $toMillis(sentAt) > $millis() - 900000
+        items: services
+        merge: true
+        setOnce: [team]
+        entity:
+          blueprint: platform-service
+          identifier: identifier # <team>/<service>
+          properties:
+            lifecycle: lifecycle # Synced | Reconciling | Ready | Degraded | Deleting | Rejected (admission denied)
+            managedBy: managedBy # crossplane
+            xrReady: xrReady
+            xrSynced: xrSynced
+            goldenPathVersion: goldenPathVersion # from the selected Composition's platform.asterius.io/version label
+            conditions: conditions # XR conditions (+ Admission when Argo CD failed to apply the Service)
+            resources: resources # [{ apiVersion, kind, name, namespace, externalName, ready, synced, message, runId }]
+            violations: violations # [{ policy, message, resource, enforcementAction, source: audit | admission }]
+            observedRunId: observedRunId # portal.asterius.io/run-id annotation of the XR
+            observedAt: observedAt
+            team: team # default only (setOnce): the portal owns it
