@@ -91,6 +91,13 @@ describe('retention', () => {
     expect(rows).toHaveLength(101);
     expect(rows[100]!.message).toMatch(/Log limit of 100 lines reached/);
   });
+
+  it('drops NUL characters from log lines (PostgreSQL text cannot store them)', async () => {
+    const id = await insertRun(now());
+    await addLog(id, 'tool\u0000 output\u0000');
+    const rows = await all<{ message: string }>('SELECT message FROM run_logs WHERE run_id = ?', id);
+    expect(rows.map((r) => r.message)).toEqual(['tool output']);
+  });
 });
 
 describe('listing', () => {

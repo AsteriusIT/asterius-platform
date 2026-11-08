@@ -9,7 +9,9 @@ COPY packages/shared/package.json packages/shared/
 RUN --mount=type=cache,target=/root/.npm npm ci --no-audit --no-fund
 COPY packages packages
 COPY apps apps
-RUN npm run build && npm prune --omit=dev --no-audit --no-fund
+RUN npm run build && npm prune --omit=dev --no-audit --no-fund \
+ # packages npm could not hoist (e.g. ajv 8 for the server while the root holds ajv 6) stay per workspace
+ && mkdir -p apps/server/node_modules packages/shared/node_modules
 
 # ---- runtime ----
 # Slim and non-root; works with a read-only root filesystem (only /tmp and DATA_DIR are writable when SQLite is used).
@@ -29,6 +31,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ca-certific
 WORKDIR /app
 COPY --from=build --chown=root:root /src/node_modules ./node_modules
 COPY --from=build --chown=root:root /src/packages/shared ./packages/shared
+COPY --from=build --chown=root:root /src/apps/server/node_modules ./apps/server/node_modules
 COPY --from=build --chown=root:root /src/apps/server/package.json ./apps/server/
 COPY --from=build --chown=root:root /src/apps/server/dist ./apps/server/dist
 COPY --from=build --chown=root:root /src/apps/web/dist ./apps/web/dist

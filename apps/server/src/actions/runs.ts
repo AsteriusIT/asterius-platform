@@ -391,7 +391,9 @@ export async function addLog(runId: string, message: string, level: RunLog['leve
     runId,
     now(),
     truncated ? 'warn' : level,
-    truncated ? `Log limit of ${max} lines reached: further lines are dropped` : maskText(message, []).slice(0, 8000), // callers redact known secrets; this also masks credential shapes
+    // callers redact known secrets; this also masks credential shapes. NUL is dropped: PostgreSQL text cannot hold it
+    // (copied CI logs may contain it), and a failed insert would make the caller retry and re-copy every line.
+    truncated ? `Log limit of ${max} lines reached: further lines are dropped` : maskText(message.replaceAll('\u0000', ''), []).slice(0, 8000),
     stepId,
   ];
   const sql = 'INSERT INTO run_logs (run_id, at, level, message, step_id) VALUES (?, ?, ?, ?, ?)';
