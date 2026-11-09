@@ -218,7 +218,10 @@ async function runOne(wf: Workflow, t: WorkflowTestDef, who: Who): Promise<Workf
     for (const n of needs[i])
       if (!seen.has(n)) {
         seen.add(n);
-        upstream(all.findIndex((d) => d.id === n), seen);
+        upstream(
+          all.findIndex((d) => d.id === n),
+          seen,
+        );
       }
     return seen;
   };

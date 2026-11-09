@@ -281,7 +281,7 @@ an attachment (`Content-Disposition: attachment`, `X-Content-Type-Options: nosni
 ### Workflow tests
 
 An action may declare tests, run with mocks by `POST /actions/:id/tests/run { name?, definition? }` (admin; `definition`
-tests an unsaved draft), the Tests dialog of the workflow editor, and `node dist/cli.js actions test [id] [--name <test>]
+tests an unsaved draft), the *Test cases* dialog of the workflow editor (the *Dry run* button next to it previews a single run instead), and `node dist/cli.js actions test [id] [--name <test>]
 [--org <slug>] [--json]` (exit code 1 when a test fails, for CI). Nothing external is called and no run is created:
 
 - `invoke`, `agent` and `workflow` steps must be mocked (`mocks.<step>: { status: SUCCESS | FAILURE, output }`), an

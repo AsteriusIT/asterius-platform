@@ -85,7 +85,17 @@ export function newStep(type: WorkflowStepType, steps: WorkflowStep[], invokers:
     fragment: 'Fragment',
   }[type];
   const id = uniqueId(
-    { invoke: 'call', approval: 'approval', agent: 'review', transform: 'compute', wait: 'wait', input: 'ask', workflow: 'sub', switch: 'route', fragment: 'frag' }[type],
+    {
+      invoke: 'call',
+      approval: 'approval',
+      agent: 'review',
+      transform: 'compute',
+      wait: 'wait',
+      input: 'ask',
+      workflow: 'sub',
+      switch: 'route',
+      fragment: 'frag',
+    }[type],
     steps,
   );
   if (type === 'invoke') {

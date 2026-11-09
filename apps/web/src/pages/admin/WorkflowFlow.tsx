@@ -296,12 +296,16 @@ function FlowEditor({ value, readOnly, version }: { value: Record<string, unknow
                 </ActionIcon>
               </Tooltip>
             )}
-            <Button size="xs" variant="light" leftSection={<IconFlask size={14} />} onClick={() => setTesting(true)} disabled={!doc.steps.length}>
-              Test
-            </Button>
-            <Button size="xs" variant="default" leftSection={<IconTestPipe size={14} />} onClick={() => setEditing({ kind: 'tests' })}>
-              Tests{(doc.tests as WorkflowTest[] | undefined)?.length ? ` (${(doc.tests as WorkflowTest[]).length})` : ''}
-            </Button>
+            <Tooltip label="Preview one run with sample inputs: how each step renders. Nothing is called or saved">
+              <Button size="xs" variant="light" leftSection={<IconFlask size={14} />} onClick={() => setTesting(true)} disabled={!doc.steps.length}>
+                Dry run
+              </Button>
+            </Tooltip>
+            <Tooltip label="Saved scenarios with mocks and expected results, pass / fail (also run by the CLI in CI)">
+              <Button size="xs" variant="default" leftSection={<IconTestPipe size={14} />} onClick={() => setEditing({ kind: 'tests' })}>
+                Test cases{(doc.tests as WorkflowTest[] | undefined)?.length ? ` (${(doc.tests as WorkflowTest[]).length})` : ''}
+              </Button>
+            </Tooltip>
             {!readOnly && (
               <Button size="xs" leftSection={<IconDeviceFloppy size={14} />} loading={saving} onClick={() => void save()}>
                 Save
@@ -327,7 +331,7 @@ function FlowEditor({ value, readOnly, version }: { value: Record<string, unknow
               {test && (
                 <Alert
                   color={test.valid ? 'green' : 'red'}
-                  title={test.valid ? 'Test passed: everything renders and validates' : 'Test found problems'}
+                  title={test.valid ? 'Dry run passed: everything renders and validates' : 'Dry run found problems'}
                   withCloseButton
                   closeButtonLabel="Clear the test"
                   onClose={() => setTest(null)}
@@ -508,7 +512,7 @@ function FlowEditor({ value, readOnly, version }: { value: Record<string, unknow
         </Tabs>
       </Modal>
 
-      <Modal opened={editing?.kind === 'tests'} onClose={() => setEditing(null)} size="xl" title={<Text fw={600}>Tests</Text>}>
+      <Modal opened={editing?.kind === 'tests'} onClose={() => setEditing(null)} size="xl" title={<Text fw={600}>Test cases</Text>}>
         <WorkflowTests
           identifier={doc.identifier}
           tests={(doc.tests as WorkflowTest[] | undefined) ?? []}
@@ -544,7 +548,7 @@ function TestResult({ step }: { step: DryRunStep }) {
       color={color}
       variant="light"
       icon={step.status === 'error' ? <IconX size={18} /> : <IconFlask size={18} />}
-      title={step.status === 'planned' ? 'Test: would run' : step.status === 'skipped' ? 'Test: skipped (condition is false)' : 'Test: problems'}
+      title={step.status === 'planned' ? 'Dry run: would run' : step.status === 'skipped' ? 'Dry run: skipped (condition is false)' : 'Dry run: problems'}
     >
       <Stack gap={6}>
         {step.errors.map((e) => (

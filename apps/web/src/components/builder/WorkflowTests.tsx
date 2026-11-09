@@ -7,7 +7,7 @@ import { api, errorText } from '../../lib/api';
 import { CodeEditor } from '../CodeEditor';
 
 /**
- * "Tests" of the workflow editor: the action's `tests` as JSON, run against the workflow being edited (unsaved changes
+ * "Test cases" of the workflow editor: the action's `tests` as JSON, run against the workflow being edited (unsaved changes
  * included) by POST /actions/:id/tests/run. Invoke, agent and workflow steps must be mocked; approvals are approved,
  * waits resolve at once. Nothing external is called and no run is created.
  */
@@ -67,7 +67,7 @@ export function WorkflowTests({
         error={parseError}
         minRows={10}
         maxRows={24}
-        aria-label="Tests"
+        aria-label="Test cases"
       />
       <Group>
         {!readOnly && !tests.length && (

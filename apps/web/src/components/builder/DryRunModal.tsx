@@ -52,7 +52,7 @@ export function DryRunModal({
   });
   const r: DryRunResult | undefined = test.data;
   return (
-    <Modal opened onClose={onClose} title="Test the workflow" size="xl">
+    <Modal opened onClose={onClose} title="Dry run" size="xl">
       <Stack>
         <Text fz="sm" c="dimmed">
           Nothing is called and no run is created. Secrets are checked, never shown.
@@ -70,7 +70,7 @@ export function DryRunModal({
         />
         <Group>
           <Button leftSection={<IconFlask size={16} />} loading={test.isPending} onClick={() => test.mutate()}>
-            Run the test
+            Start the dry run
           </Button>
         </Group>
         {(test.error || parseError) && (

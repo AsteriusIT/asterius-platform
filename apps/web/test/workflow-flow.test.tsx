@@ -138,9 +138,9 @@ describe('flow editor page', () => {
     expect(screen.queryByText('Experimental')).toBeNull();
     expect(screen.queryByText('Unsaved changes')).toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Test' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Run the test' }));
-    expect(await screen.findByText('Test found problems')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Dry run' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Start the dry run' }));
+    expect(await screen.findByText('Dry run found problems')).toBeTruthy();
     await waitFor(() => expect(screen.getByLabelText('Transform: notify').getAttribute('data-tone')).toBe('failure'));
     expect(screen.getByLabelText('Transform: compute').getAttribute('data-tone')).toBe('success');
 

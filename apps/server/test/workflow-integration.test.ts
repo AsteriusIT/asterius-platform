@@ -53,7 +53,12 @@ const workflow = {
       mocks: { deploy: { status: 'SUCCESS', output: { ok: true } } },
       expect: {
         status: 'SUCCESS',
-        steps: { policy__strict: { status: 'SUCCESS' }, policy__relaxed: { status: 'SKIPPED' }, rollback: { status: 'SKIPPED' }, cleanup: { status: 'SUCCESS' } },
+        steps: {
+          policy__strict: { status: 'SUCCESS' },
+          policy__relaxed: { status: 'SKIPPED' },
+          rollback: { status: 'SKIPPED' },
+          cleanup: { status: 'SUCCESS' },
+        },
         outputs: { mode: 'strict', slug: 'api' },
       },
     },
