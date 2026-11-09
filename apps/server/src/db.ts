@@ -96,6 +96,16 @@ export interface Migration {
 export const MIGRATIONS: Migration[] = [
   { id: 1, name: 'baseline schema', up: baseline },
   {
+    id: 2,
+    name: 'workflow vars and outputs',
+    // actions.workflow / runs.workflow: the run-level `vars` and `outputs` templates; runs.vars: their values for a run.
+    up: async (d) => {
+      await d.exec('ALTER TABLE actions ADD COLUMN workflow TEXT');
+      await d.exec('ALTER TABLE runs ADD COLUMN workflow TEXT');
+      await d.exec('ALTER TABLE runs ADD COLUMN vars TEXT');
+    },
+  },
+  {
     // Run operations: concurrency groups (slot table), priority, pause.
     id: 4,
     name: 'run operations',

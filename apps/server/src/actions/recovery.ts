@@ -5,7 +5,7 @@ import { audit } from '../audit.js';
 import { actorOf, type Principal } from '../auth/users.js';
 import { advance } from './engine.js';
 import { addLog, emitRun, getRun, getRunRow, triggerRun, startAutomatedRun, type RunRow } from './runs.js';
-import { canManageRun, loadSteps, resumableSteps, stepDefs, BLOCKED_STATE } from './steps.js';
+import { canManageRun, loadSteps, resumableSteps, stepDefs, withDownstream } from './steps.js';
 import { getAction } from './actions.js';
 import { acquireSlot } from './concurrency.js';
 
@@ -42,14 +42,14 @@ export async function rerun(p: Principal, runId: string): Promise<Run> {
   return getRun(id, p);
 }
 
-/** Reset steps to PENDING (only those still in a failed state) and drop their approvals. */
+/** Reset steps to PENDING (only those finished: failed, skipped, or done downstream of a failure) and drop their approvals. */
 async function resetSteps(runId: string, ids: string[]): Promise<string[]> {
   const reset: string[] = [];
   for (const id of ids) {
     const { changes } = await exec(
       `UPDATE run_steps SET status = 'PENDING', status_label = NULL, attempt = 0, output = NULL, state = NULL, link = NULL, worker = NULL,
          locked_until = NULL, next_at = NULL, deadline_at = NULL, started_at = NULL, ended_at = NULL
-       WHERE run_id = ? AND step_id = ? AND status IN ('FAILURE', 'CANCELLED', 'SKIPPED')`,
+       WHERE run_id = ? AND step_id = ? AND status IN ('FAILURE', 'CANCELLED', 'SKIPPED', 'SUCCESS')`,
       runId,
       id,
     );
@@ -101,7 +101,6 @@ export async function retryStep(p: Principal, runId: string, stepId: string): Pr
   const row = rows.find((s) => s.step_id === stepId);
   if (!row) throw badRequest(`No step "${stepId}" in this run`);
   if (row.status !== 'FAILURE' && !(row.status === 'CANCELLED' && r.status !== 'IN_PROGRESS')) throw conflict('Only a failed step can be retried');
-  // The steps that were skipped because this one failed start over with it.
-  const blocked = rows.filter((s) => s.status === 'SKIPPED' && s.state === BLOCKED_STATE).map((s) => s.step_id);
-  return reopen(p, r, [stepId, ...blocked], `Step "${row.name}" retried`);
+  // The steps downstream of this one (skipped because it failed, failure handlers, cleanups) start over with it.
+  return reopen(p, r, withDownstream(stepDefs(r), rows, [stepId]), `Step "${row.name}" retried`);
 }

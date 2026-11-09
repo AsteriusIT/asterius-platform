@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActionIcon, Alert, Badge, Button, Code, Group, Menu, Modal, NumberInput, Stack, Switch, Tabs, TagsInput, Text, Tooltip } from '@mantine/core';
+import { ActionIcon, Alert, Badge, Button, Code, Group, Input, Menu, Modal, NumberInput, Stack, Switch, Tabs, TagsInput, Text, Tooltip } from '@mantine/core';
 import { modals } from '@mantine/modals';
 import { notifications } from '@mantine/notifications';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -7,7 +7,7 @@ import { Navigate, useParams } from 'react-router';
 import { IconCode, IconDeviceFloppy, IconFlask, IconHistory, IconPlus, IconSettings, IconTestPipe, IconTrash, IconX } from '@tabler/icons-react';
 import type { Action, BlackoutWindow, DryRunResult, DryRunStep, WorkflowStep, WorkflowStepType, WorkflowTest } from '@asterius/shared';
 import { api, errorText } from '../../lib/api';
-import { connectSteps, disconnectSteps, insertStepAfter, needsOf, STEP_TYPES, stepWarnings, type FlowTone } from '../../lib/workflow';
+import { connectSteps, controlBadges, disconnectSteps, insertStepAfter, needsOf, STEP_TYPES, stepWarnings, type FlowTone } from '../../lib/workflow';
 import { QueryView } from '../../components/ui';
 import { FlowShell } from '../../components/FlowShell';
 import { JsonBlock } from '../../components/CodeEditor';
@@ -20,6 +20,7 @@ import { DryRunModal } from '../../components/builder/DryRunModal';
 import { ActionHistory } from '../../components/builder/ActionHistory';
 import { WorkflowTests } from '../../components/builder/WorkflowTests';
 import { CodePanels, CodeTabs, useCodeView } from '../../components/builder/shell';
+import { KeyValueEditor } from '../../components/builder/blocks';
 import { AiDraft, JsonPreview } from '../../components/AiAssistant';
 
 /**
@@ -168,8 +169,12 @@ function FlowEditor({ value, readOnly, version }: { value: Record<string, unknow
           type: s.type,
           needs: needsOf(doc.steps, i),
           tone: t ? TEST_TONE[t.status] : undefined,
-          detail: t?.errors.length ? `${t.errors.length} problem${t.errors.length > 1 ? 's' : ''}` : t?.status === 'skipped' ? 'condition is false' : null,
-          badges: [...(s.if ? ['if'] : []), ...(s.retries ? [`${s.retries} retries`] : []), ...(s.continueOnError ? ['may fail'] : [])],
+          detail: t?.errors.length
+            ? `${t.errors.length} problem${t.errors.length > 1 ? 's' : ''}`
+            : t?.status === 'skipped'
+              ? ((t.rendered as { skipped?: string } | undefined)?.skipped ?? 'condition is false')
+              : null,
+          badges: [...(s.if ? ['if'] : []), ...controlBadges(s), ...(s.retries ? [`${s.retries} retries`] : []), ...(s.continueOnError ? ['may fail'] : [])],
         };
       }),
     [doc.steps, testOf],
@@ -437,6 +442,28 @@ function FlowEditor({ value, readOnly, version }: { value: Record<string, unknow
         <fieldset disabled={readOnly} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
           <Stack gap="md">
             <GeneralFields doc={doc} isNew={false} onChange={change} />
+            <Input.Wrapper
+              label="Variables"
+              description="Templates evaluated when a run starts (inputs, entity, trigger): vars.<name> in every step. No secret references."
+            >
+              <KeyValueEditor
+                value={doc.vars as Record<string, unknown> | undefined}
+                onChange={(v) => change({ vars: Object.keys(v).length ? v : undefined })}
+                keyPlaceholder="name"
+                valuePlaceholder="{{ template }}"
+              />
+            </Input.Wrapper>
+            <Input.Wrapper
+              label="Run outputs"
+              description="Templates over steps.* evaluated when the run ends: the run result, seen by parent workflows. Empty: every step's output."
+            >
+              <KeyValueEditor
+                value={doc.outputs as Record<string, unknown> | undefined}
+                onChange={(v) => change({ outputs: Object.keys(v).length ? v : undefined })}
+                keyPlaceholder="name"
+                valuePlaceholder="{{ steps.<id>.output.<field> }}"
+              />
+            </Input.Wrapper>
             <TagsInput
               label="Allowed secrets"
               description="Secrets (NAME) and environment variables (env:NAME) this workflow may reference. Empty: any."

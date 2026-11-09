@@ -11,6 +11,14 @@ import type { ActionDef, WorkflowStepDef } from '../schemas.js';
  *  - `needs` omitted → the step waits for the previous step (a plain list runs sequentially);
  *  - `needs: []` → starts with the workflow; `needs: [a, b]` → waits for both (fan-in, parallel branches).
  * Steps may only depend on steps declared before them, so a workflow can never contain a cycle.
+ *
+ * Control flow (engine.ts):
+ *  - `when`: success (default) runs after its dependencies succeeded (a failed one skips it, "blocked"); failure runs
+ *    only if at least one dependency failed (or was blocked by a failure); always runs once they are all done.
+ *    A failed step is *handled* when a `when: failure` step that has it upstream succeeded: it no longer fails the run.
+ *  - `switch` steps pick one case; steps with `case: <switch>.<case>` of the other branches are skipped (not blocked:
+ *    their dependents run as after a false `if`). The switch must be upstream of the steps naming its cases.
+ *  - `forEach` on invoke / agent / transform loops inside the step (no child runs).
  */
 
 export type Step = WorkflowStepDef;
@@ -35,8 +43,43 @@ export function stepsOf(def: Pick<ActionDef, 'steps' | 'invoker' | 'title'>): St
 /** Effective dependencies of the step at `index`. */
 export const needsOf = (steps: Step[], index: number): string[] => steps[index].needs ?? (index > 0 ? [steps[index - 1].id] : []);
 
+/** Transitive dependencies of every step. */
+export function ancestorsOf(steps: Step[]): Map<string, Set<string>> {
+  const out = new Map<string, Set<string>>();
+  steps.forEach((s, i) => {
+    const set = new Set<string>();
+    for (const d of needsOf(steps, i)) {
+      set.add(d);
+      for (const a of out.get(d) ?? []) set.add(a);
+    }
+    out.set(s.id, set);
+  });
+  return out;
+}
+
+/** `case` of a step as a list of `<switch>.<case>` references. */
+export const casesOf = (s: Pick<Step, 'case'>): string[] => (s.case === undefined ? [] : Array.isArray(s.case) ? s.case : [s.case]);
+
+/** Run-level `vars` and `outputs`: templates without secret references (their values are stored with the run). */
+export function validateRunTemplates(def: Pick<ActionDef, 'vars' | 'outputs'>) {
+  for (const [what, value] of [
+    ['vars', def.vars],
+    ['outputs', def.outputs],
+  ] as const) {
+    if (!value) continue;
+    try {
+      checkTemplate(value);
+    } catch (err) {
+      throw badRequest(`${what}: ${(err as Error).message}`);
+    }
+    if (hasRefs(value)) throw badRequest(`${what} cannot reference secrets or environment variables (their values are stored with the run)`);
+  }
+}
+
 export function validateWorkflow(steps: Step[]) {
   const seen = new Set<string>();
+  const switches = new Map<string, Set<string>>();
+  const ancestors = ancestorsOf(steps);
   steps.forEach((s, i) => {
     const where = `Step ${i + 1} (${s.id})`;
     if (seen.has(s.id)) throw badRequest(`${where}: the id "${s.id}" is used twice`);
@@ -44,6 +87,21 @@ export function validateWorkflow(steps: Step[]) {
     seen.add(s.id);
     try {
       if (s.if) checkExpression(s.if);
+      if (s.when === 'failure' && !needsOf(steps, i).length)
+        throw new Error('when: failure needs at least one dependency (the steps whose failure it handles)');
+      for (const ref of casesOf(s)) {
+        const [sw, c] = ref.split('.');
+        const cases = switches.get(sw);
+        if (!cases) throw new Error(`case "${ref}": "${sw}" is not an earlier switch step`);
+        if (!cases.has(c)) throw new Error(`case "${ref}": the switch "${sw}" has no case "${c}" (${[...cases].join(', ')})`);
+        if (!ancestors.get(s.id)?.has(sw)) throw new Error(`case "${ref}": the step must run after "${sw}" (add it to needs)`);
+      }
+      const loop = 'forEach' in s && s.type !== 'workflow' ? s.forEach : undefined;
+      if (loop) {
+        checkExpression(loop.items);
+        // A loop is one step: retrying it would repeat the items that already ran. Failed items are in output.results.
+        if (s.retries) throw new Error('retries cannot be combined with forEach (failed items are reported in output.results)');
+      }
       switch (s.type) {
         case 'invoke':
           validateInvoker(s.invoker as { type: string } & Record<string, unknown>);
@@ -78,6 +136,17 @@ export function validateWorkflow(steps: Step[]) {
           checkTemplate([s.inputs, s.entity ?? '']);
           if (s.forEach) checkExpression(s.forEach.items);
           break;
+        case 'switch': {
+          const ids = new Set<string>();
+          for (const c of s.cases) {
+            if (ids.has(c.id)) throw new Error(`the case id "${c.id}" is used twice`);
+            ids.add(c.id);
+            checkExpression(c.when);
+          }
+          if (s.default) ids.add(s.default);
+          switches.set(s.id, ids);
+          break;
+        }
       }
     } catch (err) {
       throw badRequest(`${where}: ${(err as Error).message}`);

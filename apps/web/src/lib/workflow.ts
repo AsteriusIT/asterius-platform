@@ -24,7 +24,26 @@ export const STEP_TYPES: Record<WorkflowStepType, { label: string; color: string
   wait: { label: 'Wait', color: 'orange', hint: 'Pause for a duration, until a time, or until an external event arrives' },
   input: { label: 'Input', color: 'cyan', hint: 'Ask the requester or an operator for more data mid-run' },
   workflow: { label: 'Sub-workflow', color: 'indigo', hint: 'Run another workflow (once, or for each item of a list) and use its result' },
+  switch: { label: 'Switch', color: 'pink', hint: 'Choose a branch from conditions; the steps of the other branches are skipped' },
 };
+
+/** Control-flow badges of a step node: when, the switch branch it belongs to, an inline loop. */
+export function controlBadges(s: { when?: string; case?: string | string[]; forEach?: unknown; handled?: boolean }): string[] {
+  const cases = s.case === undefined ? [] : Array.isArray(s.case) ? s.case : [s.case];
+  return [
+    ...(s.when === 'failure' ? ['on failure'] : s.when === 'always' ? ['always'] : []),
+    ...(cases.length ? [`case ${cases.join(' | ')}`] : []),
+    ...(s.forEach ? ['for each'] : []),
+    ...(s.handled ? ['handled'] : []),
+  ];
+}
+
+/** `<switch>.<case>` references a step may use: the cases of the switch steps before it. */
+export function caseOptions(steps: WorkflowStep[], index: number): string[] {
+  return steps
+    .slice(0, index)
+    .flatMap((s) => (s.type === 'switch' ? [...s.cases.map((c) => c.id), ...(s.default ? [s.default] : [])].map((c) => `${s.id}.${c}`) : []));
+}
 
 export const STEP_STATUS_COLORS: Record<StepStatus, string> = {
   PENDING: 'gray',

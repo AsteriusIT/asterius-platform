@@ -196,9 +196,14 @@ export async function actionRoutes(app: FastifyInstance) {
     });
     scoped.post('/actions/dry-run', { preHandler: requireAdmin }, async (req) => {
       const b = z
-        .object({ steps: z.array(workflowStep).max(40), inputs: z.record(z.string(), z.unknown()).default({}), entity: z.unknown().optional() })
+        .object({
+          steps: z.array(workflowStep).max(40),
+          inputs: z.record(z.string(), z.unknown()).default({}),
+          entity: z.unknown().optional(),
+          vars: z.record(z.string(), z.unknown()).optional(),
+        })
         .parse(req.body);
-      return { steps: await simulateWorkflow(b.steps, { inputs: b.inputs, entity: b.entity }) };
+      return { steps: await simulateWorkflow(b.steps, { inputs: b.inputs, entity: b.entity, vars: b.vars }) };
     });
     scoped.post('/actions/:id/dry-run', { preHandler: requireAdmin, config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async (req) => {
       const { id } = idParam.parse(req.params);

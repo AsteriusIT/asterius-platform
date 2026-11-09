@@ -27,6 +27,11 @@ export interface RunContext {
       artifacts?: { id: string; name: string; contentType: string; size: number; sha256: string; url: string }[];
     }
   >;
+  /** The action's `vars`, evaluated when the run started. */
+  vars?: Record<string, unknown>;
+  /** Inside a `forEach` loop: the current item and its position. */
+  item?: unknown;
+  index?: number;
 }
 
 export type InvokeStatus = 'IN_PROGRESS' | 'SUCCESS' | 'FAILURE';

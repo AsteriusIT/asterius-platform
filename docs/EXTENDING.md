@@ -182,7 +182,48 @@ During a window, schedule, event and webhook starts are skipped (audited as `run
     forEach: { items: inputs.users, maxConcurrency: 3, failFast: false }   # output { results: [{ item, status, result, runId }], succeeded, failed }
 ```
 
-Child runs belong to the parent's requester, link to the parent (`parent`), are cancelled with it, and are limited to 5 levels of nesting. Failed runs can be re-run (`POST /runs/:id/rerun`), resumed in place from the failed steps (`POST /runs/:id/resume`) or have one failed step retried (`POST /runs/:id/steps/:step/retry`): requester and admins only.
+Child runs belong to the parent's requester, link to the parent (`parent`), are cancelled with it, and are limited to 5 levels of nesting.
+
+### Control flow
+
+```yaml
+vars:                                    # templates evaluated once when the run starts (inputs, entity, trigger)
+  slug: "{{ $lowercase(inputs.name) }}"  # → {{ vars.slug }} in every template and condition
+outputs:                                 # templates evaluated when the run ends: the run result (a parent's steps.<id>.output.result)
+  url: "https://{{ steps.deploy.output.host }}/{{ vars.slug }}"
+steps:
+  - id: route
+    type: switch                         # decided by the engine, output { case }
+    cases:                               # in order: the first true JSONata `when` wins
+      - { id: prod, when: 'inputs.env = "prod"' }
+      - { id: test, when: 'inputs.env in ["dev", "test"]' }
+    default: other                       # when nothing matches (omitted: no branch, case = null)
+  - { id: approve, type: approval, case: route.prod }           # skipped unless route took "prod"
+  - id: deploy
+    type: invoke
+    needs: [route, approve]
+    case: [route.prod, route.test]       # any of these branches
+    timeoutMinutes: 30
+    onTimeout: fail                      # fail (default) · skip: SKIPPED, the run goes on · continue: FAILURE treated like continueOnError
+    invoker: { type: webhook, … }
+  - id: rollback
+    type: invoke
+    needs: [deploy]
+    when: failure                        # success (default) · failure · always
+    invoker: { type: webhook, … }
+  - { id: cleanup, type: transform, needs: [deploy], when: always, output: { done: "true" } }
+  - id: notify
+    type: invoke
+    forEach: { items: inputs.channels, failFast: false }   # inline loop: item / index in templates, no child runs
+    invoker: { type: webhook, url: …, body: { channel: "{{ item }}" } }
+```
+
+- **`when`.** `success` runs after the dependencies succeeded (a failed or blocked one skips it as *blocked*, and that cascades). `failure` runs only when at least one dependency failed (also a `continueOnError` failure) or was blocked by a failure; otherwise it is skipped. `always` runs once every dependency is done, whatever the outcome. `if` is evaluated after `when`. Cancelling a run stops everything, cleanups included.
+- **Handled failures.** The run fails when a step failed without `continueOnError`, **unless** a `when: failure` step that has it upstream (through `needs`) succeeded: the failure is *handled* and the run succeeds with the label `Recovered: <steps>`. A failing handler fails the run.
+- **Switch.** Steps of the other branches are SKIPPED (not blocked): their dependents run as after a false `if`, so a join step after several branches runs. Put `case` on every step of a multi-step branch. The switch must be upstream of the steps naming its cases, and the case ids are checked when saving.
+- **Inline `forEach`** (invoke, agent, transform): output `{ results: [{ item, status, output, error? }], succeeded, failed }`; the step fails when an item failed (items not run after a `failFast` stop are `SKIPPED`), at most 200 items. Agent items run in parallel up to `maxConcurrency`; transform and invoke items run one at a time. Invoke items may poll or wait for their callback: the callback (`PATCH /runs/:id/steps/:step`) reports the item in flight, the next item starts after it. Each item gets its own idempotency key (`<run>/<step>/<index>`). `retries` cannot be combined with an inline loop (it would repeat the items that already ran).
+- **`vars` / `outputs`** cannot reference secrets (their values are stored with the run). A `vars` error fails the run at start; an `outputs` error fails a run that would have succeeded. Without `outputs`, the result is the outputs by step id.
+- **Resume / retry** start over the failed steps (not the handled ones) and every finished step downstream of them, including cleanups and branch decisions. Failed runs can be re-run (`POST /runs/:id/rerun`), resumed in place from the failed steps (`POST /runs/:id/resume`) or have one failed step retried (`POST /runs/:id/steps/:step/retry`): requester and admins only.
 
 ### Service levels (SLA)
 

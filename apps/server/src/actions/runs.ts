@@ -93,6 +93,10 @@ export interface RunRow {
   concurrency_max: number | null;
   paused_at: string | null;
   paused_by: string | null;
+  /** Snapshot of the action's run-level `vars` and `outputs` templates (null: none). */
+  workflow: string | null;
+  /** The evaluated `vars` (set when the workflow starts). */
+  vars: string | null;
   user_name?: string;
   user_email?: string;
 }
@@ -588,8 +592,8 @@ async function insertRun(n: NewRun): Promise<{ id: string; replay?: false } | { 
       throw conflict(`"${action.title}" is already running in group "${group}" (at most ${max} at a time); try again later`);
   }
   const inserted = await run(
-    `INSERT INTO runs (id, org_id, action, action_title, blueprint, entity, inputs, status, invoker, steps, approval, triggered_by, team, trigger_type, trigger_info, parent_run_id, parent_step_id, action_version, allowed_secrets, created_at, updated_at, idempotency_key, priority, concurrency_group, concurrency_max)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
+    `INSERT INTO runs (id, org_id, action, action_title, blueprint, entity, inputs, status, invoker, steps, approval, triggered_by, team, trigger_type, trigger_info, parent_run_id, parent_step_id, action_version, allowed_secrets, created_at, updated_at, idempotency_key, priority, concurrency_group, concurrency_max, workflow)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
     id,
     orgId(),
     action.identifier,
@@ -615,6 +619,7 @@ async function insertRun(n: NewRun): Promise<{ id: string; replay?: false } | { 
     n.priority ?? action.priority ?? 0,
     group,
     group ? max : null,
+    action.vars || action.outputs ? JSON.stringify({ vars: action.vars, outputs: action.outputs }) : null,
   );
   // A concurrent request with the same idempotency key won the unique index.
   if (!inserted.changes) {

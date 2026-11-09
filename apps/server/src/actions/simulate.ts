@@ -1,5 +1,5 @@
 import { evaluate, render } from '../lib/expr.js';
-import type { Step } from './workflow.js';
+import { casesOf, type Step } from './workflow.js';
 
 /** Result of simulating one step against sample data. Nothing is executed or stored. */
 export interface SimulatedStep {
@@ -27,7 +27,7 @@ export async function previewExpression(expression: string, context: unknown): P
  * (secrets and env references are masked). Steps that call the outside world are not executed;
  * their output stays empty in the context.
  */
-export async function simulateWorkflow(steps: Step[], base: { inputs?: unknown; entity?: unknown }): Promise<SimulatedStep[]> {
+export async function simulateWorkflow(steps: Step[], base: { inputs?: unknown; entity?: unknown; vars?: unknown }): Promise<SimulatedStep[]> {
   const done: Record<string, { status: string; output: unknown; link: null }> = {};
   const out: SimulatedStep[] = [];
   const mask = async (kind: string, name: string) => `<${kind}:${name}>`;
@@ -37,14 +37,27 @@ export async function simulateWorkflow(steps: Step[], base: { inputs?: unknown; 
       inputs: base.inputs ?? {},
       entity: base.entity ?? null,
       trigger: { user: { id: 'dry-run', email: '', name: 'Dry run' }, at: new Date().toISOString() },
+      vars: base.vars ?? {},
       steps: done,
     };
+    // Branches not taken and failure handlers (nothing fails in a simulation) are skipped.
+    const notTaken =
+      casesOf(s).length > 0 && !casesOf(s).some((ref) => (done[ref.split('.')[0]]?.output as { case?: string } | null)?.case === ref.split('.')[1]);
     const r: SimulatedStep = { id: s.id, type: s.type, skipped: false };
     try {
-      if (s.if && !(await evaluate(s.if, ctx))) {
+      if (s.when === 'failure' || notTaken || (s.if && !(await evaluate(s.if, ctx)))) {
         r.skipped = true;
         done[s.id] = { status: 'SKIPPED', output: null, link: null };
-      } else if (s.type === 'transform') {
+      } else if (s.type === 'switch') {
+        let chosen: string | null = null;
+        for (const c of s.cases)
+          if (await evaluate(c.when, ctx)) {
+            chosen = c.id;
+            break;
+          }
+        r.preview = { case: chosen ?? s.default ?? null };
+        done[s.id] = { status: 'SUCCESS', output: r.preview, link: null };
+      } else if (s.type === 'transform' && !s.forEach) {
         const output: Record<string, unknown> = {};
         for (const [k, expr] of Object.entries(s.output)) output[k] = await evaluate(expr, ctx);
         r.preview = output;
