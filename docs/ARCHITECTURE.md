@@ -108,6 +108,7 @@ Guarantees:
 - **No duplicate external calls.** A run is claimed before its invoker starts. If the worker dies between the claim and the invoker's answer, the run is failed rather than retried, because the external call may already have happened. The user can simply run it again.
 - **Runs always end.** A run deadline (`RUN_TIMEOUT_HOURS` plus its approval timeouts) fails runs that never report a final status; step deadlines (`STEP_TIMEOUT_MINUTES`, `timeoutMinutes`) bound each step.
 - **Secrets stay out of logs.** Secret values and the callback token are redacted from run logs. Non-admins only see an action's invoker type, never its configuration.
+- **One run per schedule tick.** `actions.next_fire_at` is claimed with a conditional UPDATE; the claim covers every tick up to now (`catchUp`), and each run carries the idempotency key `schedule:<tick>[:<entity>]`, so neither replicas nor a replayed tick start a run twice. Starts deferred by a blackout window wait in `deferred_starts`, claimed with a lease on `due_at` and deleted once started.
 
 ## Ingestion
 

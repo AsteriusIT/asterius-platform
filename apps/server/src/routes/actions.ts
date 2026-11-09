@@ -222,7 +222,14 @@ export async function actionRoutes(app: FastifyInstance) {
 
     scoped.post('/actions/:id/runs', { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async (req, reply) => {
       const { id } = idParam.parse(req.params);
-      const body = z.object({ entity: z.string().nullish(), inputs: z.record(z.string(), z.unknown()).default({}) }).parse(req.body ?? {});
+      const body = z
+        .object({
+          entity: z.string().nullish(),
+          inputs: z.record(z.string(), z.unknown()).default({}),
+          /** Admins only: start the run during a blackout window (audited). */
+          overrideBlackout: z.boolean().optional(),
+        })
+        .parse(req.body ?? {});
       const key = z.string().min(1).max(200).optional().parse(req.headers['idempotency-key']);
       const { run, created } = await triggerRun(req.principal, id, body, key);
       return reply.code(created ? 201 : 200).send(run);

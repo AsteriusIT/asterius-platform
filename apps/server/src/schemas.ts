@@ -504,6 +504,20 @@ export const scheduleTrigger = z.object({
   cron: z.string().min(1).max(100),
   timezone: z.string().min(1).max(64).default('UTC'),
   inputs: templateInputs,
+  /** Ticks missed while no worker ran: none (default: one run for the oldest, others dropped) · last · all (bounded by `maxCatchUp`, last 7 days). */
+  catchUp: z.enum(['none', 'last', 'all']).optional(),
+  /** catchUp: all: most recent missed ticks replayed (default 10). */
+  maxCatchUp: z.number().int().min(1).max(100).optional(),
+  /** Fan-out: one run per matching entity on each tick (`entity` in the input templates). */
+  entities: z
+    .object({
+      blueprint: slug,
+      /** JSONata over `{ entity, schedule }`; the entity gets a run when truthy. */
+      filter: z.string().max(2000).optional(),
+      /** At most this many runs per tick (default 200). */
+      limit: z.number().int().min(1).max(1000).optional(),
+    })
+    .optional(),
 });
 export const EVENT_TRIGGERS = ['entity.created', 'entity.updated', 'entity.deleted', 'entity.expired', 'scorecard.changed', 'run.finished'] as const;
 export const eventTrigger = z.object({
@@ -553,6 +567,21 @@ function legacyToTrigger(raw: unknown) {
   return { ...a, trigger };
 }
 
+/**
+ * A window during which automated triggers do not start the workflow and form/API submissions are refused:
+ * recurring (`cron` start + `duration`, e.g. "2h") or fixed (`from`/`to`, ISO).
+ */
+export const blackoutWindow = z.object({
+  name: z.string().max(100).optional(),
+  cron: z.string().max(100).optional(),
+  /** `30m`, `2h`, `1d`, `1h30m` (max 31 days). */
+  duration: z.string().max(20).optional(),
+  from: z.string().datetime({ offset: true }).optional(),
+  to: z.string().datetime({ offset: true }).optional(),
+  timezone: z.string().min(1).max(64).default('UTC'),
+});
+export type BlackoutWindowDef = z.infer<typeof blackoutWindow>;
+
 export const actionDef = z.preprocess(
   legacyToTrigger,
   z.object({
@@ -572,6 +601,10 @@ export const actionDef = z.preprocess(
       .max(50)
       .optional(),
     enabled: z.boolean().default(true),
+    /** Blackout windows: automated starts are skipped (or deferred), form/API submissions refused (admins may override). */
+    blackouts: z.array(blackoutWindow).max(20).optional(),
+    /** What automated triggers do during a blackout: skip (default) or defer to the end of the window. */
+    blackoutMode: z.enum(['skip', 'defer']).optional(),
   }),
 );
 export type ActionDef = z.infer<typeof actionDef>;

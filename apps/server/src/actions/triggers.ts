@@ -1,13 +1,19 @@
 import { beat, registerLoop } from '../health.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { all, json, now, one, run } from '../db.js';
-import { conflict, errorMessage, notFound } from '../lib/errors.js';
+import type { Action, Entity } from '@asterius/shared';
+import { all, json, later, newId, now, one, run } from '../db.js';
+import { conflict, errorMessage, HttpError, notFound } from '../lib/errors.js';
 import { evaluate, render } from '../lib/expr.js';
 import { onEvent, type DomainEvent } from '../events.js';
 import { scopedResolver } from './limits.js';
 import { verifyWebhook } from '../integrations/sync.js';
-import { startAutomatedRun } from './runs.js';
+import { startAutomatedRun, type RunSource } from './runs.js';
+import { getAction } from './actions.js';
 import { nextTick } from './trigger-defs.js';
+import { activeBlackout } from './blackouts.js';
+import { nextCron, parseCron } from '../lib/cron.js';
+import { searchEntities } from '../catalog/entities.js';
+import { audit, SYSTEM } from '../audit.js';
 import type { WorkflowTriggerDef } from '../schemas.js';
 import { maybeOrgId, orgId, withOrg } from '../orgs/context.js';
 
@@ -19,6 +25,11 @@ import { maybeOrgId, orgId, withOrg } from '../orgs/context.js';
  *  - webhook: `POST /api/v1/hooks/:org/:action` (`/hooks/:action`: the default organization), authenticated with the
  *    trigger's secret.
  * Schedules are found across organizations; each run starts in the organization of its action.
+ *
+ * Schedules may catch up missed ticks (`catchUp`) and fan out over entities (`entities`): the claim of
+ * `next_fire_at` covers every tick up to now, and each run carries a deterministic idempotency key
+ * (`schedule:<tick>[:<entity>]`), so a tick never starts twice. During a blackout window of the action, automated
+ * starts are skipped (audited) or deferred (`deferred_starts`, started by `fireDeferred` once the window ends).
  */
 
 type Trigger<T extends WorkflowTriggerDef['type']> = Extract<WorkflowTriggerDef, { type: T }>;
@@ -37,35 +48,212 @@ async function renderEntity(template: string | undefined, ctx: unknown): Promise
   return v == null || v === '' ? null : String(v as string | number);
 }
 
+// ---------- blackouts ----------
+interface StartOpts {
+  blueprint?: string | null;
+  entity?: string | null;
+  inputs: Record<string, unknown>;
+  source: RunSource;
+  idempotencyKey?: string;
+}
+type StartResult = { runId: string } | { skipped: string } | { deferredUntil: string } | { duplicate: true };
+
+const isDuplicate = (err: unknown, o: StartOpts) => !!o.idempotencyKey && err instanceof HttpError && err.statusCode === 409;
+
+/**
+ * Start an automated run unless the action is in a blackout window: then skip it (audited) or, with
+ * `blackoutMode: defer`, hold it in `deferred_starts` until the window ends. `action` is preloaded by fan-outs.
+ */
+async function startOrHold(actionId: string, o: StartOpts, action?: Action): Promise<StartResult> {
+  const a = action ?? (await getAction(actionId));
+  const blackout = activeBlackout(a.blackouts);
+  if (blackout) {
+    const detail = { blackout: blackout.name, until: blackout.until, source: o.source.type, ...(o.entity ? { entity: o.entity } : {}) };
+    if (a.blackoutMode === 'defer') {
+      const key = o.idempotencyKey ?? `deferred:${newId()}`;
+      await run(
+        'INSERT INTO deferred_starts (id, org_id, action, dedupe_key, payload, due_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING',
+        newId(),
+        orgId(),
+        actionId,
+        key,
+        JSON.stringify({ ...o, idempotencyKey: key }),
+        blackout.until,
+        now(),
+      );
+      await audit(SYSTEM, 'run.deferred', actionId, detail);
+      return { deferredUntil: blackout.until };
+    }
+    await audit(SYSTEM, 'run.skipped', actionId, detail);
+    return { skipped: blackout.name };
+  }
+  try {
+    return { runId: await startAutomatedRun(actionId, o) };
+  } catch (err) {
+    if (isDuplicate(err, o)) return { duplicate: true };
+    throw err;
+  }
+}
+
+/** Start the deferred runs whose blackout ended (any replica: claimed with a lease on `due_at`). */
+export async function fireDeferred(log?: Pick<FastifyBaseLogger, 'error' | 'info'>) {
+  const due = await all<{ id: string; org_id: string; action: string; payload: string; due_at: string }>(
+    'SELECT id, org_id, action, payload, due_at FROM deferred_starts WHERE due_at <= ? ORDER BY due_at LIMIT 100',
+    now(),
+  );
+  let started = 0;
+  for (const d of due) {
+    // Lease: a replica that dies half way leaves the row to be retried later (the idempotency key prevents doubles).
+    const { changes } = await run('UPDATE deferred_starts SET due_at = ? WHERE id = ? AND due_at = ?', later(5 * 60_000), d.id, d.due_at);
+    if (!changes) continue;
+    await withOrg(d.org_id, async () => {
+      const o = json<StartOpts>(d.payload, { inputs: {}, source: { type: 'schedule' } });
+      try {
+        const action = await getAction(d.action).catch(() => null);
+        if (!action?.enabled) {
+          await run('DELETE FROM deferred_starts WHERE id = ?', d.id);
+          return;
+        }
+        const blackout = activeBlackout(action.blackouts);
+        if (blackout && action.blackoutMode === 'defer') {
+          await run('UPDATE deferred_starts SET due_at = ? WHERE id = ?', blackout.until, d.id); // another window followed
+          return;
+        }
+        const res = await startOrHold(d.action, { ...o, source: { ...o.source, info: { ...o.source.info, deferred: true } } }, action);
+        await run('DELETE FROM deferred_starts WHERE id = ?', d.id);
+        if ('runId' in res) {
+          started++;
+          log?.info({ org: d.org_id, action: d.action, runId: res.runId }, 'deferred run started');
+        }
+      } catch (err) {
+        log?.error({ err, org: d.org_id, action: d.action }, 'deferred run could not start');
+      }
+    });
+  }
+  return started;
+}
+
 // ---------- schedule ----------
-export async function fireDueSchedules(log?: Pick<FastifyBaseLogger, 'error' | 'info'>) {
-  const t = now();
+/** catchUp: all only replays ticks of this window. */
+export const CATCH_UP_WINDOW_MS = 7 * 86_400_000;
+const MAX_TICK_SCAN = 20_000;
+const MAX_FANOUT_SCAN = 10_000;
+
+/**
+ * The ticks a claim of `next_fire_at` (the oldest due tick) at `nowMs` starts runs for:
+ *  - none: the claimed tick only (the others are dropped);
+ *  - last: the most recent tick up to now;
+ *  - all: every tick up to now within the catch-up window, at most `maxCatchUp` (the most recent).
+ */
+export function dueTicks(t: Trigger<'schedule'>, nextFireAt: string, nowMs: number): string[] {
+  const mode = t.catchUp ?? 'none';
+  if (mode === 'none') return [nextFireAt];
+  const max = mode === 'last' ? 1 : (t.maxCatchUp ?? 10);
+  const spec = parseCron(t.cron);
+  const ticks: number[] = [];
+  // nextCron is strictly after its start: start one millisecond before the claimed tick to include it.
+  let at = nextCron(spec, Math.max(Date.parse(nextFireAt), nowMs - CATCH_UP_WINDOW_MS) - 1, t.timezone);
+  for (let i = 0; at !== undefined && at <= nowMs && i < MAX_TICK_SCAN; i++) {
+    ticks.push(at);
+    if (ticks.length > max) ticks.shift();
+    at = nextCron(spec, at, t.timezone);
+  }
+  // `last`: nothing in the window (a rare schedule, missed long ago) still runs the claimed tick.
+  if (!ticks.length) return mode === 'last' ? [nextFireAt] : [];
+  return ticks.map((x) => new Date(x).toISOString());
+}
+
+/** Entities a fan-out schedule runs on: the blueprint's entities (by identifier) passing the filter, bounded. */
+async function fanOutEntities(f: NonNullable<Trigger<'schedule'>['entities']>, schedule: object): Promise<Entity[]> {
+  const limit = f.limit ?? 200;
+  const out: Entity[] = [];
+  let cursor: string | undefined;
+  for (let scanned = 0; out.length < limit && scanned < MAX_FANOUT_SCAN;) {
+    const page = await searchEntities({ blueprint: f.blueprint, sort: 'identifier', dir: 'asc', limit: 500, offset: 0, cursor, count: false });
+    for (const e of page.items) {
+      scanned++;
+      if (f.filter && !(await evaluate(f.filter, { entity: e, schedule }))) continue;
+      out.push(e);
+      if (out.length >= limit) break;
+    }
+    if (!page.nextCursor) break;
+    cursor = page.nextCursor;
+  }
+  return out;
+}
+
+type Log = Pick<FastifyBaseLogger, 'error' | 'info'>;
+
+/** The runs of one tick (one, or one per entity of a fan-out); returns how many started. */
+async function fireTick(actionId: string, trig: Trigger<'schedule'>, tick: string, log?: Log): Promise<number> {
+  const schedule = { at: tick, cron: trig.cron, timezone: trig.timezone };
+  const info = { cron: trig.cron, tick };
+  if (!trig.entities) {
+    const res = await startOrHold(actionId, {
+      inputs: await renderInputs(trig.inputs, { schedule }),
+      source: { type: 'schedule', info },
+      idempotencyKey: `schedule:${tick}`,
+    });
+    if (!('runId' in res)) return 0;
+    log?.info({ org: orgId(), action: actionId, runId: res.runId, tick }, 'scheduled run started');
+    return 1;
+  }
+  const action = await getAction(actionId);
+  const blackout = activeBlackout(action.blackouts);
+  if (blackout && action.blackoutMode !== 'defer') {
+    // One audit entry for the whole tick rather than one per entity.
+    await audit(SYSTEM, 'run.skipped', actionId, { blackout: blackout.name, until: blackout.until, source: 'schedule', tick });
+    return 0;
+  }
+  const { blueprint } = trig.entities;
+  let started = 0;
+  for (const e of await fanOutEntities(trig.entities, schedule)) {
+    try {
+      const res = await startOrHold(
+        actionId,
+        {
+          blueprint,
+          entity: e.identifier,
+          inputs: await renderInputs(trig.inputs, { schedule, entity: e }),
+          source: { type: 'schedule', info: { ...info, entity: e.identifier } },
+          idempotencyKey: `schedule:${tick}:${e.identifier}`,
+        },
+        action,
+      );
+      if ('runId' in res) started++;
+    } catch (err) {
+      log?.error({ err, org: orgId(), action: actionId, entity: e.identifier }, 'scheduled run could not start');
+    }
+  }
+  log?.info({ org: orgId(), action: actionId, tick, started }, 'scheduled fan-out started');
+  return started;
+}
+
+export async function fireDueSchedules(log?: Log) {
   const due = await all<{ org_id: string; identifier: string; trigger_config: string; next_fire_at: string }>(
     'SELECT org_id, identifier, trigger_config, next_fire_at FROM actions WHERE enabled = 1 AND next_fire_at IS NOT NULL AND next_fire_at <= ? ORDER BY next_fire_at LIMIT 50',
-    t,
+    now(),
   );
   let started = 0;
   for (const d of due) {
     const trig = json<Trigger<'schedule'> | null>(d.trigger_config, null);
     if (trig?.type !== 'schedule') continue;
-    // One run per tick, whatever the number of replicas or missed ticks: whoever moves next_fire_at forward owns the tick.
+    const nowMs = Date.now();
+    // Whoever moves next_fire_at forward owns every tick up to now, whatever the number of replicas.
     const { changes } = await run(
       'UPDATE actions SET next_fire_at = ? WHERE org_id = ? AND identifier = ? AND next_fire_at = ?',
-      nextTick(trig),
+      nextTick(trig, nowMs),
       d.org_id,
       d.identifier,
       d.next_fire_at,
     );
     if (!changes) continue;
-    try {
-      const id = await withOrg(d.org_id, async () => {
-        const inputs = await renderInputs(trig.inputs, { schedule: { at: d.next_fire_at, cron: trig.cron, timezone: trig.timezone } });
-        return startAutomatedRun(d.identifier, { inputs, source: { type: 'schedule', info: { cron: trig.cron, tick: d.next_fire_at } } });
-      });
-      started++;
-      log?.info({ org: d.org_id, action: d.identifier, runId: id }, 'scheduled run started');
-    } catch (err) {
-      log?.error({ err, org: d.org_id, action: d.identifier }, 'scheduled run could not start');
+    for (const tick of dueTicks(trig, d.next_fire_at, nowMs)) {
+      try {
+        started += await withOrg(d.org_id, () => fireTick(d.identifier, trig, tick, log));
+      } catch (err) {
+        log?.error({ err, org: d.org_id, action: d.identifier, tick }, 'scheduled run could not start');
+      }
     }
   }
   return started;
@@ -75,6 +263,7 @@ export function startTriggerScheduler(log: FastifyBaseLogger) {
   const timer = setInterval(
     () =>
       fireDueSchedules(log)
+        .then(() => fireDeferred(log))
         .catch((err) => log.error({ err }, 'schedule tick failed'))
         .finally(() => beat('trigger-scheduler')),
     15_000,
@@ -148,7 +337,7 @@ async function onDomainEvent(e: DomainEvent) {
             ((e.type.startsWith('entity.') || e.type === 'scorecard.changed') && trigger.blueprint ? '{{ event.entity.identifier }}' : undefined),
           ctx,
         )) ?? null;
-      await startAutomatedRun(identifier, {
+      await startOrHold(identifier, {
         blueprint: trigger.blueprint,
         entity: e.type === 'entity.deleted' ? null : entity, // the entity is gone: pass its identifier through the inputs
         inputs: await renderInputs(trigger.inputs, ctx),
@@ -172,7 +361,7 @@ export function registerTriggerListeners() {
 export async function receiveWebhook(
   actionId: string,
   req: { headers: Record<string, string | string[] | undefined>; rawBody: string; body: unknown; query: unknown },
-): Promise<{ runId: string }> {
+): Promise<{ runId: string | null; skipped?: string; deferredUntil?: string }> {
   const row = await one<{ identifier: string; trigger_config: string | null; enabled: number; allowed_secrets: string | null }>(
     "SELECT identifier, trigger_config, enabled, allowed_secrets FROM actions WHERE org_id = ? AND identifier = ? AND trigger = 'webhook'",
     orgId(),
@@ -188,11 +377,13 @@ export async function receiveWebhook(
   const headers = Object.fromEntries(Object.entries(req.headers).filter(([k]) => !['authorization', 'cookie', 'x-asterius-token'].includes(k)));
   const ctx = { body: req.body ?? null, headers, query: req.query ?? {} };
   const entity = await renderEntity(trig.entity, ctx);
-  const runId = await startAutomatedRun(row.identifier, {
+  const res = await startOrHold(row.identifier, {
     blueprint: trig.blueprint,
     entity,
     inputs: await renderInputs(trig.inputs, ctx),
     source: { type: 'webhook', info: { ...(entity ? { entity } : {}) } },
   });
-  return { runId };
+  // During a blackout the delivery is accepted (202) but starts nothing now.
+  if ('runId' in res) return { runId: res.runId };
+  return { runId: null, ...('duplicate' in res ? {} : res) };
 }

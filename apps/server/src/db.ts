@@ -93,7 +93,30 @@ export interface Migration {
  * Baseline policy: the migration history was flattened into migration 1 (schema.ts) on 2026-11-07, before the first
  * production release. From now on append migrations (id 2, 3…) and never edit the baseline once it has shipped.
  */
-export const MIGRATIONS: Migration[] = [{ id: 1, name: 'baseline schema', up: baseline }];
+export const MIGRATIONS: Migration[] = [
+  { id: 1, name: 'baseline schema', up: baseline },
+  {
+    id: 5,
+    name: 'trigger blackouts and deferred starts',
+    async up(d) {
+      // actions.blackouts: JSON { mode, windows } (NULL: none).
+      await d.exec('ALTER TABLE actions ADD COLUMN blackouts TEXT');
+      // Automated starts held during a blackout (blackoutMode: defer), started once due_at passes. Claimed by moving
+      // due_at forward (a lease), deleted once started; dedupe_key is the idempotency key of the run.
+      await d.exec(`CREATE TABLE deferred_starts (
+        id TEXT PRIMARY KEY,
+        org_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        action TEXT NOT NULL,
+        dedupe_key TEXT NOT NULL,
+        payload TEXT NOT NULL,
+        due_at TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      )`);
+      await d.exec('CREATE UNIQUE INDEX deferred_starts_key ON deferred_starts(org_id, action, dedupe_key)');
+      await d.exec('CREATE INDEX deferred_starts_due ON deferred_starts(due_at)');
+    },
+  },
+];
 
 /**
  * Apply pending numbered migrations (idempotent; serialized across replicas by an advisory lock on Postgres).

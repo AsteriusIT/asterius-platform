@@ -4,9 +4,10 @@ import { assertSecretsAllowed } from './limits.js';
 import { definitionDoc, nextVersion, recordVersion } from './versions.js';
 import { SYSTEM, type Actor } from '../audit.js';
 import { isFormLike, nextTick, validateTrigger } from './trigger-defs.js';
+import { blackoutStatus, validateBlackouts } from './blackouts.js';
 import { all, bool, json, now, one, run } from '../db.js';
 import { badRequest, managedError, notFound } from '../lib/errors.js';
-import { actionDef, type ActionDef } from '../schemas.js';
+import { actionDef, type ActionDef, type BlackoutWindowDef } from '../schemas.js';
 import { validator } from '../catalog/validation.js';
 import { stepsOf, validateWorkflow } from './workflow.js';
 import { isAdmin, matchesSubjects, type Principal } from '../auth/users.js';
@@ -30,6 +31,8 @@ interface Row {
   next_fire_at: string | null;
   version: number;
   allowed_secrets: string | null;
+  /** JSON { mode, windows } (NULL: none). */
+  blackouts: string | null;
 }
 
 /** Stored in the trigger column when a workflow has no trigger yet (draft). */
@@ -53,12 +56,20 @@ function toAction(r: Row): Action {
           allowed: json(r.allowed, {}),
           approval: json(r.approval, { required: false }),
         };
+  const blackouts = json<{ mode?: 'skip' | 'defer'; windows: BlackoutWindowDef[] } | null>(r.blackouts, null);
   return {
     identifier: r.identifier,
     title: r.title,
     description: r.description,
     icon: r.icon,
     trigger,
+    ...(blackouts?.windows.length
+      ? {
+          blackouts: blackouts.windows,
+          ...(blackouts.mode ? { blackoutMode: blackouts.mode } : {}),
+          blackout: blackoutStatus(blackouts.windows),
+        }
+      : {}),
     version: Number(r.version),
     ...(r.allowed_secrets ? { secrets: json<string[]>(r.allowed_secrets, []) } : {}),
     steps,
@@ -111,10 +122,18 @@ export async function upsertAction(
   if (t0) validateTrigger(t0);
   if (def.steps.some((s) => s.type === 'workflow' && s.action === def.identifier)) throw badRequest('A workflow cannot call itself as a sub-workflow');
   if (t0?.type === 'event' && t0.action === def.identifier) throw badRequest('Trigger: a workflow cannot be triggered by its own runs');
+  try {
+    validateBlackouts(def.blackouts);
+  } catch (err) {
+    throw badRequest((err as Error).message);
+  }
   const triggerBlueprint = t0 && 'blueprint' in t0 ? (t0.blueprint ?? null) : null;
   const org = orgId();
   if (triggerBlueprint && !(await one('SELECT identifier FROM blueprints WHERE org_id = ? AND identifier = ?', org, triggerBlueprint)))
     throw badRequest(`Blueprint "${triggerBlueprint}" does not exist`);
+  const fanOut = t0?.type === 'schedule' ? t0.entities?.blueprint : undefined;
+  if (fanOut && !(await one('SELECT identifier FROM blueprints WHERE org_id = ? AND identifier = ?', org, fanOut)))
+    throw badRequest(`Trigger: blueprint "${fanOut}" does not exist`);
   const form = isFormLike(t0) ? t0 : null;
   if (form && form.on !== 'create' && !form.blueprint) throw badRequest(`Forms submitted on an entity ("${form.on}") need a blueprint`);
   if (form) validator(form.inputs as never);
@@ -145,10 +164,11 @@ export async function upsertAction(
     t0?.type === 'schedule' && def.enabled ? nextTick(t0) : null,
     next.version,
     def.secrets ? JSON.stringify(def.secrets) : null,
+    def.blackouts?.length ? JSON.stringify({ mode: def.blackoutMode, windows: def.blackouts }) : null,
   ];
   if (existing)
     await run(
-      'UPDATE actions SET title = ?, description = ?, icon = ?, blueprint = ?, trigger = ?, inputs = ?, invoker = ?, steps = ?, approval = ?, allowed = ?, enabled = ?, managed = ?, trigger_config = ?, next_fire_at = ?, version = ?, allowed_secrets = ?, updated_at = ? WHERE org_id = ? AND identifier = ?',
+      'UPDATE actions SET title = ?, description = ?, icon = ?, blueprint = ?, trigger = ?, inputs = ?, invoker = ?, steps = ?, approval = ?, allowed = ?, enabled = ?, managed = ?, trigger_config = ?, next_fire_at = ?, version = ?, allowed_secrets = ?, blackouts = ?, updated_at = ? WHERE org_id = ? AND identifier = ?',
       ...vals,
       t,
       org,
@@ -156,7 +176,7 @@ export async function upsertAction(
     );
   else
     await run(
-      'INSERT INTO actions (title, description, icon, blueprint, trigger, inputs, invoker, steps, approval, allowed, enabled, managed, trigger_config, next_fire_at, version, allowed_secrets, created_at, updated_at, org_id, identifier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO actions (title, description, icon, blueprint, trigger, inputs, invoker, steps, approval, allowed, enabled, managed, trigger_config, next_fire_at, version, allowed_secrets, blackouts, created_at, updated_at, org_id, identifier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       ...vals,
       t,
       t,

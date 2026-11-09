@@ -33,6 +33,7 @@ import {
 import { decodeCursor, encodeCursor } from '../lib/cursor.js';
 import { findOrg, orgRef } from '../orgs/orgs.js';
 import { orgId, withOrg } from '../orgs/context.js';
+import { activeBlackout } from './blackouts.js';
 
 /**
  * Run lifecycle:
@@ -548,7 +549,7 @@ function checkRunnable(action: Action) {
 export async function triggerRun(
   p: Principal,
   actionId: string,
-  body: { entity?: string | null; inputs?: Record<string, unknown> },
+  body: { entity?: string | null; inputs?: Record<string, unknown>; overrideBlackout?: boolean },
   idempotencyKey?: string,
   source?: RunSource,
 ): Promise<{ run: Run; created: boolean }> {
@@ -557,6 +558,16 @@ export async function triggerRun(
   const trigger = action.trigger;
   if (trigger?.type !== 'form' && trigger?.type !== 'api')
     throw badRequest(`"${action.title}" is started by its ${trigger?.type} trigger, not by a form or an API call`);
+  // Blackout windows: submissions are refused; an admin may override explicitly (audited).
+  const blackout = activeBlackout(action.blackouts);
+  if (blackout) {
+    if (!body.overrideBlackout || !isAdmin(p))
+      throw conflict(
+        `"${action.title}" is in a blackout window (${blackout.name}) until ${blackout.until}` +
+          (isAdmin(p) ? '; pass "overrideBlackout": true to run it anyway' : '; try again after it ends'),
+      );
+    await audit(actorOf(p), 'run.blackout_overridden', action.identifier, { blackout: blackout.name, until: blackout.until });
+  }
   let entityTeam: string | null = null;
   let entityId: string | null = null;
   if (trigger.on !== 'create') {
@@ -608,6 +619,8 @@ export async function startAutomatedRun(
     source: RunSource;
     as?: Principal;
     parent?: { runId: string; stepId: string };
+    /** Same key twice (e.g. a schedule tick replayed): the second start fails with a 409. */
+    idempotencyKey?: string;
   },
 ): Promise<string> {
   const action = await getAction(actionId);
@@ -623,8 +636,9 @@ export async function startAutomatedRun(
     approval: { required: false, minApprovals: 1, allowSelfApproval: false },
     source: o.source,
     parent: o.parent,
+    idempotencyKey: o.idempotencyKey,
   });
-  if (res.replay) throw conflict('The run could not be created; retry');
+  if (res.replay) throw conflict(o.idempotencyKey ? `A run with key "${o.idempotencyKey}" already exists` : 'The run could not be created; retry');
   return res.id;
 }
 

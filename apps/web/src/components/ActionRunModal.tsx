@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
-import { Alert, Button, Group, Modal, Stack, Text } from '@mantine/core';
+import { Alert, Button, Group, Modal, Stack, Switch, Text } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router';
-import { IconShieldCheck } from '@tabler/icons-react';
+import { IconCalendarOff, IconShieldCheck } from '@tabler/icons-react';
 import type { Action, ApprovalPolicy, ObjectSchema } from '@asterius/shared';
 import { api, errorText } from '../lib/api';
 import { formOf } from '../lib/permissions';
+import { useAuth } from '../lib/auth';
 import { clearDraft, loadDraft, pushRecent, saveDraft } from '../lib/drafts';
 import { initialValues, SchemaForm, validateValues, type FormValues } from './SchemaForm';
 import { Markdown } from './ui';
@@ -21,6 +22,26 @@ function approvalText(approval: ApprovalPolicy) {
   ];
   const n = approval.minApprovals ?? 1;
   return `Needs ${n} approval${n > 1 ? 's' : ''} from ${who.length ? who.join(', ') : 'an admin'} before it runs.`;
+}
+
+const when = (iso: string) => new Date(iso).toLocaleString();
+
+/** The blackout in effect (submissions refused) or the next one, from the action's read-only status. */
+export function BlackoutNotice({ action }: { action: Action }) {
+  const b = action.blackout;
+  if (b?.active)
+    return (
+      <Alert color="red" variant="light" icon={<IconCalendarOff size={18} />} title={`Blackout: ${b.active.name}`}>
+        Runs cannot start until {when(b.active.until)}.
+      </Alert>
+    );
+  if (b?.next)
+    return (
+      <Text fz="xs" c="dimmed">
+        Next blackout ({b.next.name}): {when(b.next.from)} to {when(b.next.until)}
+      </Text>
+    );
+  return null;
 }
 
 const NO_INPUTS: ObjectSchema = { properties: {} };
@@ -71,8 +92,12 @@ function RunForm({
   const [errors, setErrors] = useState<Record<string, string>>({});
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const { isAdmin } = useAuth();
+  const inBlackout = !!action.blackout?.active;
+  const [override, setOverride] = useState(false);
   const run = useMutation({
-    mutationFn: () => api.trigger(action.identifier, { entity: entity?.identifier ?? null, inputs: values }),
+    mutationFn: () =>
+      api.trigger(action.identifier, { entity: entity?.identifier ?? null, inputs: values, ...(inBlackout && override ? { overrideBlackout: true } : {}) }),
     onSuccess: (r) => {
       clearDraft(action.identifier, entityId);
       pushRecent(action.identifier);
@@ -101,6 +126,10 @@ function RunForm({
           On <b>{entity.title}</b> ({entity.blueprint}/{entity.identifier})
         </Text>
       )}
+      <BlackoutNotice action={action} />
+      {inBlackout && isAdmin && (
+        <Switch label="Run anyway (admin override, audited)" checked={override} onChange={(e) => setOverride(e.currentTarget.checked)} />
+      )}
       {approval.required && (
         <Alert color="yellow" variant="light" icon={<IconShieldCheck size={18} />}>
           {approvalText(approval)}
@@ -116,7 +145,7 @@ function RunForm({
         <Button variant="default" onClick={onClose}>
           Cancel
         </Button>
-        <Button onClick={submit} loading={run.isPending} color={formOf(action)?.on === 'delete' ? 'red' : undefined}>
+        <Button onClick={submit} loading={run.isPending} disabled={inBlackout && !override} color={formOf(action)?.on === 'delete' ? 'red' : undefined}>
           {approval.required ? 'Request' : 'Run'}
         </Button>
       </Group>
