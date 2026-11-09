@@ -29,7 +29,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ca-certific
 WORKDIR /app
 COPY --from=build --chown=root:root /src/node_modules ./node_modules
 COPY --from=build --chown=root:root /src/packages/shared ./packages/shared
+# Workspace-local node_modules hold versions that conflict with the hoisted ones (e.g. ajv 8 vs eslint's ajv 6).
 COPY --from=build --chown=root:root /src/apps/server/package.json ./apps/server/
+COPY --from=build --chown=root:root /src/apps/server/node_modules ./apps/server/node_modules
 COPY --from=build --chown=root:root /src/apps/server/dist ./apps/server/dist
 COPY --from=build --chown=root:root /src/apps/web/dist ./apps/web/dist
 COPY --chown=root:root config /etc/asterius/config

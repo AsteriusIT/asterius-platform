@@ -26,6 +26,13 @@ spec:
     - from:
         - podSelector: { matchLabels: { app.kubernetes.io/instance: {{ .Release.Name }} } }
       ports: [{ port: 8080, protocol: TCP }{{ if $v.metrics.port }}, { port: {{ $v.metrics.port }}, protocol: TCP }{{ end }}] # numeric: named ports are not resolved by every CNI
+    {{- if $v.keycloak.enabled }}
+    # Keycloak ↔ Keycloak: JGroups/Infinispan cluster (7800) and its failure detection (57800), needed as soon as two
+    # pods run, including during a rolling update.
+    - from:
+        - podSelector: { matchLabels: { app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: keycloak } }
+      ports: [{ port: 7800, protocol: TCP }, { port: 57800, protocol: TCP }]
+    {{- end }}
   {{- if $v.networkPolicy.egress }}
   egress:
     - ports: [{ port: 53, protocol: UDP }, { port: 53, protocol: TCP }]
