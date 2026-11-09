@@ -247,6 +247,27 @@ When `CONFIG_DIR` applies an action with tests, they are run and failures are lo
           outputs: { deploy: { url: https://dev.example } }
 ```
 
+### Run operations
+
+```yaml
+concurrency:                                   # at most `max` runs of a group at a time
+  group: "deploy-{{ entity.identifier }}"      # template over action, inputs, entity, trigger (default: the action id)
+  max: 1                                       # 1..100, default 1
+  mode: queue                                  # queue | cancel-in-progress | reject
+priority: 10                                   # -100..100, default 0: queued runs start by priority, then age
+```
+
+- **queue**: extra runs stay `QUEUED` ("Waiting for 2 run(s) in group deploy-api") and start one by one as slots free up, by priority then creation order; the head of a full group blocks the runs behind it.
+- **cancel-in-progress**: a new run cancels the older runs of its group (pending approval, queued or in progress, two-phase cancel), keeping the `max - 1` newest, then waits for the slot.
+- **reject**: creating a run while the group is full answers `409` (a run waiting for its own approval holds its slot).
+- Every run goes through the gate: forms, the API, schedules, events, webhooks, re-runs and child runs of `workflow` steps (a child rejected by its group fails the parent's step). Resuming or retrying a finished run needs a free slot again.
+- Admins may override the priority of one run: `POST /actions/<id>/runs {"inputs": …, "priority": 50}` (others get `403`).
+
+Operators can also act on a healthy run:
+
+- `POST /runs/:id/pause` / `POST /runs/:id/unpause` (requester and admins): a paused run starts no new step. Running steps finish, and waits and approvals still complete, but their successors wait for the unpause. The run deadline (`RUN_TIMEOUT_HOURS`) does not run while paused: unpausing extends it, and the timeouts of queued steps, by the paused time. Step timeouts of running, waiting and approval steps keep running. Child runs are not paused.
+- `POST /runs/:id/steps/:step/skip {"comment": "…"}` and `POST /runs/:id/steps/:step/complete {"comment": "…", "output": {…}}` (admins, comment required): force a pending, queued, running, waiting or failed step to `SKIPPED` or `SUCCESS` (the output is checked against `outputSchema`). The steps skipped because it failed are evaluated again and a failed run continues. The change is fenced by the step's attempt, so a worker still executing it can no longer report a result. A skipped running job is asked to stop and child runs are cancelled. Both are logged on the run and audited (`run.step_skipped`, `run.step_completed`; `run.paused`, `run.unpaused`).
+
 ### Safety and testing
 
 - `secrets: [NAME, env:OTHER]` on an action restricts the references its steps may use (checked when saving and when rendering).

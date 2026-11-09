@@ -35,6 +35,8 @@ interface Row {
   blackouts: string | null;
   sla_minutes?: number | null;
   tests?: string | null;
+  /** JSON { concurrency, priority } (migration 4); NULL: defaults. */
+  run_options?: string | null;
 }
 
 /** Stored in the trigger column when a workflow has no trigger yet (draft). */
@@ -80,6 +82,7 @@ function toAction(r: Row): Action {
     managed: bool(r.managed),
     ...(r.sla_minutes ? { slaMinutes: Number(r.sla_minutes) } : {}),
     ...(r.tests ? { tests: json<WorkflowTest[]>(r.tests, []) } : {}),
+    ...json<Pick<Action, 'concurrency' | 'priority'>>(r.run_options ?? null, {}),
   };
 }
 
@@ -189,6 +192,8 @@ export async function upsertAction(
       org,
       def.identifier,
     );
+  const runOptions = def.concurrency || def.priority !== undefined ? JSON.stringify({ concurrency: def.concurrency, priority: def.priority }) : null;
+  await run('UPDATE actions SET run_options = ? WHERE org_id = ? AND identifier = ?', runOptions, org, def.identifier);
   invalidateTriggerCache();
   return { action: await getAction(def.identifier), created: !existing };
 }

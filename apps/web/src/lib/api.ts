@@ -317,6 +317,11 @@ export const api = {
   rerun: (id: string) => request<Run>('POST', v1(`/runs/${enc(id)}/rerun`), {}),
   resume: (id: string) => request<Run>('POST', v1(`/runs/${enc(id)}/resume`), {}),
   retryStep: (id: string, step: string) => request<Run>('POST', v1(`/runs/${enc(id)}/steps/${enc(step)}/retry`), {}),
+  pause: (id: string) => request<Run>('POST', v1(`/runs/${enc(id)}/pause`), {}),
+  unpause: (id: string) => request<Run>('POST', v1(`/runs/${enc(id)}/unpause`), {}),
+  /** Admins: force a step to SKIPPED or SUCCESS (optional output), with a reason. */
+  forceStep: (id: string, step: string, kind: 'skip' | 'complete', comment: string, output?: unknown) =>
+    request<Run>('POST', v1(`/runs/${enc(id)}/steps/${enc(step)}/${kind}`), { comment, ...(output !== undefined ? { output } : {}) }),
   cancel: (id: string) => request<Run>('POST', v1(`/runs/${enc(id)}/cancel`), {}),
   approveStep: (id: string, step: string, comment: string, extra: { choice?: string; values?: Record<string, unknown> } = {}) =>
     request<Run>('POST', v1(`/runs/${enc(id)}/steps/${enc(step)}/approve`), { comment, ...extra }),

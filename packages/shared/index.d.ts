@@ -505,6 +505,9 @@ export interface RunStep {
   canRetry?: boolean;
   /** When the step passed its `slaMinutes` without finishing (null: no breach). */
   slaBreachedAt?: string | null;
+  /** Admins: force the step to SKIPPED / SUCCESS (with a comment). */
+  canSkip?: boolean;
+  canComplete?: boolean;
   startedAt: string | null;
   endedAt: string | null;
 }
@@ -657,6 +660,17 @@ export interface Action {
   slaMinutes?: number;
   /** Workflow tests (admins only). */
   tests?: WorkflowTest[];
+  /** At most `max` runs of a group at a time (group: template, default the action id). */
+  concurrency?: RunConcurrency;
+  /** Claim order of queued runs, -100..100 (higher first, default 0). */
+  priority?: number;
+}
+
+export interface RunConcurrency {
+  group?: string;
+  max: number;
+  /** queue: wait for a slot · cancel-in-progress: cancel the older runs of the group · reject: 409 when full. */
+  mode: 'queue' | 'cancel-in-progress' | 'reject';
 }
 
 export interface ActionVersion {
@@ -757,6 +771,15 @@ export interface Run {
   slaBreachedAt?: string | null;
   /** Present on GET /runs/:id: files attached to its steps. */
   artifacts?: RunArtifact[];
+  /** Claim order (higher first). */
+  priority?: number;
+  /** Concurrency group of the run; `ahead`: runs holding or waiting for a slot before it (queued runs). */
+  concurrency?: { group: string; max: number; ahead?: number } | null;
+  /** Set while the run is paused: no new step starts. */
+  paused?: { at: string; by: string | null } | null;
+  /** Requester or admin, run in progress. */
+  canPause?: boolean;
+  canUnpause?: boolean;
 }
 
 export interface RunPage {

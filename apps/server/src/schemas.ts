@@ -614,6 +614,20 @@ export const blackoutWindow = z.object({
   timezone: z.string().min(1).max(64).default('UTC'),
 });
 export type BlackoutWindowDef = z.infer<typeof blackoutWindow>;
+/** Bounds of a run's claim priority (higher first). */
+export const RUN_PRIORITY = { min: -100, max: 100 } as const;
+export const runPriority = z.number().int().min(RUN_PRIORITY.min).max(RUN_PRIORITY.max);
+/**
+ * At most `max` runs of a group at a time. `group` is a template over { action, inputs, entity, trigger } (default: the
+ * action identifier). queue: extra runs wait (FIFO by priority); cancel-in-progress: a new run cancels the older ones;
+ * reject: creating a run while the group is full answers 409.
+ */
+export const runConcurrency = z.object({
+  group: z.string().min(1).max(200).optional(),
+  max: z.number().int().min(1).max(100).default(1),
+  mode: z.enum(['queue', 'cancel-in-progress', 'reject']).default('queue'),
+});
+export type RunConcurrencyDef = z.infer<typeof runConcurrency>;
 
 export const actionDef = z.preprocess(
   legacyToTrigger,
@@ -647,6 +661,10 @@ export const actionDef = z.preprocess(
       .optional(),
     /** Workflow tests: run with mocks by POST /actions/:id/tests/run (and the CLI); nothing external is called. */
     tests: z.array(workflowTest).max(50).optional(),
+    /** Concurrency limit of the runs (see runConcurrency). Omitted: unlimited. */
+    concurrency: runConcurrency.optional(),
+    /** Claim order of queued runs (higher first, default 0); admins may override it per run. */
+    priority: runPriority.optional(),
   }),
 );
 export type ActionDef = z.infer<typeof actionDef>;

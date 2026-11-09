@@ -2105,6 +2105,36 @@
                 "name"
               ]
             }
+          },
+          "concurrency": {
+            "type": "object",
+            "properties": {
+              "group": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "max": {
+                "default": 1,
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100
+              },
+              "mode": {
+                "default": "queue",
+                "type": "string",
+                "enum": [
+                  "queue",
+                  "cancel-in-progress",
+                  "reject"
+                ]
+              }
+            }
+          },
+          "priority": {
+            "type": "integer",
+            "minimum": -100,
+            "maximum": 100
           }
         },
         "required": [
@@ -4698,6 +4728,36 @@
                       "name"
                     ]
                   }
+                },
+                "concurrency": {
+                  "type": "object",
+                  "properties": {
+                    "group": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "max": {
+                      "default": 1,
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 100
+                    },
+                    "mode": {
+                      "default": "queue",
+                      "type": "string",
+                      "enum": [
+                        "queue",
+                        "cancel-in-progress",
+                        "reject"
+                      ]
+                    }
+                  }
+                },
+                "priority": {
+                  "type": "integer",
+                  "minimum": -100,
+                  "maximum": 100
                 }
               },
               "required": [
@@ -13276,6 +13336,49 @@
         }
       }
     },
+    "/api/v1/runs/{id}/pause": {
+      "post": {
+        "operationId": "postRunsPauseById",
+        "tags": [
+          "runs"
+        ],
+        "summary": "POST /api/v1/runs/{id}/pause",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
     "/api/v1/runs/{id}/reject": {
       "post": {
         "operationId": "postRunsRejectById",
@@ -13558,6 +13661,57 @@
         }
       }
     },
+    "/api/v1/runs/{id}/steps/{step}/complete": {
+      "post": {
+        "operationId": "postRunsStepsCompleteByIdStep",
+        "tags": [
+          "runs"
+        ],
+        "summary": "POST /api/v1/runs/{id}/steps/{step}/complete",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "step",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
     "/api/v1/runs/{id}/steps/{step}/events": {
       "post": {
         "operationId": "postRunsStepsEventsByIdStep",
@@ -13780,6 +13934,100 @@
           },
           {
             "name": "step",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/api/v1/runs/{id}/steps/{step}/skip": {
+      "post": {
+        "operationId": "postRunsStepsSkipByIdStep",
+        "tags": [
+          "runs"
+        ],
+        "summary": "POST /api/v1/runs/{id}/steps/{step}/skip",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "step",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/api/v1/runs/{id}/unpause": {
+      "post": {
+        "operationId": "postRunsUnpauseById",
+        "tags": [
+          "runs"
+        ],
+        "summary": "POST /api/v1/runs/{id}/unpause",
+        "parameters": [
+          {
+            "name": "id",
             "in": "path",
             "required": true,
             "schema": {

@@ -12,7 +12,7 @@ import { QueryView } from '../../components/ui';
 import { FlowShell } from '../../components/FlowShell';
 import { JsonBlock } from '../../components/CodeEditor';
 import { StepTypeItems, TRIGGER_ID, WorkflowFlow, type FlowStep, type FlowTrigger } from '../../components/WorkflowFlow';
-import { docProblems, GeneralFields, toActionDoc, type ActionDoc } from '../../components/builder/ActionBuilder';
+import { docProblems, GeneralFields, RunOptionsFields, toActionDoc, type ActionDoc } from '../../components/builder/ActionBuilder';
 import { newStep, patchStep, StepSettings } from '../../components/builder/WorkflowEditor';
 import { isFormLike, newFormTrigger, TriggerEditor, TRIGGER_TYPES, triggerSummary } from '../../components/builder/TriggerEditor';
 import { fieldsToSchema, schemaToFields, type FieldDraft } from '../../components/builder/fields';
@@ -452,6 +452,7 @@ function FlowEditor({ value, readOnly, version }: { value: Record<string, unknow
               value={(doc.slaMinutes as number | undefined) ?? ''}
               onChange={(n) => change({ slaMinutes: n === '' ? undefined : Number(n) })}
             />
+            <RunOptionsFields doc={doc as Parameters<typeof RunOptionsFields>[0]['doc']} onChange={change} />
             <Switch
               label="Enabled"
               description="Disabled workflows are hidden from users"

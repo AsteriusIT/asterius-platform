@@ -3,7 +3,7 @@ import { config } from '../config.js';
 import { all, forUpdate, json, newId, now, one, run, tx, type Driver, type SqlValue } from '../db.js';
 import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
 import { emit } from '../events.js';
-import { audit } from '../audit.js';
+import { audit, type Actor } from '../audit.js';
 import { maskText } from '../lib/mask.js';
 import { actorOf, automationPrincipal, isAdmin, matchesSubjects, principalOf, type Principal, type UserRow } from '../auth/users.js';
 import { notify } from '../inbox.js';
@@ -16,6 +16,8 @@ import { getBlueprintCached } from '../catalog/blueprints.js';
 import { metrics } from '../metrics.js';
 import { runCosts } from '../ai/usage.js';
 import { wake } from './wake.js';
+import { render } from '../lib/expr.js';
+import { acquireSlot, releaseSlot, runsAhead } from './concurrency.js';
 import { notifyPendingDecision } from '../notifications/dispatch.js';
 import {
   approverSubjects,
@@ -85,6 +87,12 @@ export interface RunRow {
   /** Run SLA (action `slaMinutes`): due time, cleared by housekeeping once handled; breach time. */
   sla_due_at?: string | null;
   sla_breached_at?: string | null;
+  /** Claim order (higher first); concurrency group (rendered) and its size; pause (migration 4). */
+  priority: number;
+  concurrency_group: string | null;
+  concurrency_max: number | null;
+  paused_at: string | null;
+  paused_by: string | null;
   user_name?: string;
   user_email?: string;
 }
@@ -123,6 +131,9 @@ const toRun = (r: RunRow, approvals: RunApproval[]): Run => ({
   trigger: { type: r.trigger_type ?? 'form', ...json<Record<string, unknown>>(r.trigger_info, {}) },
   actionVersion: r.action_version,
   parent: r.parent_run_id ? { runId: r.parent_run_id, stepId: r.parent_step_id ?? '' } : null,
+  priority: Number(r.priority ?? 0),
+  concurrency: r.concurrency_group ? { group: r.concurrency_group, max: Number(r.concurrency_max ?? 1) } : null,
+  paused: r.paused_at && r.status === 'IN_PROGRESS' ? { at: r.paused_at, by: r.paused_by } : null,
   createdAt: r.created_at,
   startedAt: r.started_at,
   endedAt: r.ended_at,
@@ -207,8 +218,11 @@ export async function getRun(id: string, p: Principal, opts: { after?: number; l
   }
   const manage = canManageRun(p, r);
   const canResume = manage && ['FAILURE', 'CANCELLED'].includes(r.status) && !!r.steps && resumableSteps(stepDefs(r), await loadSteps(id)).length > 0;
+  const view = toRun(r, approvals);
+  if (view.concurrency && r.status === 'QUEUED') view.concurrency.ahead = await runsAhead({ ...r, priority: Number(r.priority ?? 0) });
+  const running = r.status === 'IN_PROGRESS' && !Number(r.cancel_requested);
   return {
-    ...toRun(r, approvals),
+    ...view,
     logs,
     logsTruncated,
     costUsd: (await runCosts(id)).total || null,
@@ -218,6 +232,8 @@ export async function getRun(id: string, p: Principal, opts: { after?: number; l
     canRerun: manage && FINAL.includes(r.status),
     canResume,
     artifacts: await listArtifacts(id),
+    canPause: manage && running && !r.paused_at,
+    canUnpause: manage && running && !!r.paused_at,
   };
 }
 
@@ -408,6 +424,11 @@ export async function addLog(runId: string, message: string, level: RunLog['leve
 
 export async function emitRun(id: string, type: 'run.created' | 'run.updated' | 'approval.requested' | 'approval.decided') {
   const r = await getRunRow(id);
+  // Every final transition goes through here: free the run's concurrency slot and let the next run of the group start.
+  if (r.concurrency_group && FINAL.includes(r.status)) {
+    await releaseSlot(id);
+    wake();
+  }
   const steps = (await loadSteps(id)).map((s) => ({ id: s.step_id, name: s.name, type: s.type, status: s.status }));
   const data = { run: { ...toRun(r, (await approvalsOf([id])).get(id) ?? []), steps } };
   await emit({ type, blueprint: r.blueprint, data });
@@ -479,6 +500,53 @@ interface NewRun {
   parent?: { runId: string; stepId: string };
   /** Retrying a request with the same key returns the original run (`replay`). */
   idempotencyKey?: string;
+  /** Claim order override (admins); default: the action's priority. */
+  priority?: number;
+}
+
+/** The concurrency group of a new run: the action's template rendered against the request (default: the action id). */
+async function concurrencyGroup(n: NewRun, entity: unknown): Promise<string | null> {
+  const c = n.action.concurrency;
+  if (!c) return null;
+  const ctx = {
+    action: { identifier: n.action.identifier, title: n.action.title, blueprint: n.blueprint },
+    inputs: n.inputs,
+    entity: entity ?? null,
+    trigger: { type: n.source.type, user: { id: n.p.id, email: n.p.email, name: n.p.name } },
+  };
+  let value: unknown;
+  try {
+    value = (
+      await render(c.group ?? n.action.identifier, ctx, async () => {
+        throw badRequest('Secret references are not allowed in a concurrency group');
+      })
+    ).value;
+  } catch (err) {
+    throw badRequest(`Concurrency group: ${(err as Error).message}`);
+  }
+  const group = (typeof value === 'string' ? value : JSON.stringify(value ?? '')).trim().slice(0, 200);
+  return group || n.action.identifier;
+}
+
+/**
+ * cancel-in-progress: the runs of the group created before this one are cancelled (two-phase cancel), keeping the
+ * `max - 1` newest. Runs created after it are never touched, so concurrent creations converge on the newest.
+ */
+async function cancelOlderRuns(n: NewRun, id: string, group: string, max: number) {
+  const self = (await one<{ created_at: string }>('SELECT created_at FROM runs WHERE id = ?', id))!;
+  const older = await all<{ id: string }>(
+    `SELECT id FROM runs WHERE org_id = ? AND concurrency_group = ? AND status IN ('PENDING_APPROVAL', 'QUEUED', 'IN_PROGRESS')
+       AND (created_at, id) < (?, ?) ORDER BY created_at DESC, id DESC`,
+    orgId(),
+    group,
+    self.created_at,
+    id,
+  );
+  const { cancelSteps } = await import('./engine.js'); // lazy: engine.ts imports this module
+  for (const o of older.slice(max - 1))
+    await stopRun(o.id, cancelSteps, { by: `a newer run of group "${group}" (${id})`, actor: actorOf(n.p), detail: { reason: 'concurrency', by: id } }).catch(
+      (err) => addLog(o.id, `Could not cancel for the concurrency group: ${(err as Error).message}`, 'warn'),
+    );
 }
 
 async function insertRun(n: NewRun): Promise<{ id: string; replay?: false } | { replay: true }> {
@@ -499,9 +567,29 @@ async function insertRun(n: NewRun): Promise<{ id: string; replay?: false } | { 
   const id = newId();
   const t = now();
   const status: RunStatus = n.approval.required ? 'PENDING_APPROVAL' : 'QUEUED';
+  const conc = action.concurrency;
+  const group = conc ? await concurrencyGroup(n, n.entity ? await findEntity(n.blueprint!, n.entity) : null) : null;
+  const max = conc?.max ?? 1;
+  if (conc?.mode === 'reject' && group) {
+    // A retried request (same Idempotency-Key) returns the original run instead of competing for a slot.
+    if (
+      n.idempotencyKey &&
+      (await one(
+        'SELECT id FROM runs WHERE org_id = ? AND triggered_by = ? AND action = ? AND idempotency_key = ?',
+        orgId(),
+        p.id,
+        action.identifier,
+        n.idempotencyKey,
+      ))
+    )
+      return { replay: true };
+    // The slot is taken before the run exists: two concurrent creations cannot both get the last one.
+    if (!(await acquireSlot(orgId(), group, max, id)))
+      throw conflict(`"${action.title}" is already running in group "${group}" (at most ${max} at a time); try again later`);
+  }
   const inserted = await run(
-    `INSERT INTO runs (id, org_id, action, action_title, blueprint, entity, inputs, status, invoker, steps, approval, triggered_by, team, trigger_type, trigger_info, parent_run_id, parent_step_id, action_version, allowed_secrets, created_at, updated_at, idempotency_key)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
+    `INSERT INTO runs (id, org_id, action, action_title, blueprint, entity, inputs, status, invoker, steps, approval, triggered_by, team, trigger_type, trigger_info, parent_run_id, parent_step_id, action_version, allowed_secrets, created_at, updated_at, idempotency_key, priority, concurrency_group, concurrency_max)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
     id,
     orgId(),
     action.identifier,
@@ -524,9 +612,15 @@ async function insertRun(n: NewRun): Promise<{ id: string; replay?: false } | { 
     t,
     t,
     n.idempotencyKey ?? null,
+    n.priority ?? action.priority ?? 0,
+    group,
+    group ? max : null,
   );
   // A concurrent request with the same idempotency key won the unique index.
-  if (!inserted.changes) return { replay: true };
+  if (!inserted.changes) {
+    if (group) await releaseSlot(id);
+    return { replay: true };
+  }
   // The run SLA clock starts at the request (approval time included); housekeeping claims it once due (sla.ts).
   if (action.slaMinutes) await run('UPDATE runs SET sla_due_at = ? WHERE id = ?', new Date(Date.parse(t) + action.slaMinutes * 60_000).toISOString(), id);
   const via = n.source.type === 'form' || n.source.type === 'api' ? '' : ` (${n.source.type})`;
@@ -542,6 +636,15 @@ async function insertRun(n: NewRun): Promise<{ id: string; replay?: false } | { 
     }).catch(() => undefined);
   }
   await audit(actorOf(p), 'run.triggered', `${action.identifier}${n.entity ? ` → ${n.blueprint}/${n.entity}` : ''}`, { runId: id, source: n.source.type });
+  if (group && conc?.mode === 'cancel-in-progress') await cancelOlderRuns(n, id, group, max);
+  if (group && status === 'QUEUED') {
+    const ahead = await runsAhead({ id, org_id: orgId(), concurrency_group: group, priority: n.priority ?? action.priority ?? 0, created_at: t });
+    if (ahead >= max) {
+      const label = `Waiting for a slot in group "${group}" (at most ${max} at a time)`;
+      await run("UPDATE runs SET status_label = ? WHERE id = ? AND status = 'QUEUED'", label, id);
+      await addLog(id, `${label}: ${ahead} run(s) ahead`);
+    }
+  }
   await emitRun(id, 'run.created');
   if (status === 'PENDING_APPROVAL') await emitRun(id, 'approval.requested');
   if (status === 'QUEUED') wake();
@@ -557,12 +660,13 @@ function checkRunnable(action: Action) {
 export async function triggerRun(
   p: Principal,
   actionId: string,
-  body: { entity?: string | null; inputs?: Record<string, unknown>; overrideBlackout?: boolean },
+  body: { entity?: string | null; inputs?: Record<string, unknown>; overrideBlackout?: boolean; priority?: number },
   idempotencyKey?: string,
   source?: RunSource,
 ): Promise<{ run: Run; created: boolean }> {
   const action = await getAction(actionId);
   checkRunnable(action);
+  if (body.priority !== undefined && !isAdmin(p)) throw forbidden('Only admins can set the priority of a run');
   const trigger = action.trigger;
   if (trigger?.type !== 'form' && trigger?.type !== 'api')
     throw badRequest(`"${action.title}" is started by its ${trigger?.type} trigger, not by a form or an API call`);
@@ -598,6 +702,7 @@ export async function triggerRun(
     approval: trigger.approval,
     source: source ?? { type: trigger.type },
     idempotencyKey,
+    priority: body.priority,
   });
   if (res.replay) {
     const existing = await one<RunRow>(
@@ -705,9 +810,26 @@ export async function decide(p: Principal, runId: string, decision: 'approved' |
  * re-evaluated against the new status instead of failing.
  */
 export async function cancelRun(p: Principal, runId: string, cancelSteps: (r: RunRow) => Promise<void>): Promise<Run> {
+  await stopRun(runId, cancelSteps, {
+    by: p.name,
+    actor: actorOf(p),
+    check: (r) => {
+      if (!canCancel(p, r)) throw forbidden(FINAL.includes(r.status) ? 'This run is already finished' : 'Only the requester or an admin can cancel');
+    },
+  });
+  return getRun(runId, p);
+}
+
+/** The two-phase cancellation itself (cancelRun, concurrency groups). False: the run was already finished. */
+async function stopRun(
+  runId: string,
+  cancelSteps: (r: RunRow) => Promise<void>,
+  o: { by: string; actor: Actor; check?: (r: RunRow) => void; detail?: Record<string, unknown> },
+): Promise<boolean> {
   for (let attempt = 0; attempt < 5; attempt++) {
     const r = await getRunRow(runId);
-    if (!canCancel(p, r)) throw forbidden(FINAL.includes(r.status) ? 'This run is already finished' : 'Only the requester or an admin can cancel');
+    o.check?.(r);
+    if (FINAL.includes(r.status)) return false;
     const stopSteps = async () => {
       try {
         await cancelSteps(r);
@@ -729,10 +851,10 @@ export async function cancelRun(p: Principal, runId: string, cancelSteps: (r: Ru
     );
     if (!changes) continue; // the run moved on: look again
     if (r.status === 'IN_PROGRESS') await stopSteps(); // a step started while we were cancelling
-    await addLog(runId, `Cancelled by ${p.name}`, 'warn');
-    await audit(actorOf(p), 'run.cancelled', r.action, { runId });
+    await addLog(runId, `Cancelled by ${o.by}`, 'warn');
+    await audit(o.actor, 'run.cancelled', r.action, { runId, ...o.detail });
     await emitRun(runId, 'run.updated');
-    return getRun(runId, p);
+    return true;
   }
   throw conflict('The run keeps changing; try again');
 }

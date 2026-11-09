@@ -87,6 +87,11 @@ export function resumableSteps(defs: Step[], rows: Pick<StepRow, 'step_id' | 'st
 export const canRetryStep = (p: Principal, r: RunRow, row: Pick<StepRow, 'status'>) =>
   canManageRun(p, r) && row.status === 'FAILURE' && REOPENABLE.includes(r.status);
 
+/** Steps an admin may force to SKIPPED or SUCCESS (operations.ts), in a run in progress or failed. */
+export const FORCEABLE: StepStatus[] = ['PENDING', 'QUEUED', 'RUNNING', 'WAITING', 'WAITING_APPROVAL', 'FAILURE'];
+export const canForceStep = (p: Principal, r: RunRow, row: Pick<StepRow, 'status'>) =>
+  isAdmin(p) && FORCEABLE.includes(row.status) && ['IN_PROGRESS', 'FAILURE'].includes(r.status) && !Number(r.cancel_requested);
+
 /** Child runs started by a `workflow` step (one, or one per item of a fan-out). */
 function childrenOf(row: StepRow): { runId: string; status: string; item?: unknown }[] | undefined {
   const s = json<{ kind?: string; runId?: string; runs?: (string | null)[]; items?: unknown[]; results?: ({ status: string } | null)[] } | null>(
@@ -129,7 +134,13 @@ export async function runStepsView(run: RunRow, p: Principal | null): Promise<Ru
       costUsd: costs.get(row.step_id) ?? null,
       approvals: list,
       ...(p && def
-        ? { canApprove: canApproveStep(p, run, def, row, list), canRetry: canRetryStep(p, run, row), canSubmit: canSubmitInput(p, run, def, row) }
+        ? {
+            canApprove: canApproveStep(p, run, def, row, list),
+            canRetry: canRetryStep(p, run, row),
+            canSubmit: canSubmitInput(p, run, def, row),
+            canSkip: canForceStep(p, run, row),
+            canComplete: canForceStep(p, run, row),
+          }
         : {}),
       slaBreachedAt: row.sla_breached_at ?? null,
       startedAt: row.started_at,
