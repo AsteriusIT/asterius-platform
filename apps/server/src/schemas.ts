@@ -321,6 +321,8 @@ export const invokerConfig = z.object({ type: z.string().min(1) }).passthrough()
 
 /** Step ids are used in templates (`steps.<id>.output`): JSONata-friendly names. */
 export const STEP_ID = /^[A-Za-z_][A-Za-z0-9_]{0,40}$/;
+const SWITCH_CASE_REF = /^[A-Za-z_][A-Za-z0-9_]{0,40}\.[A-Za-z_][A-Za-z0-9_-]{0,40}$/;
+const CASE_ID = /^[A-Za-z_][A-Za-z0-9_-]{0,40}$/;
 
 const stepBase = {
   id: z.string().regex(STEP_ID, 'step ids: letters, digits and _ (starting with a letter)'),
@@ -338,7 +340,28 @@ const stepBase = {
   continueOnError: z.boolean().default(false),
   /** The output must match this schema or the step fails (see also STEP_OUTPUT_MAX_BYTES). */
   outputSchema: objectSchema.optional(),
+  /** Control flow (see workflow.ts): success (default) · failure: only when a dependency failed · always: once they are done. */
+  when: z.enum(['success', 'failure', 'always']).optional(),
+  /** What a timeout does: fail (default) · skip: the step becomes SKIPPED · continue: failed, like continueOnError. */
+  onTimeout: z.enum(['fail', 'skip', 'continue']).optional(),
+  /** Branch of a `switch` step this step belongs to: `<switchId>.<caseId>` (or a list: any of them). */
+  case: z
+    .union([
+      z.string().regex(SWITCH_CASE_REF, 'case: <switchStepId>.<caseId>'),
+      z.array(z.string().regex(SWITCH_CASE_REF, 'case: <switchStepId>.<caseId>')).min(1).max(20),
+    ])
+    .optional(),
 };
+
+/** Inline loop of invoke, agent and transform steps: `item` and `index` in the templates, output `{ results, succeeded, failed }`. */
+const inlineForEach = z
+  .object({
+    items: z.string().min(1).max(2000),
+    /** Agent steps: items run in parallel up to this; invoke and transform steps iterate one item at a time. */
+    maxConcurrency: z.number().int().min(1).max(20).default(1),
+    failFast: z.boolean().default(false),
+  })
+  .optional();
 
 export const AGENT_MODELS = ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-fable-5-1'] as const;
 
@@ -370,7 +393,7 @@ export const mcpServer = z.object({
 });
 
 export const workflowStep = z.discriminatedUnion('type', [
-  z.object({ ...stepBase, type: z.literal('invoke'), invoker: z.object({ type: z.string().min(1) }).passthrough() }),
+  z.object({ ...stepBase, type: z.literal('invoke'), invoker: z.object({ type: z.string().min(1) }).passthrough(), forEach: inlineForEach }),
   z.object({
     ...stepBase,
     type: z.literal('approval'),
@@ -418,6 +441,7 @@ export const workflowStep = z.discriminatedUnion('type', [
     /** anthropic (default: AI_PROVIDER), bedrock or vertex. */
     provider: z.enum(['anthropic', 'bedrock', 'vertex']).optional(),
     apiKey: z.string().optional(),
+    forEach: inlineForEach,
   }),
   z.object({
     ...stepBase,
@@ -460,7 +484,23 @@ export const workflowStep = z.discriminatedUnion('type', [
       })
       .optional(),
   }),
-  z.object({ ...stepBase, type: z.literal('transform'), output: z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,63}$/), z.string()) }),
+  z.object({
+    ...stepBase,
+    type: z.literal('transform'),
+    output: z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,63}$/), z.string()),
+    forEach: inlineForEach,
+  }),
+  z.object({
+    ...stepBase,
+    type: z.literal('switch'),
+    /** Evaluated in order: the first truthy JSONata `when` picks the branch (output `{ case }`). */
+    cases: z
+      .array(z.object({ id: z.string().regex(CASE_ID, 'case ids: letters, digits, _ and -'), when: z.string().min(1).max(2000) }))
+      .min(1)
+      .max(20),
+    /** Case id taken when no `when` matches (omitted: no branch runs). */
+    default: z.string().regex(CASE_ID).optional(),
+  }),
 ]);
 export type WorkflowStepDef = z.infer<typeof workflowStep>;
 
@@ -572,6 +612,10 @@ export const actionDef = z.preprocess(
       .max(50)
       .optional(),
     enabled: z.boolean().default(true),
+    /** Templates evaluated once when a run starts (over inputs, entity, trigger): `vars.<name>` in every template and condition. */
+    vars: z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,63}$/), z.unknown()).optional(),
+    /** Templates over `steps` (and vars, inputs…) evaluated when the run ends: the run result (what a parent workflow step sees). */
+    outputs: z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,63}$/), z.unknown()).optional(),
   }),
 );
 export type ActionDef = z.infer<typeof actionDef>;

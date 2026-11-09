@@ -3,7 +3,7 @@ import { all, json } from '../db.js';
 import { runCosts } from '../ai/usage.js';
 import { isAdmin, matchesSubjects, type Principal } from '../auth/users.js';
 import type { RunRow } from './runs.js';
-import { needsOf, type Step } from './workflow.js';
+import { ancestorsOf, casesOf, needsOf, type Step } from './workflow.js';
 
 /** Persistence and read model of workflow steps (run_steps, step_approvals). */
 
@@ -72,14 +72,65 @@ export const canManageRun = (p: Principal, r: Pick<RunRow, 'triggered_by'>) => i
 export const BLOCKED_STATE = '{"blocked":true}';
 const REOPENABLE: RunRow['status'][] = ['IN_PROGRESS', 'FAILURE', 'CANCELLED'];
 
-/** Steps to start over when a run resumes: failed or cancelled ones (not those allowed to fail) and the steps skipped because of them. */
-export function resumableSteps(defs: Step[], rows: Pick<StepRow, 'step_id' | 'status' | 'state'>[]): string[] {
-  return rows
+/** Marks the `state` of a step failed by a timeout with `onTimeout: continue` (treated like continueOnError). */
+export const timedOutState = (state: string | null, how: 'continue' | 'skip') => JSON.stringify({ ...json<object>(state, {}), timedOut: how });
+
+type FlowRow = Pick<StepRow, 'step_id' | 'status' | 'state'>;
+
+/** A failure of this step does not fail the workflow (continueOnError, or a timeout with `onTimeout: continue`). */
+export const allowedToFail = (def: Pick<Step, 'continueOnError'> | undefined, row: Pick<StepRow, 'state'>) =>
+  !!def?.continueOnError || (!!row.state?.includes('"timedOut":"continue"') && json<{ timedOut?: string }>(row.state, {}).timedOut === 'continue');
+
+/** Failed steps *handled* by a `when: failure` step downstream of them that succeeded. */
+export function handledFailures(defs: Step[], rows: FlowRow[]): Set<string> {
+  const status = new Map(rows.map((r) => [r.step_id, r.status]));
+  const handlers = defs.filter((d) => d.when === 'failure' && status.get(d.id) === 'SUCCESS');
+  const out = new Set<string>();
+  if (!handlers.length) return out;
+  const anc = ancestorsOf(defs);
+  for (const r of rows) if (r.status === 'FAILURE' && handlers.some((h) => anc.get(h.id)?.has(r.step_id))) out.add(r.step_id);
+  return out;
+}
+
+/** The step that makes a finished workflow fail: cancelled, or failed without being allowed to fail or handled. */
+export function unhandledFailure<R extends FlowRow>(defs: Step[], rows: R[]): R | undefined {
+  const handled = handledFailures(defs, rows);
+  return rows.find(
+    (s) =>
+      s.status === 'CANCELLED' ||
+      (s.status === 'FAILURE' &&
+        !allowedToFail(
+          defs.find((d) => d.id === s.step_id),
+          s,
+        ) &&
+        !handled.has(s.step_id)),
+  );
+}
+
+/** `ids` and every terminal step downstream of them (their outcome depended on the steps that start over). */
+export function withDownstream(defs: Step[], rows: FlowRow[], ids: string[]): string[] {
+  const anc = ancestorsOf(defs);
+  const seeds = new Set(ids);
+  return rows.filter((s) => seeds.has(s.step_id) || (isTerminal(s.status) && [...(anc.get(s.step_id) ?? [])].some((a) => seeds.has(a)))).map((s) => s.step_id);
+}
+
+/**
+ * Steps to start over when a run resumes: failed or cancelled ones (not those allowed to fail or handled), the steps
+ * skipped because of them, and whatever ran downstream of them (`when: always` / `failure` steps, branch decisions).
+ */
+export function resumableSteps(defs: Step[], rows: FlowRow[]): string[] {
+  const handled = handledFailures(defs, rows);
+  const seeds = rows
     .filter((s) => {
       const def = defs.find((d) => d.id === s.step_id);
-      return (s.status === 'FAILURE' && !def?.continueOnError) || s.status === 'CANCELLED' || (s.status === 'SKIPPED' && s.state === BLOCKED_STATE);
+      return (
+        (s.status === 'FAILURE' && !allowedToFail(def, s) && !handled.has(s.step_id)) ||
+        s.status === 'CANCELLED' ||
+        (s.status === 'SKIPPED' && s.state === BLOCKED_STATE)
+      );
     })
     .map((s) => s.step_id);
+  return seeds.length ? withDownstream(defs, rows, seeds) : [];
 }
 
 export const canRetryStep = (p: Principal, r: RunRow, row: Pick<StepRow, 'status'>) =>
@@ -104,6 +155,7 @@ export async function runStepsView(run: RunRow, p: Principal | null): Promise<Ru
   const rows = await loadSteps(run.id);
   const approvals = await stepApprovalsOf([run.id]);
   const costs = (await runCosts(run.id)).steps;
+  const handled = handledFailures(defs, rows);
   return rows.map((row) => {
     const i = defs.findIndex((d) => d.id === row.step_id);
     const def = defs[i];
@@ -117,7 +169,10 @@ export async function runStepsView(run: RunRow, p: Principal | null): Promise<Ru
       statusLabel: row.status_label,
       attempt: Number(row.attempt),
       maxAttempts: (def?.retries ?? 0) + 1,
-      continueOnError: !!def?.continueOnError,
+      continueOnError: allowedToFail(def, row),
+      ...(def?.when && def.when !== 'success' ? { when: def.when } : {}),
+      ...(def && casesOf(def).length ? { case: casesOf(def) } : {}),
+      ...(handled.has(row.step_id) ? { handled: true } : {}),
       output: json(row.output, null),
       link: row.link,
       message: stepMessage(row),

@@ -34,7 +34,7 @@ import { duration, Empty, Markdown, PageHeader, QueryView, StatusBadge, STATUS_C
 import { TRIGGER_ID, WorkflowFlow, type FlowStep, type FlowTrigger } from '../components/WorkflowFlow';
 import { FlowShell } from '../components/FlowShell';
 import { ExplainRun } from '../components/AiAssistant';
-import { splitJobLog, STEP_STATUS_COLORS, STEP_STATUS_LABELS, STEP_TYPES, stepTone } from '../lib/workflow';
+import { controlBadges, splitJobLog, STEP_STATUS_COLORS, STEP_STATUS_LABELS, STEP_TYPES, stepTone } from '../lib/workflow';
 import { PropertyValue } from '../components/PropertyValue';
 import { initialValues, SchemaForm, validateValues, type FormValues } from '../components/SchemaForm';
 import { UserChip } from '../components/UserChip';
@@ -393,7 +393,11 @@ function runFlowSteps(r: Run): FlowStep[] {
     needs: s.needs,
     tone: stepTone(s.status),
     detail: s.statusLabel || (s.status === 'PENDING' ? null : STEP_STATUS_LABELS[s.status]),
-    badges: [...(s.maxAttempts > 1 && s.attempt > 1 ? [`attempt ${s.attempt}/${s.maxAttempts}`] : []), ...(s.canApprove || s.canSubmit ? ['needs you'] : [])],
+    badges: [
+      ...(s.maxAttempts > 1 && s.attempt > 1 ? [`attempt ${s.attempt}/${s.maxAttempts}`] : []),
+      ...(s.canApprove || s.canSubmit ? ['needs you'] : []),
+      ...controlBadges(s),
+    ],
   }));
 }
 

@@ -69,14 +69,21 @@ organization) and an optional platform `superadmin` flag.
 A workflow (action) is a trigger — a form submission: `trigger: { type: form, on, blueprint, inputs, allowed, approval }` — followed by steps. Without a trigger or steps it is a draft that cannot run. The steps form a graph (`apps/server/src/actions/workflow.ts`): `needs` omitted → after the previous step; `needs: []` → at the start; `needs: [a, b]` → after both. A step may only depend on earlier steps, so a workflow cannot contain a cycle. A single-`invoker` action is a one-step workflow.
 
 ```
-PENDING ──deps terminal──▶ if false ─────────────▶ SKIPPED
-   │                       a dependency failed ──▶ SKIPPED (blocked: its dependents are skipped too)
+PENDING ──deps terminal──▶ when: success and a dependency failed ──▶ SKIPPED (blocked: its dependents are skipped too)
+   │                       when: failure and none failed ─────────▶ SKIPPED
+   │                       case: another switch branch taken ─────▶ SKIPPED
+   │                       if false ──────────────────────────────▶ SKIPPED
+   ├─ switch ───────────▶ SUCCESS { case } (decided by the engine, no worker)
    ├─ approval ─────────▶ WAITING_APPROVAL ─ approvals ≥ min ─▶ SUCCESS · reject ─▶ FAILURE · expiry ─▶ FAILURE
    └─ others ───────────▶ QUEUED ─worker claims─▶ RUNNING ─▶ SUCCESS | FAILURE
                             ▲                       │ invoke: poll (RUN_POLL_SECONDS) or callback PATCH /runs/:id/steps/:step
                             └── retry with backoff ─┘ (retries × retryDelaySeconds·2^n; agent & transform errors, retryable invoker errors)
-run: all steps terminal → SUCCESS, or FAILURE if a step failed without continueOnError; result = outputs by step id
+step deadline passed → onTimeout: fail ─▶ FAILURE · skip ─▶ SKIPPED · continue ─▶ FAILURE (like continueOnError)
+run: all steps terminal → SUCCESS, or FAILURE if a step failed without continueOnError and no succeeded `when: failure`
+     step downstream handles it; result = the action's `outputs` templates, or the outputs by step id
 ```
+
+Inline `forEach` loops keep their progress in the step `state` (`{"forEach": {items, results, current, inner}}`). Transform and agent loops run inside one claimed execution (under the step lease). Invoke loops run one item at a time: an item that goes on parks the step with its invoker state; when its poll or callback ends it (compare-and-set on the state), the step goes back to QUEUED and the next claim, with a new `attempt` fencing token, starts the next item. Run-level `vars` are evaluated once when the workflow starts (`runs.vars`, written with `WHERE vars IS NULL`), from the templates snapshotted with the run (`runs.workflow`).
 
 Every transition is a conditional `UPDATE … WHERE status IN (…)`: the engine (`actions/engine.ts`) can be called concurrently by workers, callbacks and API pods. Workers claim runs, steps and polls with a single `UPDATE … WHERE id IN (SELECT … FOR UPDATE SKIP LOCKED LIMIT n) RETURNING *` (SQLite: the same statement without the lock hint), so replicas never race for the same rows; everything in flight counts against `WORKER_CONCURRENCY`, and an idle worker backs off up to `WORKER_IDLE_MAX_MS`, woken at once by new work (in-process, or Postgres `LISTEN/NOTIFY` across replicas).
 

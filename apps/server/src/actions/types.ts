@@ -17,6 +17,11 @@ export interface RunContext {
   trigger: { user: { id: string; email: string; name: string }; at: string };
   /** Earlier workflow steps: `{{ steps.review.output.risk }}`. */
   steps: Record<string, { status: string; output: unknown; link: string | null; events?: { url: string; token: string } }>;
+  /** The action's `vars`, evaluated when the run started. */
+  vars?: Record<string, unknown>;
+  /** Inside a `forEach` loop: the current item and its position. */
+  item?: unknown;
+  index?: number;
 }
 
 export type InvokeStatus = 'IN_PROGRESS' | 'SUCCESS' | 'FAILURE';

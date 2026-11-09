@@ -11,7 +11,7 @@ import { getAction } from './actions.js';
 import { getInvoker } from './invokers/index.js';
 import { parseDuration } from './waiting.js';
 import { isFormLike } from './trigger-defs.js';
-import { stepsOf, type Step } from './workflow.js';
+import { casesOf, needsOf, stepsOf, type Step } from './workflow.js';
 import type { RunContext } from './types.js';
 import { orgId } from '../orgs/context.js';
 
@@ -64,6 +64,7 @@ export async function dryRun(actionId: string, p: Principal, input: DryRunInput)
   const trigger = def ? def.trigger : (saved?.trigger ?? null);
   const steps: Step[] = def ? stepsOf(def) : (saved?.steps as Step[]);
   const title = def?.title ?? saved?.title ?? actionId;
+  const runTemplates = { vars: def ? def.vars : saved?.vars, outputs: def ? def.outputs : saved?.outputs };
   const blueprint = trigger && 'blueprint' in trigger ? (trigger.blueprint ?? null) : null;
 
   const inputErrors: string[] = [];
@@ -97,11 +98,41 @@ export async function dryRun(actionId: string, p: Principal, input: DryRunInput)
     steps: {},
   };
 
+  const noSecrets: RefResolver = async () => {
+    throw new Error('Secret references are not allowed in vars and outputs');
+  };
+  let vars: Record<string, unknown> | undefined;
+  const runErrors: string[] = [];
+  if (runTemplates.vars)
+    try {
+      vars = (await render(runTemplates.vars, ctx, noSecrets)).value as Record<string, unknown>;
+      ctx.vars = vars;
+    } catch (err) {
+      runErrors.push(`vars: ${errorMessage(err)}`);
+    }
+
   const out: DryRunStep[] = [];
-  for (const s of steps) {
+  const skip = (s: Step, r: DryRunStep, why: string) => {
+    r.status = 'skipped';
+    r.errors.length = 0;
+    r.rendered = { skipped: why };
+    ctx.steps[s.id] = { status: 'SKIPPED', output: null, link: null };
+  };
+  for (const [i, s] of steps.entries()) {
     const r: DryRunStep = { id: s.id, type: s.type, status: 'planned', errors: [] };
     out.push(r);
     try {
+      // Control flow: the test assumes every planned step succeeds and steps with errors fail.
+      const deps = needsOf(steps, i).map((id) => ctx.steps[id]?.status);
+      if (s.when === 'failure' && !deps.includes('FAILURE')) {
+        skip(s, r, 'when: failure, and no dependency fails in this test');
+        continue;
+      }
+      const refs = casesOf(s);
+      if (refs.length && !refs.some((ref) => (ctx.steps[ref.split('.')[0]]?.output as { case?: string } | null)?.case === ref.split('.')[1])) {
+        skip(s, r, 'branch not taken');
+        continue;
+      }
       if (s.if) {
         r.condition = !!(await evaluate(s.if, ctx));
         if (!r.condition) {
@@ -110,7 +141,7 @@ export async function dryRun(actionId: string, p: Principal, input: DryRunInput)
           continue;
         }
       }
-      const { rendered, output } = await simulate(s, ctx, resolver, input.mock?.[s.id], r);
+      const { rendered, output } = await simulateLoop(s, ctx, resolver, input.mock?.[s.id], r);
       r.rendered = rendered;
       r.output = output;
       ctx.steps[s.id] = { status: 'SUCCESS', output, link: null };
@@ -120,12 +151,39 @@ export async function dryRun(actionId: string, p: Principal, input: DryRunInput)
       ctx.steps[s.id] = { status: 'FAILURE', output: null, link: null };
     }
   }
+  let outputs: Record<string, unknown> | undefined;
+  if (runTemplates.outputs)
+    try {
+      outputs = (await render(runTemplates.outputs, ctx, noSecrets)).value as Record<string, unknown>;
+    } catch (err) {
+      runErrors.push(`outputs: ${errorMessage(err)}`);
+    }
   return {
-    valid: !inputErrors.length && !missing.size && out.every((s) => s.status !== 'error' && !s.errors.length),
-    inputErrors,
+    valid: !inputErrors.length && !missing.size && !runErrors.length && out.every((s) => s.status !== 'error' && !s.errors.length),
+    inputErrors: [...inputErrors, ...runErrors],
     missingSecrets: [...missing],
     steps: out,
+    ...(vars ? { vars } : {}),
+    ...(outputs ? { outputs } : {}),
   };
+}
+
+/** Inline `forEach` (invoke, agent, transform): each item is simulated (the first 20 are rendered). */
+async function simulateLoop(s: Step, ctx: RunContext, resolver: RefResolver, mock: unknown, r: DryRunStep) {
+  const loop = s.type === 'invoke' || s.type === 'agent' || s.type === 'transform' ? s.forEach : undefined;
+  if (!loop) return simulate(s, ctx, resolver, mock, r);
+  const value = await evaluate(loop.items, ctx);
+  const items = value == null ? [] : Array.isArray(value) ? value : [value];
+  if (items.length > 200) r.errors.push(`${items.length} items: loops are limited to 200`);
+  const single = { ...s, forEach: undefined } as Step;
+  const rendered: unknown[] = [];
+  const results: { item: unknown; status: string; output: unknown }[] = [];
+  for (const [index, item] of items.entries()) {
+    const one = await simulate(single, { ...ctx, item, index }, resolver, undefined, r);
+    if (index < 20) rendered.push(one.rendered);
+    results.push({ item, status: 'SUCCESS', output: one.output });
+  }
+  return { rendered: { count: items.length, items: rendered }, output: mock !== undefined ? mock : { results, succeeded: results.length, failed: 0 } };
 }
 
 async function simulate(s: Step, ctx: RunContext, resolver: RefResolver, mock: unknown, r: DryRunStep): Promise<{ rendered: unknown; output: unknown }> {
@@ -169,6 +227,16 @@ async function simulate(s: Step, ctx: RunContext, resolver: RefResolver, mock: u
     case 'input': {
       const message = s.message ? (await render(s.message, ctx, resolver)).value : null;
       return { rendered: { message, form: s.inputs }, output: sample(sampleOf(s.inputs as ObjectSchema)) };
+    }
+    case 'switch': {
+      let chosen: string | null = null;
+      for (const c of s.cases)
+        if (await evaluate(c.when, ctx)) {
+          chosen = c.id;
+          break;
+        }
+      chosen ??= s.default ?? null;
+      return { rendered: { case: chosen }, output: mock !== undefined ? mock : { case: chosen } };
     }
     case 'workflow': {
       await getAction(s.action); // 404 when the child does not exist

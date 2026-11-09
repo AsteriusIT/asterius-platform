@@ -80,6 +80,10 @@ export interface RunRow {
   parent_step_id: string | null;
   action_version: number | null;
   allowed_secrets: string | null;
+  /** Snapshot of the action's run-level `vars` and `outputs` templates (null: none). */
+  workflow: string | null;
+  /** The evaluated `vars` (set when the workflow starts). */
+  vars: string | null;
   user_name?: string;
   user_email?: string;
 }
@@ -493,8 +497,8 @@ async function insertRun(n: NewRun): Promise<{ id: string; replay?: false } | { 
   const t = now();
   const status: RunStatus = n.approval.required ? 'PENDING_APPROVAL' : 'QUEUED';
   const inserted = await run(
-    `INSERT INTO runs (id, org_id, action, action_title, blueprint, entity, inputs, status, invoker, steps, approval, triggered_by, team, trigger_type, trigger_info, parent_run_id, parent_step_id, action_version, allowed_secrets, created_at, updated_at, idempotency_key)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
+    `INSERT INTO runs (id, org_id, action, action_title, blueprint, entity, inputs, status, invoker, steps, approval, triggered_by, team, trigger_type, trigger_info, parent_run_id, parent_step_id, action_version, allowed_secrets, created_at, updated_at, idempotency_key, workflow)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
     id,
     orgId(),
     action.identifier,
@@ -517,6 +521,7 @@ async function insertRun(n: NewRun): Promise<{ id: string; replay?: false } | { 
     t,
     t,
     n.idempotencyKey ?? null,
+    action.vars || action.outputs ? JSON.stringify({ vars: action.vars, outputs: action.outputs }) : null,
   );
   // A concurrent request with the same idempotency key won the unique index.
   if (!inserted.changes) return { replay: true };

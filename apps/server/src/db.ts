@@ -93,7 +93,19 @@ export interface Migration {
  * Baseline policy: the migration history was flattened into migration 1 (schema.ts) on 2026-11-07, before the first
  * production release. From now on append migrations (id 2, 3…) and never edit the baseline once it has shipped.
  */
-export const MIGRATIONS: Migration[] = [{ id: 1, name: 'baseline schema', up: baseline }];
+export const MIGRATIONS: Migration[] = [
+  { id: 1, name: 'baseline schema', up: baseline },
+  {
+    id: 2,
+    name: 'workflow vars and outputs',
+    // actions.workflow / runs.workflow: the run-level `vars` and `outputs` templates; runs.vars: their values for a run.
+    up: async (d) => {
+      await d.exec('ALTER TABLE actions ADD COLUMN workflow TEXT');
+      await d.exec('ALTER TABLE runs ADD COLUMN workflow TEXT');
+      await d.exec('ALTER TABLE runs ADD COLUMN vars TEXT');
+    },
+  },
+];
 
 /**
  * Apply pending numbered migrations (idempotent; serialized across replicas by an advisory lock on Postgres).

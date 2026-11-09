@@ -16,6 +16,7 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import {
+  IconArrowsSplit,
   IconBolt,
   IconCheck,
   IconClock,
@@ -86,6 +87,7 @@ const TYPE_ICON = {
   wait: IconHourglass,
   input: IconForms,
   workflow: IconSubtask,
+  switch: IconArrowsSplit,
 } as const;
 
 /** Grid of the canvas; node positions are multiples of it so the halo under a node lines up with the background. */

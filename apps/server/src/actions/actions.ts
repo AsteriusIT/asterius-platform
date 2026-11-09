@@ -8,7 +8,7 @@ import { all, bool, json, now, one, run } from '../db.js';
 import { badRequest, managedError, notFound } from '../lib/errors.js';
 import { actionDef, type ActionDef } from '../schemas.js';
 import { validator } from '../catalog/validation.js';
-import { stepsOf, validateWorkflow } from './workflow.js';
+import { stepsOf, validateRunTemplates, validateWorkflow } from './workflow.js';
 import { isAdmin, matchesSubjects, type Principal } from '../auth/users.js';
 import { orgId } from '../orgs/context.js';
 
@@ -30,6 +30,8 @@ interface Row {
   next_fire_at: string | null;
   version: number;
   allowed_secrets: string | null;
+  /** Run-level `vars` and `outputs` (JSON), when set. */
+  workflow: string | null;
 }
 
 /** Stored in the trigger column when a workflow has no trigger yet (draft). */
@@ -62,6 +64,7 @@ function toAction(r: Row): Action {
     version: Number(r.version),
     ...(r.allowed_secrets ? { secrets: json<string[]>(r.allowed_secrets, []) } : {}),
     steps,
+    ...json<Pick<Action, 'vars' | 'outputs'>>(r.workflow, {}),
     ...(declared || !invoker ? {} : { invoker }),
     enabled: bool(r.enabled),
     managed: bool(r.managed),
@@ -71,7 +74,7 @@ function toAction(r: Row): Action {
 /** Non-admins see what an action does, not how (URLs, secret references, pipeline ids). */
 export const forViewer = (a: Action, p: Principal): Action => {
   if (isAdmin(p)) return a;
-  const { invoker, ...rest } = a;
+  const { invoker, vars: _vars, outputs: _outputs, ...rest } = a;
   return {
     ...rest,
     ...(invoker ? { invoker: { type: invoker.type } } : {}),
@@ -119,6 +122,7 @@ export async function upsertAction(
   if (form && form.on !== 'create' && !form.blueprint) throw badRequest(`Forms submitted on an entity ("${form.on}") need a blueprint`);
   if (form) validator(form.inputs as never);
   validateWorkflow(stepsOf(def));
+  validateRunTemplates(def);
   assertSecretsAllowed(def.secrets, [def.steps, def.invoker, t0]);
   const existing = await one<Row>('SELECT * FROM actions WHERE org_id = ? AND identifier = ?', org, def.identifier);
   if (existing && bool(existing.managed) && !opts.managed) throw managedError('Action', def.identifier);
@@ -163,6 +167,9 @@ export async function upsertAction(
       org,
       def.identifier,
     );
+  const workflow =
+    def.vars || def.outputs ? JSON.stringify({ ...(def.vars ? { vars: def.vars } : {}), ...(def.outputs ? { outputs: def.outputs } : {}) }) : null;
+  await run('UPDATE actions SET workflow = ? WHERE org_id = ? AND identifier = ?', workflow, org, def.identifier);
   invalidateTriggerCache();
   return { action: await getAction(def.identifier), created: !existing };
 }

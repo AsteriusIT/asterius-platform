@@ -360,7 +360,7 @@ export interface InvokerConfig {
 }
 
 // ---------- workflows ----------
-export type WorkflowStepType = 'invoke' | 'approval' | 'agent' | 'transform' | 'wait' | 'input' | 'workflow';
+export type WorkflowStepType = 'invoke' | 'approval' | 'agent' | 'transform' | 'wait' | 'input' | 'workflow' | 'switch';
 
 interface WorkflowStepBase {
   /** Letters, digits and _; later steps read `{{ steps.<id>.output }}`. */
@@ -377,11 +377,26 @@ interface WorkflowStepBase {
   continueOnError?: boolean;
   /** The step output must match this schema (and stay under the platform size cap) or the step fails. */
   outputSchema?: ObjectSchema;
+  /** success (default): after its dependencies succeeded · failure: only if one of them failed (fallback) · always: once they are done (cleanup). */
+  when?: 'success' | 'failure' | 'always';
+  /** fail (default) · skip: a timeout skips the step · continue: a timeout fails it without failing the workflow. */
+  onTimeout?: 'fail' | 'skip' | 'continue';
+  /** Branch of a switch step: `<switchStepId>.<caseId>` (or several); skipped when another branch was taken. */
+  case?: string | string[];
+}
+
+/** Inline loop (invoke, agent, transform): `item` and `index` in templates; output `{ results: [{ item, status, output }], succeeded, failed }`. */
+export interface InlineForEach {
+  items: string;
+  /** Agent steps only: items processed in parallel (invoke and transform steps iterate one at a time). */
+  maxConcurrency?: number;
+  failFast?: boolean;
 }
 
 export interface InvokeStep extends WorkflowStepBase {
   type: 'invoke';
   invoker: InvokerConfig;
+  forEach?: InlineForEach;
 }
 
 export interface ApprovalStep extends WorkflowStepBase {
@@ -438,12 +453,22 @@ export interface AgentStep extends WorkflowStepBase {
   provider?: AiProvider;
   /** `${secret:NAME}` reference; default: the platform's ANTHROPIC_API_KEY. */
   apiKey?: string;
+  forEach?: InlineForEach;
 }
 
 export interface TransformStep extends WorkflowStepBase {
   type: 'transform';
   /** Output key → JSONata expression. */
   output: Record<string, string>;
+  forEach?: InlineForEach;
+}
+
+/** Branching: the first case whose JSONata `when` is truthy is taken (output `{ case }`); steps with `case: <id>.<case>` of other branches are skipped. */
+export interface SwitchStep extends WorkflowStepBase {
+  type: 'switch';
+  cases: { id: string; when: string }[];
+  /** Case taken when none matches (omitted: no branch). */
+  default?: string;
 }
 
 /** Pause: a duration (`15m`), until a time (template), or until an external event is posted to the step. */
@@ -471,7 +496,7 @@ export interface WorkflowCallStep extends WorkflowStepBase {
   forEach?: { items: string; maxConcurrency?: number; failFast?: boolean };
 }
 
-export type WorkflowStep = InvokeStep | ApprovalStep | AgentStep | TransformStep | WaitStep | InputStep | WorkflowCallStep;
+export type WorkflowStep = InvokeStep | ApprovalStep | AgentStep | TransformStep | WaitStep | InputStep | WorkflowCallStep | SwitchStep;
 
 export type StepStatus = 'PENDING' | 'QUEUED' | 'RUNNING' | 'WAITING_APPROVAL' | 'WAITING' | 'SUCCESS' | 'FAILURE' | 'SKIPPED' | 'CANCELLED';
 
@@ -484,7 +509,12 @@ export interface RunStep {
   statusLabel: string | null;
   attempt: number;
   maxAttempts: number;
+  /** continueOnError, or a timeout with `onTimeout: continue`: the failure does not fail the workflow. */
   continueOnError: boolean;
+  when?: 'success' | 'failure' | 'always';
+  case?: string[];
+  /** A failure handled by a `when: failure` step that succeeded (the workflow does not fail because of it). */
+  handled?: boolean;
   output: unknown;
   link: string | null;
   /** Approval and input steps: the rendered message for the people asked. */
@@ -576,6 +606,10 @@ export interface Action {
   steps: WorkflowStep[];
   /** Legacy single-invoker form (configuration files), when the action was declared with `invoker`. */
   invoker?: InvokerConfig;
+  /** Templates evaluated when a run starts: `vars.<name>` in every template and condition. */
+  vars?: Record<string, unknown>;
+  /** Templates evaluated when the run ends: the run result (seen by parent workflows). Default: the outputs by step id. */
+  outputs?: Record<string, unknown>;
   enabled: boolean;
   managed: boolean;
 }
@@ -615,6 +649,10 @@ export interface DryRunResult {
   /** Secret and environment references that do not resolve. */
   missingSecrets: string[];
   steps: DryRunStep[];
+  /** The action's `vars`, evaluated. */
+  vars?: Record<string, unknown>;
+  /** The action's `outputs` against the simulated steps (the run result). */
+  outputs?: Record<string, unknown>;
 }
 
 export type RunStatus = 'PENDING_APPROVAL' | 'QUEUED' | 'IN_PROGRESS' | 'SUCCESS' | 'FAILURE' | 'REJECTED' | 'CANCELLED';

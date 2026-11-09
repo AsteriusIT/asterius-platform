@@ -33,15 +33,17 @@ import type {
   AgentTool,
   ApprovalStep,
   InvokeStep,
+  InlineForEach,
   InvokerConfig,
   ObjectSchema,
   PluginInfo,
+  SwitchStep,
   TransformStep,
   WorkflowStep,
   WorkflowStepType,
 } from '@asterius/shared';
 import { api } from '../../lib/api';
-import { needsOf } from '../../lib/workflow';
+import { caseOptions, needsOf } from '../../lib/workflow';
 import { fieldProblems, fieldsToSchema, nameFromLabel, schemaToFields, type FieldDraft } from './fields';
 import { FieldsEditor, type FieldsMode } from './FieldsEditor';
 import { ExpressionStatus } from './ExpressionTools';
@@ -76,9 +78,10 @@ export function newStep(type: WorkflowStepType, steps: WorkflowStep[], invokers:
     wait: 'Wait',
     input: 'Ask for input',
     workflow: 'Run a workflow',
+    switch: 'Branch',
   }[type];
   const id = uniqueId(
-    { invoke: 'call', approval: 'approval', agent: 'review', transform: 'compute', wait: 'wait', input: 'ask', workflow: 'sub' }[type],
+    { invoke: 'call', approval: 'approval', agent: 'review', transform: 'compute', wait: 'wait', input: 'ask', workflow: 'sub', switch: 'route' }[type],
     steps,
   );
   if (type === 'invoke') {
@@ -90,7 +93,8 @@ export function newStep(type: WorkflowStepType, steps: WorkflowStep[], invokers:
   if (type === 'wait') return { id, name, type, duration: '15m' };
   if (type === 'input') return { id, name, type, inputs: { properties: {} } };
   if (type === 'workflow') return { id, name, type, action: '', inputs: {} };
-  return { id, name, type, output: {} };
+  if (type === 'switch') return { id, name, type, cases: [{ id: 'yes', when: 'true' }], default: 'no' };
+  return { id, name, type: 'transform', output: {} };
 }
 
 /** Problems found before saving (the server validates everything again). */
@@ -121,6 +125,12 @@ export function stepProblems(steps: WorkflowStep[], invokers: PluginInfo[]): str
     if (s.type === 'input') out.push(...fieldProblems(schemaToFields(s.inputs), `${where}: field`));
     if (s.type === 'transform')
       for (const k of Object.keys(s.output ?? {})) if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(k)) out.push(`${where}: invalid output key "${k}"`);
+    if (s.type === 'switch' && !s.cases?.length) out.push(`${where}: add at least one case`);
+    if (s.when === 'failure' && !needsOf(steps, i).length) out.push(`${where}: "on failure" needs a step to watch`);
+    const options = caseOptions(steps, i);
+    for (const c of s.case === undefined ? [] : Array.isArray(s.case) ? s.case : [s.case])
+      if (!options.includes(c)) out.push(`${where}: unknown branch "${c}"`);
+    if ('forEach' in s && s.forEach && s.type !== 'workflow' && s.retries) out.push(`${where}: retries cannot be combined with "for each"`);
   });
   return out;
 }
@@ -171,6 +181,10 @@ export function StepSettings({
       {step.type === 'wait' && <WaitEditor step={step} onChange={update} />}
       {step.type === 'input' && <InputEditor step={step} onChange={update} />}
       {step.type === 'workflow' && <WorkflowCallEditor step={step} onChange={update} />}
+      {step.type === 'switch' && <SwitchEditor step={step} onChange={update} />}
+      {(step.type === 'invoke' || step.type === 'agent' || step.type === 'transform') && (
+        <LoopEditor value={step.forEach} parallel={step.type === 'agent'} onChange={(forEach) => update({ forEach })} />
+      )}
       {warnings
         .filter((w) => w.startsWith(`Step "${step.name || step.id}"`))
         .map((w) => (
@@ -187,7 +201,13 @@ export function StepSettings({
 export function patchStep(steps: WorkflowStep[], index: number, patch: Partial<WorkflowStep>): WorkflowStep[] {
   const old = steps[index]!;
   const next = steps.map((s, i) => (i === index ? ({ ...s, ...patch } as WorkflowStep) : s));
-  if (patch.id && patch.id !== old.id) for (const s of next) if (s.needs) s.needs = s.needs.map((n) => (n === old.id ? patch.id! : n));
+  if (patch.id && patch.id !== old.id)
+    for (const s of next) {
+      if (s.needs) s.needs = s.needs.map((n) => (n === old.id ? patch.id! : n));
+      // Branches name their switch: `<switch>.<case>`.
+      const rename = (c: string) => (c.startsWith(`${old.id}.`) ? `${patch.id}${c.slice(old.id.length)}` : c);
+      if (s.case !== undefined) s.case = Array.isArray(s.case) ? s.case.map(rename) : rename(s.case);
+    }
   return next;
 }
 
@@ -213,14 +233,19 @@ function Variables({
       if (s.type === 'approval') return [`steps.${s.id}.output.approved`, `steps.${s.id}.output.by`, `steps.${s.id}.output.choice`];
       if (s.type === 'input') return Object.keys(s.inputs?.properties ?? {}).map((k) => `steps.${s.id}.output.${k}`);
       if (s.type === 'workflow') return [`steps.${s.id}.output.result`, `steps.${s.id}.output.status`];
+      if (s.type === 'switch') return [`steps.${s.id}.output.case`];
       return [`steps.${s.id}.output`, `steps.${s.id}.link`];
     });
+    const current = steps[index];
+    const loop = current && 'forEach' in current && current.forEach ? ['item', 'index'] : [];
     return [
       ...inputFields.filter((f) => f.name).map((f) => `inputs.${f.name}`),
       ...(onEntity
         ? ['entity.identifier', 'entity.title', 'entity.team', ...Object.keys(bp.data?.schema.properties ?? {}).map((p) => `entity.properties.${p}`)]
         : []),
+      ...loop,
       ...earlier,
+      'vars.<name>',
       'trigger.user.email',
       'trigger.user.name',
       'run.url',
@@ -489,6 +514,74 @@ function WorkflowCallEditor({ step, onChange }: { step: WorkflowCallStep; onChan
   );
 }
 
+/** Cases of a switch, in order (case id → JSONata condition), and the default case. */
+function SwitchEditor({ step, onChange }: { step: SwitchStep; onChange: (p: Partial<SwitchStep>) => void }) {
+  return (
+    <Stack gap="sm">
+      <Input.Wrapper
+        label="Cases"
+        description={
+          <>
+            Case id → JSONata condition, checked in order: the first true one is taken (<code>{`steps.${step.id}.output.case`}</code>). Steps join a branch with{' '}
+            <code>{`case: ${step.id}.<case>`}</code> in their flow settings.
+          </>
+        }
+      >
+        <KeyValueEditor
+          value={Object.fromEntries(step.cases.map((c) => [c.id, c.when]))}
+          onChange={(o) => onChange({ cases: Object.entries(o).map(([id, when]) => ({ id, when: String(when) })) })}
+          keyPlaceholder="case id"
+          valuePlaceholder='JSONata, e.g. inputs.env = "prod"'
+        />
+      </Input.Wrapper>
+      <TextInput
+        label="Default case"
+        description="Taken when no condition holds (empty: no branch runs)"
+        placeholder="none"
+        value={step.default ?? ''}
+        onChange={(e) => onChange({ default: e.currentTarget.value || undefined })}
+        styles={MONO_INPUT}
+      />
+    </Stack>
+  );
+}
+
+/** Inline loop of integration, AI and transform steps (no child runs). */
+function LoopEditor({ value, parallel, onChange }: { value?: InlineForEach; parallel: boolean; onChange: (v: InlineForEach | undefined) => void }) {
+  return (
+    <Stack gap="sm">
+      <Switch
+        label="Run for each item of a list"
+        description={`item and index in the templates; output { results: [{ item, status, output }], succeeded, failed }${parallel ? '' : '. Items run one at a time'}`}
+        checked={!!value}
+        onChange={(e) => onChange(e.currentTarget.checked ? { items: 'inputs.items', maxConcurrency: 1 } : undefined)}
+      />
+      {value && (
+        <SimpleGrid cols={{ base: 1, sm: 3 }}>
+          <TextInput label="List (JSONata)" value={value.items} onChange={(e) => onChange({ ...value, items: e.currentTarget.value })} styles={MONO_INPUT} />
+          {parallel ? (
+            <NumberInput
+              label="At most in parallel"
+              min={1}
+              max={20}
+              value={value.maxConcurrency ?? 1}
+              onChange={(n) => onChange({ ...value, maxConcurrency: Number(n) || 1 })}
+            />
+          ) : (
+            <div />
+          )}
+          <Switch
+            mt={28}
+            label="Stop at the first failure"
+            checked={!!value.failFast}
+            onChange={(e) => onChange({ ...value, failFast: e.currentTarget.checked })}
+          />
+        </SimpleGrid>
+      )}
+    </Stack>
+  );
+}
+
 function AgentEditor({ step, onChange }: { step: AgentStep; onChange: (p: Partial<AgentStep>) => void }) {
   const meta = useQuery({ queryKey: ['meta'], queryFn: api.meta, staleTime: Infinity });
   const models: { value: string; label: string; description: string; inputPrice?: number; outputPrice?: number }[] = meta.data?.models ?? AGENT_MODELS;
@@ -747,6 +840,9 @@ function FlowEditor({ steps, index, onChange }: { steps: WorkflowStep[]; index: 
   const step = steps[index];
   const earlier = steps.slice(0, index).map((s) => ({ value: s.id, label: s.name ? `${s.name} (${s.id})` : s.id }));
   const mode = step.needs === undefined ? 'previous' : step.needs.length ? 'custom' : 'start';
+  const branches = caseOptions(steps, index);
+  const cases = step.case === undefined ? [] : Array.isArray(step.case) ? step.case : [step.case];
+  const looping = 'forEach' in step && !!step.forEach && step.type !== 'workflow';
   return (
     <Accordion variant="contained" radius="lg" defaultValue={step.if || step.needs ? 'flow' : null}>
       <Accordion.Item value="flow">
@@ -784,6 +880,31 @@ function FlowEditor({ steps, index, onChange }: { steps: WorkflowStep[]; index: 
               styles={MONO_INPUT}
             />
             <ExpressionStatus expression={step.if ?? ''} context={SAMPLE_CONTEXT} />
+            <Input.Wrapper
+              label="Run when"
+              description="After its dependencies succeeded (default), only when one of them failed (fallback, compensation: it recovers the workflow when it succeeds), or always (cleanup)"
+            >
+              <SegmentedControl
+                fullWidth
+                value={step.when ?? 'success'}
+                onChange={(w) => onChange({ when: w === 'success' ? undefined : (w as WorkflowStep['when']) })}
+                data={[
+                  { value: 'success', label: 'They succeeded' },
+                  { value: 'failure', label: 'One failed', disabled: index === 0 && !step.needs?.length },
+                  { value: 'always', label: 'Always' },
+                ]}
+              />
+            </Input.Wrapper>
+            {(branches.length > 0 || cases.length > 0) && (
+              <MultiSelect
+                label="Branch"
+                description="Runs only when one of these switch cases is taken (skipped otherwise); the switch must run before this step"
+                placeholder="every branch"
+                data={[...new Set([...branches, ...cases])]}
+                value={cases}
+                onChange={(c) => onChange({ case: c.length ? (c.length === 1 ? c[0] : c) : undefined })}
+              />
+            )}
             <SimpleGrid cols={{ base: 1, sm: 3 }}>
               <NumberInput
                 label="Retries"
@@ -791,7 +912,7 @@ function FlowEditor({ steps, index, onChange }: { steps: WorkflowStep[]; index: 
                 max={10}
                 value={step.retries ?? 0}
                 onChange={(n) => onChange({ retries: Number(n) || 0 })}
-                disabled={step.type === 'approval'}
+                disabled={step.type === 'approval' || step.type === 'switch' || looping}
               />
               <NumberInput
                 label="Retry delay (s)"
@@ -810,6 +931,16 @@ function FlowEditor({ steps, index, onChange }: { steps: WorkflowStep[]; index: 
                 onChange={(n) => onChange({ timeoutMinutes: n === '' ? undefined : Number(n) })}
               />
             </SimpleGrid>
+            <Select
+              label="On timeout"
+              data={[
+                { value: 'fail', label: 'Fail the step' },
+                { value: 'skip', label: 'Skip the step (the workflow continues)' },
+                { value: 'continue', label: 'Fail the step, but continue the workflow' },
+              ]}
+              value={step.onTimeout ?? 'fail'}
+              onChange={(v) => onChange({ onTimeout: !v || v === 'fail' ? undefined : (v as WorkflowStep['onTimeout']) })}
+            />
             <Switch
               label="Continue if this step fails"
               description="The workflow still succeeds and later steps run; use for best-effort steps (notifications, AI hints)"

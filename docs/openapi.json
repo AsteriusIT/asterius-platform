@@ -930,6 +930,39 @@
                         }
                       }
                     },
+                    "when": {
+                      "type": "string",
+                      "enum": [
+                        "success",
+                        "failure",
+                        "always"
+                      ]
+                    },
+                    "onTimeout": {
+                      "type": "string",
+                      "enum": [
+                        "fail",
+                        "skip",
+                        "continue"
+                      ]
+                    },
+                    "case": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,40}\\.[A-Za-z_][A-Za-z0-9_-]{0,40}$"
+                        },
+                        {
+                          "minItems": 1,
+                          "maxItems": 20,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,40}\\.[A-Za-z_][A-Za-z0-9_-]{0,40}$"
+                          }
+                        }
+                      ]
+                    },
                     "type": {
                       "type": "string",
                       "const": "invoke"
@@ -946,6 +979,29 @@
                         "type"
                       ],
                       "additionalProperties": {}
+                    },
+                    "forEach": {
+                      "type": "object",
+                      "properties": {
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "maxConcurrency": {
+                          "default": 1,
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 20
+                        },
+                        "failFast": {
+                          "default": false,
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "items"
+                      ]
                     }
                   },
                   "required": [
@@ -1026,6 +1082,39 @@
                           }
                         }
                       }
+                    },
+                    "when": {
+                      "type": "string",
+                      "enum": [
+                        "success",
+                        "failure",
+                        "always"
+                      ]
+                    },
+                    "onTimeout": {
+                      "type": "string",
+                      "enum": [
+                        "fail",
+                        "skip",
+                        "continue"
+                      ]
+                    },
+                    "case": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,40}\\.[A-Za-z_][A-Za-z0-9_-]{0,40}$"
+                        },
+                        {
+                          "minItems": 1,
+                          "maxItems": 20,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,40}\\.[A-Za-z_][A-Za-z0-9_-]{0,40}$"
+                          }
+                        }
+                      ]
                     },
                     "type": {
                       "type": "string",
@@ -1190,6 +1279,39 @@
                           }
                         }
                       }
+                    },
+                    "when": {
+                      "type": "string",
+                      "enum": [
+                        "success",
+                        "failure",
+                        "always"
+                      ]
+                    },
+                    "onTimeout": {
+                      "type": "string",
+                      "enum": [
+                        "fail",
+                        "skip",
+                        "continue"
+                      ]
+                    },
+                    "case": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,40}\\.[A-Za-z_][A-Za-z0-9_-]{0,40}$"
+                        },
+                        {
+                          "minItems": 1,
+                          "maxItems": 20,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,40}\\.[A-Za-z_][A-Za-z0-9_-]{0,40}$"
+                          }
+                        }
+                      ]
                     },
                     "type": {
                       "type": "string",
@@ -1395,6 +1517,29 @@
                     },
                     "apiKey": {
                       "type": "string"
+                    },
+                    "forEach": {
+                      "type": "object",
+                      "properties": {
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "maxConcurrency": {
+                          "default": 1,
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 20
+                        },
+                        "failFast": {
+                          "default": false,
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "items"
+                      ]
                     }
                   },
                   "required": [
@@ -1475,6 +1620,39 @@
                           }
                         }
                       }
+                    },
+                    "when": {
+                      "type": "string",
+                      "enum": [
+                        "success",
+                        "failure",
+                        "always"
+                      ]
+                    },
+                    "onTimeout": {
+                      "type": "string",
+                      "enum": [
+                        "fail",
+                        "skip",
+                        "continue"
+                      ]
+                    },
+                    "case": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,40}\\.[A-Za-z_][A-Za-z0-9_-]{0,40}$"
+                        },
+                        {
+                          "minItems": 1,
+                          "maxItems": 20,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,40}\\.[A-Za-z_][A-Za-z0-9_-]{0,40}$"
+                          }
+                        }
+                      ]
                     },
                     "type": {
                       "type": "string",
@@ -1583,6 +1761,39 @@
                           }
                         }
                       }
+                    },
+                    "when": {
+                      "type": "string",
+                      "enum": [
+                        "success",
+                        "failure",
+                        "always"
+                      ]
+                    },
+                    "onTimeout": {
+                      "type": "string",
+                      "enum": [
+                        "fail",
+                        "skip",
+                        "continue"
+                      ]
+                    },
+                    "case": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,40}\\.[A-Za-z_][A-Za-z0-9_-]{0,40}$"
+                        },
+                        {
+                          "minItems": 1,
+                          "maxItems": 20,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,40}\\.[A-Za-z_][A-Za-z0-9_-]{0,40}$"
+                          }
+                        }
+                      ]
                     },
                     "type": {
                       "type": "string",
@@ -1730,6 +1941,39 @@
                         }
                       }
                     },
+                    "when": {
+                      "type": "string",
+                      "enum": [
+                        "success",
+                        "failure",
+                        "always"
+                      ]
+                    },
+                    "onTimeout": {
+                      "type": "string",
+                      "enum": [
+                        "fail",
+                        "skip",
+                        "continue"
+                      ]
+                    },
+                    "case": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,40}\\.[A-Za-z_][A-Za-z0-9_-]{0,40}$"
+                        },
+                        {
+                          "minItems": 1,
+                          "maxItems": 20,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,40}\\.[A-Za-z_][A-Za-z0-9_-]{0,40}$"
+                          }
+                        }
+                      ]
+                    },
                     "type": {
                       "type": "string",
                       "const": "workflow"
@@ -1853,6 +2097,39 @@
                         }
                       }
                     },
+                    "when": {
+                      "type": "string",
+                      "enum": [
+                        "success",
+                        "failure",
+                        "always"
+                      ]
+                    },
+                    "onTimeout": {
+                      "type": "string",
+                      "enum": [
+                        "fail",
+                        "skip",
+                        "continue"
+                      ]
+                    },
+                    "case": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,40}\\.[A-Za-z_][A-Za-z0-9_-]{0,40}$"
+                        },
+                        {
+                          "minItems": 1,
+                          "maxItems": 20,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,40}\\.[A-Za-z_][A-Za-z0-9_-]{0,40}$"
+                          }
+                        }
+                      ]
+                    },
                     "type": {
                       "type": "string",
                       "const": "transform"
@@ -1866,12 +2143,179 @@
                       "additionalProperties": {
                         "type": "string"
                       }
+                    },
+                    "forEach": {
+                      "type": "object",
+                      "properties": {
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 2000
+                        },
+                        "maxConcurrency": {
+                          "default": 1,
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 20
+                        },
+                        "failFast": {
+                          "default": false,
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "items"
+                      ]
                     }
                   },
                   "required": [
                     "id",
                     "type",
                     "output"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,40}$"
+                    },
+                    "name": {
+                      "type": "string",
+                      "maxLength": 100
+                    },
+                    "if": {
+                      "type": "string",
+                      "maxLength": 2000
+                    },
+                    "needs": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "retries": {
+                      "default": 0,
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 10
+                    },
+                    "retryDelaySeconds": {
+                      "default": 30,
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 3600
+                    },
+                    "timeoutMinutes": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 43200
+                    },
+                    "continueOnError": {
+                      "default": false,
+                      "type": "boolean"
+                    },
+                    "outputSchema": {
+                      "default": {
+                        "properties": {}
+                      },
+                      "type": "object",
+                      "properties": {
+                        "properties": {
+                          "default": {},
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string",
+                            "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+                          },
+                          "additionalProperties": {
+                            "$ref": "#/components/schemas/Action_schema0"
+                          }
+                        },
+                        "required": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "order": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "when": {
+                      "type": "string",
+                      "enum": [
+                        "success",
+                        "failure",
+                        "always"
+                      ]
+                    },
+                    "onTimeout": {
+                      "type": "string",
+                      "enum": [
+                        "fail",
+                        "skip",
+                        "continue"
+                      ]
+                    },
+                    "case": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,40}\\.[A-Za-z_][A-Za-z0-9_-]{0,40}$"
+                        },
+                        {
+                          "minItems": 1,
+                          "maxItems": 20,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,40}\\.[A-Za-z_][A-Za-z0-9_-]{0,40}$"
+                          }
+                        }
+                      ]
+                    },
+                    "type": {
+                      "type": "string",
+                      "const": "switch"
+                    },
+                    "cases": {
+                      "minItems": 1,
+                      "maxItems": 20,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "pattern": "^[A-Za-z_][A-Za-z0-9_-]{0,40}$"
+                          },
+                          "when": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 2000
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "when"
+                        ]
+                      }
+                    },
+                    "default": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z_][A-Za-z0-9_-]{0,40}$"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "type",
+                    "cases"
                   ]
                 }
               ]
@@ -1888,6 +2332,22 @@
           "enabled": {
             "default": true,
             "type": "boolean"
+          },
+          "vars": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+            },
+            "additionalProperties": {}
+          },
+          "outputs": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+            },
+            "additionalProperties": {}
           }
         },
         "required": [
@@ -3306,6 +3766,39 @@
                               }
                             }
                           },
+                          "when": {
+                            "type": "string",
+                            "enum": [
+                              "success",
+                              "failure",
+                              "always"
+                            ]
+                          },
+                          "onTimeout": {
+                            "type": "string",
+                            "enum": [
+                              "fail",
+                              "skip",
+                              "continue"
+                            ]
+                          },
+                          "case": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,40}\\.[A-Za-z_][A-Za-z0-9_-]{0,40}$"
+                              },
+                              {
+                                "minItems": 1,
+                                "maxItems": 20,
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,40}\\.[A-Za-z_][A-Za-z0-9_-]{0,40}$"
+                                }
+                              }
+                            ]
+                          },
                           "type": {
                             "type": "string",
                             "const": "invoke"
@@ -3322,6 +3815,29 @@
                               "type"
                             ],
                             "additionalProperties": {}
+                          },
+                          "forEach": {
+                            "type": "object",
+                            "properties": {
+                              "items": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 2000
+                              },
+                              "maxConcurrency": {
+                                "default": 1,
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 20
+                              },
+                              "failFast": {
+                                "default": false,
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "items"
+                            ]
                           }
                         },
                         "required": [
@@ -3402,6 +3918,39 @@
                                 }
                               }
                             }
+                          },
+                          "when": {
+                            "type": "string",
+                            "enum": [
+                              "success",
+                              "failure",
+                              "always"
+                            ]
+                          },
+                          "onTimeout": {
+                            "type": "string",
+                            "enum": [
+                              "fail",
+                              "skip",
+                              "continue"
+                            ]
+                          },
+                          "case": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,40}\\.[A-Za-z_][A-Za-z0-9_-]{0,40}$"
+                              },
+                              {
+                                "minItems": 1,
+                                "maxItems": 20,
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,40}\\.[A-Za-z_][A-Za-z0-9_-]{0,40}$"
+                                }
+                              }
+                            ]
                           },
                           "type": {
                             "type": "string",
@@ -3566,6 +4115,39 @@
                                 }
                               }
                             }
+                          },
+                          "when": {
+                            "type": "string",
+                            "enum": [
+                              "success",
+                              "failure",
+                              "always"
+                            ]
+                          },
+                          "onTimeout": {
+                            "type": "string",
+                            "enum": [
+                              "fail",
+                              "skip",
+                              "continue"
+                            ]
+                          },
+                          "case": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,40}\\.[A-Za-z_][A-Za-z0-9_-]{0,40}$"
+                              },
+                              {
+                                "minItems": 1,
+                                "maxItems": 20,
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,40}\\.[A-Za-z_][A-Za-z0-9_-]{0,40}$"
+                                }
+                              }
+                            ]
                           },
                           "type": {
                             "type": "string",
@@ -3771,6 +4353,29 @@
                           },
                           "apiKey": {
                             "type": "string"
+                          },
+                          "forEach": {
+                            "type": "object",
+                            "properties": {
+                              "items": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 2000
+                              },
+                              "maxConcurrency": {
+                                "default": 1,
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 20
+                              },
+                              "failFast": {
+                                "default": false,
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "items"
+                            ]
                           }
                         },
                         "required": [
@@ -3851,6 +4456,39 @@
                                 }
                               }
                             }
+                          },
+                          "when": {
+                            "type": "string",
+                            "enum": [
+                              "success",
+                              "failure",
+                              "always"
+                            ]
+                          },
+                          "onTimeout": {
+                            "type": "string",
+                            "enum": [
+                              "fail",
+                              "skip",
+                              "continue"
+                            ]
+                          },
+                          "case": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,40}\\.[A-Za-z_][A-Za-z0-9_-]{0,40}$"
+                              },
+                              {
+                                "minItems": 1,
+                                "maxItems": 20,
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,40}\\.[A-Za-z_][A-Za-z0-9_-]{0,40}$"
+                                }
+                              }
+                            ]
                           },
                           "type": {
                             "type": "string",
@@ -3959,6 +4597,39 @@
                                 }
                               }
                             }
+                          },
+                          "when": {
+                            "type": "string",
+                            "enum": [
+                              "success",
+                              "failure",
+                              "always"
+                            ]
+                          },
+                          "onTimeout": {
+                            "type": "string",
+                            "enum": [
+                              "fail",
+                              "skip",
+                              "continue"
+                            ]
+                          },
+                          "case": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,40}\\.[A-Za-z_][A-Za-z0-9_-]{0,40}$"
+                              },
+                              {
+                                "minItems": 1,
+                                "maxItems": 20,
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,40}\\.[A-Za-z_][A-Za-z0-9_-]{0,40}$"
+                                }
+                              }
+                            ]
                           },
                           "type": {
                             "type": "string",
@@ -4106,6 +4777,39 @@
                               }
                             }
                           },
+                          "when": {
+                            "type": "string",
+                            "enum": [
+                              "success",
+                              "failure",
+                              "always"
+                            ]
+                          },
+                          "onTimeout": {
+                            "type": "string",
+                            "enum": [
+                              "fail",
+                              "skip",
+                              "continue"
+                            ]
+                          },
+                          "case": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,40}\\.[A-Za-z_][A-Za-z0-9_-]{0,40}$"
+                              },
+                              {
+                                "minItems": 1,
+                                "maxItems": 20,
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,40}\\.[A-Za-z_][A-Za-z0-9_-]{0,40}$"
+                                }
+                              }
+                            ]
+                          },
                           "type": {
                             "type": "string",
                             "const": "workflow"
@@ -4229,6 +4933,39 @@
                               }
                             }
                           },
+                          "when": {
+                            "type": "string",
+                            "enum": [
+                              "success",
+                              "failure",
+                              "always"
+                            ]
+                          },
+                          "onTimeout": {
+                            "type": "string",
+                            "enum": [
+                              "fail",
+                              "skip",
+                              "continue"
+                            ]
+                          },
+                          "case": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,40}\\.[A-Za-z_][A-Za-z0-9_-]{0,40}$"
+                              },
+                              {
+                                "minItems": 1,
+                                "maxItems": 20,
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,40}\\.[A-Za-z_][A-Za-z0-9_-]{0,40}$"
+                                }
+                              }
+                            ]
+                          },
                           "type": {
                             "type": "string",
                             "const": "transform"
@@ -4242,12 +4979,179 @@
                             "additionalProperties": {
                               "type": "string"
                             }
+                          },
+                          "forEach": {
+                            "type": "object",
+                            "properties": {
+                              "items": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 2000
+                              },
+                              "maxConcurrency": {
+                                "default": 1,
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 20
+                              },
+                              "failFast": {
+                                "default": false,
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "items"
+                            ]
                           }
                         },
                         "required": [
                           "id",
                           "type",
                           "output"
+                        ]
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,40}$"
+                          },
+                          "name": {
+                            "type": "string",
+                            "maxLength": 100
+                          },
+                          "if": {
+                            "type": "string",
+                            "maxLength": 2000
+                          },
+                          "needs": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "retries": {
+                            "default": 0,
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 10
+                          },
+                          "retryDelaySeconds": {
+                            "default": 30,
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 3600
+                          },
+                          "timeoutMinutes": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 43200
+                          },
+                          "continueOnError": {
+                            "default": false,
+                            "type": "boolean"
+                          },
+                          "outputSchema": {
+                            "default": {
+                              "properties": {}
+                            },
+                            "type": "object",
+                            "properties": {
+                              "properties": {
+                                "default": {},
+                                "type": "object",
+                                "propertyNames": {
+                                  "type": "string",
+                                  "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+                                },
+                                "additionalProperties": {
+                                  "$ref": "#/components/schemas/ConfigFile_schema0"
+                                }
+                              },
+                              "required": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "order": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              }
+                            }
+                          },
+                          "when": {
+                            "type": "string",
+                            "enum": [
+                              "success",
+                              "failure",
+                              "always"
+                            ]
+                          },
+                          "onTimeout": {
+                            "type": "string",
+                            "enum": [
+                              "fail",
+                              "skip",
+                              "continue"
+                            ]
+                          },
+                          "case": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,40}\\.[A-Za-z_][A-Za-z0-9_-]{0,40}$"
+                              },
+                              {
+                                "minItems": 1,
+                                "maxItems": 20,
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,40}\\.[A-Za-z_][A-Za-z0-9_-]{0,40}$"
+                                }
+                              }
+                            ]
+                          },
+                          "type": {
+                            "type": "string",
+                            "const": "switch"
+                          },
+                          "cases": {
+                            "minItems": 1,
+                            "maxItems": 20,
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "id": {
+                                  "type": "string",
+                                  "pattern": "^[A-Za-z_][A-Za-z0-9_-]{0,40}$"
+                                },
+                                "when": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 2000
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "when"
+                              ]
+                            }
+                          },
+                          "default": {
+                            "type": "string",
+                            "pattern": "^[A-Za-z_][A-Za-z0-9_-]{0,40}$"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "type",
+                          "cases"
                         ]
                       }
                     ]
@@ -4264,6 +5168,22 @@
                 "enabled": {
                   "default": true,
                   "type": "boolean"
+                },
+                "vars": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+                  },
+                  "additionalProperties": {}
+                },
+                "outputs": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+                  },
+                  "additionalProperties": {}
                 }
               },
               "required": [

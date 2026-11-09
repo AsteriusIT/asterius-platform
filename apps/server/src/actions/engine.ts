@@ -18,8 +18,19 @@ import { withSpan } from '../tracing.js';
 import { getInvoker } from './invokers/index.js';
 import type { InvokeEnv, InvokeResult, RunContext } from './types.js';
 import { addLog, emitRun, getRunRow, inRunOrg, runUrl, updateRun, type RunRow } from './runs.js';
-import { canApproveStep, isTerminal, loadSteps, stepApprovalsOf, stepDefs, type StepRow } from './steps.js';
-import { needsOf, type Step } from './workflow.js';
+import {
+  allowedToFail,
+  canApproveStep,
+  handledFailures,
+  isTerminal,
+  loadSteps,
+  stepApprovalsOf,
+  stepDefs,
+  timedOutState,
+  unhandledFailure,
+  type StepRow,
+} from './steps.js';
+import { casesOf, needsOf, type Step } from './workflow.js';
 import { runAgent, StepError, wrapUntrusted } from './agent.js';
 import { wake } from './wake.js';
 import { notifyPendingDecision } from '../notifications/dispatch.js';
@@ -27,7 +38,7 @@ import { cancelChildrenOf, startSubWorkflow, startWaitingStep } from './waiting.
 
 /**
  * Workflow engine. A run's steps form a graph (see workflow.ts); the engine moves each step through
- *   PENDING → (condition / dependencies) → SKIPPED | QUEUED | WAITING_APPROVAL → RUNNING → SUCCESS | FAILURE
+ *   PENDING → (when / case / condition) → SKIPPED | QUEUED | WAITING_APPROVAL → RUNNING → SUCCESS | FAILURE
  * and finishes the run when every step is terminal. Workers execute QUEUED steps and poll RUNNING ones.
  * Every transition is a conditional UPDATE on the current status: concurrent replicas, callbacks and polls can call
  * `advance` at any time, and a step is only ever started, completed or retried once.
@@ -43,6 +54,11 @@ export const runDeadline = (defs: Step[], startMs = Date.now()) =>
     startMs + config.RUN_TIMEOUT_HOURS * 3_600_000 + defs.filter((d) => HUMAN_STEPS.has(d.type)).reduce((n, d) => n + defaultTimeoutMin(d) * 60_000, 0),
   ).toISOString();
 const BLOCKED = '{"blocked":true}';
+/** Run-level `vars` and `outputs` never resolve secrets: their values are stored with the run. */
+const noSecrets = async (): Promise<string> => {
+  throw new Error('Secret references are not allowed in vars and outputs');
+};
+const runTemplates = (r: Pick<RunRow, 'workflow'>) => json<{ vars?: Record<string, unknown>; outputs?: Record<string, unknown> }>(r.workflow, {});
 
 const stepLog =
   (runId: string, stepId: string | null, secrets: string[] = []) =>
@@ -66,6 +82,7 @@ export async function buildContext(r: RunRow, rows: StepRow[], forStep?: string)
     // `entity.scorecards.<id>.level` / `.rank` (0: below the first level) for conditions and templates.
     entity: entity ? { ...entity, scorecards: await scorecardLevels(entity.blueprint, entity.identifier) } : null,
     trigger: { user: { id: r.triggered_by, email: r.user_email ?? '', name: r.user_name ?? '' }, at: r.created_at },
+    vars: json(r.vars, {}),
     steps: Object.fromEntries(
       rows.map((s) => {
         const def = defs.find((d) => d.id === s.step_id);
@@ -77,11 +94,33 @@ export async function buildContext(r: RunRow, rows: StepRow[], forStep?: string)
   };
 }
 
+/** Inside a `forEach` loop: `item` and `index` in the context, and an idempotency key per item. */
+export interface Iteration {
+  item: unknown;
+  index: number;
+}
+const withIteration = (ctx: RunContext, it?: Iteration): RunContext =>
+  it ? { ...ctx, item: it.item, index: it.index, run: { ...ctx.run, idempotencyKey: `${ctx.run.idempotencyKey}/${it.index}` } } : ctx;
+
 // ---------- run start ----------
 /** Create the step rows of a run that just moved to IN_PROGRESS, then start what can start. Idempotent. */
 export async function initRun(runId: string) {
-  const r = await getRunRow(runId);
+  let r = await getRunRow(runId);
   if (r.status !== 'IN_PROGRESS') return; // cancelled between the claim and the start
+  const { vars } = runTemplates(r);
+  if (vars && r.vars === null) {
+    // Evaluated once: a retry after a crash keeps the first values (`$now()` stays stable).
+    try {
+      const value = (await render(vars, await buildContext(r, []), noSecrets)).value;
+      await exec('UPDATE runs SET vars = ? WHERE id = ? AND vars IS NULL', JSON.stringify(value ?? {}), runId);
+      r = await getRunRow(runId);
+    } catch (err) {
+      const message = `Variables could not be evaluated: ${errorMessage(err)}`;
+      await addLog(runId, message, 'error');
+      await updateRun(runId, { status: 'FAILURE', statusLabel: message.slice(0, 200) });
+      return;
+    }
+  }
   const defs = stepDefs(r);
   // Step rows and the run deadline are created atomically; a retry after a crash finds the rows and only advances.
   await tx(async (d) => {
@@ -121,17 +160,45 @@ export async function advance(runId: string): Promise<void> {
       if (!row || row.status !== 'PENDING') continue;
       const deps = needsOf(defs, i).map((id) => byId.get(id)!);
       if (deps.some((d) => !isTerminal(d.status))) continue;
+      const when = def.when ?? 'success';
       const failedDep = deps.find(
         (d) =>
           d.status === 'CANCELLED' ||
           (d.status === 'SKIPPED' && d.state === BLOCKED) ||
-          (d.status === 'FAILURE' && !defs.find((x) => x.id === d.step_id)?.continueOnError),
+          (d.status === 'FAILURE' &&
+            !allowedToFail(
+              defs.find((x) => x.id === d.step_id),
+              d,
+            )),
       );
-      if (failedDep) {
+      if (when === 'success' && failedDep) {
         changed =
           (await setStep(runId, def.id, 'PENDING', { status: 'SKIPPED', status_label: `Skipped: ${failedDep.name} did not succeed`, state: BLOCKED })) ||
           changed;
         continue;
+      }
+      // when: failure → only after a failure (also one allowed to fail, or upstream of a blocked dependency).
+      if (when === 'failure' && !deps.some((d) => d.status === 'FAILURE' || d.status === 'CANCELLED' || (d.status === 'SKIPPED' && d.state === BLOCKED))) {
+        if (await setStep(runId, def.id, 'PENDING', { status: 'SKIPPED', status_label: 'Skipped: no dependency failed' })) {
+          await addLog(runId, 'Skipped (when: failure, and no dependency failed)', 'info', def.id);
+          changed = true;
+        }
+        continue;
+      }
+      const refs = casesOf(def);
+      if (refs.length) {
+        const chosen = (sw: string) => {
+          const row = byId.get(sw);
+          return row?.status === 'SUCCESS' ? (json<{ case?: string | null }>(row.output, {}).case ?? null) : null;
+        };
+        if (!refs.some((ref) => chosen(ref.split('.')[0]) === ref.split('.')[1])) {
+          const taken = [...new Set(refs.map((ref) => ref.split('.')[0]))].map((sw) => `${sw}: ${chosen(sw) ?? 'none'}`).join(', ');
+          if (await setStep(runId, def.id, 'PENDING', { status: 'SKIPPED', status_label: `Branch not taken (${taken})` })) {
+            await addLog(runId, `Skipped (branch not taken: ${taken})`, 'info', def.id);
+            changed = true;
+          }
+          continue;
+        }
       }
       if (def.if) {
         ctx ??= await buildContext(r, rows, def.id);
@@ -150,10 +217,37 @@ export async function advance(runId: string): Promise<void> {
           continue;
         }
       }
+      if (def.type === 'switch') {
+        changed = (await decideSwitch(r, def, rows)) || changed;
+        continue;
+      }
       changed = (await startStep(r, def, rows)) || changed;
     }
   }
   await finishOrLabel(runId, defs);
+}
+
+/** A switch step is decided by the engine itself (no worker): the first case whose `when` holds, else `default`. */
+async function decideSwitch(r: RunRow, def: Extract<Step, { type: 'switch' }>, rows: StepRow[]): Promise<boolean> {
+  const ctx = await buildContext(r, rows, def.id);
+  let chosen: string | null = null;
+  try {
+    for (const c of def.cases)
+      if (await evaluate(c.when, ctx)) {
+        chosen = c.id;
+        break;
+      }
+  } catch (err) {
+    const message = `Case error: ${errorMessage(err)}`;
+    return complete(r.id, def.id, ['PENDING'], { status: 'FAILURE', statusLabel: message.slice(0, 200), log: message, noAdvance: true });
+  }
+  chosen ??= def.default ?? null;
+  return complete(r.id, def.id, ['PENDING'], {
+    status: 'SUCCESS',
+    output: { case: chosen },
+    statusLabel: chosen ? `Case: ${chosen}` : 'No case matched',
+    noAdvance: true,
+  });
 }
 
 /** PENDING → WAITING_APPROVAL (approval) or QUEUED (others). */
@@ -226,19 +320,37 @@ async function finishOrLabel(runId: string, defs: Step[]) {
   const rows = await loadSteps(runId);
   if (!rows.length) return;
   if (rows.every((s) => isTerminal(s.status))) {
-    const failed = rows.find((s) => {
-      const def = defs.find((d) => d.id === s.step_id);
-      return s.status === 'CANCELLED' || (s.status === 'FAILURE' && !def?.continueOnError);
-    });
-    const outputs = Object.fromEntries(rows.filter((s) => s.status === 'SUCCESS' && s.output).map((s) => [s.step_id, json(s.output, null)]));
+    // A failure handled by a `when: failure` step that succeeded does not fail the run.
+    const failed = unhandledFailure(defs, rows);
+    const handled = handledFailures(defs, rows);
+    let outputs: unknown = Object.fromEntries(rows.filter((s) => s.status === 'SUCCESS' && s.output).map((s) => [s.step_id, json(s.output, null)]));
+    let outputsError: string | null = null;
+    const r = await getRunRow(runId);
+    const templates = runTemplates(r).outputs;
+    if (templates) {
+      try {
+        outputs = (await render(templates, await buildContext(r, rows), noSecrets)).value;
+      } catch (err) {
+        outputsError = `Run outputs could not be evaluated: ${errorMessage(err)}`;
+        await addLog(runId, outputsError, failed ? 'warn' : 'error');
+      }
+    }
+    const fails = !!failed || !!outputsError;
     const link = [...rows].reverse().find((s) => s.link)?.link ?? null;
+    const recovered = rows.filter((s) => handled.has(s.step_id)).map((s) => s.name);
     const done = await updateRun(runId, {
-      status: failed ? 'FAILURE' : 'SUCCESS',
-      statusLabel: failed ? `Failed at ${failed.name}` : null,
-      result: Object.keys(outputs).length ? outputs : undefined,
+      status: fails ? 'FAILURE' : 'SUCCESS',
+      statusLabel: failed
+        ? `Failed at ${failed.name}`
+        : outputsError
+          ? outputsError.slice(0, 200)
+          : recovered.length
+            ? `Recovered: ${recovered.join(', ')}`
+            : null,
+      result: outputs && typeof outputs === 'object' && Object.keys(outputs).length ? outputs : undefined,
       link,
     });
-    if (done) await audit(SYSTEM, failed ? 'run.failed' : 'run.succeeded', runId, failed ? { step: failed.step_id } : {});
+    if (done) await audit(SYSTEM, fails ? 'run.failed' : 'run.succeeded', runId, failed ? { step: failed.step_id } : {});
     return;
   }
   const waiting = rows.filter((s) => s.status === 'WAITING_APPROVAL').map((s) => s.name);
@@ -250,12 +362,16 @@ async function finishOrLabel(runId: string, defs: Step[]) {
 
 // ---------- step completion ----------
 interface Completion {
-  status: 'SUCCESS' | 'FAILURE';
+  /** SKIPPED: a timeout with `onTimeout: skip`. */
+  status: 'SUCCESS' | 'FAILURE' | 'SKIPPED';
   output?: unknown;
   link?: string | null;
   statusLabel?: string | null;
   /** Error text logged before the outcome, only by the call that actually made the transition. */
   log?: string;
+  state?: string;
+  /** The caller advances the run itself (the engine deciding a switch inside `advance`). */
+  noAdvance?: boolean;
 }
 
 /** The transition and its log lines commit together; only the caller that wins the conditional update advances the run. */
@@ -273,6 +389,7 @@ export async function complete(runId: string, stepId: string, from: StepRow['sta
       status_label: c.statusLabel ?? null,
       ...(c.output !== undefined ? { output: JSON.stringify(c.output) } : {}),
       ...(c.link !== undefined ? { link: c.link } : {}),
+      ...(c.state !== undefined ? { state: c.state } : {}),
       ended_at: now(),
       next_at: null,
       locked_until: null,
@@ -285,8 +402,8 @@ export async function complete(runId: string, stepId: string, from: StepRow['sta
     if (c.log) await addLog(runId, c.log, 'error', stepId, d);
     await addLog(
       runId,
-      c.status === 'SUCCESS' ? 'Step succeeded' : `Step failed${c.statusLabel ? `: ${c.statusLabel}` : ''}`,
-      c.status === 'SUCCESS' ? 'info' : 'error',
+      c.status === 'SUCCESS' ? 'Step succeeded' : `Step ${c.status === 'SKIPPED' ? 'skipped' : 'failed'}${c.statusLabel ? `: ${c.statusLabel}` : ''}`,
+      c.status === 'FAILURE' ? 'error' : c.status === 'SKIPPED' ? 'warn' : 'info',
       stepId,
       d,
     );
@@ -300,7 +417,7 @@ export async function complete(runId: string, stepId: string, from: StepRow['sta
     data: { runId, stepId, name: row.name, stepType: row.type, status: c.status, statusLabel: c.statusLabel ?? null, link: c.link ?? null },
   });
   await emitRun(runId, 'run.updated');
-  await advance(runId);
+  if (!c.noAdvance) await advance(runId);
   return true;
 }
 
@@ -332,17 +449,18 @@ export async function failStep(runId: string, stepId: string, message: string, r
 }
 
 // ---------- execution (workers) ----------
-async function invokeEnv(r: RunRow, def: Extract<Step, { type: 'invoke' }>, rows: StepRow[]) {
-  const ctx = await buildContext(r, rows, def.id);
+async function invokeEnv(r: RunRow, def: Extract<Step, { type: 'invoke' }>, rows: StepRow[], it?: Iteration) {
+  const ctx = withIteration(await buildContext(r, rows, def.id), it);
   const { value, secrets } = await render(def.invoker, ctx, resolverFor(r));
   secrets.push(ctx.run.callback.token);
   const env: InvokeEnv = { ctx, config: value as Record<string, unknown>, log: stepLog(r.id, def.id, secrets) };
   return { env, secrets };
 }
 
-async function applyInvokeResult(runId: string, stepId: string, res: InvokeResult, polls: boolean, secrets: string[] = [], owner?: Owner) {
+async function applyInvokeResult(runId: string, stepId: string, res: InvokeResult, polls: boolean, secrets: string[] = [], owner?: Owner, loopRow?: StepRow) {
   // Whatever the external system echoed back (webhook answers, job output) is stored: mask the secrets it may contain.
   res = { ...res, result: redactDeep(res.result, secrets), statusLabel: res.statusLabel == null ? res.statusLabel : redact(res.statusLabel, secrets) };
+  if (loopRow) return applyLoopResult(runId, stepId, loopRow, res, polls);
   if (res.status === 'SUCCESS' || res.status === 'FAILURE')
     return complete(runId, stepId, ['RUNNING'], { status: res.status, output: res.result ?? null, link: res.link, statusLabel: res.statusLabel }, owner);
   const ok = await setStep(
@@ -409,8 +527,15 @@ async function teamApiKey(team: string | null): Promise<string | undefined> {
   return resolveRef('secret', name);
 }
 
-async function executeAgent(r: RunRow, rows: StepRow[], def: Extract<Step, { type: 'agent' }>, setSecrets: (s: string[]) => void, signal?: AbortSignal) {
-  const ctx = await buildContext(r, rows, def.id);
+async function executeAgent(
+  r: RunRow,
+  rows: StepRow[],
+  def: Extract<Step, { type: 'agent' }>,
+  setSecrets: (s: string[]) => void,
+  signal?: AbortSignal,
+  it?: Iteration,
+) {
+  const ctx = withIteration(await buildContext(r, rows, def.id), it);
   // Text sent to the model: interpolated values are fenced as untrusted data and secrets cannot be referenced.
   const text = await render({ prompt: def.prompt, system: def.system }, ctx, resolverFor(r), { wrap: (t, expr) => wrapUntrusted(t, expr), noRefs: true });
   const creds = await render({ apiKey: def.apiKey ?? '', mcpTokens: def.mcpServers.map((s) => s.token ?? '') }, ctx, resolverFor(r));
@@ -450,7 +575,15 @@ export async function executeStep(runId: string, stepId: string, owner: Owner) {
   const rows = await loadSteps(runId);
   const row = rows.find((s) => s.step_id === stepId)!;
   await emit({ type: 'step.started', blueprint: null, data: { runId, stepId, name: row.name, stepType: row.type, attempt: Number(row.attempt) } });
-  await addLog(runId, `Started${Number(row.attempt) > 1 ? ` (attempt ${row.attempt}/${def.retries + 1})` : ''}`, 'info', stepId);
+  const looping = loopOf(row);
+  await addLog(
+    runId,
+    looping
+      ? `Continuing the loop (item ${looping.results.filter(Boolean).length + 1}/${looping.items.length})`
+      : `Started${Number(row.attempt) > 1 ? ` (attempt ${row.attempt}/${def.retries + 1})` : ''}`,
+    'info',
+    stepId,
+  );
   await emitRun(runId, 'run.updated');
   let secrets: string[] = [];
   let lost = false;
@@ -462,7 +595,13 @@ export async function executeStep(runId: string, stepId: string, owner: Owner) {
   try {
     await withSpan('workflow.step', { 'run.id': runId, 'step.id': stepId, 'step.type': def.type }, async () => {
       try {
-        if (def.type === 'invoke') {
+        if ((def.type === 'invoke' || def.type === 'agent' || def.type === 'transform') && def.forEach) {
+          await executeLoop(r, rows, row, def, owner, {
+            lost: () => lost,
+            signal: abort.signal,
+            setSecrets: (s) => (secrets = s),
+          });
+        } else if (def.type === 'invoke') {
           const inv = getInvoker(def.invoker.type);
           const built = await invokeEnv(r, def, rows);
           secrets = built.secrets;
@@ -528,9 +667,12 @@ export async function pollStep(runId: string, stepId: string) {
   try {
     const inv = getInvoker(def.invoker.type);
     if (!inv.poll) return;
-    const built = await invokeEnv(r, def, rows);
+    const loop = loopOf(row);
+    if (loop && loop.current === undefined) return; // the worker is between two items
+    const built = await invokeEnv(r, def, rows, loop ? iterationOf(loop) : undefined);
     secrets = built.secrets;
-    await applyInvokeResult(runId, stepId, await inv.poll(built.env, json(row.state, {})), true, secrets);
+    const state = loop ? (loop.inner ?? {}) : json<Record<string, unknown>>(row.state, {});
+    await applyInvokeResult(runId, stepId, await inv.poll(built.env, state), true, secrets, undefined, loop ? row : undefined);
   } catch (err) {
     await addLog(runId, redact(`Status check failed: ${errorMessage(err)}`, secrets), 'warn', stepId);
     await setStep(runId, stepId, 'RUNNING', { next_at: later(config.RUN_POLL_SECONDS * 2000) });
@@ -562,6 +704,9 @@ export async function stepSecrets(runId: string, stepId: string): Promise<string
 export async function updateStep(runId: string, stepId: string, u: StepUpdate): Promise<boolean> {
   const row = await one<StepRow>('SELECT * FROM run_steps WHERE run_id = ? AND step_id = ?', runId, stepId);
   if (!row || row.status !== 'RUNNING') return false;
+  // Loops: a callback reports the item in flight (none while the worker is between two items).
+  const loop = loopOf(row);
+  if (loop && loop.current === undefined) return false;
   // The external system may echo credentials (a pipeline printing its environment): mask before anything is stored.
   const secrets = await stepSecrets(runId, stepId);
   for (const l of u.logs ?? []) await addLog(runId, redact(l.message, secrets), l.level ?? 'info', stepId);
@@ -571,6 +716,8 @@ export async function updateStep(runId: string, stepId: string, u: StepUpdate): 
     statusLabel: u.statusLabel == null ? u.statusLabel : redact(u.statusLabel, secrets),
     link: u.link == null ? u.link : redact(u.link, secrets),
   };
+  if (loop && (u.status === 'SUCCESS' || u.status === 'FAILURE'))
+    return settleLoopItem(runId, stepId, row, { status: u.status, result: u.result, link: u.link ?? undefined, statusLabel: u.statusLabel ?? undefined });
   if (u.status === 'SUCCESS' || u.status === 'FAILURE')
     return complete(runId, stepId, ['RUNNING'], { status: u.status, output: u.result, link: u.link, statusLabel: u.statusLabel });
   if (u.statusLabel !== undefined || u.link !== undefined) {
@@ -688,11 +835,13 @@ async function approvalExtras(runId: string, stepId: string) {
 async function cancelExternal(r: RunRow, row: StepRow) {
   const def = stepDefs(r).find((d) => d.id === row.step_id);
   if (row.status !== 'RUNNING' || def?.type !== 'invoke' || !row.state) return;
+  const loop = loopOf(row);
+  if (loop && !loop.inner) return; // no item in flight
   try {
     const inv = getInvoker(def.invoker.type);
     if (!inv.cancel) return;
-    const { env } = await invokeEnv(r, def, await loadSteps(r.id));
-    await inv.cancel(env, json(row.state, {}));
+    const { env } = await invokeEnv(r, def, await loadSteps(r.id), loop ? iterationOf(loop) : undefined);
+    await inv.cancel(env, loop ? loop.inner! : json(row.state, {}));
     await addLog(r.id, 'Cancellation requested from the external system', 'warn', row.step_id);
   } catch (err) {
     await addLog(r.id, `Could not cancel the external run: ${errorMessage(err)}`, 'warn', row.step_id);
@@ -713,6 +862,228 @@ export async function cancelSteps(r: RunRow) {
   }
 }
 
+// ---------- inline loops (forEach on invoke, agent and transform steps) ----------
+/**
+ * The progress of a loop lives in the step `state` (`{"forEach": …}`), so it survives workers:
+ *  - transform: every item in one execution; agent: items in parallel (maxConcurrency) in one execution, under the
+ *    step lease (its heartbeat stops the loop when the lease is lost);
+ *  - invoke: one item at a time. Items that finish at once are chained in the same execution; an item that goes on
+ *    (poll or callback) parks the step with the item's invoker state in `inner`. When it ends, the step goes back to
+ *    QUEUED (compare-and-set on the state) and the next claim (a new fencing token) starts the next item.
+ */
+const MAX_LOOP_ITEMS = 200;
+const LOOP_PREFIX = '{"forEach":';
+type LoopStep = Extract<Step, { type: 'invoke' | 'agent' | 'transform' }>;
+interface LoopItem {
+  item: unknown;
+  status: 'SUCCESS' | 'FAILURE' | 'SKIPPED';
+  output: unknown;
+  error?: string;
+  link?: string;
+}
+interface LoopState {
+  items: unknown[];
+  results: (LoopItem | null)[];
+  /** Invoke: the item in flight and its invoker state. */
+  current?: number;
+  inner?: Record<string, unknown>;
+  failFast?: boolean;
+}
+const loopOf = (row: Pick<StepRow, 'state'>): LoopState | undefined =>
+  row.state?.startsWith(LOOP_PREFIX) ? json<{ forEach?: LoopState }>(row.state, {}).forEach : undefined;
+const loopState = (l: LoopState) => JSON.stringify({ forEach: l });
+const iterationOf = (l: LoopState): Iteration => ({ item: l.items[l.current ?? 0], index: l.current ?? 0 });
+const loopFailed = (l: LoopState) => l.results.some((x) => x?.status === 'FAILURE');
+const loopDone = (l: LoopState) => l.results.every(Boolean) || (!!l.failFast && loopFailed(l));
+
+function loopOutcome(l: LoopState): Completion {
+  const results = l.items.map((item, i) => l.results[i] ?? { item, status: 'SKIPPED' as const, output: null });
+  const succeeded = results.filter((x) => x.status === 'SUCCESS').length;
+  const failed = results.filter((x) => x.status === 'FAILURE').length;
+  return {
+    status: failed ? 'FAILURE' : 'SUCCESS',
+    output: { results, succeeded, failed },
+    statusLabel: failed ? `${failed} of ${results.length} item(s) failed${l.failFast ? ' (fail fast)' : ''}` : `${succeeded} item(s) succeeded`,
+  };
+}
+
+interface LoopControl {
+  lost: () => boolean;
+  signal: AbortSignal;
+  setSecrets: (s: string[]) => void;
+}
+
+async function executeLoop(r: RunRow, rows: StepRow[], row: StepRow, def: LoopStep, owner: Owner, ctl: LoopControl) {
+  let loop = loopOf(row);
+  if (!loop) {
+    const value = await evaluate(def.forEach!.items, await buildContext(r, rows, def.id));
+    const items = value === undefined || value === null ? [] : Array.isArray(value) ? value : [value];
+    if (items.length > MAX_LOOP_ITEMS) throw new StepError(`The list has ${items.length} items; loops are limited to ${MAX_LOOP_ITEMS}`, false);
+    loop = { items, results: items.map(() => null), failFast: !!def.forEach!.failFast };
+    await addLog(r.id, `Looping over ${items.length} item(s)`, 'info', def.id);
+  }
+  const l = loop;
+  const failure = (i: number, err: unknown): LoopItem => ({ item: l.items[i], status: 'FAILURE', output: null, error: errorMessage(err).slice(0, 500) });
+  if (def.type === 'transform') {
+    const ctx = await buildContext(r, rows, def.id);
+    for (let i = 0; i < l.items.length && !loopDone(l); i++) {
+      if (l.results[i]) continue;
+      try {
+        const output: Record<string, unknown> = {};
+        const itemCtx = withIteration(ctx, { item: l.items[i], index: i });
+        for (const [k, expr] of Object.entries(def.output)) output[k] = await evaluate(expr, itemCtx);
+        l.results[i] = { item: l.items[i], status: 'SUCCESS', output };
+      } catch (err) {
+        l.results[i] = failure(i, err);
+      }
+    }
+  } else if (def.type === 'agent') {
+    const secrets = new Set<string>();
+    let next = 0;
+    const lane = async () => {
+      for (;;) {
+        if (ctl.lost() || loopDone(l)) return;
+        const i = next++;
+        if (i >= l.items.length) return;
+        if (l.results[i]) continue;
+        try {
+          const res = await executeAgent(r, rows, def, (s) => s.forEach((x) => secrets.add(x)), ctl.signal, { item: l.items[i], index: i });
+          l.results[i] = { item: l.items[i], status: 'SUCCESS', output: res.output };
+        } catch (err) {
+          if (!ctl.lost()) l.results[i] = failure(i, redact(errorMessage(err), [...secrets]));
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(def.forEach!.maxConcurrency ?? 1, Math.max(l.items.length, 1)) }, lane));
+    ctl.setSecrets([...secrets]);
+  } else {
+    const inv = getInvoker(def.invoker.type);
+    for (let i = 0; i < l.items.length && !loopDone(l); i++) {
+      if (l.results[i]) continue;
+      if (ctl.lost() || (await runStopped(r.id))) return;
+      const it = { item: l.items[i], index: i };
+      const built = await invokeEnv(r, def, rows, it);
+      ctl.setSecrets(built.secrets);
+      let res: InvokeResult;
+      try {
+        res = await inv.start(built.env);
+      } catch (err) {
+        // The call may have reached the external system: the item fails, it is not started again.
+        l.results[i] = failure(i, redact(errorMessage(err), built.secrets));
+        continue;
+      }
+      res = {
+        ...res,
+        result: redactDeep(res.result, built.secrets),
+        statusLabel: res.statusLabel == null ? res.statusLabel : redact(res.statusLabel, built.secrets),
+      };
+      if (res.status !== 'IN_PROGRESS') {
+        l.results[i] = {
+          item: l.items[i],
+          status: res.status,
+          output: res.result ?? null,
+          ...(res.status === 'FAILURE' ? { error: res.statusLabel ?? 'Failed' } : {}),
+          ...(res.link ? { link: res.link } : {}),
+        };
+        continue;
+      }
+      if (ctl.lost() || (await runStopped(r.id))) {
+        if (inv.cancel && res.state) await inv.cancel(built.env, res.state).catch(() => undefined);
+        await setStep(r.id, def.id, 'RUNNING', { status: 'CANCELLED', ended_at: now(), next_at: null, locked_until: null }, owner);
+        return;
+      }
+      // Park on this item: polls or the callback settle it (settleLoopItem).
+      const ok = await setStep(
+        r.id,
+        def.id,
+        'RUNNING',
+        {
+          state: loopState({ ...l, current: i, inner: res.state ?? {} }),
+          status_label: `Item ${i + 1}/${l.items.length}${res.statusLabel ? `: ${res.statusLabel}` : ''}`,
+          ...(res.link !== undefined ? { link: res.link } : {}),
+          locked_until: null,
+          next_at: inv.poll ? later(config.RUN_POLL_SECONDS * 1000) : null,
+        },
+        owner,
+      );
+      if (ok) await emitRun(r.id, 'run.updated');
+      return;
+    }
+  }
+  if (ctl.lost()) return;
+  await complete(r.id, def.id, ['RUNNING'], { ...loopOutcome(l), state: loopState(l) }, owner);
+}
+
+/** A poll of the item in flight: still going (keep its invoker state) or done (settle it). */
+async function applyLoopResult(runId: string, stepId: string, row: StepRow, res: InvokeResult, polls: boolean) {
+  if (res.status === 'SUCCESS' || res.status === 'FAILURE')
+    return settleLoopItem(runId, stepId, row, { status: res.status, result: res.result, link: res.link, statusLabel: res.statusLabel });
+  const loop = loopOf(row)!;
+  await exec(
+    'UPDATE run_steps SET state = ?, status_label = ?, next_at = ? WHERE run_id = ? AND step_id = ? AND status = ? AND state = ?',
+    loopState({ ...loop, inner: res.state ?? loop.inner ?? {} }),
+    `Item ${(loop.current ?? 0) + 1}/${loop.items.length}${res.statusLabel ? `: ${res.statusLabel}` : ''}`,
+    polls ? later(config.RUN_POLL_SECONDS * 1000) : null,
+    runId,
+    stepId,
+    'RUNNING',
+    row.state,
+  );
+}
+
+/**
+ * The item in flight ended (poll or callback). Compare-and-set on the state: a stale poll or a duplicate callback
+ * cannot settle an item twice. Then finish the loop, or hand the step back to the workers for the next item.
+ */
+async function settleLoopItem(
+  runId: string,
+  stepId: string,
+  row: StepRow,
+  res: { status: 'SUCCESS' | 'FAILURE'; result?: unknown; link?: string; statusLabel?: string },
+): Promise<boolean> {
+  const loop = loopOf(row);
+  if (!loop || loop.current === undefined) return false;
+  const i = loop.current;
+  const next: LoopState = { items: loop.items, results: [...loop.results], failFast: loop.failFast };
+  next.results[i] = {
+    item: loop.items[i],
+    status: res.status,
+    output: res.result ?? null,
+    ...(res.status === 'FAILURE' ? { error: res.statusLabel ?? 'Failed' } : {}),
+    ...(res.link ? { link: res.link } : {}),
+  };
+  const state = loopState(next);
+  const { changes } = await exec(
+    'UPDATE run_steps SET state = ? WHERE run_id = ? AND step_id = ? AND status = ? AND state = ?',
+    state,
+    runId,
+    stepId,
+    'RUNNING',
+    row.state,
+  );
+  if (!changes) return false;
+  await addLog(
+    runId,
+    `Item ${i + 1}/${loop.items.length} ${res.status === 'SUCCESS' ? 'succeeded' : 'failed'}`,
+    res.status === 'SUCCESS' ? 'info' : 'error',
+    stepId,
+  );
+  if (loopDone(next)) return complete(runId, stepId, ['RUNNING'], loopOutcome(next));
+  const requeued = await exec(
+    "UPDATE run_steps SET status = 'QUEUED', next_at = ?, locked_until = NULL, status_label = ? WHERE run_id = ? AND step_id = ? AND status = 'RUNNING' AND state = ?",
+    now(),
+    `${next.results.filter(Boolean).length}/${next.items.length} item(s) done`,
+    runId,
+    stepId,
+    state,
+  );
+  if (requeued.changes) {
+    wake();
+    await emitRun(runId, 'run.updated');
+  }
+  return requeued.changes > 0;
+}
+
 // ---------- worker loops ----------
 /** Lease of a claimed step by type. Renewed by the executor's heartbeat; mutable so tests can shorten it. */
 export const LEASES: Record<Step['type'], number> = {
@@ -723,6 +1094,7 @@ export const LEASES: Record<Step['type'], number> = {
   wait: 0,
   input: 0,
   workflow: 2 * 60_000,
+  switch: 0,
 };
 
 // Postgres: concurrent replicas skip rows another claim already locked instead of queueing behind or racing for them.
@@ -800,6 +1172,24 @@ async function terminateRun(runId: string, status: 'FAILURE' | 'CANCELLED', labe
   return true;
 }
 
+/**
+ * What a passed step deadline does (`onTimeout`): fail (default), skip (SKIPPED, not blocking its dependents) or
+ * continue (FAILURE that does not fail the run, like continueOnError).
+ * Hook: an approval step's own expiry policy (`onExpiry`), when set, takes precedence over `onTimeout` for
+ * WAITING_APPROVAL steps: return its outcome here first.
+ */
+export function timeoutOutcome(def: Step | undefined, row: Pick<StepRow, 'status' | 'state'>): Completion {
+  const label = row.status === 'WAITING_APPROVAL' ? 'Approval expired' : 'Timed out';
+  switch (def?.onTimeout ?? 'fail') {
+    case 'skip':
+      return { status: 'SKIPPED', statusLabel: `${label}: skipped`, state: timedOutState(row.state, 'skip') };
+    case 'continue':
+      return { status: 'FAILURE', statusLabel: `${label}: continuing`, state: timedOutState(row.state, 'continue') };
+    default:
+      return { status: 'FAILURE', statusLabel: label };
+  }
+}
+
 const HOUSEKEEPING_LOCK = 726204;
 const BATCH = 100;
 
@@ -816,7 +1206,7 @@ export async function stepHousekeeping(log: FastifyBaseLogger) {
     // A worker died (or lost its database) while executing a step: invokers may have called the external system →
     // failed, not retried. The fencing token keeps a step that was re-claimed meanwhile untouched.
     for (const s of await all<StepRow>(
-      "SELECT * FROM run_steps WHERE status = 'RUNNING' AND locked_until IS NOT NULL AND locked_until < ? AND state IS NULL LIMIT ?",
+      `SELECT * FROM run_steps WHERE status = 'RUNNING' AND locked_until IS NOT NULL AND locked_until < ? AND (state IS NULL OR state LIKE '${LOOP_PREFIX}%') LIMIT ?`,
       t,
       BATCH,
     ))
@@ -837,10 +1227,8 @@ export async function stepHousekeeping(log: FastifyBaseLogger) {
       BATCH,
     ))
       await guard('step timeout', s.run_id, async () => {
-        const won = await complete(s.run_id, s.step_id, ['RUNNING', 'WAITING_APPROVAL', 'QUEUED', 'WAITING'], {
-          status: 'FAILURE',
-          statusLabel: s.status === 'WAITING_APPROVAL' ? 'Approval expired' : 'Timed out',
-        });
+        const def = stepDefs(await getRunRow(s.run_id)).find((d) => d.id === s.step_id);
+        const won = await complete(s.run_id, s.step_id, ['RUNNING', 'WAITING_APPROVAL', 'QUEUED', 'WAITING'], timeoutOutcome(def, s));
         if (won) await cancelChildrenOf(s);
         const r = won && s.status === 'RUNNING' ? await getRunRow(s.run_id).catch(() => undefined) : undefined;
         if (r) await cancelExternal(r, s);
