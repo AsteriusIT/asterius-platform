@@ -538,6 +538,68 @@
                           "allowSelfApproval": {
                             "default": false,
                             "type": "boolean"
+                          },
+                          "remindEvery": {
+                            "type": "string",
+                            "pattern": "^[1-9]\\d{0,5}[smhd]$"
+                          },
+                          "maxReminders": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 20
+                          },
+                          "escalate": {
+                            "type": "object",
+                            "properties": {
+                              "after": {
+                                "type": "string",
+                                "pattern": "^[1-9]\\d{0,5}[smhd]$"
+                              },
+                              "approvers": {
+                                "type": "object",
+                                "properties": {
+                                  "roles": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string",
+                                      "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                                    }
+                                  },
+                                  "teams": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "users": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "ownerTeam": {
+                                    "type": "boolean"
+                                  }
+                                }
+                              }
+                            },
+                            "required": [
+                              "after",
+                              "approvers"
+                            ]
+                          },
+                          "onExpiry": {
+                            "type": "string",
+                            "enum": [
+                              "fail",
+                              "reject",
+                              "approve",
+                              "skip"
+                            ]
+                          },
+                          "expireAfter": {
+                            "type": "string",
+                            "pattern": "^[1-9]\\d{0,5}[smhd]$"
                           }
                         }
                       }
@@ -681,6 +743,68 @@
                           "allowSelfApproval": {
                             "default": false,
                             "type": "boolean"
+                          },
+                          "remindEvery": {
+                            "type": "string",
+                            "pattern": "^[1-9]\\d{0,5}[smhd]$"
+                          },
+                          "maxReminders": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 20
+                          },
+                          "escalate": {
+                            "type": "object",
+                            "properties": {
+                              "after": {
+                                "type": "string",
+                                "pattern": "^[1-9]\\d{0,5}[smhd]$"
+                              },
+                              "approvers": {
+                                "type": "object",
+                                "properties": {
+                                  "roles": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string",
+                                      "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                                    }
+                                  },
+                                  "teams": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "users": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "ownerTeam": {
+                                    "type": "boolean"
+                                  }
+                                }
+                              }
+                            },
+                            "required": [
+                              "after",
+                              "approvers"
+                            ]
+                          },
+                          "onExpiry": {
+                            "type": "string",
+                            "enum": [
+                              "fail",
+                              "reject",
+                              "approve",
+                              "skip"
+                            ]
+                          },
+                          "expireAfter": {
+                            "type": "string",
+                            "pattern": "^[1-9]\\d{0,5}[smhd]$"
                           }
                         }
                       }
@@ -1111,6 +1235,115 @@
                     "message": {
                       "type": "string",
                       "maxLength": 20000
+                    },
+                    "tiers": {
+                      "minItems": 1,
+                      "maxItems": 5,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 60
+                          },
+                          "approvers": {
+                            "type": "object",
+                            "properties": {
+                              "roles": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                                }
+                              },
+                              "teams": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "users": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "ownerTeam": {
+                                "type": "boolean"
+                              }
+                            }
+                          },
+                          "minApprovals": {
+                            "default": 1,
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 10
+                          }
+                        },
+                        "required": [
+                          "name"
+                        ]
+                      }
+                    },
+                    "remindEvery": {
+                      "type": "string",
+                      "pattern": "^[1-9]\\d{0,5}[smhd]$"
+                    },
+                    "maxReminders": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 20
+                    },
+                    "escalate": {
+                      "type": "object",
+                      "properties": {
+                        "after": {
+                          "type": "string",
+                          "pattern": "^[1-9]\\d{0,5}[smhd]$"
+                        },
+                        "approvers": {
+                          "type": "object",
+                          "properties": {
+                            "roles": {
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                              }
+                            },
+                            "teams": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "users": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "ownerTeam": {
+                              "type": "boolean"
+                            }
+                          }
+                        }
+                      },
+                      "required": [
+                        "after",
+                        "approvers"
+                      ]
+                    },
+                    "onExpiry": {
+                      "type": "string",
+                      "enum": [
+                        "fail",
+                        "reject",
+                        "approve",
+                        "skip"
+                      ]
                     }
                   },
                   "required": [
@@ -1650,6 +1883,15 @@
                           "type": "boolean"
                         }
                       }
+                    },
+                    "remindEvery": {
+                      "type": "string",
+                      "pattern": "^[1-9]\\d{0,5}[smhd]$"
+                    },
+                    "maxReminders": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 20
                     }
                   },
                   "required": [
@@ -2320,6 +2562,43 @@
           "identifier"
         ]
       },
+      "DelegationInput": {
+        "type": "object",
+        "properties": {
+          "delegate": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "startsAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "endsAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "delegate"
+        ]
+      },
       "ConfigFile": {
         "type": "object",
         "properties": {
@@ -2914,6 +3193,68 @@
                                 "allowSelfApproval": {
                                   "default": false,
                                   "type": "boolean"
+                                },
+                                "remindEvery": {
+                                  "type": "string",
+                                  "pattern": "^[1-9]\\d{0,5}[smhd]$"
+                                },
+                                "maxReminders": {
+                                  "type": "integer",
+                                  "minimum": 1,
+                                  "maximum": 20
+                                },
+                                "escalate": {
+                                  "type": "object",
+                                  "properties": {
+                                    "after": {
+                                      "type": "string",
+                                      "pattern": "^[1-9]\\d{0,5}[smhd]$"
+                                    },
+                                    "approvers": {
+                                      "type": "object",
+                                      "properties": {
+                                        "roles": {
+                                          "type": "array",
+                                          "items": {
+                                            "type": "string",
+                                            "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                                          }
+                                        },
+                                        "teams": {
+                                          "type": "array",
+                                          "items": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "users": {
+                                          "type": "array",
+                                          "items": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "ownerTeam": {
+                                          "type": "boolean"
+                                        }
+                                      }
+                                    }
+                                  },
+                                  "required": [
+                                    "after",
+                                    "approvers"
+                                  ]
+                                },
+                                "onExpiry": {
+                                  "type": "string",
+                                  "enum": [
+                                    "fail",
+                                    "reject",
+                                    "approve",
+                                    "skip"
+                                  ]
+                                },
+                                "expireAfter": {
+                                  "type": "string",
+                                  "pattern": "^[1-9]\\d{0,5}[smhd]$"
                                 }
                               }
                             }
@@ -3057,6 +3398,68 @@
                                 "allowSelfApproval": {
                                   "default": false,
                                   "type": "boolean"
+                                },
+                                "remindEvery": {
+                                  "type": "string",
+                                  "pattern": "^[1-9]\\d{0,5}[smhd]$"
+                                },
+                                "maxReminders": {
+                                  "type": "integer",
+                                  "minimum": 1,
+                                  "maximum": 20
+                                },
+                                "escalate": {
+                                  "type": "object",
+                                  "properties": {
+                                    "after": {
+                                      "type": "string",
+                                      "pattern": "^[1-9]\\d{0,5}[smhd]$"
+                                    },
+                                    "approvers": {
+                                      "type": "object",
+                                      "properties": {
+                                        "roles": {
+                                          "type": "array",
+                                          "items": {
+                                            "type": "string",
+                                            "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                                          }
+                                        },
+                                        "teams": {
+                                          "type": "array",
+                                          "items": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "users": {
+                                          "type": "array",
+                                          "items": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "ownerTeam": {
+                                          "type": "boolean"
+                                        }
+                                      }
+                                    }
+                                  },
+                                  "required": [
+                                    "after",
+                                    "approvers"
+                                  ]
+                                },
+                                "onExpiry": {
+                                  "type": "string",
+                                  "enum": [
+                                    "fail",
+                                    "reject",
+                                    "approve",
+                                    "skip"
+                                  ]
+                                },
+                                "expireAfter": {
+                                  "type": "string",
+                                  "pattern": "^[1-9]\\d{0,5}[smhd]$"
                                 }
                               }
                             }
@@ -3487,6 +3890,115 @@
                           "message": {
                             "type": "string",
                             "maxLength": 20000
+                          },
+                          "tiers": {
+                            "minItems": 1,
+                            "maxItems": 5,
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "name": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 60
+                                },
+                                "approvers": {
+                                  "type": "object",
+                                  "properties": {
+                                    "roles": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "string",
+                                        "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                                      }
+                                    },
+                                    "teams": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "users": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "ownerTeam": {
+                                      "type": "boolean"
+                                    }
+                                  }
+                                },
+                                "minApprovals": {
+                                  "default": 1,
+                                  "type": "integer",
+                                  "minimum": 1,
+                                  "maximum": 10
+                                }
+                              },
+                              "required": [
+                                "name"
+                              ]
+                            }
+                          },
+                          "remindEvery": {
+                            "type": "string",
+                            "pattern": "^[1-9]\\d{0,5}[smhd]$"
+                          },
+                          "maxReminders": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 20
+                          },
+                          "escalate": {
+                            "type": "object",
+                            "properties": {
+                              "after": {
+                                "type": "string",
+                                "pattern": "^[1-9]\\d{0,5}[smhd]$"
+                              },
+                              "approvers": {
+                                "type": "object",
+                                "properties": {
+                                  "roles": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string",
+                                      "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                                    }
+                                  },
+                                  "teams": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "users": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "ownerTeam": {
+                                    "type": "boolean"
+                                  }
+                                }
+                              }
+                            },
+                            "required": [
+                              "after",
+                              "approvers"
+                            ]
+                          },
+                          "onExpiry": {
+                            "type": "string",
+                            "enum": [
+                              "fail",
+                              "reject",
+                              "approve",
+                              "skip"
+                            ]
                           }
                         },
                         "required": [
@@ -4026,6 +4538,15 @@
                                 "type": "boolean"
                               }
                             }
+                          },
+                          "remindEvery": {
+                            "type": "string",
+                            "pattern": "^[1-9]\\d{0,5}[smhd]$"
+                          },
+                          "maxReminders": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 20
                           }
                         },
                         "required": [
@@ -5267,6 +5788,190 @@
           "source",
           "createdAt",
           "updatedAt"
+        ],
+        "additionalProperties": false
+      },
+      "Delegation": {
+        "type": "object",
+        "properties": {
+          "user": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "email": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "email"
+            ],
+            "additionalProperties": false
+          },
+          "delegate": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "email": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "email"
+            ],
+            "additionalProperties": false
+          },
+          "startsAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "ISO 8601 timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "endsAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "ISO 8601 timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "active": {
+            "type": "boolean"
+          },
+          "createdAt": {
+            "type": "string",
+            "description": "ISO 8601 timestamp"
+          }
+        },
+        "required": [
+          "user",
+          "delegate",
+          "startsAt",
+          "endsAt",
+          "active",
+          "createdAt"
+        ],
+        "additionalProperties": false,
+        "description": "Out-of-office delegation: the delegate decides approvals (and answers inputs) for the user"
+      },
+      "MyDelegation": {
+        "type": "object",
+        "properties": {
+          "delegation": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "user": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "email": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "name",
+                      "email"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "delegate": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "email": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "name",
+                      "email"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "startsAt": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "description": "ISO 8601 timestamp"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "endsAt": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "description": "ISO 8601 timestamp"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "active": {
+                    "type": "boolean"
+                  },
+                  "createdAt": {
+                    "type": "string",
+                    "description": "ISO 8601 timestamp"
+                  }
+                },
+                "required": [
+                  "user",
+                  "delegate",
+                  "startsAt",
+                  "endsAt",
+                  "active",
+                  "createdAt"
+                ],
+                "additionalProperties": false,
+                "description": "Out-of-office delegation: the delegate decides approvals (and answers inputs) for the user"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "delegation"
         ],
         "additionalProperties": false
       },
@@ -10083,6 +10788,93 @@
         }
       }
     },
+    "/api/v1/delegations": {
+      "get": {
+        "operationId": "getDelegations",
+        "tags": [
+          "delegations"
+        ],
+        "summary": "GET /api/v1/delegations",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Delegation"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/api/v1/delegations/{userId}": {
+      "delete": {
+        "operationId": "deleteDelegationsByUserId",
+        "tags": [
+          "delegations"
+        ],
+        "summary": "DELETE /api/v1/delegations/{userId}",
+        "parameters": [
+          {
+            "name": "userId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
     "/api/v1/deleted-entities": {
       "get": {
         "operationId": "getDeletedEntities",
@@ -11281,6 +12073,128 @@
         "responses": {
           "200": {
             "description": "Success"
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/api/v1/me/delegation": {
+      "delete": {
+        "operationId": "deleteMeDelegation",
+        "tags": [
+          "me"
+        ],
+        "summary": "DELETE /api/v1/me/delegation",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      },
+      "get": {
+        "operationId": "getMeDelegation",
+        "tags": [
+          "me"
+        ],
+        "summary": "GET /api/v1/me/delegation",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MyDelegation"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      },
+      "put": {
+        "operationId": "putMeDelegation",
+        "tags": [
+          "me"
+        ],
+        "summary": "PUT /api/v1/me/delegation",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DelegationInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MyDelegation"
+                }
+              }
+            }
           },
           "400": {
             "description": "Validation error",

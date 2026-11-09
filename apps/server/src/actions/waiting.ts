@@ -10,7 +10,9 @@ import { complete, buildContext, setStep } from './engine.js';
 import { addLog, emitRun, getRunRow, inRunOrg, startAutomatedRun, type RunRow } from './runs.js';
 import { getAction } from './actions.js';
 import { notifyPendingDecision } from '../notifications/dispatch.js';
-import { canSubmitInput, loadSteps, stepDefs, type StepRow } from './steps.js';
+import { inputResponder, loadSteps, stepDefs, type StepRow } from './steps.js';
+import { withDelegators } from '../auth/delegations.js';
+import { armStep } from './approvals.js';
 import type { Step } from './workflow.js';
 
 /**
@@ -90,6 +92,7 @@ export async function startWaitingStep(r: RunRow, def: WaitStep | InputStep, row
   });
   if (ok) {
     await addLog(r.id, label, 'info', def.id);
+    if (def.type === 'input') await armStep(r.id, def);
     if (def.type === 'input')
       void notifyPendingDecision({ run: r, kind: 'input', subjects: def.assignees, stepName: def.name || def.id, message: (state as WaitState).message }).catch(
         () => undefined,
@@ -143,18 +146,21 @@ export async function deliverEvent(runId: string, stepId: string, name: string, 
   return complete(runId, stepId, ['WAITING'], { status: 'SUCCESS', output: { event: name, payload: payload ?? null } });
 }
 
-export async function submitInput(p: Principal, runId: string, stepId: string, values: Record<string, unknown>) {
+export async function submitInput(p0: Principal, runId: string, stepId: string, values: Record<string, unknown>) {
+  const p = await withDelegators(p0);
   const r = await getRunRow(runId);
   const def = stepDefs(r).find((d) => d.id === stepId);
   const row = (await loadSteps(runId)).find((s) => s.step_id === stepId);
   if (!def || !row) throw badRequest(`No step "${stepId}" in this run`);
   if (def.type !== 'input' || row.status !== 'WAITING') throw conflict('This step is not waiting for input');
-  if (!canSubmitInput(p, r, def, row)) throw forbidden('You cannot answer this step');
+  const as = inputResponder(p, r, def, row);
+  if (!as) throw forbidden('You cannot answer this step');
+  const behalf = as.id !== p.id ? ` on behalf of ${as.name}` : '';
   const clean = compact(values);
   validate(def.inputs as ObjectSchema, clean, 'inputs');
-  await addLog(runId, `Input provided by ${p.name}`, 'info', stepId);
-  await audit(actorOf(p), 'run.step_input', `${r.action} · ${row.name}`, { runId, step: stepId });
-  await complete(runId, stepId, ['WAITING'], { status: 'SUCCESS', output: clean, statusLabel: `Provided by ${p.name}` });
+  await addLog(runId, `Input provided by ${p.name}${behalf}`, 'info', stepId);
+  await audit(actorOf(p), 'run.step_input', `${r.action} · ${row.name}`, { runId, step: stepId, ...(behalf ? { onBehalfOf: as.email } : {}) });
+  await complete(runId, stepId, ['WAITING'], { status: 'SUCCESS', output: clean, statusLabel: `Provided by ${p.name}${behalf}` });
 }
 
 // ---------- sub-workflows ----------

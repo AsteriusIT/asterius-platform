@@ -46,6 +46,7 @@ import { fieldProblems, fieldsToSchema, nameFromLabel, schemaToFields, type Fiel
 import { FieldsEditor, type FieldsMode } from './FieldsEditor';
 import { ExpressionStatus } from './ExpressionTools';
 import { JsonEditor, KeyValueEditor, MONO_INPUT, PluginFieldInput, SubjectsEditor, VariableChips } from './blocks';
+import { ApprovalTimersEditor, RemindersEditor, TiersEditor } from './ApprovalSettings';
 
 /**
  * Settings of the workflow steps, shown in the editor page's dialogs (pages/admin/WorkflowFlow.tsx): per type
@@ -308,16 +309,36 @@ function ApprovalEditor({ step, onEntity, onChange }: { step: ApprovalStep; onEn
   return (
     <Stack gap="sm">
       <Title order={6}>Approvers</Title>
-      <SubjectsEditor value={step.approvers} onChange={(approvers) => onChange({ approvers })} allowOwnerTeam={onEntity} emptyMeans="admins approve" />
+      <SegmentedControl
+        value={step.tiers ? 'tiers' : 'single'}
+        data={[
+          { value: 'single', label: 'One group' },
+          { value: 'tiers', label: 'Sequential tiers' },
+        ]}
+        onChange={(m) =>
+          onChange(
+            m === 'tiers'
+              ? { tiers: [{ name: 'Tier 1', approvers: step.approvers ?? {}, minApprovals: step.minApprovals ?? 1 }], approvers: undefined, minApprovals: 1 }
+              : { tiers: undefined, approvers: step.tiers?.[0]?.approvers, minApprovals: step.tiers?.[0]?.minApprovals ?? 1 },
+          )
+        }
+      />
+      {step.tiers ? (
+        <TiersEditor tiers={step.tiers} onChange={(tiers) => onChange({ tiers })} onEntity={onEntity} />
+      ) : (
+        <SubjectsEditor value={step.approvers} onChange={(approvers) => onChange({ approvers })} allowOwnerTeam={onEntity} emptyMeans="admins approve" />
+      )}
       <Group align="flex-end">
-        <NumberInput
-          label="Approvals needed"
-          min={1}
-          max={10}
-          w={180}
-          value={step.minApprovals ?? 1}
-          onChange={(n) => onChange({ minApprovals: Number(n) || 1 })}
-        />
+        {!step.tiers && (
+          <NumberInput
+            label="Approvals needed"
+            min={1}
+            max={10}
+            w={180}
+            value={step.minApprovals ?? 1}
+            onChange={(n) => onChange({ minApprovals: Number(n) || 1 })}
+          />
+        )}
         <Switch
           mb={8}
           label="The requester may approve"
@@ -334,6 +355,7 @@ function ApprovalEditor({ step, onEntity, onChange }: { step: ApprovalStep; onEn
         onChange={(e) => onChange({ message: e.currentTarget.value || undefined })}
         styles={MONO_INPUT}
       />
+      <ApprovalTimersEditor value={step} onChange={onChange} onEntity={onEntity} expiryHint="After the step timeout (Flow, default 7 days)" />
     </Stack>
   );
 }
@@ -419,6 +441,7 @@ function InputEditor({ step, onChange }: { step: InputStep; onChange: (p: Partia
       />
       <Title order={6}>Who answers</Title>
       <SubjectsEditor value={step.assignees} onChange={(assignees) => onChange({ assignees })} allowOwnerTeam emptyMeans="the requester and admins" />
+      <RemindersEditor value={step} onChange={onChange} />
       <Title order={6}>Form</Title>
       <FieldsEditor
         fields={fields}

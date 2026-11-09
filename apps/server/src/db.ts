@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { config, paths } from './config.js';
 import { baseline } from './schema.js';
+import { approvalsMigration } from './migrations/approvals.js';
 import { componentLogger } from './logger.js';
 import { dbSpan } from './tracing.js';
 
@@ -93,7 +94,10 @@ export interface Migration {
  * Baseline policy: the migration history was flattened into migration 1 (schema.ts) on 2026-11-07, before the first
  * production release. From now on append migrations (id 2, 3…) and never edit the baseline once it has shipped.
  */
-export const MIGRATIONS: Migration[] = [{ id: 1, name: 'baseline schema', up: baseline }];
+export const MIGRATIONS: Migration[] = [
+  { id: 1, name: 'baseline schema', up: baseline },
+  { id: 3, name: 'approval reminders, escalation, delegation and tiers', up: approvalsMigration },
+];
 
 /**
  * Apply pending numbered migrations (idempotent; serialized across replicas by an advisory lock on Postgres).

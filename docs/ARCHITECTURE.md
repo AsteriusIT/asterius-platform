@@ -71,7 +71,7 @@ A workflow (action) is a trigger — a form submission: `trigger: { type: form, 
 ```
 PENDING ──deps terminal──▶ if false ─────────────▶ SKIPPED
    │                       a dependency failed ──▶ SKIPPED (blocked: its dependents are skipped too)
-   ├─ approval ─────────▶ WAITING_APPROVAL ─ approvals ≥ min ─▶ SUCCESS · reject ─▶ FAILURE · expiry ─▶ FAILURE
+   ├─ approval ─────────▶ WAITING_APPROVAL ─ approvals ≥ min (each tier in turn) ─▶ SUCCESS · reject ─▶ FAILURE · expiry ─▶ onExpiry (FAILURE | SUCCESS | SKIPPED)
    └─ others ───────────▶ QUEUED ─worker claims─▶ RUNNING ─▶ SUCCESS | FAILURE
                             ▲                       │ invoke: poll (RUN_POLL_SECONDS) or callback PATCH /runs/:id/steps/:step
                             └── retry with backoff ─┘ (retries × retryDelaySeconds·2^n; agent & transform errors, retryable invoker errors)
@@ -81,6 +81,8 @@ run: all steps terminal → SUCCESS, or FAILURE if a step failed without continu
 Every transition is a conditional `UPDATE … WHERE status IN (…)`: the engine (`actions/engine.ts`) can be called concurrently by workers, callbacks and API pods. Workers claim runs, steps and polls with a single `UPDATE … WHERE id IN (SELECT … FOR UPDATE SKIP LOCKED LIMIT n) RETURNING *` (SQLite: the same statement without the lock hint), so replicas never race for the same rows; everything in flight counts against `WORKER_CONCURRENCY`, and an idle worker backs off up to `WORKER_IDLE_MAX_MS`, woken at once by new work (in-process, or Postgres `LISTEN/NOTIFY` across replicas).
 
 Each claimed step has a **lease** (`locked_until`, by type) that its executor renews with a heartbeat while it runs; the heartbeat also notices a cancelled run or a lost lease and stops the step (agent loops stop between turns and abort the API call). A claim increments `attempt`, which is a fencing token: a worker that lost its lease can no longer write the step's result. Deadlines: a step times out after its `timeoutMinutes` (approvals 7 days, others `STEP_TIMEOUT_MINUTES`); a **run** is failed after `RUN_TIMEOUT_HOURS` from its start, extended by the timeouts of its approval steps (`runs.deadline_at`). **Housekeeping** (every 30 s, one replica at a time under an advisory lock) only visits work that is due: stale leases (the worker died mid-start; invokers are not retried because the external call may have happened), passed step and run deadlines, interrupted cancellations, and runs nothing drives anymore. Healthy in-flight runs, including ones waiting days for an approval, are never touched. Runs keep a snapshot of the workflow: editing an action never changes runs in flight.
+
+**Approval timers** (`actions/approvals.ts`): reminders, escalations and pre-start expiries are due-time columns (`remind_at`, `escalate_at` on runs and steps, `runs.approval_expires_at`; migration 3) visited by housekeeping. Each is claimed with a conditional UPDATE on the value that was read (`… SET remind_at = <next>, reminders = reminders + 1 WHERE … AND remind_at = <read>`), so a reminder or escalation is sent once even when passes overlap; a row that stopped waiting has its timer cleared by the same statement. Escalation sets `escalated_at`, which makes the escalation approvers eligible. Delegations (`delegations` table, per organization, optional date range) are loaded onto the principal (`delegators`) where approvals are decided or listed; `run_approvals` / `step_approvals` record `on_behalf_of` and, for tiers, `tier`.
 
 Cancelling is two-phase: the run gets `cancel_requested` (workers stop starting and continuing steps), its steps are cancelled and external jobs asked to stop (also a job that was still starting), and then the run turns `CANCELLED`. Approvals insert, count and transition under a row lock in one transaction, so concurrent approvers cannot leave a run below `minApprovals`. `POST /actions/:id/runs` accepts an `Idempotency-Key` header (same key and request returns the original run); the webhook invoker sends `Idempotency-Key: <run>/<step>`, stable across retries. Run logs are capped (`RUN_LOG_MAX_LINES`); `GET /runs/:id` returns the newest lines (`?after=<seq>` for incremental polling) and `GET /runs/:id/logs?after=&limit=` pages through the rest.
 
@@ -92,7 +94,8 @@ Cancelling is two-phase: the run gets `cancel_requested` (workers stop starting 
 POST /actions/:id/runs
    ├─ the action has a trigger and steps; permission (trigger.allowed: roles / teams / users / ownerTeam); input validation (trigger.inputs, JSON Schema)
    ├─ approval required → PENDING_APPROVAL ── approve × minApprovals → QUEUED
-   │                                       └─ reject (with reason)    → REJECTED
+   │                                       ├─ reject (with reason)    → REJECTED
+   │                                       └─ expireAfter passed      → onExpiry: FAILURE | REJECTED | QUEUED
    └─ otherwise → QUEUED
 worker: UPDATE … SET status='IN_PROGRESS' WHERE id=? AND status='QUEUED'      (claim; any number of workers)
    create the step rows → the engine runs the workflow (above); for each invoke step:

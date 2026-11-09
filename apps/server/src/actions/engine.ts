@@ -18,7 +18,9 @@ import { withSpan } from '../tracing.js';
 import { getInvoker } from './invokers/index.js';
 import type { InvokeEnv, InvokeResult, RunContext } from './types.js';
 import { addLog, emitRun, getRunRow, inRunOrg, runUrl, updateRun, type RunRow } from './runs.js';
-import { canApproveStep, isTerminal, loadSteps, stepApprovalsOf, stepDefs, type StepRow } from './steps.js';
+import { isTerminal, loadSteps, openTier, stepApprovalsOf, stepDecider, stepDefs, toApproval, type DecisionRow, type StepRow } from './steps.js';
+import { withDelegators } from '../auth/delegations.js';
+import { approvalTimers, armStep, expireApprovalStep, openTier as openNextTier } from './approvals.js';
 import { needsOf, type Step } from './workflow.js';
 import { runAgent, StepError, wrapUntrusted } from './agent.js';
 import { wake } from './wake.js';
@@ -166,19 +168,23 @@ async function startStep(r: RunRow, def: Step, rows: StepRow[]): Promise<boolean
       const ctx = await buildContext(r, rows, def.id);
       message = String((await render(def.message, ctx, async () => '')).value ?? '');
     }
+    // Tiered approvals start with the first tier (approvals.ts opens the next ones).
+    const tier = def.tiers?.[0];
+    const waitingFor = tier ? `Waiting for ${tier.minApprovals ?? 1} approval(s) · tier "${tier.name}"` : `Waiting for ${def.minApprovals} approval(s)`;
     const ok = await setStep(r.id, def.id, 'PENDING', {
       status: 'WAITING_APPROVAL',
-      status_label: `Waiting for ${def.minApprovals} approval(s)`,
+      status_label: waitingFor,
       state: JSON.stringify({ message }),
       started_at: now(),
       deadline_at: deadline,
     });
     if (ok) {
-      await addLog(r.id, `Waiting for ${def.minApprovals} approval(s)`, 'info', def.id);
+      await addLog(r.id, waitingFor, 'info', def.id);
+      await armStep(r.id, def);
       void notifyPendingDecision({
         run: r,
         kind: 'approval',
-        subjects: def.approvers,
+        subjects: tier ? tier.approvers : def.approvers,
         allowSelf: def.allowSelfApproval,
         stepName: def.name || def.id,
         message,
@@ -591,20 +597,24 @@ export async function runningInvokeStep(runId: string): Promise<string | undefin
 
 // ---------- approval steps ----------
 export async function decideStep(
-  p: Principal,
+  p0: Principal,
   runId: string,
   stepId: string,
   decision: 'approved' | 'rejected',
   comment: string,
   extra: { choice?: string; values?: Record<string, unknown> } = {},
 ) {
+  const p = await withDelegators(p0);
   const r = await getRunRow(runId);
   const def = stepDefs(r).find((d) => d.id === stepId);
   const row = await one<StepRow>('SELECT * FROM run_steps WHERE run_id = ? AND step_id = ?', runId, stepId);
   if (!def || !row) throw badRequest(`No step "${stepId}" in this run`);
   if (def.type !== 'approval' || row.status !== 'WAITING_APPROVAL') throw conflict('This step is not waiting for approval');
   const approvals = (await stepApprovalsOf([runId])).get(`${runId}/${stepId}`) ?? [];
-  if (!canApproveStep(p, r, def, row, approvals)) throw forbidden('You cannot approve this step');
+  // `as`: whose approval this is — the caller, or a person the caller is the active delegate of.
+  const as = stepDecider(p, r, def, row, approvals);
+  if (!as) throw forbidden('You cannot approve this step');
+  const behalf = as.id !== p.id ? as : null;
   if (decision === 'rejected' && !comment.trim()) throw badRequest('Give a reason when rejecting');
   let values: Record<string, unknown> | null = null;
   if (decision === 'approved') {
@@ -619,51 +629,94 @@ export async function decideStep(
     const cur = (await d.query<{ status: string }>(`SELECT status FROM run_steps WHERE run_id = ? AND step_id = ?${forUpdate}`, [runId, stepId])).rows[0];
     if (cur?.status !== 'WAITING_APPROVAL') throw conflict('This step is not waiting for approval');
     const decided = (
-      await d.query<{ user_id: string; user_name: string; decision: string; comment: string }>(
-        'SELECT a.user_id, u.name AS user_name, a.decision, a.comment FROM step_approvals a JOIN users u ON u.id = a.user_id WHERE a.run_id = ? AND a.step_id = ? ORDER BY a.at',
+      await d.query<DecisionRow & { tier: number | null }>(
+        `SELECT a.user_id, u.name, a.decision, a.comment, a.at, a.tier, a.on_behalf_of, b.name AS behalf_name
+         FROM step_approvals a JOIN users u ON u.id = a.user_id LEFT JOIN users b ON b.id = a.on_behalf_of WHERE a.run_id = ? AND a.step_id = ? ORDER BY a.at`,
         [runId, stepId],
       )
-    ).rows;
-    if (decided.some((a) => a.user_id === p.id)) throw conflict('You already decided on this step');
-    await d.query('INSERT INTO step_approvals (run_id, step_id, user_id, decision, comment, at, choice, form_values) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', [
-      runId,
-      stepId,
-      p.id,
-      decision,
-      comment,
-      now(),
-      decision === 'approved' ? (extra.choice ?? null) : null,
-      values ? JSON.stringify(values) : null,
-    ]);
-    return [...decided, { user_id: p.id, user_name: p.name, decision, comment }].filter((a) => a.decision === 'approved');
+    ).rows.map((a) => ({ ...toApproval(a), tier: a.tier === null ? null : Number(a.tier) }));
+    if (decided.some((a) => [p.id, as.id].includes(a.userId) || (a.onBehalfOf && [p.id, as.id].includes(a.onBehalfOf.id))))
+      throw conflict('You already decided on this step');
+    // Under the lock: a concurrent decision may have closed the tier the caller was entitled to.
+    if (stepDecider(p, r, def, { ...row, status: 'WAITING_APPROVAL' }, decided)?.id !== as.id) throw conflict('This tier was already decided; reload the run');
+    const tier = def.tiers?.length ? openTier(def, decided) : null;
+    const at = now();
+    await d.query(
+      'INSERT INTO step_approvals (run_id, step_id, user_id, decision, comment, at, choice, form_values, tier, on_behalf_of) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [
+        runId,
+        stepId,
+        p.id,
+        decision,
+        comment,
+        at,
+        decision === 'approved' ? (extra.choice ?? null) : null,
+        values ? JSON.stringify(values) : null,
+        tier,
+        behalf?.id ?? null,
+      ],
+    );
+    const mine = { userId: p.id, userName: p.name, decision, comment, at, tier, onBehalfOf: behalf ? { id: behalf.id, name: behalf.name } : null };
+    return { all: [...decided, mine], tier };
   });
+  const tierName = outcome.tier !== null ? def.tiers![outcome.tier]!.name : null;
   await addLog(
     runId,
-    `${decision === 'approved' ? 'Approved' : 'Rejected'} by ${p.name}${comment ? `: ${comment}` : ''}`,
+    `${decision === 'approved' ? 'Approved' : 'Rejected'} by ${p.name}${behalf ? ` on behalf of ${behalf.name}` : ''}${tierName ? ` (tier "${tierName}")` : ''}${comment ? `: ${comment}` : ''}`,
     decision === 'approved' ? 'info' : 'warn',
     stepId,
   );
-  await audit(actorOf(p), `run.step_${decision}`, `${r.action} · ${row.name}`, { runId, step: stepId, comment });
-  const approved = outcome;
+  await audit(actorOf(p), `run.step_${decision}`, `${r.action} · ${row.name}`, {
+    runId,
+    step: stepId,
+    comment,
+    ...(behalf ? { onBehalfOf: behalf.email } : {}),
+    ...(tierName ? { tier: tierName } : {}),
+  });
+  const approved = outcome.all.filter((a) => a.decision === 'approved');
+  const delegated = approved.filter((a) => a.onBehalfOf).map((a) => ({ by: a.userName, for: a.onBehalfOf!.name }));
+  // Tiered steps: the decisions of each tier.
+  const tiers = def.tiers?.length
+    ? {
+        tiers: def.tiers.map((t, i) => {
+          const mine = outcome.all.filter((a) => a.tier === i);
+          return {
+            name: t.name,
+            approved: mine.filter((a) => a.decision === 'approved').length >= (t.minApprovals ?? 1),
+            by: mine.filter((a) => a.decision === 'approved').map((a) => a.userName),
+            comments: mine.map((a) => a.comment).filter(Boolean),
+            ...(mine.some((a) => a.decision === 'rejected') ? { rejectedBy: mine.find((a) => a.decision === 'rejected')!.userName } : {}),
+          };
+        }),
+      }
+    : {};
+  const open = def.tiers?.length ? openTier(def, outcome.all) : null;
   if (decision === 'rejected')
     await complete(runId, stepId, ['WAITING_APPROVAL'], {
       status: 'FAILURE',
-      statusLabel: `Rejected by ${p.name}`,
-      output: { approved: false, by: p.name, comment },
+      statusLabel: `Rejected by ${p.name}${tierName ? ` (tier "${tierName}")` : ''}`,
+      output: { approved: false, by: p.name, comment, ...(behalf ? { onBehalfOf: behalf.name } : {}), ...tiers },
     });
-  else if (approved.length >= def.minApprovals)
+  else if (open === null ? approved.length >= def.minApprovals : open >= def.tiers!.length)
     await complete(runId, stepId, ['WAITING_APPROVAL'], {
       status: 'SUCCESS',
-      statusLabel: `Approved by ${approved.map((a) => a.user_name).join(', ')}`,
+      statusLabel: `Approved by ${approved.map((a) => a.userName).join(', ')}`,
       output: {
         approved: true,
-        by: approved.map((a) => a.user_name),
+        by: approved.map((a) => a.userName),
         comments: approved.map((a) => a.comment).filter(Boolean),
+        ...(delegated.length ? { delegated } : {}),
+        ...tiers,
         ...(await approvalExtras(runId, stepId)),
       },
     });
+  else if (open !== null && outcome.tier !== null && open > outcome.tier) await openNextTier(r, def, open, outcome.all);
   else {
-    await setStep(runId, stepId, 'WAITING_APPROVAL', { status_label: `${approved.length}/${def.minApprovals} approval(s)` });
+    const need = open !== null ? (def.tiers![open]!.minApprovals ?? 1) : def.minApprovals;
+    const have = open !== null ? approved.filter((a) => a.tier === open).length : approved.length;
+    await setStep(runId, stepId, 'WAITING_APPROVAL', {
+      status_label: `${have}/${need} approval(s)${open !== null ? ` · tier "${def.tiers![open]!.name}"` : ''}`,
+    });
     await emitRun(runId, 'run.updated');
   }
 }
@@ -837,6 +890,7 @@ export async function stepHousekeeping(log: FastifyBaseLogger) {
       BATCH,
     ))
       await guard('step timeout', s.run_id, async () => {
+        if (await expireApprovalStep(s)) return; // approval steps with `onExpiry` decide their own outcome
         const won = await complete(s.run_id, s.step_id, ['RUNNING', 'WAITING_APPROVAL', 'QUEUED', 'WAITING'], {
           status: 'FAILURE',
           statusLabel: s.status === 'WAITING_APPROVAL' ? 'Approval expired' : 'Timed out',
@@ -871,6 +925,8 @@ export async function stepHousekeeping(log: FastifyBaseLogger) {
           ? terminateRun(r.id, 'FAILURE', 'Timed out', `The run exceeded its time limit (RUN_TIMEOUT_HOURS=${config.RUN_TIMEOUT_HOURS}) and was stopped`)
           : terminateRun(r.id, 'CANCELLED', null, 'Cancellation completed'),
       );
+    // Approval reminders, escalations and pre-start expiries (each claimed with a conditional UPDATE).
+    await approvalTimers(log);
     // Runs that nothing drives anymore: no steps yet (start interrupted) or no active step (a transition's follow-up
     // was interrupted, or the workflow completed without being finalized).
     for (const r of await all<{ id: string; n: number }>(

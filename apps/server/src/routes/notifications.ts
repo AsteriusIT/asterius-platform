@@ -6,6 +6,7 @@ import { mailConfigured, postSlack, postTeams, sendMail } from '../notifications
 import { getPrefs, listNotifications, markRead, setPrefs } from '../inbox.js';
 import { page } from './util.js';
 import { getNotificationPrefs, getNotificationSettings, setNotificationPrefs, setNotificationSettings } from '../notifications/settings.js';
+import { clearDelegation, getDelegation, listDelegations, setDelegation } from '../auth/delegations.js';
 
 export async function notificationRoutes(app: FastifyInstance) {
   await app.register(async (scoped) => {
@@ -29,6 +30,24 @@ export async function notificationRoutes(app: FastifyInstance) {
     scoped.put('/notifications/preferences', async (req) => setPrefs(req.principal.id, z.object({ email: z.boolean(), slack: z.boolean() }).parse(req.body)));
     scoped.get('/me/notifications', async (req) => getNotificationPrefs(req.principal.id));
     scoped.put('/me/notifications', async (req) => setNotificationPrefs(req.principal.id, req.body));
+    // Out-of-office delegation (see auth/delegations.ts): the delegate decides the approvals the user is eligible for.
+    scoped.get('/me/delegation', async (req) => ({ delegation: await getDelegation(req.principal.id) }));
+    scoped.put('/me/delegation', async (req) => {
+      const d = await setDelegation(req.principal.id, req.body);
+      await audit(actorOf(req.principal), 'delegation.set', d.delegate.email, { startsAt: d.startsAt, endsAt: d.endsAt });
+      return { delegation: d };
+    });
+    scoped.delete('/me/delegation', async (req) => {
+      if (await clearDelegation(req.principal.id)) await audit(actorOf(req.principal), 'delegation.cleared', req.principal.email);
+      return { ok: true };
+    });
+    scoped.get('/delegations', { preHandler: requireAdmin }, async () => listDelegations());
+    scoped.delete('/delegations/:userId', { preHandler: requireAdmin }, async (req) => {
+      const { userId } = z.object({ userId: z.string().min(1) }).parse(req.params);
+      await clearDelegation(userId, true);
+      await audit(actorOf(req.principal), 'delegation.cleared', userId);
+      return { ok: true };
+    });
 
     scoped.get('/notification-settings', { preHandler: requireAdmin }, async () => getNotificationSettings());
     scoped.put('/notification-settings', { preHandler: requireAdmin }, async (req) => {

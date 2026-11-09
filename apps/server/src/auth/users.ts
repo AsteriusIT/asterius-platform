@@ -70,6 +70,8 @@ export interface Principal {
   org: OrgRef | null;
   /** Set when the request authenticated with an API token that carries restrictions. */
   token?: { id: string; scopes: string[] | null; blueprints: string[] | null };
+  /** People whose approvals this principal may decide now (active out-of-office delegations, see auth/delegations.ts). */
+  delegators?: Principal[];
 }
 
 /** Teams of the user in the current organization. */

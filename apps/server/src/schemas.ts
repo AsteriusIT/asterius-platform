@@ -369,6 +369,25 @@ export const mcpServer = z.object({
   allowedTools: z.array(z.string().min(1).max(100)).max(100).optional(),
 });
 
+/** Delays of reminders, escalations and expiries: `30m`, `4h`, `1d`. */
+const delay = z.string().regex(/^[1-9]\d{0,5}[smhd]$/, 'e.g. 30m, 4h, 1d');
+/** Re-notify the people who have not decided yet, every `remindEvery`, at most `maxReminders` times (default 3). */
+const reminders = { remindEvery: delay.optional(), maxReminders: z.number().int().min(1).max(20).optional() };
+/** After `after` without a decision, `approvers` become eligible too (and are notified). */
+const escalation = z.object({
+  after: delay,
+  approvers: subjectsRule.refine((s) => !!(s.roles?.length || s.teams?.length || s.users?.length || s.ownerTeam), 'name the escalation approvers'),
+});
+/** What an approval that nobody decided becomes once it expires (default: fail). */
+export const ON_EXPIRY = ['fail', 'reject', 'approve', 'skip'] as const;
+const approvalExtras = { ...reminders, escalate: escalation.optional(), onExpiry: z.enum(ON_EXPIRY).optional() };
+/** Sequential approval tiers: each opens once the previous one reached its minimum. */
+const approvalTier = z.object({
+  name: z.string().min(1).max(60),
+  approvers: subjectsRule.optional(),
+  minApprovals: z.number().int().min(1).max(10).default(1),
+});
+
 export const workflowStep = z.discriminatedUnion('type', [
   z.object({ ...stepBase, type: z.literal('invoke'), invoker: z.object({ type: z.string().min(1) }).passthrough() }),
   z.object({
@@ -389,6 +408,9 @@ export const workflowStep = z.discriminatedUnion('type', [
     minApprovals: z.number().int().min(1).max(10).default(1),
     allowSelfApproval: z.boolean().default(false),
     message: z.string().max(20_000).optional(),
+    /** Instead of approvers / minApprovals: tiers decided in order. */
+    tiers: z.array(approvalTier).min(1).max(5).optional(),
+    ...approvalExtras,
   }),
   z.object({
     ...stepBase,
@@ -440,6 +462,7 @@ export const workflowStep = z.discriminatedUnion('type', [
     inputs: objectSchema,
     /** Who may answer (default: the requester and admins). */
     assignees: subjects.optional(),
+    ...reminders,
   }),
   z.object({
     ...stepBase,
@@ -470,7 +493,11 @@ const approvalPolicy = z
     approvers: subjects.optional(),
     minApprovals: z.number().int().min(1).max(10).default(1),
     allowSelfApproval: z.boolean().default(false),
+    ...approvalExtras,
+    /** The request expires after this delay without enough approvals (`onExpiry` decides what happens). */
+    expireAfter: delay.optional(),
   })
+  .refine((a) => !a.onExpiry || a.expireAfter, { message: 'onExpiry needs expireAfter', path: ['onExpiry'] })
   .default({ required: false, minApprovals: 1, allowSelfApproval: false });
 
 /**
@@ -598,6 +625,17 @@ export const notificationPrefs = z.object({
   runs: z.array(z.enum(['email', 'slack'])).default([]),
 });
 export type NotificationPrefs = z.infer<typeof notificationPrefs>;
+
+/** Out-of-office: the delegate may decide approvals (and answer inputs) for this person, optionally within a date range. */
+export const delegationInput = z
+  .object({
+    /** User id or email of the delegate (a member of the organization). */
+    delegate: z.string().min(1).max(200),
+    startsAt: z.iso.datetime({ offset: true }).nullish(),
+    endsAt: z.iso.datetime({ offset: true }).nullish(),
+  })
+  .refine((d) => !d.startsAt || !d.endsAt || Date.parse(d.startsAt) < Date.parse(d.endsAt), { message: 'endsAt must be after startsAt', path: ['endsAt'] });
+export type DelegationInput = z.infer<typeof delegationInput>;
 
 export const mappingDef = z.object({
   kind: z.string().default('item'),

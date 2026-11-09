@@ -8,6 +8,7 @@ import { approverSubjects } from '../actions/steps.js';
 import { dmSlack, mailConfigured, sendMail } from './channels.js';
 import { getNotificationPrefs, getNotificationSettings } from './settings.js';
 import { orgId } from '../orgs/context.js';
+import { activeDelegates } from '../auth/delegations.js';
 import { findOrg, orgRef } from '../orgs/orgs.js';
 
 /**
@@ -40,41 +41,72 @@ async function deliver(to: Recipient, channels: Channel[], subject: string, body
 const runLink = (id: string) => `${config.PUBLIC_URL}/runs/${id}`;
 const MAX_RECIPIENTS = 50;
 
-/** Ask the people who can decide (approvers; for an input step, the assignees or the requester). */
+/**
+ * Ask the people who can decide (approvers; for an input step, the assignees or the requester), and the active
+ * delegates of those people. `subjects` may list several sets (an open tier plus escalation approvers). Reminders and
+ * escalations use their own wording and skip the people in `exclude` (who already decided, or had a delegate decide).
+ */
 export async function notifyPendingDecision(o: {
   run: { id: string; action_title: string; team: string | null; triggered_by: string; user_name?: string };
   kind: 'approval' | 'input';
-  subjects: Subjects | undefined;
+  subjects: Subjects | Subjects[] | undefined;
   allowSelf?: boolean;
   stepName?: string;
   message?: string | null;
+  /** n-th reminder of at most `of`. */
+  reminder?: { n: number; of: number };
+  /** The approval was escalated after this delay: the people asked are the escalation approvers. */
+  escalation?: { after: string };
+  exclude?: string[];
 }) {
-  const named = o.subjects && (o.subjects.roles?.length || o.subjects.teams?.length || o.subjects.users?.length || o.subjects.ownerTeam);
-  const subjects: Subjects = o.kind === 'approval' ? approverSubjects(o.subjects) : named ? (o.subjects as Subjects) : { users: [] };
+  const isNamed = (s: Subjects | undefined) => !!s && !!(s.roles?.length || s.teams?.length || s.users?.length || s.ownerTeam);
+  const list = Array.isArray(o.subjects) ? o.subjects : [o.subjects];
+  const named = list.some(isNamed);
+  const sets: Subjects[] = o.kind === 'approval' ? list.map((s) => approverSubjects(s)) : named ? (list.filter(isNamed) as Subjects[]) : [{ users: [] }];
+  const exclude = new Set(o.exclude ?? []);
   // Members of the run's organization (the context of the run).
   const ref = orgRef((await findOrg(orgId()))!);
   const users = await all<UserRow>(
     "SELECT u.* FROM users u JOIN memberships m ON m.user_id = u.id WHERE m.org_id = ? AND u.active = 1 AND u.provider != 'service' ORDER BY u.name LIMIT 1000",
     ref.id,
   );
-  const subject = o.kind === 'approval' ? `Approval needed: ${o.run.action_title}` : `Input needed: ${o.run.action_title}`;
-  const body = [`${o.run.user_name ?? 'Someone'} started ${o.run.action_title}.`, o.stepName ? `Step: ${o.stepName}` : '', o.message ?? '']
+  const base = o.kind === 'approval' ? `Approval needed: ${o.run.action_title}` : `Input needed: ${o.run.action_title}`;
+  const subject = o.reminder ? `Reminder: ${base}` : o.escalation ? `Escalated: ${base}` : base;
+  const body = [
+    `${o.run.user_name ?? 'Someone'} started ${o.run.action_title}.`,
+    o.stepName ? `Step: ${o.stepName}` : '',
+    o.reminder ? `Still waiting for your decision (reminder ${o.reminder.n} of ${o.reminder.of}).` : '',
+    o.escalation ? `Nobody decided within ${o.escalation.after}: the request was escalated to you.` : '',
+    o.message ?? '',
+  ]
     .filter(Boolean)
     .join('\n');
-  let sent = 0;
+  const mayDecide = (id: string) => o.kind !== 'approval' || o.allowSelf || id !== o.run.triggered_by;
+  // Who is asked: the eligible people (an input step nobody is assigned to is for the requester), never for their own
+  // request unless self-approval is allowed.
+  const eligible: UserRow[] = [];
   for (const u of users) {
-    if (sent >= MAX_RECIPIENTS) break;
-    const isRequester = u.id === o.run.triggered_by;
-    // An input step nobody is assigned to is for the requester; otherwise whoever matches (never one's own approval).
-    const eligible =
+    if (exclude.has(u.id)) continue;
+    const ok =
       o.kind === 'input' && !named
-        ? isRequester
-        : matchesSubjects(await principalOf(u, ref), subjects, o.run.team) && (o.kind !== 'approval' || o.allowSelf || !isRequester);
-    if (!eligible) continue;
+        ? u.id === o.run.triggered_by
+        : mayDecide(u.id) && (await principalOf(u, ref).then((pr) => sets.some((s) => matchesSubjects(pr, s, o.run.team))));
+    if (ok) eligible.push(u);
+  }
+  // …and the active delegates of those people (out of office), on the same conditions.
+  const byId = new Map(users.map((u) => [u.id, u]));
+  const recipients = new Map<string, { u: UserRow; for?: string }>(eligible.map((u) => [u.id, { u }]));
+  for (const [from, to] of await activeDelegates(eligible.map((u) => u.id))) {
+    const d = byId.get(to);
+    if (d && !recipients.has(to) && !exclude.has(to) && mayDecide(to)) recipients.set(to, { u: d, for: byId.get(from)?.name });
+  }
+  let sent = 0;
+  for (const { u, for: delegator } of recipients.values()) {
+    if (sent >= MAX_RECIPIENTS) break;
     const prefs = await getNotificationPrefs(u.id);
     if (!prefs.approvals.length) continue;
     sent++;
-    await deliver(u, prefs.approvals, subject, body, runLink(o.run.id));
+    await deliver(u, prefs.approvals, subject, delegator ? `${body}\nYou are asked as the delegate of ${delegator}.` : body, runLink(o.run.id));
   }
 }
 

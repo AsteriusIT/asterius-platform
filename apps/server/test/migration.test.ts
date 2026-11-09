@@ -11,14 +11,16 @@ async function checkFresh(d: Driver) {
   await migrate(d);
   const all = async (sql: string) => (await d.query<Record<string, unknown>>(sql)).rows;
 
-  expect(MIGRATIONS.map((m) => m.id)).toEqual([1]);
-  expect((await all('SELECT id, name FROM schema_migrations')).map((r) => Number(r.id))).toEqual([1]);
+  const ids = MIGRATIONS.map((m) => m.id);
+  expect(ids[0]).toBe(1);
+  expect(ids).toContain(3); // approvals (reminders, escalation, delegation, tiers)
+  expect((await all('SELECT id, name FROM schema_migrations')).map((r) => Number(r.id)).sort((a, b) => a - b)).toEqual(ids);
   expect(await all("SELECT slug, name FROM organizations WHERE id = 'default'")).toEqual([{ slug: 'default', name: 'Default' }]);
   expect((await all('SELECT version FROM config_version WHERE id = 1')).map((r) => Number(r.version))).toEqual([0]);
 
   // A second run is a no-op.
   await migrate(d);
-  expect((await all('SELECT id FROM schema_migrations')).length).toBe(1);
+  expect((await all('SELECT id FROM schema_migrations')).length).toBe(ids.length);
   expect((await all('SELECT id FROM organizations')).length).toBe(1);
 
   // Keys are per organization: the same identifiers can exist in two of them.

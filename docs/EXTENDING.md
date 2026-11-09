@@ -61,6 +61,10 @@ trigger:
   approval: { required: false }    # approval before the workflow starts (or use an approval step)
 ```
 
+The pre-start approval takes the same reminders and escalation as approval steps, plus an expiry:
+`approval: { required: true, approvers: { teams: [platform] }, remindEvery: 1d, maxReminders: 3, escalate: { after: 2d, approvers: { roles: [admin] } }, expireAfter: 7d, onExpiry: reject }`
+(`onExpiry`: `fail`, the default, fails the run; `reject` rejects it; `approve` and `skip` start the workflow anyway).
+
 Without `trigger` (or without `steps`), the workflow is a draft: it can be saved and edited, but not run, and users don't see it. The older flat form (`blueprint`, `trigger: day-2`, `inputs`, `allowed`, `approval` at the top level, and a single `invoker` instead of `steps`) is still accepted and read as the above.
 
 Steps run in order, or as a graph with `needs`:
@@ -100,7 +104,7 @@ steps:
     output: { url: "steps.provision.link" }
 ```
 
-Step outputs: invoke → the invoker result (webhook response, callback `result`); approval → `{ approved, by, comments }`; agent → the structured fields or `{ text }`; transform → its keys. Every step also exposes `steps.<id>.status` and `steps.<id>.link`. The run result is the outputs by step id.
+Step outputs: invoke → the invoker result (webhook response, callback `result`); approval → `{ approved, by, comments }` (plus `tiers: [{ name, approved, by, comments }]` for tiered steps, `delegated: [{ by, for }]` when a delegate decided, `expired: true` after an `onExpiry` outcome); agent → the structured fields or `{ text }`; transform → its keys. Every step also exposes `steps.<id>.status` and `steps.<id>.link`. The run result is the outputs by step id.
 
 ### Other triggers
 
@@ -143,6 +147,16 @@ Runs started automatically belong to the "Workflow automation" service account a
     type: approval
     choices: [eu, us]                                              # output.choice
     fields: { properties: { ticket: { type: string } } }           # output.values
+  - id: signoff
+    type: approval
+    tiers:                                                         # instead of approvers / minApprovals: decided in order
+      - { name: lead, approvers: { ownerTeam: true } }
+      - { name: director, approvers: { roles: [director] }, minApprovals: 1 }
+    remindEvery: 1d                                                # re-notify who has not decided (also on input steps)
+    maxReminders: 3                                                # default 3
+    escalate: { after: 2d, approvers: { roles: [admin] } }         # they become eligible too, and are notified
+    timeoutMinutes: 10080                                          # the expiry (default 7 days)
+    onExpiry: skip                                                 # fail (default) | reject | approve | skip
   - id: child                                                      # run another action and wait: output { runId, status, result }
     type: workflow
     action: create-repo
@@ -153,6 +167,8 @@ Runs started automatically belong to the "Workflow automation" service account a
     inputs: { user: "{{ item }}" }
     forEach: { items: inputs.users, maxConcurrency: 3, failFast: false }   # output { results: [{ item, status, result, runId }], succeeded, failed }
 ```
+
+**Approvals.** A tier opens once the previous one has its `minApprovals`; a reject at any tier rejects the step, and one person decides at most once per step. Reminders go (email / Slack, per each person's preferences) to the approvers who have not decided, every `remindEvery`, at most `maxReminders` times. Escalation adds `escalate.approvers` (to the open tier) after `escalate.after` and logs it on the run. `onExpiry` on an approval step wins over any generic timeout handling. **Delegation** (out of office): `PUT /api/v1/me/delegation { delegate: <user id or email>, startsAt?, endsAt? }` (Profile → Out of office; `GET`/`DELETE` the same path; admins: `GET /api/v1/delegations`, `DELETE /api/v1/delegations/:userId`). While it is in effect the delegate may decide what the person is eligible for (approvals, pre-start approvals, input steps) and is notified of it, never their own request unless `allowSelfApproval`; the decision records both (`approvals[].onBehalfOf`). Delegation is one hop.
 
 Child runs belong to the parent's requester, link to the parent (`parent`), are cancelled with it, and are limited to 5 levels of nesting. Failed runs can be re-run (`POST /runs/:id/rerun`), resumed in place from the failed steps (`POST /runs/:id/resume`) or have one failed step retried (`POST /runs/:id/steps/:step/retry`): requester and admins only.
 

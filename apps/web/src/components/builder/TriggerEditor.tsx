@@ -6,6 +6,7 @@ import { api } from '../../lib/api';
 import type { FieldDraft } from './fields';
 import { FieldsEditor } from './FieldsEditor';
 import { KeyValueEditor, MONO_INPUT, SubjectsEditor } from './blocks';
+import { ApprovalTimersEditor } from './ApprovalSettings';
 
 /**
  * The trigger of a workflow. Only one kind today: a form submitted by a user, offered on the self-service page
@@ -298,6 +299,22 @@ function FormTriggerEditor({
                 onChange={(e) => set({ approval: { ...approval, allowSelfApproval: e.currentTarget.checked } })}
               />
             </Group>
+            <TextInput
+              label="Expires after"
+              description="Without enough approvals by then (e.g. 7d); empty: never"
+              w={260}
+              value={approval.expireAfter ?? ''}
+              onChange={(e) => {
+                const expireAfter = e.currentTarget.value || undefined;
+                set({ approval: { ...approval, expireAfter, ...(expireAfter ? {} : { onExpiry: undefined }) } });
+              }}
+            />
+            <ApprovalTimersEditor
+              value={approval}
+              onChange={(p) => set({ approval: { ...approval, ...p } })}
+              onEntity={onEntity}
+              expiryHint={approval.expireAfter ? `After ${approval.expireAfter}` : 'Set "Expires after" first'}
+            />
           </>
         )}
       </Stack>
