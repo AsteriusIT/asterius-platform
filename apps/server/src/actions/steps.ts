@@ -25,6 +25,8 @@ export interface StepRow {
   deadline_at: string | null;
   started_at: string | null;
   ended_at: string | null;
+  sla_due_at?: string | null;
+  sla_breached_at?: string | null;
 }
 
 export const TERMINAL: StepStatus[] = ['SUCCESS', 'FAILURE', 'SKIPPED', 'CANCELLED'];
@@ -129,6 +131,7 @@ export async function runStepsView(run: RunRow, p: Principal | null): Promise<Ru
       ...(p && def
         ? { canApprove: canApproveStep(p, run, def, row, list), canRetry: canRetryStep(p, run, row), canSubmit: canSubmitInput(p, run, def, row) }
         : {}),
+      slaBreachedAt: row.sla_breached_at ?? null,
       startedAt: row.started_at,
       endedAt: row.ended_at,
     };

@@ -810,6 +810,14 @@ function FlowEditor({ steps, index, onChange }: { steps: WorkflowStep[]; index: 
                 onChange={(n) => onChange({ timeoutMinutes: n === '' ? undefined : Number(n) })}
               />
             </SimpleGrid>
+            <NumberInput
+              label="SLA (minutes)"
+              description="Not finished this long after it started: the requester and admins are notified (step.sla_breached); the step keeps running"
+              placeholder="none"
+              min={1}
+              value={step.slaMinutes ?? ''}
+              onChange={(n) => onChange({ slaMinutes: n === '' ? undefined : Number(n) })}
+            />
             <Switch
               label="Continue if this step fails"
               description="The workflow still succeeds and later steps run; use for best-effort steps (notifications, AI hints)"

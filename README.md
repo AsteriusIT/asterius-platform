@@ -87,6 +87,8 @@ To plug in a **custom service**, use one of three paths:
 2. **HTTP source / inbound webhook / bulk API.** Use these to bring your service's data into the catalog without writing code.
 3. **Code plugin.** Implement the `Invoker` or `Source` interface (~50 lines) and register it.
 
+Workflows can declare SLAs (`slaMinutes`: notification and `*.sla_breached` events when exceeded), attach files to runs (artifacts, uploaded through the step callback) and carry tests run with mocks (`POST /actions/:id/tests/run`, `node dist/cli.js actions test`).
+
 See [docs/EXTENDING.md](docs/EXTENDING.md) for the API, the callback contract and the plugin interfaces.
 
 ## Organizations, sign-in and AI assistants

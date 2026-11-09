@@ -930,6 +930,11 @@
                         }
                       }
                     },
+                    "slaMinutes": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 129600
+                    },
                     "type": {
                       "type": "string",
                       "const": "invoke"
@@ -1026,6 +1031,11 @@
                           }
                         }
                       }
+                    },
+                    "slaMinutes": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 129600
                     },
                     "type": {
                       "type": "string",
@@ -1190,6 +1200,11 @@
                           }
                         }
                       }
+                    },
+                    "slaMinutes": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 129600
                     },
                     "type": {
                       "type": "string",
@@ -1476,6 +1491,11 @@
                         }
                       }
                     },
+                    "slaMinutes": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 129600
+                    },
                     "type": {
                       "type": "string",
                       "const": "wait"
@@ -1583,6 +1603,11 @@
                           }
                         }
                       }
+                    },
+                    "slaMinutes": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 129600
                     },
                     "type": {
                       "type": "string",
@@ -1730,6 +1755,11 @@
                         }
                       }
                     },
+                    "slaMinutes": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 129600
+                    },
                     "type": {
                       "type": "string",
                       "const": "workflow"
@@ -1853,6 +1883,11 @@
                         }
                       }
                     },
+                    "slaMinutes": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 129600
+                    },
                     "type": {
                       "type": "string",
                       "const": "transform"
@@ -1888,6 +1923,110 @@
           "enabled": {
             "default": true,
             "type": "boolean"
+          },
+          "slaMinutes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 129600
+          },
+          "tests": {
+            "maxItems": 50,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100
+                },
+                "inputs": {
+                  "default": {},
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "additionalProperties": {}
+                },
+                "entity": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "maxLength": 200
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "mocks": {
+                  "default": {},
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,40}$"
+                  },
+                  "additionalProperties": {
+                    "type": "object",
+                    "properties": {
+                      "status": {
+                        "default": "SUCCESS",
+                        "type": "string",
+                        "enum": [
+                          "SUCCESS",
+                          "FAILURE"
+                        ]
+                      },
+                      "output": {}
+                    }
+                  }
+                },
+                "expect": {
+                  "default": {},
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "SUCCESS",
+                        "FAILURE"
+                      ]
+                    },
+                    "steps": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,40}$"
+                      },
+                      "additionalProperties": {
+                        "type": "object",
+                        "properties": {
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "SUCCESS",
+                              "FAILURE",
+                              "SKIPPED"
+                            ]
+                          },
+                          "output": {}
+                        }
+                      }
+                    },
+                    "outputs": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {}
+                    }
+                  }
+                }
+              },
+              "required": [
+                "name"
+              ]
+            }
           }
         },
         "required": [
@@ -2079,7 +2218,7 @@
             "type": "array",
             "items": {
               "type": "string",
-              "pattern": "^(\\*|(entity|run|approval|sync|step|team|user|scorecard)\\.\\*|entity\\.(created|updated|deleted)|run\\.(created|updated)|approval\\.(requested|decided)|sync\\.(finished|failed)|step\\.(started|finished)|team\\.(created|updated|deleted)|user\\.(created|updated)|scorecard\\.changed)$"
+              "pattern": "^(\\*|(entity|run|approval|sync|step|team|user|scorecard)\\.\\*|entity\\.(created|updated|deleted)|run\\.(created|updated|sla_breached)|approval\\.(requested|decided)|sync\\.(finished|failed)|step\\.(started|finished|sla_breached)|team\\.(created|updated|deleted)|user\\.(created|updated)|scorecard\\.changed)$"
             }
           },
           "blueprints": {
@@ -3306,6 +3445,11 @@
                               }
                             }
                           },
+                          "slaMinutes": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 129600
+                          },
                           "type": {
                             "type": "string",
                             "const": "invoke"
@@ -3402,6 +3546,11 @@
                                 }
                               }
                             }
+                          },
+                          "slaMinutes": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 129600
                           },
                           "type": {
                             "type": "string",
@@ -3566,6 +3715,11 @@
                                 }
                               }
                             }
+                          },
+                          "slaMinutes": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 129600
                           },
                           "type": {
                             "type": "string",
@@ -3852,6 +4006,11 @@
                               }
                             }
                           },
+                          "slaMinutes": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 129600
+                          },
                           "type": {
                             "type": "string",
                             "const": "wait"
@@ -3959,6 +4118,11 @@
                                 }
                               }
                             }
+                          },
+                          "slaMinutes": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 129600
                           },
                           "type": {
                             "type": "string",
@@ -4106,6 +4270,11 @@
                               }
                             }
                           },
+                          "slaMinutes": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 129600
+                          },
                           "type": {
                             "type": "string",
                             "const": "workflow"
@@ -4229,6 +4398,11 @@
                               }
                             }
                           },
+                          "slaMinutes": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 129600
+                          },
                           "type": {
                             "type": "string",
                             "const": "transform"
@@ -4264,6 +4438,110 @@
                 "enabled": {
                   "default": true,
                   "type": "boolean"
+                },
+                "slaMinutes": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 129600
+                },
+                "tests": {
+                  "maxItems": 50,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 100
+                      },
+                      "inputs": {
+                        "default": {},
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string"
+                        },
+                        "additionalProperties": {}
+                      },
+                      "entity": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "maxLength": 200
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "mocks": {
+                        "default": {},
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,40}$"
+                        },
+                        "additionalProperties": {
+                          "type": "object",
+                          "properties": {
+                            "status": {
+                              "default": "SUCCESS",
+                              "type": "string",
+                              "enum": [
+                                "SUCCESS",
+                                "FAILURE"
+                              ]
+                            },
+                            "output": {}
+                          }
+                        }
+                      },
+                      "expect": {
+                        "default": {},
+                        "type": "object",
+                        "properties": {
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "SUCCESS",
+                              "FAILURE"
+                            ]
+                          },
+                          "steps": {
+                            "type": "object",
+                            "propertyNames": {
+                              "type": "string",
+                              "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,40}$"
+                            },
+                            "additionalProperties": {
+                              "type": "object",
+                              "properties": {
+                                "status": {
+                                  "type": "string",
+                                  "enum": [
+                                    "SUCCESS",
+                                    "FAILURE",
+                                    "SKIPPED"
+                                  ]
+                                },
+                                "output": {}
+                              }
+                            }
+                          },
+                          "outputs": {
+                            "type": "object",
+                            "propertyNames": {
+                              "type": "string"
+                            },
+                            "additionalProperties": {}
+                          }
+                        }
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ]
+                  }
                 }
               },
               "required": [
@@ -4463,7 +4741,7 @@
                   "type": "array",
                   "items": {
                     "type": "string",
-                    "pattern": "^(\\*|(entity|run|approval|sync|step|team|user|scorecard)\\.\\*|entity\\.(created|updated|deleted)|run\\.(created|updated)|approval\\.(requested|decided)|sync\\.(finished|failed)|step\\.(started|finished)|team\\.(created|updated|deleted)|user\\.(created|updated)|scorecard\\.changed)$"
+                    "pattern": "^(\\*|(entity|run|approval|sync|step|team|user|scorecard)\\.\\*|entity\\.(created|updated|deleted)|run\\.(created|updated|sla_breached)|approval\\.(requested|decided)|sync\\.(finished|failed)|step\\.(started|finished|sla_breached)|team\\.(created|updated|deleted)|user\\.(created|updated)|scorecard\\.changed)$"
                   }
                 },
                 "blueprints": {
@@ -6295,7 +6573,7 @@
             "type": "array",
             "items": {
               "type": "string",
-              "pattern": "^(\\*|(entity|run|approval|sync|step|team|user|scorecard)\\.\\*|entity\\.(created|updated|deleted)|run\\.(created|updated)|approval\\.(requested|decided)|sync\\.(finished|failed)|step\\.(started|finished)|team\\.(created|updated|deleted)|user\\.(created|updated)|scorecard\\.changed)$"
+              "pattern": "^(\\*|(entity|run|approval|sync|step|team|user|scorecard)\\.\\*|entity\\.(created|updated|deleted)|run\\.(created|updated|sla_breached)|approval\\.(requested|decided)|sync\\.(finished|failed)|step\\.(started|finished|sla_breached)|team\\.(created|updated|deleted)|user\\.(created|updated)|scorecard\\.changed)$"
             }
           },
           "blueprints": {
@@ -7306,6 +7584,49 @@
           "actions"
         ],
         "summary": "POST /api/v1/actions/{id}/runs",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/api/v1/actions/{id}/tests/run": {
+      "post": {
+        "operationId": "postActionsTestsRunById",
+        "tags": [
+          "actions"
+        ],
+        "summary": "POST /api/v1/actions/{id}/tests/run",
         "parameters": [
           {
             "name": "id",
@@ -12535,6 +12856,100 @@
         }
       }
     },
+    "/api/v1/runs/{id}/artifacts": {
+      "get": {
+        "operationId": "getRunsArtifactsById",
+        "tags": [
+          "runs"
+        ],
+        "summary": "GET /api/v1/runs/{id}/artifacts",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/api/v1/runs/{id}/artifacts/{artifactId}": {
+      "get": {
+        "operationId": "getRunsArtifactsByIdArtifactId",
+        "tags": [
+          "runs"
+        ],
+        "summary": "GET /api/v1/runs/{id}/artifacts/{artifactId}",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "artifactId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
     "/api/v1/runs/{id}/cancel": {
       "post": {
         "operationId": "postRunsCancelById",
@@ -12892,6 +13307,57 @@
           "runs"
         ],
         "summary": "POST /api/v1/runs/{id}/steps/{step}/approve",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "step",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/api/v1/runs/{id}/steps/{step}/artifacts": {
+      "post": {
+        "operationId": "postRunsStepsArtifactsByIdStep",
+        "tags": [
+          "runs"
+        ],
+        "summary": "POST /api/v1/runs/{id}/steps/{step}/artifacts",
         "parameters": [
           {
             "name": "id",

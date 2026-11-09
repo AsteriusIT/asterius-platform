@@ -25,6 +25,8 @@ export type EventType =
   | 'sync.failed'
   | 'step.started'
   | 'step.finished'
+  | 'step.sla_breached'
+  | 'run.sla_breached'
   | 'team.created'
   | 'team.updated'
   | 'team.deleted'

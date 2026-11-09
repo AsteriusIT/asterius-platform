@@ -16,7 +16,17 @@ export interface RunContext {
   entity: (Entity & { scorecards?: Record<string, { level: string | null; rank: number; passed: number; total: number }> }) | null;
   trigger: { user: { id: string; email: string; name: string }; at: string };
   /** Earlier workflow steps: `{{ steps.review.output.risk }}`. */
-  steps: Record<string, { status: string; output: unknown; link: string | null; events?: { url: string; token: string } }>;
+  steps: Record<
+    string,
+    {
+      status: string;
+      output: unknown;
+      link: string | null;
+      events?: { url: string; token: string };
+      /** Files attached to the step: metadata and download URL (`GET` with an API token that may read the run). */
+      artifacts?: { id: string; name: string; contentType: string; size: number; sha256: string; url: string }[];
+    }
+  >;
 }
 
 export type InvokeStatus = 'IN_PROGRESS' | 'SUCCESS' | 'FAILURE';
@@ -28,6 +38,8 @@ export interface InvokeResult {
   link?: string;
   statusLabel?: string;
   result?: unknown;
+  /** Files to attach to the step (base64 content): stored as run artifacts. */
+  artifacts?: { name: string; contentType?: string; content: string }[];
 }
 
 export interface InvokeEnv {

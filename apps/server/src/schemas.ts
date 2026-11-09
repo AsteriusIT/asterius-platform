@@ -338,6 +338,13 @@ const stepBase = {
   continueOnError: z.boolean().default(false),
   /** The output must match this schema or the step fails (see also STEP_OUTPUT_MAX_BYTES). */
   outputSchema: objectSchema.optional(),
+  /** Service level: still not finished this many minutes after it started → `step.sla_breached` (once) and a notification. */
+  slaMinutes: z
+    .number()
+    .int()
+    .min(1)
+    .max(60 * 24 * 90)
+    .optional(),
 };
 
 export const AGENT_MODELS = ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-fable-5-1'] as const;
@@ -464,6 +471,32 @@ export const workflowStep = z.discriminatedUnion('type', [
 ]);
 export type WorkflowStepDef = z.infer<typeof workflowStep>;
 
+/**
+ * A workflow test: inputs (and an entity) for a simulated run, mocks for the steps that would call the outside world,
+ * and what to expect. `output` and `outputs` are partial matches (only the keys given are compared).
+ */
+export const workflowTest = z.object({
+  name: z.string().min(1).max(100),
+  inputs: z.record(z.string(), z.unknown()).default({}),
+  /** Identifier of the entity a day-2 / event workflow runs on (it must exist). */
+  entity: z.string().max(200).nullish(),
+  /** Step id → its outcome. Invoke, agent and workflow steps must be mocked; approvals are approved and waits resolve unless mocked. */
+  mocks: z
+    .record(z.string().regex(STEP_ID), z.object({ status: z.enum(['SUCCESS', 'FAILURE']).default('SUCCESS'), output: z.unknown().optional() }))
+    .default({}),
+  expect: z
+    .object({
+      status: z.enum(['SUCCESS', 'FAILURE']).optional(),
+      steps: z
+        .record(z.string().regex(STEP_ID), z.object({ status: z.enum(['SUCCESS', 'FAILURE', 'SKIPPED']).optional(), output: z.unknown().optional() }))
+        .optional(),
+      /** Partial match against the run result (outputs by step id). */
+      outputs: z.record(z.string(), z.unknown()).optional(),
+    })
+    .default({}),
+});
+export type WorkflowTestDef = z.infer<typeof workflowTest>;
+
 const approvalPolicy = z
   .object({
     required: z.boolean().default(false),
@@ -572,6 +605,15 @@ export const actionDef = z.preprocess(
       .max(50)
       .optional(),
     enabled: z.boolean().default(true),
+    /** Service level of the whole run: still not finished this many minutes after it was requested → `run.sla_breached` (once). */
+    slaMinutes: z
+      .number()
+      .int()
+      .min(1)
+      .max(60 * 24 * 90)
+      .optional(),
+    /** Workflow tests: run with mocks by POST /actions/:id/tests/run (and the CLI); nothing external is called. */
+    tests: z.array(workflowTest).max(50).optional(),
   }),
 );
 export type ActionDef = z.infer<typeof actionDef>;
@@ -699,6 +741,8 @@ export const WEBHOOK_EVENTS = [
   'sync.failed',
   'step.started',
   'step.finished',
+  'step.sla_breached',
+  'run.sla_breached',
   'team.created',
   'team.updated',
   'team.deleted',
@@ -721,7 +765,7 @@ export const webhookDef = z.object({
       z
         .string()
         .regex(
-          /^(\*|(entity|run|approval|sync|step|team|user|scorecard)\.\*|entity\.(created|updated|deleted)|run\.(created|updated)|approval\.(requested|decided)|sync\.(finished|failed)|step\.(started|finished)|team\.(created|updated|deleted)|user\.(created|updated)|scorecard\.changed)$/,
+          /^(\*|(entity|run|approval|sync|step|team|user|scorecard)\.\*|entity\.(created|updated|deleted)|run\.(created|updated|sla_breached)|approval\.(requested|decided)|sync\.(finished|failed)|step\.(started|finished|sla_breached)|team\.(created|updated|deleted)|user\.(created|updated)|scorecard\.changed)$/,
         ),
     )
     .min(1),

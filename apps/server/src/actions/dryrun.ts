@@ -128,7 +128,8 @@ export async function dryRun(actionId: string, p: Principal, input: DryRunInput)
   };
 }
 
-async function simulate(s: Step, ctx: RunContext, resolver: RefResolver, mock: unknown, r: DryRunStep): Promise<{ rendered: unknown; output: unknown }> {
+/** Simulate one step (shared with the workflow tests, workflow-tests.ts). */
+export async function simulate(s: Step, ctx: RunContext, resolver: RefResolver, mock: unknown, r: DryRunStep): Promise<{ rendered: unknown; output: unknown }> {
   const sample = (fallback: unknown) => (mock !== undefined ? mock : fallback);
   switch (s.type) {
     case 'invoke': {

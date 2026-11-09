@@ -5,7 +5,9 @@ import fs from 'node:fs';
  *   node dist/cli.js export [file]                          archive of definitions + entities (stdout by default)
  *   node dist/cli.js import <file> [--mode skip|overwrite] [--dry-run]
  *   node dist/cli.js rotate-secrets-key                     re-encrypt stored secrets with NEW_SECRETS_KEY (stop all pods first)
- * Exit code 0 on success, 1 on error (import: also when some items failed).
+ *   node dist/cli.js actions test [id] [--name <test>] [--org <slug>] [--json]
+ *                                                           run workflow tests (all actions with tests, or one) with mocks
+ * Exit code 0 on success, 1 on error (import: also when some items failed; actions test: when a test failed).
  */
 const [command, ...rest] = process.argv.slice(2);
 const flag = (name: string) => rest.includes(`--${name}`);
@@ -43,8 +45,16 @@ async function main(): Promise<number> {
       console.log(`re-encrypted ${r.reencrypted}/${r.total} secrets${r.failed.length ? `; FAILED: ${r.failed.join(', ')}` : ''}`);
       return r.failed.length ? 1 : 0;
     }
+    case 'actions': {
+      if (positional[0] !== 'test') {
+        console.error('usage: actions test [id] [--name <test>] [--org <slug>] [--json]');
+        return 1;
+      }
+      const { testActions } = await import('./cli/actions-test.js');
+      return testActions({ action: positional[1], name: option('name'), org: option('org'), json: flag('json') });
+    }
     default:
-      console.error('commands: export [file] | import <file> [--mode skip|overwrite] [--dry-run] | reencrypt-secrets');
+      console.error('commands: export [file] | import <file> [--mode skip|overwrite] [--dry-run] | reencrypt-secrets | actions test [id]');
       return 1;
   }
 }

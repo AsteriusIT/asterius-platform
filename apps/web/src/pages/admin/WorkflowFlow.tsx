@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActionIcon, Alert, Badge, Button, Code, Group, Menu, Modal, Stack, Switch, Tabs, TagsInput, Text, Tooltip } from '@mantine/core';
+import { ActionIcon, Alert, Badge, Button, Code, Group, Menu, Modal, NumberInput, Stack, Switch, Tabs, TagsInput, Text, Tooltip } from '@mantine/core';
 import { modals } from '@mantine/modals';
 import { notifications } from '@mantine/notifications';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Navigate, useParams } from 'react-router';
-import { IconCode, IconDeviceFloppy, IconFlask, IconHistory, IconPlus, IconSettings, IconTrash, IconX } from '@tabler/icons-react';
-import type { DryRunResult, DryRunStep, WorkflowStep, WorkflowStepType } from '@asterius/shared';
+import { IconCode, IconDeviceFloppy, IconFlask, IconHistory, IconPlus, IconSettings, IconTestPipe, IconTrash, IconX } from '@tabler/icons-react';
+import type { DryRunResult, DryRunStep, WorkflowStep, WorkflowStepType, WorkflowTest } from '@asterius/shared';
 import { api, errorText } from '../../lib/api';
 import { connectSteps, disconnectSteps, insertStepAfter, needsOf, STEP_TYPES, stepWarnings, type FlowTone } from '../../lib/workflow';
 import { QueryView } from '../../components/ui';
@@ -18,6 +18,7 @@ import { isFormLike, newFormTrigger, TriggerEditor, TRIGGER_TYPES, triggerSummar
 import { fieldsToSchema, schemaToFields, type FieldDraft } from '../../components/builder/fields';
 import { DryRunModal } from '../../components/builder/DryRunModal';
 import { ActionHistory } from '../../components/builder/ActionHistory';
+import { WorkflowTests } from '../../components/builder/WorkflowTests';
 import { CodePanels, CodeTabs, useCodeView } from '../../components/builder/shell';
 import { AiDraft, JsonPreview } from '../../components/AiAssistant';
 
@@ -29,7 +30,7 @@ import { AiDraft, JsonPreview } from '../../components/AiAssistant';
  * skipped, red has errors. Managed workflows (configuration repository) open read-only.
  */
 
-type Editing = { kind: 'trigger' } | { kind: 'step'; id: string } | { kind: 'general' } | { kind: 'code' } | { kind: 'history' } | null;
+type Editing = { kind: 'trigger' } | { kind: 'step'; id: string } | { kind: 'general' } | { kind: 'code' } | { kind: 'history' } | { kind: 'tests' } | null;
 
 const TEST_TONE: Record<DryRunStep['status'], FlowTone> = { planned: 'success', skipped: 'skipped', error: 'failure' };
 
@@ -293,6 +294,9 @@ function FlowEditor({ value, readOnly, version }: { value: Record<string, unknow
             <Button size="xs" variant="light" leftSection={<IconFlask size={14} />} onClick={() => setTesting(true)} disabled={!doc.steps.length}>
               Test
             </Button>
+            <Button size="xs" variant="default" leftSection={<IconTestPipe size={14} />} onClick={() => setEditing({ kind: 'tests' })}>
+              Tests{(doc.tests as WorkflowTest[] | undefined)?.length ? ` (${(doc.tests as WorkflowTest[]).length})` : ''}
+            </Button>
             {!readOnly && (
               <Button size="xs" leftSection={<IconDeviceFloppy size={14} />} loading={saving} onClick={() => void save()}>
                 Save
@@ -436,6 +440,14 @@ function FlowEditor({ value, readOnly, version }: { value: Record<string, unknow
               value={(doc.secrets as string[] | undefined) ?? []}
               onChange={(secrets) => change({ secrets: secrets.length ? secrets : undefined })}
             />
+            <NumberInput
+              label="Run SLA (minutes)"
+              description="Not finished this long after the request: the requester and admins are notified (run.sla_breached)"
+              placeholder="none"
+              min={1}
+              value={(doc.slaMinutes as number | undefined) ?? ''}
+              onChange={(n) => change({ slaMinutes: n === '' ? undefined : Number(n) })}
+            />
             <Switch
               label="Enabled"
               description="Disabled workflows are hidden from users"
@@ -462,6 +474,16 @@ function FlowEditor({ value, readOnly, version }: { value: Record<string, unknow
           </Tabs.List>
           <CodePanels view={code} readOnly={readOnly} />
         </Tabs>
+      </Modal>
+
+      <Modal opened={editing?.kind === 'tests'} onClose={() => setEditing(null)} size="xl" title={<Text fw={600}>Tests</Text>}>
+        <WorkflowTests
+          identifier={doc.identifier}
+          tests={(doc.tests as WorkflowTest[] | undefined) ?? []}
+          onChange={(tests) => change({ tests })}
+          body={body}
+          readOnly={readOnly}
+        />
       </Modal>
 
       {version !== undefined && (
