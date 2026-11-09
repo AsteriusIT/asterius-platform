@@ -126,6 +126,34 @@ trigger:                                           # POST /api/v1/hooks/<action>
 
 Runs started automatically belong to the "Workflow automation" service account and record `trigger.type` (and, for event triggers, a depth that stops loops). The inputs of these triggers are free-form templates (`event`, `body`, `headers`, `query`, `schedule`); secret references are not allowed in them.
 
+**Missed ticks and fan-out.** A schedule whose ticks passed while no worker ran (downtime, upgrade) catches up according to `catchUp`; it can also start one run per entity of a blueprint on every tick:
+
+```yaml
+trigger:
+  type: schedule
+  cron: "0 * * * *"
+  catchUp: all              # none (default: one run for the oldest missed tick, the others dropped) | last | all
+  maxCatchUp: 24            # all: the most recent missed ticks, within the last 7 days (default 10, max 100)
+  entities:                 # optional fan-out: one run per matching entity, on that entity (like a day-2 action)
+    blueprint: service
+    filter: 'entity.properties.tier = "gold"'   # JSONata over { entity, schedule }
+    limit: 200              # runs per tick (default 200, max 1000)
+  inputs: { name: "{{ entity.identifier }}", at: "{{ schedule.at }}" }
+```
+
+Each run's `schedule.at` (and `trigger.tick`) is the tick it stands for. Ticks are exactly-once across replicas: the replica that moves `next_fire_at` forward owns every tick up to now, and every run carries the idempotency key `schedule:<tick>` (`schedule:<tick>:<entity>` for a fan-out), so a replayed tick starts nothing twice.
+
+**Blackout windows.** Freeze periods of a workflow, at the action level:
+
+```yaml
+blackouts:
+  - { name: weekend, cron: "0 18 * * 5", duration: 62h, timezone: Europe/Paris }   # recurring: start (cron) + duration (30m, 2h, 1d, 1h30m; max 31d)
+  - { name: year-end, from: "2026-12-20T00:00:00Z", to: "2027-01-04T00:00:00Z" }   # fixed dates
+blackoutMode: defer         # skip (default) | defer
+```
+
+During a window, schedule, event and webhook starts are skipped (audited as `run.skipped`) or, with `defer`, held and started once the window ends (`run.deferred`; a webhook still answers 202, with `runId: null` and `deferredUntil`). Form and API submissions are refused with a 409 that names the window; an admin may pass `"overrideBlackout": true` in `POST /api/v1/actions/<id>/runs` (audited as `run.blackout_overridden`). `GET /api/v1/actions/<id>` returns `blackout: { active, next }`, shown on the form and in the trigger editor.
+
 ### More step types
 
 ```yaml

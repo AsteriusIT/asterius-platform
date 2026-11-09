@@ -283,7 +283,8 @@ export const api = {
   action: (id: string) => request<Action>('GET', v1(`/actions/${enc(id)}`)),
   saveAction: (id: string, body: unknown) => request<Action>('PUT', v1(`/actions/${enc(id)}`), body),
   deleteAction: (id: string) => request('DELETE', v1(`/actions/${enc(id)}`)),
-  trigger: (id: string, body: { entity?: string | null; inputs: Record<string, unknown> }) => request<Run>('POST', v1(`/actions/${enc(id)}/runs`), body),
+  trigger: (id: string, body: { entity?: string | null; inputs: Record<string, unknown>; overrideBlackout?: boolean }) =>
+    request<Run>('POST', v1(`/actions/${enc(id)}/runs`), body),
 
   runs: (q: { mine?: boolean; status?: string; action?: string; blueprint?: string; entity?: string; limit?: number; offset?: number }) =>
     request<RunPage>('GET', v1(`/runs${qs(q)}`)),

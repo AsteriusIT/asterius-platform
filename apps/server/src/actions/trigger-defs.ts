@@ -15,6 +15,8 @@ export function validateTrigger(t: WorkflowTriggerDef) {
         parseCron(t.cron);
         checkTimezone(t.timezone);
         checkTemplate(t.inputs);
+        if (t.maxCatchUp && t.catchUp !== 'all') throw new Error('"maxCatchUp" only applies with catchUp: all');
+        if (t.entities?.filter) checkExpression(t.entities.filter);
         break;
       case 'event':
         if (t.filter) checkExpression(t.filter);

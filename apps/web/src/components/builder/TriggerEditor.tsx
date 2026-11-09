@@ -1,7 +1,22 @@
-import { Button, Group, Input, NumberInput, SegmentedControl, Select, SimpleGrid, Stack, Switch, Text, TextInput, Title } from '@mantine/core';
+import {
+  ActionIcon,
+  Button,
+  Card,
+  Group,
+  Input,
+  NumberInput,
+  SegmentedControl,
+  Select,
+  SimpleGrid,
+  Stack,
+  Switch,
+  Text,
+  TextInput,
+  Title,
+} from '@mantine/core';
 import { useQuery } from '@tanstack/react-query';
-import { IconApi, IconBolt, IconCalendarTime, IconForms, IconTrash, IconWebhook } from '@tabler/icons-react';
-import type { FormLikeTrigger, FormTrigger, WorkflowTrigger } from '@asterius/shared';
+import { IconApi, IconBolt, IconCalendarTime, IconForms, IconPlus, IconTrash, IconWebhook } from '@tabler/icons-react';
+import type { Action, BlackoutWindow, FormLikeTrigger, FormTrigger, ScheduleTrigger, WorkflowTrigger } from '@asterius/shared';
 import { api } from '../../lib/api';
 import type { FieldDraft } from './fields';
 import { FieldsEditor } from './FieldsEditor';
@@ -33,7 +48,7 @@ export const newFormTrigger = (): FormTrigger => ({
 
 /** "Self-service · database" / "On a database entity" / "Every day at 03:00" */
 export function triggerSummary(t: WorkflowTrigger) {
-  if (t.type === 'schedule') return `${t.cron} (${t.timezone})`;
+  if (t.type === 'schedule') return `${t.cron} (${t.timezone})${t.entities ? ` · each ${t.entities.blueprint}` : ''}`;
   if (t.type === 'event') return `On ${t.event}${t.blueprint ? ` · ${t.blueprint}` : ''}${t.action ? ` · ${t.action}` : ''}`;
   if (t.type === 'webhook') return 'POST /api/v1/hooks/…';
   if (t.type === 'api') return `API only${t.blueprint ? ` · ${t.blueprint}` : ''}`;
@@ -63,8 +78,14 @@ export function TriggerEditor(props: {
   fields: FieldDraft[];
   onFieldsChange: (f: FieldDraft[]) => void;
   onRemove: () => void;
+  /** Action-level blackout windows (edited here: they govern when the trigger may start the workflow). */
+  blackouts?: BlackoutWindow[];
+  blackoutMode?: 'skip' | 'defer';
+  /** Read-only status of the saved windows (active / next). */
+  blackoutStatus?: Action['blackout'];
+  onBlackoutsChange?: (patch: { blackouts?: BlackoutWindow[]; blackoutMode?: 'skip' | 'defer' }) => void;
 }) {
-  const { trigger, onChange } = props;
+  const { trigger, onChange, onBlackoutsChange } = props;
   return (
     <Stack gap="lg">
       <Select
@@ -87,6 +108,131 @@ export function TriggerEditor(props: {
           </Group>
         </>
       )}
+      {onBlackoutsChange && (
+        <BlackoutEditor
+          windows={props.blackouts ?? []}
+          mode={props.blackoutMode}
+          status={props.blackoutStatus}
+          automated={!isFormLike(trigger)}
+          onChange={onBlackoutsChange}
+        />
+      )}
+    </Stack>
+  );
+}
+
+const newWindow = (): BlackoutWindow => ({ name: '', cron: '0 22 * * 5', duration: '60h', timezone: 'UTC' });
+
+/** Blackout windows: recurring (cron start + duration) or fixed (from/to), and what automated triggers do meanwhile. */
+export function BlackoutEditor({
+  windows,
+  mode,
+  status,
+  automated,
+  onChange,
+}: {
+  windows: BlackoutWindow[];
+  mode?: 'skip' | 'defer';
+  status?: Action['blackout'];
+  automated: boolean;
+  onChange: (patch: { blackouts?: BlackoutWindow[]; blackoutMode?: 'skip' | 'defer' }) => void;
+}) {
+  const set = (list: BlackoutWindow[]) => onChange({ blackouts: list.length ? list : undefined, blackoutMode: list.length ? mode : undefined });
+  const edit = (i: number, patch: Partial<BlackoutWindow>) => set(windows.map((w, j) => (j === i ? { ...w, ...patch } : w)));
+  return (
+    <Stack gap="sm">
+      <div>
+        <Title order={5}>Blackout windows</Title>
+        <Text fz="xs" c="dimmed">
+          No run starts during a window: form and API submissions are refused (admins may override), automated triggers skip or defer their runs.
+        </Text>
+        {status?.active && (
+          <Text fz="xs" c="red">
+            In effect now: {status.active.name}, until {new Date(status.active.until).toLocaleString()}
+          </Text>
+        )}
+        {!status?.active && status?.next && (
+          <Text fz="xs" c="dimmed">
+            Next: {status.next.name}, {new Date(status.next.from).toLocaleString()} to {new Date(status.next.until).toLocaleString()}
+          </Text>
+        )}
+      </div>
+      {windows.map((w, i) => {
+        const fixed = !w.cron && (w.from !== undefined || w.to !== undefined);
+        return (
+          <Card key={i} withBorder padding="sm">
+            <Stack gap="xs">
+              <Group gap="xs" wrap="nowrap" align="flex-end">
+                <TextInput
+                  label="Name"
+                  placeholder="Weekend freeze"
+                  style={{ flex: 1 }}
+                  value={w.name ?? ''}
+                  onChange={(e) => edit(i, { name: e.currentTarget.value || undefined })}
+                />
+                <SegmentedControl
+                  value={fixed ? 'fixed' : 'recurring'}
+                  onChange={(v) =>
+                    edit(
+                      i,
+                      v === 'fixed'
+                        ? { cron: undefined, duration: undefined, from: new Date().toISOString(), to: new Date(Date.now() + 3_600_000).toISOString() }
+                        : { cron: '0 22 * * 5', duration: '60h', from: undefined, to: undefined },
+                    )
+                  }
+                  data={[
+                    { value: 'recurring', label: 'Recurring' },
+                    { value: 'fixed', label: 'Fixed dates' },
+                  ]}
+                />
+                <ActionIcon variant="subtle" color="red" size="lg" onClick={() => set(windows.filter((_, j) => j !== i))} aria-label="Remove window">
+                  <IconTrash size={16} />
+                </ActionIcon>
+              </Group>
+              {fixed ? (
+                <SimpleGrid cols={{ base: 1, sm: 2 }}>
+                  <TextInput
+                    label="From"
+                    description="ISO date and time, e.g. 2026-12-24T18:00:00Z"
+                    value={w.from ?? ''}
+                    onChange={(e) => edit(i, { from: e.currentTarget.value })}
+                    styles={MONO_INPUT}
+                  />
+                  <TextInput label="To" value={w.to ?? ''} onChange={(e) => edit(i, { to: e.currentTarget.value })} styles={MONO_INPUT} />
+                </SimpleGrid>
+              ) : (
+                <SimpleGrid cols={{ base: 1, sm: 3 }}>
+                  <TextInput label="Starts (cron)" value={w.cron ?? ''} onChange={(e) => edit(i, { cron: e.currentTarget.value })} styles={MONO_INPUT} />
+                  <TextInput
+                    label="Duration"
+                    description="e.g. 30m, 2h, 1d, 1h30m"
+                    value={w.duration ?? ''}
+                    onChange={(e) => edit(i, { duration: e.currentTarget.value })}
+                    styles={MONO_INPUT}
+                  />
+                  <TextInput label="Time zone" value={w.timezone} onChange={(e) => edit(i, { timezone: e.currentTarget.value })} />
+                </SimpleGrid>
+              )}
+            </Stack>
+          </Card>
+        );
+      })}
+      <Group justify="space-between">
+        <Button variant="subtle" color="gray" size="xs" leftSection={<IconPlus size={14} />} onClick={() => set([...windows, newWindow()])}>
+          Add window
+        </Button>
+        {windows.length > 0 && automated && (
+          <SegmentedControl
+            size="xs"
+            value={mode ?? 'skip'}
+            onChange={(v) => onChange({ blackouts: windows, blackoutMode: v === 'defer' ? 'defer' : undefined })}
+            data={[
+              { value: 'skip', label: 'Skip runs during a window' },
+              { value: 'defer', label: 'Defer them to its end' },
+            ]}
+          />
+        )}
+      </Group>
     </Stack>
   );
 }
@@ -99,7 +245,7 @@ function AutomaticTriggerEditor({ trigger, onChange }: { trigger: Exclude<Workfl
   const actions = useQuery({ queryKey: ['actions', 'all'], queryFn: () => api.actions(), enabled: trigger.type === 'event' });
   const bpData = (blueprints.data ?? []).map((b) => ({ value: b.identifier, label: b.title }));
   const ctxHint = {
-    schedule: 'schedule.at',
+    schedule: trigger.type === 'schedule' && trigger.entities ? 'schedule.at, entity.identifier, entity.properties.<name>' : 'schedule.at',
     event: 'event.entity.identifier, event.entity.properties.<name>, event.run.id',
     webhook: 'body.<field>, headers.<name>, query.<name>',
   }[trigger.type];
@@ -120,8 +266,37 @@ function AutomaticTriggerEditor({ trigger, onChange }: { trigger: Exclude<Workfl
             value={trigger.timezone}
             onChange={(e) => onChange({ ...trigger, timezone: e.currentTarget.value })}
           />
+          <Select
+            label="Missed ticks"
+            description="When no worker ran at tick time (downtime, upgrade)"
+            allowDeselect={false}
+            data={[
+              { value: 'none', label: 'Run the oldest once, drop the others' },
+              { value: 'last', label: 'Run the most recent once' },
+              { value: 'all', label: 'Run each (last 7 days, bounded)' },
+            ]}
+            value={trigger.catchUp ?? 'none'}
+            onChange={(v) =>
+              onChange({
+                ...trigger,
+                catchUp: v === 'none' ? undefined : (v as ScheduleTrigger['catchUp']),
+                maxCatchUp: v === 'all' ? trigger.maxCatchUp : undefined,
+              })
+            }
+          />
+          {trigger.catchUp === 'all' && (
+            <NumberInput
+              label="At most (most recent ticks)"
+              min={1}
+              max={100}
+              placeholder="10"
+              value={trigger.maxCatchUp ?? ''}
+              onChange={(n) => onChange({ ...trigger, maxCatchUp: typeof n === 'number' ? n : undefined })}
+            />
+          )}
         </SimpleGrid>
       )}
+      {trigger.type === 'schedule' && <FanOutEditor trigger={trigger} onChange={onChange} blueprints={bpData} />}
       {trigger.type === 'event' && (
         <>
           <Select
@@ -203,6 +378,57 @@ function AutomaticTriggerEditor({ trigger, onChange }: { trigger: Exclude<Workfl
           valuePlaceholder="value or {{ template }}"
         />
       </Input.Wrapper>
+    </Stack>
+  );
+}
+
+/** Scheduled fan-out: one run per matching entity of a blueprint on every tick. */
+function FanOutEditor({
+  trigger,
+  onChange,
+  blueprints,
+}: {
+  trigger: ScheduleTrigger;
+  onChange: (t: WorkflowTrigger) => void;
+  blueprints: { value: string; label: string }[];
+}) {
+  const f = trigger.entities;
+  const set = (patch: Partial<NonNullable<ScheduleTrigger['entities']>>) => onChange({ ...trigger, entities: { blueprint: '', ...f, ...patch } });
+  return (
+    <Stack gap="xs">
+      <Switch
+        label="Run once per entity"
+        description="On each tick, one run per matching entity of a blueprint (like an action on each entity)"
+        checked={!!f}
+        onChange={(e) => onChange({ ...trigger, entities: e.currentTarget.checked ? { blueprint: blueprints[0]?.value ?? '' } : undefined })}
+      />
+      {f && (
+        <SimpleGrid cols={{ base: 1, sm: 3 }}>
+          <Select
+            label="Blueprint"
+            searchable
+            allowDeselect={false}
+            data={blueprints}
+            value={f.blueprint || null}
+            onChange={(v) => v && set({ blueprint: v })}
+          />
+          <TextInput
+            label="Filter (JSONata, optional)"
+            placeholder='entity.properties.env = "prod"'
+            value={f.filter ?? ''}
+            onChange={(e) => set({ filter: e.currentTarget.value || undefined })}
+            styles={MONO_INPUT}
+          />
+          <NumberInput
+            label="At most per tick"
+            min={1}
+            max={1000}
+            placeholder="200"
+            value={f.limit ?? ''}
+            onChange={(n) => set({ limit: typeof n === 'number' ? n : undefined })}
+          />
+        </SimpleGrid>
+      )}
     </Stack>
   );
 }

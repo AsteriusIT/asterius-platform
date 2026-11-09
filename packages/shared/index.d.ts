@@ -530,8 +530,29 @@ export interface ScheduleTrigger {
   cron: string;
   timezone: string;
   inputs: Record<string, unknown>;
+  /** Missed ticks: none (default) · last (one run for the latest) · all (up to `maxCatchUp`, last 7 days). */
+  catchUp?: 'none' | 'last' | 'all';
+  maxCatchUp?: number;
+  /** Fan-out: one run per matching entity on each tick (`entity` in the input templates). */
+  entities?: { blueprint: string; filter?: string; limit?: number };
   /** Next planned tick (read-only). */
   nextRunAt?: string | null;
+}
+
+/** Recurring (`cron` + `duration`) or fixed (`from`/`to`) window when the workflow does not start. */
+export interface BlackoutWindow {
+  name?: string;
+  cron?: string;
+  duration?: string;
+  from?: string;
+  to?: string;
+  timezone: string;
+}
+
+export interface BlackoutSpan {
+  name: string;
+  from: string;
+  until: string;
 }
 
 export interface EventTrigger {
@@ -578,6 +599,11 @@ export interface Action {
   invoker?: InvokerConfig;
   enabled: boolean;
   managed: boolean;
+  /** Automated starts are skipped (or deferred) and form/API submissions refused during these windows. */
+  blackouts?: BlackoutWindow[];
+  blackoutMode?: 'skip' | 'defer';
+  /** Read-only: the blackout in effect now and the next one. */
+  blackout?: { active: BlackoutSpan | null; next: BlackoutSpan | null };
 }
 
 export interface ActionVersion {

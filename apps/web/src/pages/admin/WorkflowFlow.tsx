@@ -5,7 +5,7 @@ import { notifications } from '@mantine/notifications';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Navigate, useParams } from 'react-router';
 import { IconCode, IconDeviceFloppy, IconFlask, IconHistory, IconPlus, IconSettings, IconTrash, IconX } from '@tabler/icons-react';
-import type { DryRunResult, DryRunStep, WorkflowStep, WorkflowStepType } from '@asterius/shared';
+import type { Action, BlackoutWindow, DryRunResult, DryRunStep, WorkflowStep, WorkflowStepType } from '@asterius/shared';
 import { api, errorText } from '../../lib/api';
 import { connectSteps, disconnectSteps, insertStepAfter, needsOf, STEP_TYPES, stepWarnings, type FlowTone } from '../../lib/workflow';
 import { QueryView } from '../../components/ui';
@@ -378,6 +378,10 @@ function FlowEditor({ value, readOnly, version }: { value: Record<string, unknow
               fields={fields}
               onFieldsChange={setFieldDrafts}
               onRemove={removeTrigger}
+              blackouts={doc.blackouts as BlackoutWindow[] | undefined}
+              blackoutMode={doc.blackoutMode as 'skip' | 'defer' | undefined}
+              blackoutStatus={doc.blackout as Action['blackout']}
+              onBlackoutsChange={change}
             />
           </fieldset>
         )}
