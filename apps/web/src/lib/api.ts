@@ -46,6 +46,8 @@ import type {
   NotificationSettings,
   EntityGraph as SharedGraph,
   DryRunResult,
+  RunArtifact,
+  WorkflowTestReport,
 } from '@asterius/shared';
 
 export interface SimulationResult {
@@ -180,6 +182,23 @@ export async function request<T>(method: string, path: string, body?: unknown, r
   return data as T;
 }
 
+/** Download an authenticated file (run artifacts): fetched with the session, then saved by the browser. */
+export async function downloadArtifact(runId: string, a: Pick<RunArtifact, 'id' | 'name'>) {
+  const token = tokenStore.get();
+  const org = orgStore.get();
+  const res = await fetch(`/api/v1/runs/${encodeURIComponent(runId)}/artifacts/${encodeURIComponent(a.id)}`, {
+    credentials: 'same-origin',
+    headers: { ...(token && token !== COOKIE_SESSION ? { authorization: `Bearer ${token}` } : {}), ...(org ? { 'x-asterius-org': org } : {}) },
+  });
+  if (!res.ok) throw new ApiError(res.status, `${res.status} ${res.statusText}`);
+  const url = URL.createObjectURL(await res.blob());
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = a.name;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
 const v1 = (p: string) => `/api/v1${p}`;
 const enc = encodeURIComponent;
 const qs = (o: Record<string, string | number | boolean | undefined | null>) => {
@@ -273,6 +292,8 @@ export const api = {
     id: string,
     body: { definition?: Record<string, unknown>; inputs: Record<string, unknown>; entity?: string | null; mock?: Record<string, unknown> },
   ) => request<DryRunResult>('POST', v1(`/actions/${enc(id)}/dry-run`), body),
+  runWorkflowTests: (id: string, body: { name?: string; definition?: Record<string, unknown> }) =>
+    request<WorkflowTestReport>('POST', v1(`/actions/${enc(id)}/tests/run`), body),
   notificationSettings: () => request<NotificationSettings>('GET', v1('/notification-settings')),
   saveNotificationSettings: (s: NotificationSettings) => request<NotificationSettings>('PUT', v1('/notification-settings'), s),
   testNotification: (channel: 'slack' | 'teams' | 'email') => request<{ ok: boolean }>('POST', v1('/notification-settings/test'), { channel }),

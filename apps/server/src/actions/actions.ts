@@ -1,4 +1,4 @@
-import type { Action, ActionTrigger, InvokerConfig, WorkflowStep, WorkflowTrigger } from '@asterius/shared';
+import type { Action, ActionTrigger, InvokerConfig, WorkflowStep, WorkflowTest, WorkflowTrigger } from '@asterius/shared';
 import { invalidateTriggerCache } from './triggers.js';
 import { assertSecretsAllowed } from './limits.js';
 import { definitionDoc, nextVersion, recordVersion } from './versions.js';
@@ -33,6 +33,8 @@ interface Row {
   allowed_secrets: string | null;
   /** JSON { mode, windows } (NULL: none). */
   blackouts: string | null;
+  sla_minutes?: number | null;
+  tests?: string | null;
 }
 
 /** Stored in the trigger column when a workflow has no trigger yet (draft). */
@@ -76,13 +78,15 @@ function toAction(r: Row): Action {
     ...(declared || !invoker ? {} : { invoker }),
     enabled: bool(r.enabled),
     managed: bool(r.managed),
+    ...(r.sla_minutes ? { slaMinutes: Number(r.sla_minutes) } : {}),
+    ...(r.tests ? { tests: json<WorkflowTest[]>(r.tests, []) } : {}),
   };
 }
 
 /** Non-admins see what an action does, not how (URLs, secret references, pipeline ids). */
 export const forViewer = (a: Action, p: Principal): Action => {
   if (isAdmin(p)) return a;
-  const { invoker, ...rest } = a;
+  const { invoker, tests: _tests, ...rest } = a;
   return {
     ...rest,
     ...(invoker ? { invoker: { type: invoker.type } } : {}),
@@ -165,10 +169,12 @@ export async function upsertAction(
     next.version,
     def.secrets ? JSON.stringify(def.secrets) : null,
     def.blackouts?.length ? JSON.stringify({ mode: def.blackoutMode, windows: def.blackouts }) : null,
+    def.slaMinutes ?? null,
+    def.tests?.length ? JSON.stringify(def.tests) : null,
   ];
   if (existing)
     await run(
-      'UPDATE actions SET title = ?, description = ?, icon = ?, blueprint = ?, trigger = ?, inputs = ?, invoker = ?, steps = ?, approval = ?, allowed = ?, enabled = ?, managed = ?, trigger_config = ?, next_fire_at = ?, version = ?, allowed_secrets = ?, blackouts = ?, updated_at = ? WHERE org_id = ? AND identifier = ?',
+      'UPDATE actions SET title = ?, description = ?, icon = ?, blueprint = ?, trigger = ?, inputs = ?, invoker = ?, steps = ?, approval = ?, allowed = ?, enabled = ?, managed = ?, trigger_config = ?, next_fire_at = ?, version = ?, allowed_secrets = ?, blackouts = ?, sla_minutes = ?, tests = ?, updated_at = ? WHERE org_id = ? AND identifier = ?',
       ...vals,
       t,
       org,
@@ -176,7 +182,7 @@ export async function upsertAction(
     );
   else
     await run(
-      'INSERT INTO actions (title, description, icon, blueprint, trigger, inputs, invoker, steps, approval, allowed, enabled, managed, trigger_config, next_fire_at, version, allowed_secrets, blackouts, created_at, updated_at, org_id, identifier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO actions (title, description, icon, blueprint, trigger, inputs, invoker, steps, approval, allowed, enabled, managed, trigger_config, next_fire_at, version, allowed_secrets, blackouts, sla_minutes, tests, created_at, updated_at, org_id, identifier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       ...vals,
       t,
       t,

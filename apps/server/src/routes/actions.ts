@@ -21,6 +21,10 @@ import { receiveWebhook } from '../actions/triggers.js';
 import { checkRunToken, checkStepToken } from '../secrets.js';
 import { conflict, forbidden, notFound } from '../lib/errors.js';
 import { entityParam, idParam, page } from './util.js';
+import { addArtifact, artifactBodyLimit, contentDisposition, getArtifact, listArtifacts } from '../actions/artifacts.js';
+import { canManageRun } from '../actions/steps.js';
+import { FINAL } from '../actions/runs.js';
+import { runWorkflowTests } from '../actions/workflow-tests.js';
 
 const RUN_STATUSES = ['PENDING_APPROVAL', 'QUEUED', 'IN_PROGRESS', 'SUCCESS', 'FAILURE', 'REJECTED', 'CANCELLED'] as const;
 
@@ -94,6 +98,34 @@ export async function actionRoutes(app: FastifyInstance) {
     const delivered = await deliverEvent(id, step, body.name, body.payload);
     return reply.code(delivered ? 200 : 202).send({ delivered });
   });
+
+  /**
+   * Attach a file to a step (JSON: `{ name, contentType, content }`, content in base64). Authenticated by the step's
+   * callback token while the run is not finished, or by the requester / an admin (any time).
+   */
+  const artifactBody = z.object({ name: z.string().min(1).max(500), contentType: z.string().min(1).max(200), content: z.string() });
+  app.post(
+    '/runs/:id/steps/:step/artifacts',
+    { bodyLimit: artifactBodyLimit(), config: { rateLimit: { max: 120, timeWindow: '1 minute' } } },
+    async (req, reply) => {
+      const { id, step } = stepParams.parse(req.params);
+      const org = await runOrg(id);
+      if (!org) throw notFound('Run');
+      let createdBy: string;
+      if (checkStepToken(id, step, bearer(req))) {
+        enterOrg(org);
+        if (FINAL.includes((await getRunRow(id)).status)) throw conflict('The run is finished: its steps no longer accept artifacts');
+        createdBy = `step:${step}`;
+      } else {
+        const p = await authenticate(req);
+        if (!p) return reply.code(401).send({ error: 'unauthorized' });
+        if (p.org?.id !== org) throw notFound('Run');
+        if (!canManageRun(p, await getRunRow(id))) throw forbidden('Only the requester or an admin can attach artifacts to this run');
+        createdBy = p.email;
+      }
+      return reply.code(201).send(await addArtifact(id, step, artifactBody.parse(req.body ?? {}), createdBy));
+    },
+  );
 
   /** Single-step (legacy) form: applies to the one running invoke step of the run. */
   app.patch('/runs/:id', { config: { rateLimit: { max: 600, timeWindow: '1 minute' } } }, async (req) => {
@@ -178,6 +210,12 @@ export async function actionRoutes(app: FastifyInstance) {
         })
         .parse(req.body ?? {});
       return dryRun(id, req.principal, body);
+    });
+    /** Workflow tests: all of them, or `name`; `definition` tests the unsaved draft of the editor. Nothing external is called. */
+    scoped.post('/actions/:id/tests/run', { preHandler: requireAdmin, config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async (req) => {
+      const { id } = idParam.parse(req.params);
+      const body = z.object({ name: z.string().max(100).optional(), definition: z.record(z.string(), z.unknown()).optional() }).parse(req.body ?? {});
+      return runWorkflowTests(id, req.principal, body);
     });
     scoped.get('/actions/:id/versions', { preHandler: requireAdmin }, async (req) => {
       const { id } = idParam.parse(req.params);
@@ -316,6 +354,26 @@ export async function actionRoutes(app: FastifyInstance) {
         .object({ after: z.coerce.number().int().min(0).default(0), limit: z.coerce.number().int().min(1).max(2000).default(500), step: z.string().optional() })
         .parse(req.query);
       return getRunLogs(idParam.parse(req.params).id, req.principal, q);
+    });
+    /** Files attached to the run's steps (also listed in GET /runs/:id). */
+    scoped.get('/runs/:id/artifacts', async (req) => {
+      const { id } = idParam.parse(req.params);
+      await getRun(id, req.principal, { logs: false }); // same visibility as the run
+      return listArtifacts(id);
+    });
+    /** Download: always as an attachment, never rendered by the browser (nosniff, sandboxed). */
+    scoped.get('/runs/:id/artifacts/:artifactId', async (req, reply) => {
+      const { id, artifactId } = z.object({ id: z.string().min(1).max(200), artifactId: z.string().min(1).max(100) }).parse(req.params);
+      await getRun(id, req.principal, { logs: false });
+      const { artifact, content } = await getArtifact(id, artifactId);
+      return reply
+        .header('content-type', artifact.contentType)
+        .header('content-disposition', contentDisposition(artifact.name))
+        .header('x-content-type-options', 'nosniff')
+        .header('content-security-policy', "default-src 'none'; sandbox")
+        .header('cache-control', 'private, no-store')
+        .header('x-artifact-sha256', artifact.sha256)
+        .send(content);
     });
     scoped.get('/approvals', async (req, reply) => {
       const q = z.object({ limit: z.coerce.number().int().min(1).max(500).default(200), cursor: z.string().max(500).optional() }).parse(req.query);

@@ -1,11 +1,12 @@
 import { createHmac } from 'node:crypto';
 import { validateAuth } from '../../lib/auth.js';
 import { http } from '../../lib/http.js';
-import { requireFields, str, type Invoker } from '../types.js';
+import { requireFields, str, type InvokeResult, type Invoker } from '../types.js';
 
 /**
  * Generic HTTP call: the integration point for custom services.
- *  - mode `sync`: the action succeeds when the endpoint answers 2xx (its JSON body becomes the run result);
+ *  - mode `sync`: the action succeeds when the endpoint answers 2xx (its JSON body becomes the run result; an
+ *    `artifacts: [{ name, contentType, content }]` list in it (base64 content) is stored as run artifacts);
  *  - mode `async`: the endpoint acknowledges and later reports through the callback API
  *    (PATCH {{ run.callback.url }} with `Authorization: Bearer {{ run.callback.token }}`).
  * With `secret`, requests carry `X-Asterius-Signature: sha256=<HMAC of the body>`.
@@ -65,6 +66,13 @@ export const webhookInvoker: Invoker = {
     const res = await http(str(config.url), { method, headers, body: method === 'GET' ? undefined : body, auth: config.auth });
     await log(`Answered ${res.status}`);
     if (config.mode === 'async') return { status: 'IN_PROGRESS', statusLabel: 'Waiting for the service to report' };
-    return { status: 'SUCCESS', result: typeof res.data === 'string' ? res.data.slice(0, 4000) || null : res.data };
+    if (typeof res.data === 'string') return { status: 'SUCCESS', result: res.data.slice(0, 4000) || null };
+    // `artifacts: [{ name, contentType, content (base64) }]` in the answer become run artifacts, not part of the output.
+    const data = res.data as Record<string, unknown> | null;
+    if (data && typeof data === 'object' && !Array.isArray(data) && Array.isArray(data.artifacts)) {
+      const { artifacts, ...rest } = data;
+      return { status: 'SUCCESS', result: rest, artifacts: artifacts as InvokeResult['artifacts'] };
+    }
+    return { status: 'SUCCESS', result: res.data };
   },
 };

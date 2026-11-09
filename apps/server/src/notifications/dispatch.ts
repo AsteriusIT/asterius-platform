@@ -9,6 +9,7 @@ import { dmSlack, mailConfigured, sendMail } from './channels.js';
 import { getNotificationPrefs, getNotificationSettings } from './settings.js';
 import { orgId } from '../orgs/context.js';
 import { findOrg, orgRef } from '../orgs/orgs.js';
+import { notify } from '../inbox.js';
 
 /**
  * The platform's own notifications, following each person's preferences (Profile → Notifications):
@@ -103,4 +104,24 @@ export function registerNotificationListeners() {
   onEvent(async (e) => {
     if (e.type === 'run.finished') await notifyRunFinished((e.data as { run: FinishedRun }).run);
   });
+}
+
+/**
+ * SLA breach of a run or a step: the requester and the organization's admins (who own the workflows) get an in-app
+ * notification (once, deduplicated) and a message on the channels of their `runs` preference.
+ */
+export async function notifySlaBreach(o: { runId: string; requester: string; title: string; body: string; dedupe: string }) {
+  const users = await all<UserRow>(
+    `SELECT u.* FROM users u JOIN memberships m ON m.user_id = u.id
+     WHERE m.org_id = ? AND u.active = 1 AND u.provider != 'service' AND (m.role = 'admin' OR u.id = ?) ORDER BY u.name LIMIT ?`,
+    orgId(),
+    o.requester,
+    MAX_RECIPIENTS,
+  );
+  for (const u of users) {
+    const fresh = await notify(u.id, { kind: 'sla.breached', title: o.title, body: o.body, link: `/runs/${o.runId}`, dedupe: `sla:${o.dedupe}` });
+    if (!fresh) continue;
+    const prefs = await getNotificationPrefs(u.id);
+    if (prefs.runs.length) await deliver(u, prefs.runs, o.title, o.body, runLink(o.runId));
+  }
 }

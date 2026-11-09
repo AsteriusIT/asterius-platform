@@ -34,6 +34,7 @@ import { decodeCursor, encodeCursor } from '../lib/cursor.js';
 import { findOrg, orgRef } from '../orgs/orgs.js';
 import { orgId, withOrg } from '../orgs/context.js';
 import { activeBlackout } from './blackouts.js';
+import { listArtifacts } from './artifacts.js';
 
 /**
  * Run lifecycle:
@@ -81,6 +82,9 @@ export interface RunRow {
   parent_step_id: string | null;
   action_version: number | null;
   allowed_secrets: string | null;
+  /** Run SLA (action `slaMinutes`): due time, cleared by housekeeping once handled; breach time. */
+  sla_due_at?: string | null;
+  sla_breached_at?: string | null;
   user_name?: string;
   user_email?: string;
 }
@@ -122,6 +126,7 @@ const toRun = (r: RunRow, approvals: RunApproval[]): Run => ({
   createdAt: r.created_at,
   startedAt: r.started_at,
   endedAt: r.ended_at,
+  slaBreachedAt: r.sla_breached_at ?? null,
 });
 
 /** Approvers default to admins when the policy names nobody. */
@@ -212,6 +217,7 @@ export async function getRun(id: string, p: Principal, opts: { after?: number; l
     canCancel: canCancel(p, r),
     canRerun: manage && FINAL.includes(r.status),
     canResume,
+    artifacts: await listArtifacts(id),
   };
 }
 
@@ -521,6 +527,8 @@ async function insertRun(n: NewRun): Promise<{ id: string; replay?: false } | { 
   );
   // A concurrent request with the same idempotency key won the unique index.
   if (!inserted.changes) return { replay: true };
+  // The run SLA clock starts at the request (approval time included); housekeeping claims it once due (sla.ts).
+  if (action.slaMinutes) await run('UPDATE runs SET sla_due_at = ? WHERE id = ?', new Date(Date.parse(t) + action.slaMinutes * 60_000).toISOString(), id);
   const via = n.source.type === 'form' || n.source.type === 'api' ? '' : ` (${n.source.type})`;
   const where = n.entity ? ` on ${n.blueprint}/${n.entity}` : '';
   await addLog(id, `Triggered by ${p.name} <${p.email}>${where}${via}`);

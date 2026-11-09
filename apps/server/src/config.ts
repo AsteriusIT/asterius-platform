@@ -280,6 +280,20 @@ const schema = z.object({
   EXPR_MAX_DEPTH: z.coerce.number().int().min(10).default(500),
   /** A step whose output is larger (JSON bytes) fails instead of bloating the database. */
   STEP_OUTPUT_MAX_BYTES: z.coerce.number().int().min(1024).default(262_144),
+  /** Largest run artifact (bytes); artifacts are stored in the database. */
+  ARTIFACT_MAX_BYTES: z.coerce
+    .number()
+    .int()
+    .min(1024)
+    .default(10 * 1024 * 1024),
+  /** Most artifacts kept per run. */
+  RUN_ARTIFACTS_MAX: z.coerce.number().int().min(1).default(20),
+  /** Content types accepted for run artifacts (comma-separated; `type/*` wildcards). */
+  ARTIFACT_CONTENT_TYPES: z
+    .string()
+    .default(
+      'text/plain,text/csv,text/markdown,application/json,application/pdf,application/zip,application/gzip,application/x-tar,application/octet-stream,application/xml,application/yaml,image/png,image/jpeg,image/gif,image/webp',
+    ),
 
   // ---- notifications ----
   /** smtp://user:pass@host:587 (or smtps://…): email notifications and the email invoker. Admin → Notifications can override it. */

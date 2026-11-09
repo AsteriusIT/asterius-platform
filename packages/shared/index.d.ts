@@ -377,6 +377,8 @@ interface WorkflowStepBase {
   continueOnError?: boolean;
   /** The step output must match this schema (and stay under the platform size cap) or the step fails. */
   outputSchema?: ObjectSchema;
+  /** Service level: not finished this many minutes after it started → `step.sla_breached` (once) and a notification. */
+  slaMinutes?: number;
 }
 
 export interface InvokeStep extends WorkflowStepBase {
@@ -501,8 +503,55 @@ export interface RunStep {
   canApprove?: boolean;
   /** A failed step the caller may retry. */
   canRetry?: boolean;
+  /** When the step passed its `slaMinutes` without finishing (null: no breach). */
+  slaBreachedAt?: string | null;
   startedAt: string | null;
   endedAt: string | null;
+}
+
+/** A file attached to a run step (reports, plans, logs…). Downloaded from `GET /runs/:id/artifacts/:artifactId`. */
+export interface RunArtifact {
+  id: string;
+  stepId: string | null;
+  name: string;
+  contentType: string;
+  size: number;
+  sha256: string;
+  createdAt: string;
+  createdBy: string | null;
+}
+
+/** A workflow test (`tests` of an action): run with mocks, nothing external is called. */
+export interface WorkflowTest {
+  name: string;
+  inputs?: Record<string, unknown>;
+  entity?: string | null;
+  mocks?: Record<string, { status?: 'SUCCESS' | 'FAILURE'; output?: unknown }>;
+  expect?: {
+    status?: 'SUCCESS' | 'FAILURE';
+    steps?: Record<string, { status?: 'SUCCESS' | 'FAILURE' | 'SKIPPED'; output?: unknown }>;
+    /** Partial match against the run result (outputs by step id). */
+    outputs?: Record<string, unknown>;
+  };
+}
+
+export interface WorkflowTestResult {
+  name: string;
+  passed: boolean;
+  /** Simulated run status. */
+  status: 'SUCCESS' | 'FAILURE';
+  steps: { id: string; status: 'SUCCESS' | 'FAILURE' | 'SKIPPED'; output: unknown; error?: string }[];
+  outputs: Record<string, unknown>;
+  /** What did not match: dotted path, expected and actual values. */
+  diffs: { path: string; expected: unknown; actual: unknown }[];
+  /** Problems that fail the test regardless of expectations (unmocked external steps, input errors, template errors). */
+  errors: string[];
+}
+
+export interface WorkflowTestReport {
+  passed: number;
+  failed: number;
+  results: WorkflowTestResult[];
 }
 
 /** A user submits a form: from the self-service page (`on: create`) or on an entity (`day-2`, `delete`). */
@@ -604,6 +653,10 @@ export interface Action {
   blackoutMode?: 'skip' | 'defer';
   /** Read-only: the blackout in effect now and the next one. */
   blackout?: { active: BlackoutSpan | null; next: BlackoutSpan | null };
+  /** Service level of a whole run (minutes from the request): `run.sla_breached` once when exceeded. */
+  slaMinutes?: number;
+  /** Workflow tests (admins only). */
+  tests?: WorkflowTest[];
 }
 
 export interface ActionVersion {
@@ -700,6 +753,10 @@ export interface Run {
   canRerun?: boolean;
   /** Requester or admin, failed or cancelled run with steps to start over. */
   canResume?: boolean;
+  /** When the run passed the action's `slaMinutes` without finishing (null: no breach). */
+  slaBreachedAt?: string | null;
+  /** Present on GET /runs/:id: files attached to its steps. */
+  artifacts?: RunArtifact[];
 }
 
 export interface RunPage {

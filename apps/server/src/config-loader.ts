@@ -16,6 +16,7 @@ import { deleteTeam, listTeams, upsertTeam } from './auth/teams.js';
 import { deleteBlueprint, listBlueprints, upsertBlueprint } from './catalog/blueprints.js';
 import { deleteEntity, upsertEntity } from './catalog/entities.js';
 import { deleteAction, listActions, upsertAction } from './actions/actions.js';
+import { reportWorkflowTests } from './actions/workflow-tests.js';
 import { deleteIntegration, listIntegrations, upsertIntegration } from './integrations/integrations.js';
 import { deleteScorecard, evaluateAllEntities, listScorecards, upsertScorecard } from './catalog/scorecards.js';
 import { deletePolicy, listPolicies, upsertPolicy } from './policies/policies.js';
@@ -250,6 +251,9 @@ export async function applyConfig(loaded: LoadedConfig, log: FastifyBaseLogger):
       log.error({ component: 'config', blueprint, identifier: e.identifier, err }, 'seeded entity rejected');
     });
   }
+  // Workflow tests of the declared actions: reported in the log, never blocking the apply.
+  for (const a of data.actions.filter((x) => x.tests?.length))
+    await reportWorkflowTests(a.identifier, log).catch((err) => log.warn({ component: 'config', action: a.identifier, err }, 'workflow tests could not run'));
   return errs;
 }
 

@@ -116,6 +116,38 @@ export const MIGRATIONS: Migration[] = [
       await d.exec('CREATE INDEX deferred_starts_due ON deferred_starts(due_at)');
     },
   },
+  {
+    id: 7,
+    name: 'run and step SLAs, run artifacts, workflow tests',
+    async up(d) {
+      // SLA: `sla_due_at` is set when the clock starts and cleared (claimed) by housekeeping once due, so only due rows
+      // are ever visited; `sla_breached_at` records the breach (shown on the run page).
+      await d.exec(`
+        ALTER TABLE runs ADD COLUMN sla_due_at TEXT;
+        ALTER TABLE runs ADD COLUMN sla_breached_at TEXT;
+        ALTER TABLE run_steps ADD COLUMN sla_due_at TEXT;
+        ALTER TABLE run_steps ADD COLUMN sla_breached_at TEXT;
+        ALTER TABLE actions ADD COLUMN sla_minutes INTEGER;
+        ALTER TABLE actions ADD COLUMN tests TEXT;
+        CREATE INDEX runs_sla_due ON runs(sla_due_at) WHERE sla_due_at IS NOT NULL;
+        CREATE INDEX run_steps_sla_due ON run_steps(sla_due_at) WHERE sla_due_at IS NOT NULL;
+        CREATE TABLE run_artifacts (
+          id TEXT PRIMARY KEY,
+          org_id TEXT,
+          run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+          step_id TEXT,
+          name TEXT NOT NULL,
+          content_type TEXT NOT NULL,
+          size INTEGER NOT NULL,
+          sha256 TEXT NOT NULL,
+          content ${d.dialect === 'postgres' ? 'BYTEA' : 'BLOB'} NOT NULL,
+          created_at TEXT NOT NULL,
+          created_by TEXT
+        );
+        CREATE INDEX run_artifacts_run ON run_artifacts(run_id, created_at);
+      `);
+    },
+  },
 ];
 
 /**

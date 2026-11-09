@@ -16,6 +16,8 @@ export const WEBHOOK_EVENT_OPTIONS = [
   { value: 'run.*', label: 'Any run change' },
   { value: 'run.created', label: 'Run created' },
   { value: 'run.updated', label: 'Run updated' },
+  { value: 'run.sla_breached', label: 'Run SLA breached' },
+  { value: 'step.sla_breached', label: 'Step SLA breached' },
 ];
 
 const SECRET_REF = /^\$\{secret:([A-Za-z0-9_.-]+)\}$/;

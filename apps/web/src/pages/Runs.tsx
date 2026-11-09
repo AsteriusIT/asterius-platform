@@ -23,9 +23,19 @@ import {
 import { notifications } from '@mantine/notifications';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, Navigate, useLocation, useNavigate, useParams, useSearchParams } from 'react-router';
-import { IconCheck, IconExternalLink, IconFileText, IconInfoCircle, IconPlayerPlay, IconPlayerStop, IconRepeat, IconX } from '@tabler/icons-react';
-import type { Run, RunStatus, RunStep } from '@asterius/shared';
-import { api, errorText } from '../lib/api';
+import {
+  IconCheck,
+  IconDownload,
+  IconExternalLink,
+  IconFileText,
+  IconInfoCircle,
+  IconPlayerPlay,
+  IconPlayerStop,
+  IconRepeat,
+  IconX,
+} from '@tabler/icons-react';
+import type { Run, RunArtifact, RunStatus, RunStep } from '@asterius/shared';
+import { api, downloadArtifact, errorText } from '../lib/api';
 import { DataTable } from '../components/DataTable';
 import { useUrlParams } from '../lib/urlState';
 import { useRunStream } from '../lib/runStream';
@@ -393,7 +403,11 @@ function runFlowSteps(r: Run): FlowStep[] {
     needs: s.needs,
     tone: stepTone(s.status),
     detail: s.statusLabel || (s.status === 'PENDING' ? null : STEP_STATUS_LABELS[s.status]),
-    badges: [...(s.maxAttempts > 1 && s.attempt > 1 ? [`attempt ${s.attempt}/${s.maxAttempts}`] : []), ...(s.canApprove || s.canSubmit ? ['needs you'] : [])],
+    badges: [
+      ...(s.maxAttempts > 1 && s.attempt > 1 ? [`attempt ${s.attempt}/${s.maxAttempts}`] : []),
+      ...(s.canApprove || s.canSubmit ? ['needs you'] : []),
+      ...(s.slaBreachedAt ? ['SLA breached'] : []),
+    ],
   }));
 }
 
@@ -463,6 +477,7 @@ function RunFlow({ r }: { r: Run }) {
         meta={
           <>
             <StatusBadge status={r.status} />
+            {r.slaBreachedAt && <SlaBadge at={r.slaBreachedAt} />}
             {r.statusLabel && (
               <Text span fz="xs" c="dimmed" truncate>
                 {r.statusLabel}
@@ -591,6 +606,7 @@ function RunFlow({ r }: { r: Run }) {
         {step && (
           <Stack>
             <StepPanel key={step.id} run={r} step={step} onDone={refresh} />
+            <ArtifactsCard runId={r.id} artifacts={(r.artifacts ?? []).filter((a) => a.stepId === step.id)} />
             <LogsCard lines={allLogs.filter((l) => l.stepId === step.id)} filename={`run-${r.id}-${step.id}.log`} live={live} />
           </Stack>
         )}
@@ -660,6 +676,7 @@ function StepPanel({ run, step, onDone }: { run: Run; step: RunStep; onDone: (r:
             <Badge color={STEP_STATUS_COLORS[step.status]} variant={step.status === 'RUNNING' ? 'dot' : 'light'}>
               {STEP_STATUS_LABELS[step.status]}
             </Badge>
+            {step.slaBreachedAt && <SlaBadge at={step.slaBreachedAt} />}
           </Group>
           <Text fz="xs" c="dimmed" mt={4}>
             {step.statusLabel ? `${step.statusLabel} · ` : ''}
@@ -769,6 +786,50 @@ function StepPanel({ run, step, onDone }: { run: Run; step: RunStep; onDone: (r:
           )}
         </Box>
       )}
+    </Card>
+  );
+}
+
+/** Shown on runs and steps that passed their `slaMinutes` without finishing. */
+function SlaBadge({ at }: { at: string }) {
+  return (
+    <Badge color="orange" variant="filled" title={`SLA breached ${new Date(at).toLocaleString()}`}>
+      SLA breached
+    </Badge>
+  );
+}
+
+const fileSize = (n: number) => (n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`);
+
+/** Files attached to a step (reports, plans…), downloaded with the session. */
+function ArtifactsCard({ runId, artifacts }: { runId: string; artifacts: RunArtifact[] }) {
+  if (!artifacts.length) return null;
+  return (
+    <Card>
+      <Text fw={600} mb="xs">
+        Artifacts
+      </Text>
+      <Table withRowBorders={false} verticalSpacing={4} highlightOnHover={false} fz="sm">
+        <Table.Tbody>
+          {artifacts.map((a) => (
+            <Table.Tr key={a.id}>
+              <Table.Td style={{ overflowWrap: 'anywhere' }}>
+                <Anchor component="button" fz="sm" onClick={() => void downloadArtifact(runId, a).catch(onError)}>
+                  <Group gap={4} wrap="nowrap">
+                    <IconDownload size={14} />
+                    {a.name}
+                  </Group>
+                </Anchor>
+              </Table.Td>
+              <Table.Td c="dimmed">{a.contentType}</Table.Td>
+              <Table.Td c="dimmed">{fileSize(a.size)}</Table.Td>
+              <Table.Td c="dimmed">
+                <TimeAgo at={a.createdAt} />
+              </Table.Td>
+            </Table.Tr>
+          ))}
+        </Table.Tbody>
+      </Table>
     </Card>
   );
 }

@@ -116,6 +116,12 @@ const c = {
     labelNames: ['host'],
     registers: [registry],
   }),
+  slaBreaches: new client.Counter({
+    name: 'asterius_sla_breaches_total',
+    help: 'Runs and steps still not finished after their SLA (slaMinutes), by kind (run | step) and action',
+    labelNames: ['kind', 'action'],
+    registers: [registry],
+  }),
   events: new client.Counter({ name: 'asterius_events_total', help: 'Domain events emitted', labelNames: ['type'], registers: [registry] }),
 };
 
@@ -233,6 +239,7 @@ export const metrics = {
   httpCircuitOpened: (circuit: string) => c.httpCircuitOpened.inc({ circuit }),
   event: (type: string) => c.events.inc({ type }),
   stepFinished: (type: string, status: string) => c.steps.inc({ type, status }),
+  slaBreached: (kind: 'run' | 'step', action: string) => c.slaBreaches.inc({ kind, action }),
   llmTokens: (model: string, input: number, output: number) => {
     c.llmTokens.inc({ model, kind: 'input' }, input);
     c.llmTokens.inc({ model, kind: 'output' }, output);

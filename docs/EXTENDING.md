@@ -184,6 +184,69 @@ During a window, schedule, event and webhook starts are skipped (audited as `run
 
 Child runs belong to the parent's requester, link to the parent (`parent`), are cancelled with it, and are limited to 5 levels of nesting. Failed runs can be re-run (`POST /runs/:id/rerun`), resumed in place from the failed steps (`POST /runs/:id/resume`) or have one failed step retried (`POST /runs/:id/steps/:step/retry`): requester and admins only.
 
+### Service levels (SLA)
+
+`slaMinutes` on a step starts a clock when the step starts; `slaMinutes` on the action starts one when the run is
+requested (approval time included). When the step (or run) is still not finished after it, the platform reports it
+once: `step.sla_breached` / `run.sla_breached` webhook events, an in-app notification (and email / Slack following the
+`runs` preference) to the requester and the organization's admins, a warning in the run log, the
+`asterius_sla_breaches_total{kind,action}` counter and an "SLA breached" badge on the run page. An SLA never stops
+anything (use `timeoutMinutes` for that).
+
+```yaml
+actions:
+  - identifier: provision-db
+    slaMinutes: 240            # whole run, from the request
+    steps:
+      - id: dba
+        type: approval
+        slaMinutes: 60         # nobody approved within an hour → notify
+```
+
+### Run artifacts
+
+Steps can attach files (plans, reports, generated configuration) to the run. Upload with the step's callback token
+while the run is not finished, or as the requester / an admin at any time:
+
+```bash
+curl -X POST "$CALLBACK_URL/artifacts" -H "Authorization: Bearer $CALLBACK_TOKEN" -H 'content-type: application/json' \
+  -d "{\"name\": \"plan.txt\", \"contentType\": \"text/plain\", \"content\": \"$(base64 -w0 plan.txt)\"}"
+```
+
+A webhook invoker in `sync` mode may answer `{ …, "artifacts": [{ "name", "contentType", "content" (base64) }] }`: the
+files are stored (rejected ones are logged) and removed from the step output. Limits: `ARTIFACT_MAX_BYTES` per file
+(default 10 MB, 413 above), `RUN_ARTIFACTS_MAX` per run (default 20, 409 above), content types in
+`ARTIFACT_CONTENT_TYPES` (no HTML or SVG by default). `GET /runs/:id` lists them (`artifacts`, also
+`GET /runs/:id/artifacts`); `GET /runs/:id/artifacts/:artifactId` downloads one with the run's read permission, always as
+an attachment (`Content-Disposition: attachment`, `X-Content-Type-Options: nosniff`, sandbox CSP). Later steps read
+`steps.<id>.artifacts` (`[{ id, name, contentType, size, sha256, url }]`). Artifacts are deleted with their run.
+
+### Workflow tests
+
+An action may declare tests, run with mocks by `POST /actions/:id/tests/run { name?, definition? }` (admin; `definition`
+tests an unsaved draft), the Tests dialog of the workflow editor, and `node dist/cli.js actions test [id] [--name <test>]
+[--org <slug>] [--json]` (exit code 1 when a test fails, for CI). Nothing external is called and no run is created:
+
+- `invoke`, `agent` and `workflow` steps must be mocked (`mocks.<step>: { status: SUCCESS | FAILURE, output }`), an
+  unmocked one is an error; their configuration is still rendered and validated;
+- approvals are approved, waits resolve at once, input steps answer with sample values, unless mocked;
+- conditions, transforms, `needs`, `continueOnError` and `outputSchema` behave as in a run; secrets are masked.
+
+`expect.status` defaults to `SUCCESS`; `expect.steps.<id>.output` and `expect.outputs` (run result: outputs by step id)
+are partial matches. Results list each test's `passed`, simulated step statuses and `diffs: [{ path, expected, actual }]`.
+When `CONFIG_DIR` applies an action with tests, they are run and failures are logged (never blocking).
+
+```yaml
+    tests:
+      - name: dev deploys without approval
+        inputs: { env: dev }
+        mocks:
+          deploy: { status: SUCCESS, output: { url: https://dev.example } }
+        expect:
+          steps: { gate: { status: SKIPPED } }
+          outputs: { deploy: { url: https://dev.example } }
+```
+
 ### Safety and testing
 
 - `secrets: [NAME, env:OTHER]` on an action restricts the references its steps may use (checked when saving and when rendering).
@@ -385,7 +448,7 @@ blueprints:
 
 ## Outbound webhooks
 
-The payload has the form `{ id, type, at, blueprint, actor, data }`. Event types are `entity.created`, `entity.updated` (with `data.before`), `entity.deleted`, `entity.expired` (`data: { entity, property, expiresAt }`), `run.created`, `run.updated` and `scorecard.changed` (`data: { scorecard, entity, from, to, passed, total }`). Requests carry the headers `X-Asterius-Event`, `X-Asterius-Delivery` and `X-Asterius-Signature: t=<unix seconds>,v1=<hex>`, where `v1 = HMAC-SHA256(secret, "<t>.<body>")`. Receivers must recompute it over the raw body, compare in constant time, and reject timestamps more than **5 minutes** from their clock (replay protection); the timestamp is refreshed on every retry. `secret` and `secondarySecret` must be references (`${secret:NAME}` / `${env:NAME}`); literal values are rejected.
+The payload has the form `{ id, type, at, blueprint, actor, data }`. Event types are `entity.created`, `entity.updated` (with `data.before`), `entity.deleted`, `entity.expired` (`data: { entity, property, expiresAt }`), `run.created`, `run.updated`, `run.sla_breached` (`data: { runId, action, status, createdAt, breachedAt }`), `step.started`, `step.finished`, `step.sla_breached` (`data: { runId, action, stepId, name, status, slaMinutes, startedAt, breachedAt }`) and `scorecard.changed` (`data: { scorecard, entity, from, to, passed, total }`). Requests carry the headers `X-Asterius-Event`, `X-Asterius-Delivery` and `X-Asterius-Signature: t=<unix seconds>,v1=<hex>`, where `v1 = HMAC-SHA256(secret, "<t>.<body>")`. Receivers must recompute it over the raw body, compare in constant time, and reject timestamps more than **5 minutes** from their clock (replay protection); the timestamp is refreshed on every retry. `secret` and `secondarySecret` must be references (`${secret:NAME}` / `${env:NAME}`); literal values are rejected.
 
 **Rotating a signing secret without downtime:** (1) create the new secret and set it as `secondarySecret`: deliveries now carry two `v1=` entries, one per secret; (2) make receivers accept either (any matching `v1`) and switch them to the new secret; (3) move the new secret to `secret` and remove `secondarySecret`.
 

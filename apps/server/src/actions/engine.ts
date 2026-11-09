@@ -24,6 +24,8 @@ import { runAgent, StepError, wrapUntrusted } from './agent.js';
 import { wake } from './wake.js';
 import { notifyPendingDecision } from '../notifications/dispatch.js';
 import { cancelChildrenOf, startSubWorkflow, startWaitingStep } from './waiting.js';
+import { artifactsByStep, storeInvokerArtifacts } from './artifacts.js';
+import { armStepSla, checkSlas } from './sla.js';
 
 /**
  * Workflow engine. A run's steps form a graph (see workflow.ts); the engine moves each step through
@@ -53,6 +55,7 @@ const stepLog =
 export async function buildContext(r: RunRow, rows: StepRow[], forStep?: string): Promise<RunContext> {
   const defs = stepDefs(r);
   const entity = r.blueprint && r.entity ? ((await findEntity(r.blueprint, r.entity)) ?? null) : null;
+  const artifacts = await artifactsByStep(r.id);
   return {
     // Each step gets its own callback (URL + token scoped to the step).
     run: {
@@ -71,7 +74,11 @@ export async function buildContext(r: RunRow, rows: StepRow[], forStep?: string)
         const def = defs.find((d) => d.id === s.step_id);
         // Event waits: the token an earlier step (or an external system) uses to signal this step.
         const events = def?.type === 'wait' && def.event ? { url: `${stepCallbackUrl(r.id, s.step_id)}/events`, token: stepToken(r.id, s.step_id) } : undefined;
-        return [s.step_id, { status: s.status, output: json(s.output, null), link: s.link, ...(events ? { events } : {}) }];
+        const files = artifacts.get(s.step_id);
+        return [
+          s.step_id,
+          { status: s.status, output: json(s.output, null), link: s.link, ...(events ? { events } : {}), ...(files ? { artifacts: files } : {}) },
+        ];
       }),
     ),
   };
@@ -156,8 +163,15 @@ export async function advance(runId: string): Promise<void> {
   await finishOrLabel(runId, defs);
 }
 
-/** PENDING → WAITING_APPROVAL (approval) or QUEUED (others). */
+/** Start a step and, when it declares `slaMinutes`, its SLA clock. */
 async function startStep(r: RunRow, def: Step, rows: StepRow[]): Promise<boolean> {
+  const started = await enterStep(r, def, rows);
+  if (started && def.slaMinutes) await armStepSla(r.id, def.id, def.slaMinutes);
+  return started;
+}
+
+/** PENDING → WAITING_APPROVAL (approval) or QUEUED (others). */
+async function enterStep(r: RunRow, def: Step, rows: StepRow[]): Promise<boolean> {
   const deadline = later(defaultTimeoutMin(def) * 60_000);
   if (def.type === 'wait' || def.type === 'input') return startWaitingStep(r, def, rows, deadline);
   if (def.type === 'approval') {
@@ -343,6 +357,7 @@ async function invokeEnv(r: RunRow, def: Extract<Step, { type: 'invoke' }>, rows
 async function applyInvokeResult(runId: string, stepId: string, res: InvokeResult, polls: boolean, secrets: string[] = [], owner?: Owner) {
   // Whatever the external system echoed back (webhook answers, job output) is stored: mask the secrets it may contain.
   res = { ...res, result: redactDeep(res.result, secrets), statusLabel: res.statusLabel == null ? res.statusLabel : redact(res.statusLabel, secrets) };
+  if (res.artifacts?.length) await storeInvokerArtifacts(runId, stepId, res.artifacts);
   if (res.status === 'SUCCESS' || res.status === 'FAILURE')
     return complete(runId, stepId, ['RUNNING'], { status: res.status, output: res.result ?? null, link: res.link, statusLabel: res.statusLabel }, owner);
   const ok = await setStep(
@@ -881,6 +896,8 @@ export async function stepHousekeeping(log: FastifyBaseLogger) {
       BATCH,
     ))
       await guard('run recovery', r.id, () => (Number(r.n) === 0 ? initRun(r.id) : advance(r.id)));
+    // Run and step SLAs that came due (only rows with a pending `sla_due_at` are read).
+    await checkSlas(t, BATCH, guard);
   });
 }
 

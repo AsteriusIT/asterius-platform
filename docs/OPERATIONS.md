@@ -139,6 +139,21 @@ runs in flight lose their callback tokens (derived from the key) and should be r
 5. Record the restore duration; it is your measured RTO. The recovery point you chose is your RPO.
 6. Delete the scratch namespace.
 
+## Run artifacts and SLAs
+
+Run artifacts (files attached to run steps) are stored in the database (`run_artifacts`), so they are in the database
+backups (not in archives) and are deleted with their run by `RETENTION_DAYS`. Size them with:
+
+| Variable                 | Default                                         | Meaning                                                    |
+| ------------------------ | ----------------------------------------------- | ---------------------------------------------------------- |
+| `ARTIFACT_MAX_BYTES`     | `10485760` (10 MB)                              | Largest artifact; larger uploads answer 413.               |
+| `RUN_ARTIFACTS_MAX`      | `20`                                            | Artifacts per run; more answer 409.                        |
+| `ARTIFACT_CONTENT_TYPES` | text, JSON, YAML, XML, PDF, archives, raster images | Accepted content types (comma-separated, `type/*` allowed). |
+
+SLA breaches (`slaMinutes` on actions and steps) are detected by housekeeping (every 30 s) and counted in
+`asterius_sla_breaches_total{kind,action}`: alert on `increase(asterius_sla_breaches_total[1h]) > 0` for the workflows
+that matter.
+
 ## Checklists
 
 - Before an upgrade: database backup completed in the last 24 h, archive exported, `helm lint` and `helm template` clean.
