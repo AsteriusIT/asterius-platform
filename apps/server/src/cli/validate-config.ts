@@ -11,12 +11,21 @@ import { errorMessage } from '../lib/errors.js';
 import { getSource } from '../integrations/sources/index.js';
 import { checkMapping } from '../integrations/mapping.js';
 import { parseCron } from '../lib/cron.js';
+import { expandWorkflow, validateFragment, type FragmentLookup } from '../actions/fragments.js';
 
 const dir = path.resolve(process.argv[2] ?? process.env.CONFIG_DIR ?? './config');
 const problems: string[] = [];
 const check = (where: string, fn: () => void) => {
   try {
     fn();
+  } catch (err) {
+    problems.push(`${where}: ${errorMessage(err)}`);
+  }
+};
+
+const checkAsync = async (where: string, fn: () => Promise<unknown>) => {
+  try {
+    await fn();
   } catch (err) {
     problems.push(`${where}: ${errorMessage(err)}`);
   }
@@ -49,10 +58,17 @@ for (const w of loaded.data.webhooks)
   ] as const)
     if (expr) check(`webhook ${w.identifier} ${k}`, () => checkExpression(expr));
 
+// Fragments on their own (graph, outputs, parameters used), and inlined into the actions that include them.
+const fragments = new Map(loaded.data.fragments.map((f) => [f.identifier, f]));
+const lookup: FragmentLookup = async (id) => (fragments.has(id) ? { def: fragments.get(id)!, version: 0 } : undefined);
+for (const f of loaded.data.fragments) await checkAsync(`fragment ${f.identifier}`, () => validateFragment(f, lookup));
+for (const a of loaded.data.actions)
+  if (a.steps.some((s) => s.type === 'fragment')) await checkAsync(`action ${a.identifier}`, () => expandWorkflow(a.steps, lookup));
+
 if (problems.length) {
   for (const p of problems) console.error(`FAIL ${p}`);
   process.exit(1);
 }
 console.log(
-  `OK ${loaded.files.length} file(s): ${loaded.data.teams.length} teams, ${loaded.data.blueprints.length} blueprints, ${loaded.data.actions.length} actions, ${loaded.data.integrations.length} integrations, ${loaded.data.webhooks.length} webhooks`,
+  `OK ${loaded.files.length} file(s): ${loaded.data.teams.length} teams, ${loaded.data.blueprints.length} blueprints, ${loaded.data.fragments.length} fragments, ${loaded.data.actions.length} actions, ${loaded.data.integrations.length} integrations, ${loaded.data.webhooks.length} webhooks`,
 );

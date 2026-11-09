@@ -153,6 +153,9 @@ export function validateWorkflow(steps: Step[]) {
           switches.set(s.id, ids);
           break;
         }
+        case 'fragment': // inlined when the run starts (fragments.ts), where its parameters are checked
+          checkTemplate(s.with);
+          break;
       }
     } catch (err) {
       throw badRequest(`${where}: ${(err as Error).message}`);

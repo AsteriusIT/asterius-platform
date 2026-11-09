@@ -5,7 +5,8 @@ import { notifications } from '@mantine/notifications';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import { IconCopy, IconRefresh, IconSend } from '@tabler/icons-react';
-import type { Action, Blueprint, Dashboard, Integration, Policy, Scorecard, Webhook } from '@asterius/shared';
+import type { Action, Blueprint, Dashboard, Fragment, Integration, Policy, Scorecard, Webhook } from '@asterius/shared';
+import { blankFragment, FragmentBuilder } from '../../components/builder/FragmentBuilder';
 import { useAppMutation } from '../../lib/queryClient';
 import { FormEditor } from '../../components/builder/FormEditor';
 import { IntegrationForm } from '../../components/builder/IntegrationForm';
@@ -388,6 +389,29 @@ export function PoliciesAdmin() {
       editor={(p) => <PolicyBuilder {...p} />}
       save={api.savePolicy}
       remove={(p) => api.deletePolicy(p.identifier)}
+    />
+  );
+}
+
+export function FragmentsAdmin() {
+  return (
+    <ResourceAdmin<Fragment>
+      title="Fragments"
+      description="Reusable groups of steps (notify and wait for approval, open a ticket…) that workflows include with a Fragment step. Changes apply to new runs; a fragment in use cannot be deleted."
+      queryKey="fragments"
+      list={api.fragments}
+      columns={[
+        { key: 'p', label: 'Parameters', render: (f) => Object.keys(f.params.properties ?? {}).join(', ') || '—' },
+        { key: 's', label: 'Steps', render: (f) => f.steps.length },
+        { key: 'v', label: 'Version', render: (f) => <Badge variant="light">v{f.version}</Badge> },
+        { key: 'u', label: 'Updated', render: (f) => <TimeAgo at={f.updatedAt} /> },
+      ]}
+      templates={[{ label: 'Fragment', value: blankFragment }]}
+      toEditable={(f) => strip(f, ['managed', 'version', 'updatedAt'])}
+      editor={(p) => <FragmentBuilder {...p} />}
+      save={api.saveFragment}
+      remove={(f) => api.deleteFragment(f.identifier)}
+      removeWarning={() => 'Workflows that include it must stop using it first. Past runs keep their copy of its steps.'}
     />
   );
 }

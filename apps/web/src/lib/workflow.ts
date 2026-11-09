@@ -25,6 +25,7 @@ export const STEP_TYPES: Record<WorkflowStepType, { label: string; color: string
   input: { label: 'Input', color: 'cyan', hint: 'Ask the requester or an operator for more data mid-run' },
   workflow: { label: 'Sub-workflow', color: 'indigo', hint: 'Run another workflow (once, or for each item of a list) and use its result' },
   switch: { label: 'Switch', color: 'pink', hint: 'Choose a branch from conditions; the steps of the other branches are skipped' },
+  fragment: { label: 'Fragment', color: 'pink', hint: 'Include reusable steps shared by several workflows (Admin → Fragments)' },
 };
 
 /** Control-flow badges of a step node: when, the switch branch it belongs to, an inline loop. */

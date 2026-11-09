@@ -1,14 +1,15 @@
 import type { DryRunStep, ObjectSchema, WorkflowTestReport, WorkflowTestResult } from '@asterius/shared';
 import { config } from '../config.js';
 import { errorMessage, notFound } from '../lib/errors.js';
-import { evaluate, type RefResolver } from '../lib/expr.js';
+import { evaluate, render, type RefResolver } from '../lib/expr.js';
 import { compact, validator } from '../catalog/validation.js';
 import { findEntity } from '../catalog/entities.js';
 import { actionDef, workflowTest, type WorkflowTestDef } from '../schemas.js';
 import { getAction } from './actions.js';
-import { simulate } from './dryrun.js';
+import { simulateLoop } from './dryrun.js';
+import { expandWorkflow, withParams } from './fragments.js';
 import { isFormLike } from './trigger-defs.js';
-import { needsOf, stepsOf, type Step } from './workflow.js';
+import { casesOf, needsOf, stepsOf, type Step } from './workflow.js';
 import type { RunContext } from './types.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { automationPrincipal } from '../auth/users.js';
@@ -21,8 +22,9 @@ import { automationPrincipal } from '../auth/users.js';
  *    validated, so template and invoker errors show up;
  *  - approval steps are approved (output `{ approved: true, … }`), wait steps resolve at once and input steps answer
  *    with sample values, unless mocked (a mocked FAILURE is a rejection / timeout);
- *  - transforms and conditions (`if`) are evaluated for real; `needs`, `continueOnError` and `outputSchema` behave as in
- *    a run (a failed dependency skips its dependents);
+ *  - transforms and conditions (`if`) are evaluated for real; `needs`, `continueOnError`, `outputSchema`, `when`
+ *    (failure handlers and cleanups), `switch` branches (`case`), inline `forEach`, fragments (inlined, mockable by
+ *    their inlined ids `<step>__<inner>`), run `vars` and `outputs` behave as in a run;
  *  - secret references resolve to a mask and are not looked up.
  * Expectations: `status` (default SUCCESS), per-step `status` and `output`, and the run `outputs` (outputs by step id).
  * `output` / `outputs` are partial matches: objects compare only the keys given, arrays element by element.
@@ -68,12 +70,14 @@ interface Workflow {
   trigger: ReturnType<typeof actionDef.parse>['trigger'];
   steps: Step[];
   tests: WorkflowTestDef[];
+  vars?: Record<string, unknown>;
+  outputs?: Record<string, unknown>;
 }
 
 async function load(actionId: string, definition?: unknown): Promise<Workflow> {
   if (definition) {
     const def = actionDef.parse({ ...(definition as object), identifier: actionId });
-    return { identifier: actionId, title: def.title, trigger: def.trigger, steps: stepsOf(def), tests: def.tests ?? [] };
+    return { identifier: actionId, title: def.title, trigger: def.trigger, steps: stepsOf(def), tests: def.tests ?? [], vars: def.vars, outputs: def.outputs };
   }
   const a = await getAction(actionId);
   return {
@@ -83,6 +87,8 @@ async function load(actionId: string, definition?: unknown): Promise<Workflow> {
     steps: a.steps as Step[],
     // Stored tests were validated on save; parse again for the defaults (mock status, empty expectations).
     tests: (a.tests ?? []).map((t) => workflowTest.parse(t)),
+    vars: a.vars,
+    outputs: a.outputs,
   };
 }
 
@@ -99,7 +105,14 @@ export async function runWorkflowTests(actionId: string, who: Who, opts: { name?
 
 async function runOne(wf: Workflow, t: WorkflowTestDef, who: Who): Promise<WorkflowTestResult> {
   const errors: string[] = [];
-  const ids = new Set(wf.steps.map((s) => s.id));
+  // Fragments are inlined as in a run: their steps can be mocked and expected by their inlined ids.
+  let all: Step[] = wf.steps;
+  try {
+    all = (await expandWorkflow(wf.steps)) as Step[];
+  } catch (err) {
+    errors.push(errorMessage(err));
+  }
+  const ids = new Set([...wf.steps, ...all].map((s) => s.id));
   for (const id of Object.keys(t.mocks)) if (!ids.has(id)) errors.push(`mocks.${id}: no step "${id}" in this workflow`);
   for (const id of Object.keys(t.expect.steps ?? {})) if (!ids.has(id)) errors.push(`expect.steps.${id}: no step "${id}" in this workflow`);
   if (!wf.steps.length) errors.push('The workflow has no steps');
@@ -131,21 +144,42 @@ async function runOne(wf: Workflow, t: WorkflowTestDef, who: Who): Promise<Workf
     trigger: { user: { id: who.id, email: who.email, name: who.name }, at: new Date().toISOString() },
     steps: {},
   };
+  if (wf.vars)
+    try {
+      ctx.vars = (await render(wf.vars, ctx, resolver)).value as Record<string, unknown>;
+    } catch (err) {
+      errors.push(`vars: ${errorMessage(err)}`);
+    }
 
   const outcomes = new Map<string, StepOutcome & { blocked?: boolean }>();
-  for (const [i, def] of wf.steps.entries()) {
+  const needs = all.map((_, i) => needsOf(all, i));
+  const byId = new Map(all.map((d) => [d.id, d]));
+  for (const [i, def] of all.entries()) {
     const set = (o: StepOutcome & { blocked?: boolean }) => {
       outcomes.set(def.id, o);
       ctx.steps[def.id] = { status: o.status, output: o.output, link: null };
     };
-    const deps = needsOf(wf.steps, i).map((id) => ({ id, o: outcomes.get(id) }));
-    const failed = deps.find(({ id, o }) => o && (o.blocked || (o.status === 'FAILURE' && !wf.steps.find((d) => d.id === id)?.continueOnError)));
-    if (failed) {
+    // Control flow, as in the engine: `when` against the dependencies' outcomes, then the switch branch, then `if`.
+    const deps = needs[i].map((id) => ({ id, o: outcomes.get(id) }));
+    const anyFailed = deps.some(({ o }) => o && (o.blocked || o.status === 'FAILURE'));
+    const blocking = deps.some(({ id, o }) => o && (o.blocked || (o.status === 'FAILURE' && !byId.get(id)?.continueOnError)));
+    const when = def.when ?? 'success';
+    if (when === 'failure' && !anyFailed) {
+      set({ id: def.id, status: 'SKIPPED', output: null });
+      continue;
+    }
+    if (when === 'success' && blocking) {
       set({ id: def.id, status: 'SKIPPED', output: null, blocked: true });
       continue;
     }
+    const refs = casesOf(def);
+    if (refs.length && !refs.some((ref) => (outcomes.get(ref.split('.')[0])?.output as { case?: string } | null)?.case === ref.split('.')[1])) {
+      set({ id: def.id, status: 'SKIPPED', output: null });
+      continue;
+    }
+    const sctx = await withParams(ctx, def);
     try {
-      if (def.if && !(await evaluate(def.if, ctx))) {
+      if (def.if && !(await evaluate(def.if, sctx))) {
         set({ id: def.id, status: 'SKIPPED', output: null });
         continue;
       }
@@ -161,7 +195,7 @@ async function runOne(wf: Workflow, t: WorkflowTestDef, who: Who): Promise<Workf
     }
     try {
       const scratch: DryRunStep = { id: def.id, type: def.type, status: 'planned', errors: [] };
-      const { output } = await simulate(def, ctx, resolver, mock?.status === 'SUCCESS' ? mock.output : undefined, scratch);
+      const { output } = await simulateLoop(def, sctx, resolver, mock?.status === 'SUCCESS' ? mock.output : undefined, scratch);
       if (scratch.errors.length) throw new Error(scratch.errors.join('; '));
       if (mock?.status === 'FAILURE') {
         set({ id: def.id, status: 'FAILURE', output: mock.output ?? null, error: 'Mocked failure' });
@@ -175,13 +209,30 @@ async function runOne(wf: Workflow, t: WorkflowTestDef, who: Who): Promise<Workf
     }
   }
 
-  const steps = wf.steps.map((d) => {
+  const steps = all.map((d) => {
     const { blocked: _blocked, ...o } = outcomes.get(d.id)!;
     return o;
   });
-  const runFailed = steps.some((s) => s.status === 'FAILURE' && !wf.steps.find((d) => d.id === s.id)?.continueOnError);
+  // A failure is handled when a `when: failure` step downstream of it succeeded (the run recovers).
+  const upstream = (i: number, seen = new Set<string>()): Set<string> => {
+    for (const n of needs[i])
+      if (!seen.has(n)) {
+        seen.add(n);
+        upstream(all.findIndex((d) => d.id === n), seen);
+      }
+    return seen;
+  };
+  const handled = (id: string) => all.some((d, i) => d.when === 'failure' && outcomes.get(d.id)?.status === 'SUCCESS' && upstream(i).has(id));
+  let runFailed = steps.some((s) => s.status === 'FAILURE' && !byId.get(s.id)?.continueOnError && !handled(s.id));
+  let outputs: Record<string, unknown> = Object.fromEntries(steps.filter((s) => s.status === 'SUCCESS' && s.output != null).map((s) => [s.id, s.output]));
+  if (wf.outputs)
+    try {
+      outputs = (await render(wf.outputs, ctx, resolver)).value as Record<string, unknown>;
+    } catch (err) {
+      errors.push(`outputs: ${errorMessage(err)}`);
+      runFailed = true;
+    }
   const status = runFailed ? 'FAILURE' : 'SUCCESS';
-  const outputs = Object.fromEntries(steps.filter((s) => s.status === 'SUCCESS' && s.output != null).map((s) => [s.id, s.output]));
 
   const diffs: Diff[] = [];
   const expected = t.expect.status ?? 'SUCCESS';

@@ -11,6 +11,8 @@ import { findEntity, getEntity } from '../catalog/entities.js';
 import { enforcePolicies } from '../policies/policies.js';
 import { compact, validate } from '../catalog/validation.js';
 import { canTrigger, getAction } from './actions.js';
+import { expandWorkflow } from './fragments.js';
+import type { Step } from './workflow.js';
 import { assertCan } from '../auth/access.js';
 import { getBlueprintCached } from '../catalog/blueprints.js';
 import { metrics } from '../metrics.js';
@@ -615,6 +617,7 @@ async function insertRun(n: NewRun): Promise<{ id: string; replay?: false } | { 
     },
     actorOf(p),
   );
+  const steps = await expandWorkflow(action.steps as Step[]);
   const id = newId();
   const t = now();
   const status: RunStatus = n.approval.required ? 'PENDING_APPROVAL' : 'QUEUED';
@@ -650,7 +653,7 @@ async function insertRun(n: NewRun): Promise<{ id: string; replay?: false } | { 
     JSON.stringify(n.inputs),
     status,
     JSON.stringify(action.invoker ?? null),
-    JSON.stringify(action.steps), // snapshot: editing the action never changes runs in flight
+    JSON.stringify(steps), // snapshot, fragments inlined: editing the action or its fragments never changes runs in flight
     JSON.stringify(n.approval),
     p.id,
     n.entityTeam,

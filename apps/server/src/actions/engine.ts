@@ -43,6 +43,7 @@ import { cancelChildrenOf, startSubWorkflow, startWaitingStep } from './waiting.
 import { artifactsByStep, storeInvokerArtifacts } from './artifacts.js';
 import { armStepSla, checkSlas } from './sla.js';
 import { admitGrouped } from './concurrency.js';
+import { withParams } from './fragments.js';
 
 /**
  * Workflow engine. A run's steps form a graph (see workflow.ts); the engine moves each step through
@@ -78,7 +79,7 @@ export async function buildContext(r: RunRow, rows: StepRow[], forStep?: string)
   const defs = stepDefs(r);
   const entity = r.blueprint && r.entity ? ((await findEntity(r.blueprint, r.entity)) ?? null) : null;
   const artifacts = await artifactsByStep(r.id);
-  return {
+  const ctx: RunContext = {
     // Each step gets its own callback (URL + token scoped to the step).
     run: {
       id: r.id,
@@ -105,6 +106,8 @@ export async function buildContext(r: RunRow, rows: StepRow[], forStep?: string)
       }),
     ),
   };
+  // Steps inlined from a fragment read their parameters as `params`.
+  return withParams(ctx, forStep ? defs.find((d) => d.id === forStep) : undefined);
 }
 
 /** Inside a `forEach` loop: `item` and `index` in the context, and an idempotency key per item. */
@@ -219,7 +222,7 @@ export async function advance(runId: string): Promise<void> {
         ctx ??= await buildContext(r, rows, def.id);
         let ok: boolean;
         try {
-          ok = !!(await evaluate(def.if, ctx));
+          ok = !!(await evaluate(def.if, await withParams(ctx, def)));
         } catch (err) {
           changed = (await setStep(runId, def.id, 'PENDING', { status: 'FAILURE', status_label: `Condition error: ${errorMessage(err)}` })) || changed;
           continue;
@@ -1176,6 +1179,7 @@ export const LEASES: Record<Step['type'], number> = {
   input: 0,
   workflow: 2 * 60_000,
   switch: 0,
+  fragment: 0, // inlined when the run is created: never executed
 };
 
 // Postgres: concurrent replicas skip rows another claim already locked instead of queueing behind or racing for them.

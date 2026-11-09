@@ -404,7 +404,7 @@ export interface InvokerConfig {
 }
 
 // ---------- workflows ----------
-export type WorkflowStepType = 'invoke' | 'approval' | 'agent' | 'transform' | 'wait' | 'input' | 'workflow' | 'switch';
+export type WorkflowStepType = 'invoke' | 'approval' | 'agent' | 'transform' | 'wait' | 'input' | 'workflow' | 'switch' | 'fragment';
 
 interface WorkflowStepBase {
   /** Letters, digits and _; later steps read `{{ steps.<id>.output }}`. */
@@ -546,7 +546,15 @@ export interface WorkflowCallStep extends WorkflowStepBase {
   forEach?: { items: string; maxConcurrency?: number; failFast?: boolean };
 }
 
-export type WorkflowStep = InvokeStep | ApprovalStep | AgentStep | TransformStep | WaitStep | InputStep | WorkflowCallStep | SwitchStep;
+/** Include a reusable fragment: its steps are inlined (ids `<id>__<inner id>`) when a run starts. Only id, name, if and needs apply. */
+export interface FragmentStep extends WorkflowStepBase {
+  type: 'fragment';
+  fragment: string;
+  /** Parameter values: literals or `{{ }}` templates over the caller's context (read as `params.<name>` inside). */
+  with?: Record<string, unknown>;
+}
+
+export type WorkflowStep = InvokeStep | ApprovalStep | AgentStep | TransformStep | WaitStep | InputStep | WorkflowCallStep | SwitchStep | FragmentStep;
 
 export type StepStatus = 'PENDING' | 'QUEUED' | 'RUNNING' | 'WAITING_APPROVAL' | 'WAITING' | 'SUCCESS' | 'FAILURE' | 'SKIPPED' | 'CANCELLED';
 
@@ -555,6 +563,8 @@ export interface RunStep {
   name: string;
   type: WorkflowStepType;
   needs: string[];
+  /** Inlined from a fragment: the id of the workflow's fragment step it belongs to. */
+  fragment?: string;
   status: StepStatus;
   statusLabel: string | null;
   attempt: number;
@@ -1203,6 +1213,29 @@ export interface ScorecardSummary {
   distribution: Record<string, number>;
   /** Daily snapshots of the distribution. */
   trend: { day: string; distribution: Record<string, number> }[];
+}
+
+// ---------- fragments ----------
+/** Reusable steps, included in workflows by `type: fragment` steps. */
+export interface Fragment {
+  identifier: string;
+  title: string;
+  description: string;
+  /** Parameters callers pass with `with`. */
+  params: ObjectSchema;
+  steps: WorkflowStep[];
+  /** Output name → JSONata over the fragment's steps (`steps.<inner id>.output…`). */
+  outputs: Record<string, string>;
+  version: number;
+  managed: boolean;
+  updatedAt: string;
+}
+
+export interface FragmentVersion {
+  version: number;
+  actor: string | null;
+  at: string;
+  definition: Record<string, unknown>;
 }
 
 // ---------- policies ----------

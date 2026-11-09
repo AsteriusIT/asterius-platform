@@ -766,6 +766,12 @@ function StepPanel({ run, step, onDone }: { run: Run; step: RunStep; onDone: (r:
           <Group gap="xs">
             <Text fw={600}>{step.name}</Text>
             <Badge color={STEP_TYPES[step.type].color}>{STEP_TYPES[step.type].label}</Badge>
+            {step.fragment && (
+              // Inlined from a fragment: its steps are `<fragment step>__<inner id>`, the step `<fragment step>` gives its outputs.
+              <Badge color={STEP_TYPES.fragment.color} variant="outline">
+                {step.fragment === step.id ? 'fragment outputs' : `fragment ${step.fragment}`}
+              </Badge>
+            )}
             <Badge color={STEP_STATUS_COLORS[step.status]} variant={step.status === 'RUNNING' ? 'dot' : 'light'}>
               {STEP_STATUS_LABELS[step.status]}
             </Badge>

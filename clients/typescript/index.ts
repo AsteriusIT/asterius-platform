@@ -105,6 +105,19 @@ export type Action = {
       };
       minApprovals?: number;
       allowSelfApproval?: boolean;
+      remindEvery?: string;
+      maxReminders?: number;
+      escalate?: {
+        after: string;
+        approvers: {
+          roles?: Array<string>;
+          teams?: Array<string>;
+          users?: Array<string>;
+          ownerTeam?: boolean;
+        };
+      };
+      onExpiry?: "fail" | "reject" | "approve" | "skip";
+      expireAfter?: string;
     };
   } | {
     type: "api";
@@ -133,6 +146,19 @@ export type Action = {
       };
       minApprovals?: number;
       allowSelfApproval?: boolean;
+      remindEvery?: string;
+      maxReminders?: number;
+      escalate?: {
+        after: string;
+        approvers: {
+          roles?: Array<string>;
+          teams?: Array<string>;
+          users?: Array<string>;
+          ownerTeam?: boolean;
+        };
+      };
+      onExpiry?: "fail" | "reject" | "approve" | "skip";
+      expireAfter?: string;
     };
   } | {
     type: "schedule";
@@ -140,6 +166,13 @@ export type Action = {
     timezone?: string;
     inputs?: {
       [key: string]: unknown;
+    };
+    catchUp?: "none" | "last" | "all";
+    maxCatchUp?: number;
+    entities?: {
+      blueprint: string;
+      filter?: string;
+      limit?: number;
     };
   } | {
     type: "event";
@@ -181,10 +214,19 @@ export type Action = {
       required?: Array<string>;
       order?: Array<string>;
     };
+    slaMinutes?: number;
+    when?: "success" | "failure" | "always";
+    onTimeout?: "fail" | "skip" | "continue";
+    case?: string | Array<string>;
     type: "invoke";
     invoker: {
       type: string;
       [key: string]: unknown;
+    };
+    forEach?: {
+      items: string;
+      maxConcurrency?: number;
+      failFast?: boolean;
     };
   } | {
     id: string;
@@ -202,6 +244,10 @@ export type Action = {
       required?: Array<string>;
       order?: Array<string>;
     };
+    slaMinutes?: number;
+    when?: "success" | "failure" | "always";
+    onTimeout?: "fail" | "skip" | "continue";
+    case?: string | Array<string>;
     type: "approval";
     approvers?: {
       roles?: Array<string>;
@@ -220,6 +266,28 @@ export type Action = {
     minApprovals?: number;
     allowSelfApproval?: boolean;
     message?: string;
+    tiers?: Array<{
+      name: string;
+      approvers?: {
+        roles?: Array<string>;
+        teams?: Array<string>;
+        users?: Array<string>;
+        ownerTeam?: boolean;
+      };
+      minApprovals?: number;
+    }>;
+    remindEvery?: string;
+    maxReminders?: number;
+    escalate?: {
+      after: string;
+      approvers: {
+        roles?: Array<string>;
+        teams?: Array<string>;
+        users?: Array<string>;
+        ownerTeam?: boolean;
+      };
+    };
+    onExpiry?: "fail" | "reject" | "approve" | "skip";
   } | {
     id: string;
     name?: string;
@@ -236,6 +304,10 @@ export type Action = {
       required?: Array<string>;
       order?: Array<string>;
     };
+    slaMinutes?: number;
+    when?: "success" | "failure" | "always";
+    onTimeout?: "fail" | "skip" | "continue";
+    case?: string | Array<string>;
     type: "agent";
     model?: string;
     effort?: "low" | "medium" | "high" | "xhigh" | "max";
@@ -269,6 +341,11 @@ export type Action = {
     maxCostUsd?: number;
     provider?: "anthropic" | "bedrock" | "vertex";
     apiKey?: string;
+    forEach?: {
+      items: string;
+      maxConcurrency?: number;
+      failFast?: boolean;
+    };
   } | {
     id: string;
     name?: string;
@@ -285,6 +362,10 @@ export type Action = {
       required?: Array<string>;
       order?: Array<string>;
     };
+    slaMinutes?: number;
+    when?: "success" | "failure" | "always";
+    onTimeout?: "fail" | "skip" | "continue";
+    case?: string | Array<string>;
     type: "wait";
     duration?: string;
     until?: string;
@@ -308,6 +389,10 @@ export type Action = {
       required?: Array<string>;
       order?: Array<string>;
     };
+    slaMinutes?: number;
+    when?: "success" | "failure" | "always";
+    onTimeout?: "fail" | "skip" | "continue";
+    case?: string | Array<string>;
     type: "input";
     message?: string;
     inputs?: {
@@ -323,6 +408,8 @@ export type Action = {
       users?: Array<string>;
       ownerTeam?: boolean;
     };
+    remindEvery?: string;
+    maxReminders?: number;
   } | {
     id: string;
     name?: string;
@@ -339,6 +426,10 @@ export type Action = {
       required?: Array<string>;
       order?: Array<string>;
     };
+    slaMinutes?: number;
+    when?: "success" | "failure" | "always";
+    onTimeout?: "fail" | "skip" | "continue";
+    case?: string | Array<string>;
     type: "workflow";
     action: string;
     inputs?: {
@@ -366,13 +457,120 @@ export type Action = {
       required?: Array<string>;
       order?: Array<string>;
     };
+    slaMinutes?: number;
+    when?: "success" | "failure" | "always";
+    onTimeout?: "fail" | "skip" | "continue";
+    case?: string | Array<string>;
     type: "transform";
     output: {
       [key: string]: string;
     };
+    forEach?: {
+      items: string;
+      maxConcurrency?: number;
+      failFast?: boolean;
+    };
+  } | {
+    id: string;
+    name?: string;
+    if?: string;
+    needs?: Array<string>;
+    retries?: number;
+    retryDelaySeconds?: number;
+    timeoutMinutes?: number;
+    continueOnError?: boolean;
+    outputSchema?: {
+      properties?: {
+        [key: string]: Action_schema0;
+      };
+      required?: Array<string>;
+      order?: Array<string>;
+    };
+    slaMinutes?: number;
+    when?: "success" | "failure" | "always";
+    onTimeout?: "fail" | "skip" | "continue";
+    case?: string | Array<string>;
+    type: "switch";
+    cases: Array<{
+      id: string;
+      when: string;
+    }>;
+    default?: string;
+  } | {
+    id: string;
+    name?: string;
+    if?: string;
+    needs?: Array<string>;
+    retries?: number;
+    retryDelaySeconds?: number;
+    timeoutMinutes?: number;
+    continueOnError?: boolean;
+    outputSchema?: {
+      properties?: {
+        [key: string]: Action_schema0;
+      };
+      required?: Array<string>;
+      order?: Array<string>;
+    };
+    slaMinutes?: number;
+    when?: "success" | "failure" | "always";
+    onTimeout?: "fail" | "skip" | "continue";
+    case?: string | Array<string>;
+    type: "fragment";
+    fragment: string;
+    with?: {
+      [key: string]: unknown;
+    };
   }>;
   secrets?: Array<string>;
   enabled?: boolean;
+  blackouts?: Array<{
+    name?: string;
+    cron?: string;
+    duration?: string;
+    from?: string;
+    to?: string;
+    timezone?: string;
+  }>;
+  blackoutMode?: "skip" | "defer";
+  slaMinutes?: number;
+  tests?: Array<{
+    name: string;
+    inputs?: {
+      [key: string]: unknown;
+    };
+    entity?: string | null;
+    mocks?: {
+      [key: string]: {
+        status?: "SUCCESS" | "FAILURE";
+        output?: unknown;
+      };
+    };
+    expect?: {
+      status?: "SUCCESS" | "FAILURE";
+      steps?: {
+        [key: string]: {
+          status?: "SUCCESS" | "FAILURE" | "SKIPPED";
+          output?: unknown;
+        };
+      };
+      outputs?: {
+        [key: string]: unknown;
+      };
+    };
+  }>;
+  concurrency?: {
+    group?: string;
+    max?: number;
+    mode?: "queue" | "cancel-in-progress" | "reject";
+  };
+  priority?: number;
+  vars?: {
+    [key: string]: unknown;
+  };
+  outputs?: {
+    [key: string]: unknown;
+  };
 };
 
 export type Integration = {
@@ -453,6 +651,346 @@ export type Policy = {
   message?: string;
 };
 
+export type Fragment = {
+  identifier: string;
+  title: string;
+  description?: string;
+  params?: {
+    properties?: {
+      [key: string]: Fragment_schema0;
+    };
+    required?: Array<string>;
+    order?: Array<string>;
+  };
+  steps: Array<{
+    id: string;
+    name?: string;
+    if?: string;
+    needs?: Array<string>;
+    retries?: number;
+    retryDelaySeconds?: number;
+    timeoutMinutes?: number;
+    continueOnError?: boolean;
+    outputSchema?: {
+      properties?: {
+        [key: string]: Fragment_schema0;
+      };
+      required?: Array<string>;
+      order?: Array<string>;
+    };
+    slaMinutes?: number;
+    when?: "success" | "failure" | "always";
+    onTimeout?: "fail" | "skip" | "continue";
+    case?: string | Array<string>;
+    type: "invoke";
+    invoker: {
+      type: string;
+      [key: string]: unknown;
+    };
+    forEach?: {
+      items: string;
+      maxConcurrency?: number;
+      failFast?: boolean;
+    };
+  } | {
+    id: string;
+    name?: string;
+    if?: string;
+    needs?: Array<string>;
+    retries?: number;
+    retryDelaySeconds?: number;
+    timeoutMinutes?: number;
+    continueOnError?: boolean;
+    outputSchema?: {
+      properties?: {
+        [key: string]: Fragment_schema0;
+      };
+      required?: Array<string>;
+      order?: Array<string>;
+    };
+    slaMinutes?: number;
+    when?: "success" | "failure" | "always";
+    onTimeout?: "fail" | "skip" | "continue";
+    case?: string | Array<string>;
+    type: "approval";
+    approvers?: {
+      roles?: Array<string>;
+      teams?: Array<string>;
+      users?: Array<string>;
+      ownerTeam?: boolean;
+    };
+    choices?: Array<string>;
+    fields?: {
+      properties?: {
+        [key: string]: Fragment_schema0;
+      };
+      required?: Array<string>;
+      order?: Array<string>;
+    };
+    minApprovals?: number;
+    allowSelfApproval?: boolean;
+    message?: string;
+    tiers?: Array<{
+      name: string;
+      approvers?: {
+        roles?: Array<string>;
+        teams?: Array<string>;
+        users?: Array<string>;
+        ownerTeam?: boolean;
+      };
+      minApprovals?: number;
+    }>;
+    remindEvery?: string;
+    maxReminders?: number;
+    escalate?: {
+      after: string;
+      approvers: {
+        roles?: Array<string>;
+        teams?: Array<string>;
+        users?: Array<string>;
+        ownerTeam?: boolean;
+      };
+    };
+    onExpiry?: "fail" | "reject" | "approve" | "skip";
+  } | {
+    id: string;
+    name?: string;
+    if?: string;
+    needs?: Array<string>;
+    retries?: number;
+    retryDelaySeconds?: number;
+    timeoutMinutes?: number;
+    continueOnError?: boolean;
+    outputSchema?: {
+      properties?: {
+        [key: string]: Fragment_schema0;
+      };
+      required?: Array<string>;
+      order?: Array<string>;
+    };
+    slaMinutes?: number;
+    when?: "success" | "failure" | "always";
+    onTimeout?: "fail" | "skip" | "continue";
+    case?: string | Array<string>;
+    type: "agent";
+    model?: string;
+    effort?: "low" | "medium" | "high" | "xhigh" | "max";
+    system?: string;
+    prompt: string;
+    output?: {
+      properties: {
+        [key: string]: {
+          [key: string]: unknown;
+        };
+      };
+      required?: Array<string>;
+      order?: Array<string>;
+    };
+    tools?: Array<"catalog" | "upsert_entity" | "trigger_action" | "http">;
+    guardrails?: {
+      entityBlueprints?: Array<string>;
+      actions?: Array<string>;
+      httpHosts?: Array<string>;
+      httpMethods?: Array<"GET" | "POST" | "PUT" | "PATCH" | "DELETE">;
+      maxWrites?: number;
+    };
+    mcpServers?: Array<{
+      name: string;
+      url: string;
+      token?: string;
+      allowedTools?: Array<string>;
+    }>;
+    maxTurns?: number;
+    maxTokens?: number;
+    maxCostUsd?: number;
+    provider?: "anthropic" | "bedrock" | "vertex";
+    apiKey?: string;
+    forEach?: {
+      items: string;
+      maxConcurrency?: number;
+      failFast?: boolean;
+    };
+  } | {
+    id: string;
+    name?: string;
+    if?: string;
+    needs?: Array<string>;
+    retries?: number;
+    retryDelaySeconds?: number;
+    timeoutMinutes?: number;
+    continueOnError?: boolean;
+    outputSchema?: {
+      properties?: {
+        [key: string]: Fragment_schema0;
+      };
+      required?: Array<string>;
+      order?: Array<string>;
+    };
+    slaMinutes?: number;
+    when?: "success" | "failure" | "always";
+    onTimeout?: "fail" | "skip" | "continue";
+    case?: string | Array<string>;
+    type: "wait";
+    duration?: string;
+    until?: string;
+    event?: {
+      name: string;
+      filter?: string;
+    };
+  } | {
+    id: string;
+    name?: string;
+    if?: string;
+    needs?: Array<string>;
+    retries?: number;
+    retryDelaySeconds?: number;
+    timeoutMinutes?: number;
+    continueOnError?: boolean;
+    outputSchema?: {
+      properties?: {
+        [key: string]: Fragment_schema0;
+      };
+      required?: Array<string>;
+      order?: Array<string>;
+    };
+    slaMinutes?: number;
+    when?: "success" | "failure" | "always";
+    onTimeout?: "fail" | "skip" | "continue";
+    case?: string | Array<string>;
+    type: "input";
+    message?: string;
+    inputs?: {
+      properties?: {
+        [key: string]: Fragment_schema0;
+      };
+      required?: Array<string>;
+      order?: Array<string>;
+    };
+    assignees?: {
+      roles?: Array<string>;
+      teams?: Array<string>;
+      users?: Array<string>;
+      ownerTeam?: boolean;
+    };
+    remindEvery?: string;
+    maxReminders?: number;
+  } | {
+    id: string;
+    name?: string;
+    if?: string;
+    needs?: Array<string>;
+    retries?: number;
+    retryDelaySeconds?: number;
+    timeoutMinutes?: number;
+    continueOnError?: boolean;
+    outputSchema?: {
+      properties?: {
+        [key: string]: Fragment_schema0;
+      };
+      required?: Array<string>;
+      order?: Array<string>;
+    };
+    slaMinutes?: number;
+    when?: "success" | "failure" | "always";
+    onTimeout?: "fail" | "skip" | "continue";
+    case?: string | Array<string>;
+    type: "workflow";
+    action: string;
+    inputs?: {
+      [key: string]: unknown;
+    };
+    entity?: string;
+    forEach?: {
+      items: string;
+      maxConcurrency?: number;
+      failFast?: boolean;
+    };
+  } | {
+    id: string;
+    name?: string;
+    if?: string;
+    needs?: Array<string>;
+    retries?: number;
+    retryDelaySeconds?: number;
+    timeoutMinutes?: number;
+    continueOnError?: boolean;
+    outputSchema?: {
+      properties?: {
+        [key: string]: Fragment_schema0;
+      };
+      required?: Array<string>;
+      order?: Array<string>;
+    };
+    slaMinutes?: number;
+    when?: "success" | "failure" | "always";
+    onTimeout?: "fail" | "skip" | "continue";
+    case?: string | Array<string>;
+    type: "transform";
+    output: {
+      [key: string]: string;
+    };
+    forEach?: {
+      items: string;
+      maxConcurrency?: number;
+      failFast?: boolean;
+    };
+  } | {
+    id: string;
+    name?: string;
+    if?: string;
+    needs?: Array<string>;
+    retries?: number;
+    retryDelaySeconds?: number;
+    timeoutMinutes?: number;
+    continueOnError?: boolean;
+    outputSchema?: {
+      properties?: {
+        [key: string]: Fragment_schema0;
+      };
+      required?: Array<string>;
+      order?: Array<string>;
+    };
+    slaMinutes?: number;
+    when?: "success" | "failure" | "always";
+    onTimeout?: "fail" | "skip" | "continue";
+    case?: string | Array<string>;
+    type: "switch";
+    cases: Array<{
+      id: string;
+      when: string;
+    }>;
+    default?: string;
+  } | {
+    id: string;
+    name?: string;
+    if?: string;
+    needs?: Array<string>;
+    retries?: number;
+    retryDelaySeconds?: number;
+    timeoutMinutes?: number;
+    continueOnError?: boolean;
+    outputSchema?: {
+      properties?: {
+        [key: string]: Fragment_schema0;
+      };
+      required?: Array<string>;
+      order?: Array<string>;
+    };
+    slaMinutes?: number;
+    when?: "success" | "failure" | "always";
+    onTimeout?: "fail" | "skip" | "continue";
+    case?: string | Array<string>;
+    type: "fragment";
+    fragment: string;
+    with?: {
+      [key: string]: unknown;
+    };
+  }>;
+  outputs?: {
+    [key: string]: string;
+  };
+};
+
 export type EntityInput = {
   identifier: string;
   title?: string;
@@ -463,6 +1001,12 @@ export type EntityInput = {
   relations?: {
     [key: string]: string | Array<string> | null;
   };
+};
+
+export type DelegationInput = {
+  delegate: string;
+  startsAt?: string | null;
+  endsAt?: string | null;
 };
 
 export type ConfigFile = {
@@ -581,6 +1125,19 @@ export type ConfigFile = {
         };
         minApprovals?: number;
         allowSelfApproval?: boolean;
+        remindEvery?: string;
+        maxReminders?: number;
+        escalate?: {
+          after: string;
+          approvers: {
+            roles?: Array<string>;
+            teams?: Array<string>;
+            users?: Array<string>;
+            ownerTeam?: boolean;
+          };
+        };
+        onExpiry?: "fail" | "reject" | "approve" | "skip";
+        expireAfter?: string;
       };
     } | {
       type: "api";
@@ -609,6 +1166,19 @@ export type ConfigFile = {
         };
         minApprovals?: number;
         allowSelfApproval?: boolean;
+        remindEvery?: string;
+        maxReminders?: number;
+        escalate?: {
+          after: string;
+          approvers: {
+            roles?: Array<string>;
+            teams?: Array<string>;
+            users?: Array<string>;
+            ownerTeam?: boolean;
+          };
+        };
+        onExpiry?: "fail" | "reject" | "approve" | "skip";
+        expireAfter?: string;
       };
     } | {
       type: "schedule";
@@ -616,6 +1186,13 @@ export type ConfigFile = {
       timezone?: string;
       inputs?: {
         [key: string]: unknown;
+      };
+      catchUp?: "none" | "last" | "all";
+      maxCatchUp?: number;
+      entities?: {
+        blueprint: string;
+        filter?: string;
+        limit?: number;
       };
     } | {
       type: "event";
@@ -657,10 +1234,19 @@ export type ConfigFile = {
         required?: Array<string>;
         order?: Array<string>;
       };
+      slaMinutes?: number;
+      when?: "success" | "failure" | "always";
+      onTimeout?: "fail" | "skip" | "continue";
+      case?: string | Array<string>;
       type: "invoke";
       invoker: {
         type: string;
         [key: string]: unknown;
+      };
+      forEach?: {
+        items: string;
+        maxConcurrency?: number;
+        failFast?: boolean;
       };
     } | {
       id: string;
@@ -678,6 +1264,10 @@ export type ConfigFile = {
         required?: Array<string>;
         order?: Array<string>;
       };
+      slaMinutes?: number;
+      when?: "success" | "failure" | "always";
+      onTimeout?: "fail" | "skip" | "continue";
+      case?: string | Array<string>;
       type: "approval";
       approvers?: {
         roles?: Array<string>;
@@ -696,6 +1286,28 @@ export type ConfigFile = {
       minApprovals?: number;
       allowSelfApproval?: boolean;
       message?: string;
+      tiers?: Array<{
+        name: string;
+        approvers?: {
+          roles?: Array<string>;
+          teams?: Array<string>;
+          users?: Array<string>;
+          ownerTeam?: boolean;
+        };
+        minApprovals?: number;
+      }>;
+      remindEvery?: string;
+      maxReminders?: number;
+      escalate?: {
+        after: string;
+        approvers: {
+          roles?: Array<string>;
+          teams?: Array<string>;
+          users?: Array<string>;
+          ownerTeam?: boolean;
+        };
+      };
+      onExpiry?: "fail" | "reject" | "approve" | "skip";
     } | {
       id: string;
       name?: string;
@@ -712,6 +1324,10 @@ export type ConfigFile = {
         required?: Array<string>;
         order?: Array<string>;
       };
+      slaMinutes?: number;
+      when?: "success" | "failure" | "always";
+      onTimeout?: "fail" | "skip" | "continue";
+      case?: string | Array<string>;
       type: "agent";
       model?: string;
       effort?: "low" | "medium" | "high" | "xhigh" | "max";
@@ -745,6 +1361,11 @@ export type ConfigFile = {
       maxCostUsd?: number;
       provider?: "anthropic" | "bedrock" | "vertex";
       apiKey?: string;
+      forEach?: {
+        items: string;
+        maxConcurrency?: number;
+        failFast?: boolean;
+      };
     } | {
       id: string;
       name?: string;
@@ -761,6 +1382,10 @@ export type ConfigFile = {
         required?: Array<string>;
         order?: Array<string>;
       };
+      slaMinutes?: number;
+      when?: "success" | "failure" | "always";
+      onTimeout?: "fail" | "skip" | "continue";
+      case?: string | Array<string>;
       type: "wait";
       duration?: string;
       until?: string;
@@ -784,6 +1409,10 @@ export type ConfigFile = {
         required?: Array<string>;
         order?: Array<string>;
       };
+      slaMinutes?: number;
+      when?: "success" | "failure" | "always";
+      onTimeout?: "fail" | "skip" | "continue";
+      case?: string | Array<string>;
       type: "input";
       message?: string;
       inputs?: {
@@ -799,6 +1428,8 @@ export type ConfigFile = {
         users?: Array<string>;
         ownerTeam?: boolean;
       };
+      remindEvery?: string;
+      maxReminders?: number;
     } | {
       id: string;
       name?: string;
@@ -815,6 +1446,10 @@ export type ConfigFile = {
         required?: Array<string>;
         order?: Array<string>;
       };
+      slaMinutes?: number;
+      when?: "success" | "failure" | "always";
+      onTimeout?: "fail" | "skip" | "continue";
+      case?: string | Array<string>;
       type: "workflow";
       action: string;
       inputs?: {
@@ -842,13 +1477,120 @@ export type ConfigFile = {
         required?: Array<string>;
         order?: Array<string>;
       };
+      slaMinutes?: number;
+      when?: "success" | "failure" | "always";
+      onTimeout?: "fail" | "skip" | "continue";
+      case?: string | Array<string>;
       type: "transform";
       output: {
         [key: string]: string;
       };
+      forEach?: {
+        items: string;
+        maxConcurrency?: number;
+        failFast?: boolean;
+      };
+    } | {
+      id: string;
+      name?: string;
+      if?: string;
+      needs?: Array<string>;
+      retries?: number;
+      retryDelaySeconds?: number;
+      timeoutMinutes?: number;
+      continueOnError?: boolean;
+      outputSchema?: {
+        properties?: {
+          [key: string]: ConfigFile_schema0;
+        };
+        required?: Array<string>;
+        order?: Array<string>;
+      };
+      slaMinutes?: number;
+      when?: "success" | "failure" | "always";
+      onTimeout?: "fail" | "skip" | "continue";
+      case?: string | Array<string>;
+      type: "switch";
+      cases: Array<{
+        id: string;
+        when: string;
+      }>;
+      default?: string;
+    } | {
+      id: string;
+      name?: string;
+      if?: string;
+      needs?: Array<string>;
+      retries?: number;
+      retryDelaySeconds?: number;
+      timeoutMinutes?: number;
+      continueOnError?: boolean;
+      outputSchema?: {
+        properties?: {
+          [key: string]: ConfigFile_schema0;
+        };
+        required?: Array<string>;
+        order?: Array<string>;
+      };
+      slaMinutes?: number;
+      when?: "success" | "failure" | "always";
+      onTimeout?: "fail" | "skip" | "continue";
+      case?: string | Array<string>;
+      type: "fragment";
+      fragment: string;
+      with?: {
+        [key: string]: unknown;
+      };
     }>;
     secrets?: Array<string>;
     enabled?: boolean;
+    blackouts?: Array<{
+      name?: string;
+      cron?: string;
+      duration?: string;
+      from?: string;
+      to?: string;
+      timezone?: string;
+    }>;
+    blackoutMode?: "skip" | "defer";
+    slaMinutes?: number;
+    tests?: Array<{
+      name: string;
+      inputs?: {
+        [key: string]: unknown;
+      };
+      entity?: string | null;
+      mocks?: {
+        [key: string]: {
+          status?: "SUCCESS" | "FAILURE";
+          output?: unknown;
+        };
+      };
+      expect?: {
+        status?: "SUCCESS" | "FAILURE";
+        steps?: {
+          [key: string]: {
+            status?: "SUCCESS" | "FAILURE" | "SKIPPED";
+            output?: unknown;
+          };
+        };
+        outputs?: {
+          [key: string]: unknown;
+        };
+      };
+    }>;
+    concurrency?: {
+      group?: string;
+      max?: number;
+      mode?: "queue" | "cancel-in-progress" | "reject";
+    };
+    priority?: number;
+    vars?: {
+      [key: string]: unknown;
+    };
+    outputs?: {
+      [key: string]: unknown;
+    };
   }>;
   integrations?: Array<{
     identifier: string;
@@ -1011,6 +1753,345 @@ export type ConfigFile = {
       content: string;
     }>;
   }>;
+  fragments?: Array<{
+    identifier: string;
+    title: string;
+    description?: string;
+    params?: {
+      properties?: {
+        [key: string]: ConfigFile_schema0;
+      };
+      required?: Array<string>;
+      order?: Array<string>;
+    };
+    steps: Array<{
+      id: string;
+      name?: string;
+      if?: string;
+      needs?: Array<string>;
+      retries?: number;
+      retryDelaySeconds?: number;
+      timeoutMinutes?: number;
+      continueOnError?: boolean;
+      outputSchema?: {
+        properties?: {
+          [key: string]: ConfigFile_schema0;
+        };
+        required?: Array<string>;
+        order?: Array<string>;
+      };
+      slaMinutes?: number;
+      when?: "success" | "failure" | "always";
+      onTimeout?: "fail" | "skip" | "continue";
+      case?: string | Array<string>;
+      type: "invoke";
+      invoker: {
+        type: string;
+        [key: string]: unknown;
+      };
+      forEach?: {
+        items: string;
+        maxConcurrency?: number;
+        failFast?: boolean;
+      };
+    } | {
+      id: string;
+      name?: string;
+      if?: string;
+      needs?: Array<string>;
+      retries?: number;
+      retryDelaySeconds?: number;
+      timeoutMinutes?: number;
+      continueOnError?: boolean;
+      outputSchema?: {
+        properties?: {
+          [key: string]: ConfigFile_schema0;
+        };
+        required?: Array<string>;
+        order?: Array<string>;
+      };
+      slaMinutes?: number;
+      when?: "success" | "failure" | "always";
+      onTimeout?: "fail" | "skip" | "continue";
+      case?: string | Array<string>;
+      type: "approval";
+      approvers?: {
+        roles?: Array<string>;
+        teams?: Array<string>;
+        users?: Array<string>;
+        ownerTeam?: boolean;
+      };
+      choices?: Array<string>;
+      fields?: {
+        properties?: {
+          [key: string]: ConfigFile_schema0;
+        };
+        required?: Array<string>;
+        order?: Array<string>;
+      };
+      minApprovals?: number;
+      allowSelfApproval?: boolean;
+      message?: string;
+      tiers?: Array<{
+        name: string;
+        approvers?: {
+          roles?: Array<string>;
+          teams?: Array<string>;
+          users?: Array<string>;
+          ownerTeam?: boolean;
+        };
+        minApprovals?: number;
+      }>;
+      remindEvery?: string;
+      maxReminders?: number;
+      escalate?: {
+        after: string;
+        approvers: {
+          roles?: Array<string>;
+          teams?: Array<string>;
+          users?: Array<string>;
+          ownerTeam?: boolean;
+        };
+      };
+      onExpiry?: "fail" | "reject" | "approve" | "skip";
+    } | {
+      id: string;
+      name?: string;
+      if?: string;
+      needs?: Array<string>;
+      retries?: number;
+      retryDelaySeconds?: number;
+      timeoutMinutes?: number;
+      continueOnError?: boolean;
+      outputSchema?: {
+        properties?: {
+          [key: string]: ConfigFile_schema0;
+        };
+        required?: Array<string>;
+        order?: Array<string>;
+      };
+      slaMinutes?: number;
+      when?: "success" | "failure" | "always";
+      onTimeout?: "fail" | "skip" | "continue";
+      case?: string | Array<string>;
+      type: "agent";
+      model?: string;
+      effort?: "low" | "medium" | "high" | "xhigh" | "max";
+      system?: string;
+      prompt: string;
+      output?: {
+        properties: {
+          [key: string]: {
+            [key: string]: unknown;
+          };
+        };
+        required?: Array<string>;
+        order?: Array<string>;
+      };
+      tools?: Array<"catalog" | "upsert_entity" | "trigger_action" | "http">;
+      guardrails?: {
+        entityBlueprints?: Array<string>;
+        actions?: Array<string>;
+        httpHosts?: Array<string>;
+        httpMethods?: Array<"GET" | "POST" | "PUT" | "PATCH" | "DELETE">;
+        maxWrites?: number;
+      };
+      mcpServers?: Array<{
+        name: string;
+        url: string;
+        token?: string;
+        allowedTools?: Array<string>;
+      }>;
+      maxTurns?: number;
+      maxTokens?: number;
+      maxCostUsd?: number;
+      provider?: "anthropic" | "bedrock" | "vertex";
+      apiKey?: string;
+      forEach?: {
+        items: string;
+        maxConcurrency?: number;
+        failFast?: boolean;
+      };
+    } | {
+      id: string;
+      name?: string;
+      if?: string;
+      needs?: Array<string>;
+      retries?: number;
+      retryDelaySeconds?: number;
+      timeoutMinutes?: number;
+      continueOnError?: boolean;
+      outputSchema?: {
+        properties?: {
+          [key: string]: ConfigFile_schema0;
+        };
+        required?: Array<string>;
+        order?: Array<string>;
+      };
+      slaMinutes?: number;
+      when?: "success" | "failure" | "always";
+      onTimeout?: "fail" | "skip" | "continue";
+      case?: string | Array<string>;
+      type: "wait";
+      duration?: string;
+      until?: string;
+      event?: {
+        name: string;
+        filter?: string;
+      };
+    } | {
+      id: string;
+      name?: string;
+      if?: string;
+      needs?: Array<string>;
+      retries?: number;
+      retryDelaySeconds?: number;
+      timeoutMinutes?: number;
+      continueOnError?: boolean;
+      outputSchema?: {
+        properties?: {
+          [key: string]: ConfigFile_schema0;
+        };
+        required?: Array<string>;
+        order?: Array<string>;
+      };
+      slaMinutes?: number;
+      when?: "success" | "failure" | "always";
+      onTimeout?: "fail" | "skip" | "continue";
+      case?: string | Array<string>;
+      type: "input";
+      message?: string;
+      inputs?: {
+        properties?: {
+          [key: string]: ConfigFile_schema0;
+        };
+        required?: Array<string>;
+        order?: Array<string>;
+      };
+      assignees?: {
+        roles?: Array<string>;
+        teams?: Array<string>;
+        users?: Array<string>;
+        ownerTeam?: boolean;
+      };
+      remindEvery?: string;
+      maxReminders?: number;
+    } | {
+      id: string;
+      name?: string;
+      if?: string;
+      needs?: Array<string>;
+      retries?: number;
+      retryDelaySeconds?: number;
+      timeoutMinutes?: number;
+      continueOnError?: boolean;
+      outputSchema?: {
+        properties?: {
+          [key: string]: ConfigFile_schema0;
+        };
+        required?: Array<string>;
+        order?: Array<string>;
+      };
+      slaMinutes?: number;
+      when?: "success" | "failure" | "always";
+      onTimeout?: "fail" | "skip" | "continue";
+      case?: string | Array<string>;
+      type: "workflow";
+      action: string;
+      inputs?: {
+        [key: string]: unknown;
+      };
+      entity?: string;
+      forEach?: {
+        items: string;
+        maxConcurrency?: number;
+        failFast?: boolean;
+      };
+    } | {
+      id: string;
+      name?: string;
+      if?: string;
+      needs?: Array<string>;
+      retries?: number;
+      retryDelaySeconds?: number;
+      timeoutMinutes?: number;
+      continueOnError?: boolean;
+      outputSchema?: {
+        properties?: {
+          [key: string]: ConfigFile_schema0;
+        };
+        required?: Array<string>;
+        order?: Array<string>;
+      };
+      slaMinutes?: number;
+      when?: "success" | "failure" | "always";
+      onTimeout?: "fail" | "skip" | "continue";
+      case?: string | Array<string>;
+      type: "transform";
+      output: {
+        [key: string]: string;
+      };
+      forEach?: {
+        items: string;
+        maxConcurrency?: number;
+        failFast?: boolean;
+      };
+    } | {
+      id: string;
+      name?: string;
+      if?: string;
+      needs?: Array<string>;
+      retries?: number;
+      retryDelaySeconds?: number;
+      timeoutMinutes?: number;
+      continueOnError?: boolean;
+      outputSchema?: {
+        properties?: {
+          [key: string]: ConfigFile_schema0;
+        };
+        required?: Array<string>;
+        order?: Array<string>;
+      };
+      slaMinutes?: number;
+      when?: "success" | "failure" | "always";
+      onTimeout?: "fail" | "skip" | "continue";
+      case?: string | Array<string>;
+      type: "switch";
+      cases: Array<{
+        id: string;
+        when: string;
+      }>;
+      default?: string;
+    } | {
+      id: string;
+      name?: string;
+      if?: string;
+      needs?: Array<string>;
+      retries?: number;
+      retryDelaySeconds?: number;
+      timeoutMinutes?: number;
+      continueOnError?: boolean;
+      outputSchema?: {
+        properties?: {
+          [key: string]: ConfigFile_schema0;
+        };
+        required?: Array<string>;
+        order?: Array<string>;
+      };
+      slaMinutes?: number;
+      when?: "success" | "failure" | "always";
+      onTimeout?: "fail" | "skip" | "continue";
+      case?: string | Array<string>;
+      type: "fragment";
+      fragment: string;
+      with?: {
+        [key: string]: unknown;
+      };
+    }>;
+    outputs?: {
+      [key: string]: string;
+    };
+  }>;
   entities?: Array<{
     identifier: string;
     title?: string;
@@ -1039,6 +2120,42 @@ export type Entity = {
   source: string;
   createdAt: string;
   updatedAt: string;
+};
+
+export type Delegation = {
+  user: {
+    id: string;
+    name: string;
+    email: string;
+  };
+  delegate: {
+    id: string;
+    name: string;
+    email: string;
+  };
+  startsAt: string | null;
+  endsAt: string | null;
+  active: boolean;
+  createdAt: string;
+};
+
+export type MyDelegation = {
+  delegation: {
+    user: {
+      id: string;
+      name: string;
+      email: string;
+    };
+    delegate: {
+      id: string;
+      name: string;
+      email: string;
+    };
+    startsAt: string | null;
+    endsAt: string | null;
+    active: boolean;
+    createdAt: string;
+  } | null;
 };
 
 export type EntityDocs = {
@@ -1245,6 +2362,349 @@ export type PolicyView = {
   managed: boolean;
 };
 
+export type FragmentView = {
+  identifier: string;
+  title: string;
+  description: string;
+  params: {
+    properties: {
+      [key: string]: FragmentView_schema0;
+    };
+    required?: Array<string>;
+    order?: Array<string>;
+  };
+  steps: Array<{
+    id: string;
+    name?: string;
+    if?: string;
+    needs?: Array<string>;
+    retries: number;
+    retryDelaySeconds: number;
+    timeoutMinutes?: number;
+    continueOnError: boolean;
+    outputSchema?: {
+      properties: {
+        [key: string]: FragmentView_schema0;
+      };
+      required?: Array<string>;
+      order?: Array<string>;
+    };
+    slaMinutes?: number;
+    when?: "success" | "failure" | "always";
+    onTimeout?: "fail" | "skip" | "continue";
+    case?: string | Array<string>;
+    type: "invoke";
+    invoker: {
+      type: string;
+      [key: string]: unknown;
+    };
+    forEach?: {
+      items: string;
+      maxConcurrency: number;
+      failFast: boolean;
+    };
+  } | {
+    id: string;
+    name?: string;
+    if?: string;
+    needs?: Array<string>;
+    retries: number;
+    retryDelaySeconds: number;
+    timeoutMinutes?: number;
+    continueOnError: boolean;
+    outputSchema?: {
+      properties: {
+        [key: string]: FragmentView_schema0;
+      };
+      required?: Array<string>;
+      order?: Array<string>;
+    };
+    slaMinutes?: number;
+    when?: "success" | "failure" | "always";
+    onTimeout?: "fail" | "skip" | "continue";
+    case?: string | Array<string>;
+    type: "approval";
+    approvers?: {
+      roles?: Array<string>;
+      teams?: Array<string>;
+      users?: Array<string>;
+      ownerTeam?: boolean;
+    };
+    choices?: Array<string>;
+    fields?: {
+      properties: {
+        [key: string]: FragmentView_schema0;
+      };
+      required?: Array<string>;
+      order?: Array<string>;
+    };
+    minApprovals: number;
+    allowSelfApproval: boolean;
+    message?: string;
+    tiers?: Array<{
+      name: string;
+      approvers?: {
+        roles?: Array<string>;
+        teams?: Array<string>;
+        users?: Array<string>;
+        ownerTeam?: boolean;
+      };
+      minApprovals: number;
+    }>;
+    remindEvery?: string;
+    maxReminders?: number;
+    escalate?: {
+      after: string;
+      approvers: {
+        roles?: Array<string>;
+        teams?: Array<string>;
+        users?: Array<string>;
+        ownerTeam?: boolean;
+      };
+    };
+    onExpiry?: "fail" | "reject" | "approve" | "skip";
+  } | {
+    id: string;
+    name?: string;
+    if?: string;
+    needs?: Array<string>;
+    retries: number;
+    retryDelaySeconds: number;
+    timeoutMinutes?: number;
+    continueOnError: boolean;
+    outputSchema?: {
+      properties: {
+        [key: string]: FragmentView_schema0;
+      };
+      required?: Array<string>;
+      order?: Array<string>;
+    };
+    slaMinutes?: number;
+    when?: "success" | "failure" | "always";
+    onTimeout?: "fail" | "skip" | "continue";
+    case?: string | Array<string>;
+    type: "agent";
+    model: string;
+    effort: "low" | "medium" | "high" | "xhigh" | "max";
+    system?: string;
+    prompt: string;
+    output?: {
+      properties: {
+        [key: string]: {
+          [key: string]: unknown;
+        };
+      };
+      required?: Array<string>;
+      order?: Array<string>;
+    };
+    tools: Array<"catalog" | "upsert_entity" | "trigger_action" | "http">;
+    guardrails: {
+      entityBlueprints: Array<string>;
+      actions: Array<string>;
+      httpHosts: Array<string>;
+      httpMethods: Array<"GET" | "POST" | "PUT" | "PATCH" | "DELETE">;
+      maxWrites: number;
+    };
+    mcpServers: Array<{
+      name: string;
+      url: string;
+      token?: string;
+      allowedTools?: Array<string>;
+    }>;
+    maxTurns: number;
+    maxTokens: number;
+    maxCostUsd?: number;
+    provider?: "anthropic" | "bedrock" | "vertex";
+    apiKey?: string;
+    forEach?: {
+      items: string;
+      maxConcurrency: number;
+      failFast: boolean;
+    };
+  } | {
+    id: string;
+    name?: string;
+    if?: string;
+    needs?: Array<string>;
+    retries: number;
+    retryDelaySeconds: number;
+    timeoutMinutes?: number;
+    continueOnError: boolean;
+    outputSchema?: {
+      properties: {
+        [key: string]: FragmentView_schema0;
+      };
+      required?: Array<string>;
+      order?: Array<string>;
+    };
+    slaMinutes?: number;
+    when?: "success" | "failure" | "always";
+    onTimeout?: "fail" | "skip" | "continue";
+    case?: string | Array<string>;
+    type: "wait";
+    duration?: string;
+    until?: string;
+    event?: {
+      name: string;
+      filter?: string;
+    };
+  } | {
+    id: string;
+    name?: string;
+    if?: string;
+    needs?: Array<string>;
+    retries: number;
+    retryDelaySeconds: number;
+    timeoutMinutes?: number;
+    continueOnError: boolean;
+    outputSchema?: {
+      properties: {
+        [key: string]: FragmentView_schema0;
+      };
+      required?: Array<string>;
+      order?: Array<string>;
+    };
+    slaMinutes?: number;
+    when?: "success" | "failure" | "always";
+    onTimeout?: "fail" | "skip" | "continue";
+    case?: string | Array<string>;
+    type: "input";
+    message?: string;
+    inputs: {
+      properties: {
+        [key: string]: FragmentView_schema0;
+      };
+      required?: Array<string>;
+      order?: Array<string>;
+    };
+    assignees?: {
+      roles?: Array<string>;
+      teams?: Array<string>;
+      users?: Array<string>;
+      ownerTeam?: boolean;
+    };
+    remindEvery?: string;
+    maxReminders?: number;
+  } | {
+    id: string;
+    name?: string;
+    if?: string;
+    needs?: Array<string>;
+    retries: number;
+    retryDelaySeconds: number;
+    timeoutMinutes?: number;
+    continueOnError: boolean;
+    outputSchema?: {
+      properties: {
+        [key: string]: FragmentView_schema0;
+      };
+      required?: Array<string>;
+      order?: Array<string>;
+    };
+    slaMinutes?: number;
+    when?: "success" | "failure" | "always";
+    onTimeout?: "fail" | "skip" | "continue";
+    case?: string | Array<string>;
+    type: "workflow";
+    action: string;
+    inputs: {
+      [key: string]: unknown;
+    };
+    entity?: string;
+    forEach?: {
+      items: string;
+      maxConcurrency: number;
+      failFast: boolean;
+    };
+  } | {
+    id: string;
+    name?: string;
+    if?: string;
+    needs?: Array<string>;
+    retries: number;
+    retryDelaySeconds: number;
+    timeoutMinutes?: number;
+    continueOnError: boolean;
+    outputSchema?: {
+      properties: {
+        [key: string]: FragmentView_schema0;
+      };
+      required?: Array<string>;
+      order?: Array<string>;
+    };
+    slaMinutes?: number;
+    when?: "success" | "failure" | "always";
+    onTimeout?: "fail" | "skip" | "continue";
+    case?: string | Array<string>;
+    type: "transform";
+    output: {
+      [key: string]: string;
+    };
+    forEach?: {
+      items: string;
+      maxConcurrency: number;
+      failFast: boolean;
+    };
+  } | {
+    id: string;
+    name?: string;
+    if?: string;
+    needs?: Array<string>;
+    retries: number;
+    retryDelaySeconds: number;
+    timeoutMinutes?: number;
+    continueOnError: boolean;
+    outputSchema?: {
+      properties: {
+        [key: string]: FragmentView_schema0;
+      };
+      required?: Array<string>;
+      order?: Array<string>;
+    };
+    slaMinutes?: number;
+    when?: "success" | "failure" | "always";
+    onTimeout?: "fail" | "skip" | "continue";
+    case?: string | Array<string>;
+    type: "switch";
+    cases: Array<{
+      id: string;
+      when: string;
+    }>;
+    default?: string;
+  } | {
+    id: string;
+    name?: string;
+    if?: string;
+    needs?: Array<string>;
+    retries: number;
+    retryDelaySeconds: number;
+    timeoutMinutes?: number;
+    continueOnError: boolean;
+    outputSchema?: {
+      properties: {
+        [key: string]: FragmentView_schema0;
+      };
+      required?: Array<string>;
+      order?: Array<string>;
+    };
+    slaMinutes?: number;
+    when?: "success" | "failure" | "always";
+    onTimeout?: "fail" | "skip" | "continue";
+    case?: string | Array<string>;
+    type: "fragment";
+    fragment: string;
+    with: {
+      [key: string]: unknown;
+    };
+  }>;
+  outputs: {
+    [key: string]: string;
+  };
+  version: number;
+  managed: boolean;
+  updatedAt: string;
+};
+
 export type WebhookView = {
   identifier: string;
   title: string;
@@ -1329,6 +2789,17 @@ export type Action_schema0 = {
   [key: string]: unknown;
 };
 
+export type Fragment_schema0 = {
+  type: "string" | "number" | "integer" | "boolean" | "array" | "object";
+  title?: string;
+  description?: string;
+  format?: string;
+  blueprint?: string;
+  enum?: Array<string | number>;
+  items?: Fragment_schema0;
+  [key: string]: unknown;
+};
+
 export type ConfigFile_schema0 = {
   type: "string" | "number" | "integer" | "boolean" | "array" | "object";
   title?: string;
@@ -1337,6 +2808,17 @@ export type ConfigFile_schema0 = {
   blueprint?: string;
   enum?: Array<string | number>;
   items?: ConfigFile_schema0;
+  [key: string]: unknown;
+};
+
+export type FragmentView_schema0 = {
+  type: "string" | "number" | "integer" | "boolean" | "array" | "object";
+  title?: string;
+  description?: string;
+  format?: string;
+  blueprint?: string;
+  enum?: Array<string | number>;
+  items?: FragmentView_schema0;
   [key: string]: unknown;
 };
 
@@ -1453,6 +2935,11 @@ export class AsteriusClient {
   /** POST /api/v1/actions/{id}/runs */
   postActionsRunsById(id: string, query?: Record<string, string | number | undefined>): Promise<unknown> {
     return this.request('POST', `/api/v1/actions/${encodeURIComponent(id)}/runs`, { query });
+  }
+
+  /** POST /api/v1/actions/{id}/tests/run */
+  postActionsTestsRunById(id: string, query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('POST', `/api/v1/actions/${encodeURIComponent(id)}/tests/run`, { query });
   }
 
   /** GET /api/v1/actions/{id}/versions */
@@ -1775,6 +3262,16 @@ export class AsteriusClient {
     return this.request('GET', `/api/v1/dashboards/resolve`, { query });
   }
 
+  /** GET /api/v1/delegations */
+  getDelegations(query?: Record<string, string | number | undefined>): Promise<Array<Delegation>> {
+    return this.request('GET', `/api/v1/delegations`, { query });
+  }
+
+  /** DELETE /api/v1/delegations/{userId} */
+  deleteDelegationsByUserId(userId: string, query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('DELETE', `/api/v1/delegations/${encodeURIComponent(userId)}`, { query });
+  }
+
   /** GET /api/v1/deleted-entities */
   getDeletedEntities(query?: Record<string, string | number | undefined>): Promise<unknown> {
     return this.request('GET', `/api/v1/deleted-entities`, { query });
@@ -1828,6 +3325,36 @@ export class AsteriusClient {
   /** POST /api/v1/expressions/check */
   postExpressionsCheck(query?: Record<string, string | number | undefined>): Promise<unknown> {
     return this.request('POST', `/api/v1/expressions/check`, { query });
+  }
+
+  /** GET /api/v1/fragments */
+  getFragments(query?: Record<string, string | number | undefined>): Promise<Array<FragmentView>> {
+    return this.request('GET', `/api/v1/fragments`, { query });
+  }
+
+  /** DELETE /api/v1/fragments/{id} */
+  deleteFragmentsById(id: string, query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('DELETE', `/api/v1/fragments/${encodeURIComponent(id)}`, { query });
+  }
+
+  /** GET /api/v1/fragments/{id} */
+  getFragmentsById(id: string, query?: Record<string, string | number | undefined>): Promise<FragmentView> {
+    return this.request('GET', `/api/v1/fragments/${encodeURIComponent(id)}`, { query });
+  }
+
+  /** PUT /api/v1/fragments/{id} */
+  putFragmentsById(id: string, body: Fragment, query?: Record<string, string | number | undefined>): Promise<FragmentView> {
+    return this.request('PUT', `/api/v1/fragments/${encodeURIComponent(id)}`, { query, body });
+  }
+
+  /** GET /api/v1/fragments/{id}/usage */
+  getFragmentsUsageById(id: string, query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('GET', `/api/v1/fragments/${encodeURIComponent(id)}/usage`, { query });
+  }
+
+  /** GET /api/v1/fragments/{id}/versions */
+  getFragmentsVersionsById(id: string, query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('GET', `/api/v1/fragments/${encodeURIComponent(id)}/versions`, { query });
   }
 
   /** GET /api/v1/home */
@@ -1908,6 +3435,21 @@ export class AsteriusClient {
   /** POST /api/v1/mcp */
   postApiV1Mcp(query?: Record<string, string | number | undefined>): Promise<unknown> {
     return this.request('POST', `/api/v1/mcp`, { query });
+  }
+
+  /** DELETE /api/v1/me/delegation */
+  deleteMeDelegation(query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('DELETE', `/api/v1/me/delegation`, { query });
+  }
+
+  /** GET /api/v1/me/delegation */
+  getMeDelegation(query?: Record<string, string | number | undefined>): Promise<MyDelegation> {
+    return this.request('GET', `/api/v1/me/delegation`, { query });
+  }
+
+  /** PUT /api/v1/me/delegation */
+  putMeDelegation(body: DelegationInput, query?: Record<string, string | number | undefined>): Promise<MyDelegation> {
+    return this.request('PUT', `/api/v1/me/delegation`, { query, body });
   }
 
   /** GET /api/v1/me/notifications */
@@ -2075,6 +3617,16 @@ export class AsteriusClient {
     return this.request('POST', `/api/v1/runs/${encodeURIComponent(id)}/approve`, { query });
   }
 
+  /** GET /api/v1/runs/{id}/artifacts */
+  getRunsArtifactsById(id: string, query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('GET', `/api/v1/runs/${encodeURIComponent(id)}/artifacts`, { query });
+  }
+
+  /** GET /api/v1/runs/{id}/artifacts/{artifactId} */
+  getRunsArtifactsByIdArtifactId(id: string, artifactId: string, query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('GET', `/api/v1/runs/${encodeURIComponent(id)}/artifacts/${encodeURIComponent(artifactId)}`, { query });
+  }
+
   /** POST /api/v1/runs/{id}/cancel */
   postRunsCancelById(id: string, query?: Record<string, string | number | undefined>): Promise<unknown> {
     return this.request('POST', `/api/v1/runs/${encodeURIComponent(id)}/cancel`, { query });
@@ -2093,6 +3645,11 @@ export class AsteriusClient {
   /** POST /api/v1/runs/{id}/logs */
   postRunsLogsById(id: string, query?: Record<string, string | number | undefined>): Promise<unknown> {
     return this.request('POST', `/api/v1/runs/${encodeURIComponent(id)}/logs`, { query });
+  }
+
+  /** POST /api/v1/runs/{id}/pause */
+  postRunsPauseById(id: string, query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('POST', `/api/v1/runs/${encodeURIComponent(id)}/pause`, { query });
   }
 
   /** POST /api/v1/runs/{id}/reject */
@@ -2120,6 +3677,16 @@ export class AsteriusClient {
     return this.request('POST', `/api/v1/runs/${encodeURIComponent(id)}/steps/${encodeURIComponent(step)}/approve`, { query });
   }
 
+  /** POST /api/v1/runs/{id}/steps/{step}/artifacts */
+  postRunsStepsArtifactsByIdStep(id: string, step: string, query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('POST', `/api/v1/runs/${encodeURIComponent(id)}/steps/${encodeURIComponent(step)}/artifacts`, { query });
+  }
+
+  /** POST /api/v1/runs/{id}/steps/{step}/complete */
+  postRunsStepsCompleteByIdStep(id: string, step: string, query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('POST', `/api/v1/runs/${encodeURIComponent(id)}/steps/${encodeURIComponent(step)}/complete`, { query });
+  }
+
   /** POST /api/v1/runs/{id}/steps/{step}/events */
   postRunsStepsEventsByIdStep(id: string, step: string, query?: Record<string, string | number | undefined>): Promise<unknown> {
     return this.request('POST', `/api/v1/runs/${encodeURIComponent(id)}/steps/${encodeURIComponent(step)}/events`, { query });
@@ -2143,6 +3710,16 @@ export class AsteriusClient {
   /** POST /api/v1/runs/{id}/steps/{step}/retry */
   postRunsStepsRetryByIdStep(id: string, step: string, query?: Record<string, string | number | undefined>): Promise<unknown> {
     return this.request('POST', `/api/v1/runs/${encodeURIComponent(id)}/steps/${encodeURIComponent(step)}/retry`, { query });
+  }
+
+  /** POST /api/v1/runs/{id}/steps/{step}/skip */
+  postRunsStepsSkipByIdStep(id: string, step: string, query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('POST', `/api/v1/runs/${encodeURIComponent(id)}/steps/${encodeURIComponent(step)}/skip`, { query });
+  }
+
+  /** POST /api/v1/runs/{id}/unpause */
+  postRunsUnpauseById(id: string, query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('POST', `/api/v1/runs/${encodeURIComponent(id)}/unpause`, { query });
   }
 
   /** POST /api/v1/scim/token */

@@ -1,5 +1,6 @@
 import { evaluate, render } from '../lib/expr.js';
 import { casesOf, type Step } from './workflow.js';
+import { expandWorkflow, withParams } from './fragments.js';
 
 /** Result of simulating one step against sample data. Nothing is executed or stored. */
 export interface SimulatedStep {
@@ -31,15 +32,18 @@ export async function simulateWorkflow(steps: Step[], base: { inputs?: unknown; 
   const done: Record<string, { status: string; output: unknown; link: null }> = {};
   const out: SimulatedStep[] = [];
   const mask = async (kind: string, name: string) => `<${kind}:${name}>`;
-  for (const s of steps) {
-    const ctx = {
-      run: { id: 'dry-run', url: '', idempotencyKey: 'dry-run', callback: { url: '', token: '' } },
-      inputs: base.inputs ?? {},
-      entity: base.entity ?? null,
-      trigger: { user: { id: 'dry-run', email: '', name: 'Dry run' }, at: new Date().toISOString() },
-      vars: base.vars ?? {},
-      steps: done,
-    };
+  for (const s of (await expandWorkflow(steps)) as Step[]) {
+    const ctx = await withParams(
+      {
+        run: { id: 'dry-run', url: '', idempotencyKey: 'dry-run', callback: { url: '', token: '' } },
+        inputs: base.inputs ?? {},
+        entity: base.entity ?? null,
+        trigger: { user: { id: 'dry-run', email: '', name: 'Dry run' }, at: new Date().toISOString() },
+        vars: base.vars ?? {},
+        steps: done,
+      },
+      s,
+    );
     // Branches not taken and failure handlers (nothing fails in a simulation) are skipped.
     const notTaken =
       casesOf(s).length > 0 && !casesOf(s).some((ref) => (done[ref.split('.')[0]]?.output as { case?: string } | null)?.case === ref.split('.')[1]);

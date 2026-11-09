@@ -25,6 +25,7 @@
 teams ─< team_members >─ users ─< api_tokens / sessions
 blueprints ─< entities ─< entity_relations (blueprint, identifier, relation → target_blueprint, target_identifier)
 actions ─< runs ─< run_logs, run_approvals          (runs keep a snapshot of the invoker and approval policy)
+fragments ─< fragment_versions                      (reusable steps; inlined into the run snapshot when a run is created)
 integrations ─< sync_runs                           entities.source = integration:<id> | ui | api | action | config
 webhooks ─< deliveries (outbox)
 secrets (encrypted) · audit_log

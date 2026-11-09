@@ -531,6 +531,17 @@ export const workflowStep = z.discriminatedUnion('type', [
     /** Case id taken when no `when` matches (omitted: no branch runs). */
     default: z.string().regex(CASE_ID).optional(),
   }),
+  /**
+   * A reusable fragment (see `fragmentDef`), inlined into the run when it starts. Only id, name, if and needs apply
+   * (retries, timeouts… are set on the fragment's own steps).
+   */
+  z.object({
+    ...stepBase,
+    type: z.literal('fragment'),
+    fragment: slug,
+    /** Parameter values: literals or `{{ }}` templates over the parent workflow (no secret references). */
+    with: z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,63}$/), z.unknown()).default({}),
+  }),
 ]);
 export type WorkflowStepDef = z.infer<typeof workflowStep>;
 
@@ -559,6 +570,21 @@ export const workflowTest = z.object({
     .default({}),
 });
 export type WorkflowTestDef = z.infer<typeof workflowTest>;
+
+/**
+ * Step fragment: steps reused by several workflows (`type: fragment` steps). `params` declares what callers pass
+ * (`with`), read inside the fragment as `params.<name>`; `outputs` are JSONata expressions over the fragment's
+ * own steps, exposed to the caller as `steps.<fragment step id>.output.<name>`.
+ */
+export const fragmentDef = z.object({
+  identifier: slug,
+  title: z.string().min(1).max(100),
+  description: z.string().max(4000).default(''),
+  params: objectSchema,
+  steps: z.array(workflowStep).min(1).max(40),
+  outputs: z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,63}$/), z.string().min(1).max(2000)).default({}),
+});
+export type FragmentDef = z.infer<typeof fragmentDef>;
 
 const approvalPolicy = z
   .object({
@@ -969,6 +995,7 @@ export const configFile = z.object({
   scorecards: z.array(scorecardDef).default([]),
   policies: z.array(policyDef).default([]),
   dashboards: z.array(dashboardDef).default([]),
+  fragments: z.array(fragmentDef).default([]),
   entities: z.array(seedEntity).default([]),
 });
 export type ConfigFile = z.infer<typeof configFile>;

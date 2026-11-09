@@ -9,6 +9,7 @@ import {
   IconLock,
   IconMedal,
   IconPlugConnected,
+  IconPuzzle,
   IconRobot,
   IconSchema,
   IconSend,
@@ -56,6 +57,7 @@ export const ADMIN_CATEGORIES: AdminCategory[] = [
     icon: i(IconBolt),
     tabs: [
       { label: 'Actions', path: '/admin/actions', icon: i(IconBolt) },
+      { label: 'Fragments', path: '/admin/fragments', icon: i(IconPuzzle) },
       { label: 'Integrations', path: '/admin/integrations', icon: i(IconPlugConnected) },
       { label: 'Webhooks', path: '/admin/webhooks', icon: i(IconWebhook) },
       { label: 'Deliveries', path: '/admin/deliveries', icon: i(IconSend) },

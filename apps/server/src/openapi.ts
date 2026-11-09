@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { DESCRIPTOR_SCHEMA } from './integrations/sources/descriptors.js';
-import { actionDef, blueprintDef, configFile, delegationInput, entityInput, integrationDef, policyDef, teamDef, webhookDef } from './schemas.js';
+import { actionDef, blueprintDef, configFile, delegationInput, entityInput, fragmentDef, integrationDef, policyDef, teamDef, webhookDef } from './schemas.js';
 
 /**
  * OpenAPI 3.1 description of the REST API. Paths come from the registered Fastify routes (so they cannot drift),
@@ -17,6 +17,7 @@ const COMPONENTS: Record<string, z.ZodType> = {
   Webhook: webhookDef,
   Team: teamDef,
   Policy: policyDef,
+  Fragment: fragmentDef,
   EntityInput: entityInput,
   DelegationInput: delegationInput,
   ConfigFile: configFile,
@@ -91,6 +92,7 @@ const OUTPUTS: Record<string, z.ZodType> = {
     webhookUrl: str.optional(),
   }),
   PolicyView: policyDef.safeExtend({ managed: z.boolean() }),
+  FragmentView: fragmentDef.safeExtend({ version: z.number(), managed: z.boolean(), updatedAt: iso }),
   WebhookView: webhookDef.safeExtend({ managed: z.boolean(), hasSecret: z.boolean() }),
   Delivery: z.object({
     id: str,
@@ -138,6 +140,9 @@ const RESPONSES: Record<string, string> = {
   'GET /api/v1/policies': 'PolicyView[]',
   'GET /api/v1/policies/:id': 'PolicyView',
   'PUT /api/v1/policies/:id': 'PolicyView',
+  'GET /api/v1/fragments': 'FragmentView[]',
+  'GET /api/v1/fragments/:id': 'FragmentView',
+  'PUT /api/v1/fragments/:id': 'FragmentView',
   'GET /api/v1/runs': 'RunPage',
   'GET /api/v1/runs/:id': 'Run',
   'GET /api/v1/config/status': 'ConfigStatus',
@@ -156,6 +161,7 @@ const BODIES: Record<string, string> = {
   'PUT /api/v1/webhooks/:id': 'Webhook',
   'PUT /api/v1/teams/:id': 'Team',
   'PUT /api/v1/policies/:id': 'Policy',
+  'PUT /api/v1/fragments/:id': 'Fragment',
   'POST /api/v1/blueprints/:bp/entities': 'EntityInput',
   'PUT /api/v1/blueprints/:bp/entities/:id': 'EntityInput',
   'PUT /api/v1/me/delegation': 'DelegationInput',

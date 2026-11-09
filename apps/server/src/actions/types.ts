@@ -32,6 +32,8 @@ export interface RunContext {
   /** Inside a `forEach` loop: the current item and its position. */
   item?: unknown;
   index?: number;
+  /** Steps inlined from a fragment: the fragment's parameters (`{{ params.channel }}`). */
+  params?: Record<string, unknown>;
 }
 
 export type InvokeStatus = 'IN_PROGRESS' | 'SUCCESS' | 'FAILURE';

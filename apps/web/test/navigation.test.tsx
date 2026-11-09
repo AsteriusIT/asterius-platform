@@ -112,7 +112,7 @@ describe('navigation', () => {
     const tab = await screen.findByRole('tab', { name: 'Actions' });
     expect(tab.getAttribute('aria-selected')).toBe('true');
     expect(screen.getByRole('tab', { name: 'Integrations' }).getAttribute('aria-selected')).toBe('false');
-    expect(screen.getAllByRole('tab')).toHaveLength(5);
+    expect(screen.getAllByRole('tab')).toHaveLength(6); // Actions, Fragments, Integrations, Webhooks, Deliveries, Notifications
   });
 
   it('redirects a category URL to its first tab', async () => {

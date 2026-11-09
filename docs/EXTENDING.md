@@ -287,7 +287,7 @@ tests an unsaved draft), the Tests dialog of the workflow editor, and `node dist
 - `invoke`, `agent` and `workflow` steps must be mocked (`mocks.<step>: { status: SUCCESS | FAILURE, output }`), an
   unmocked one is an error; their configuration is still rendered and validated;
 - approvals are approved, waits resolve at once, input steps answer with sample values, unless mocked;
-- conditions, transforms, `needs`, `continueOnError` and `outputSchema` behave as in a run; secrets are masked.
+- conditions, transforms, `needs`, `continueOnError`, `outputSchema`, `when` (failure handlers recover the run, cleanups), `switch` branches, inline `forEach`, run `vars` and `outputs` behave as in a run; fragments are inlined and their steps are mocked and expected by their inlined ids (`<step>__<inner>`); secrets are masked.
 
 `expect.status` defaults to `SUCCESS`; `expect.steps.<id>.output` and `expect.outputs` (run result: outputs by step id)
 are partial matches. Results list each test's `passed`, simulated step statuses and `diffs: [{ path, expected, actual }]`.
@@ -324,6 +324,58 @@ Operators can also act on a healthy run:
 
 - `POST /runs/:id/pause` / `POST /runs/:id/unpause` (requester and admins): a paused run starts no new step. Running steps finish, and waits and approvals still complete, but their successors wait for the unpause. The run deadline (`RUN_TIMEOUT_HOURS`) does not run while paused: unpausing extends it, and the timeouts of queued steps, by the paused time. Step timeouts of running, waiting and approval steps keep running. Child runs are not paused.
 - `POST /runs/:id/steps/:step/skip {"comment": "…"}` and `POST /runs/:id/steps/:step/complete {"comment": "…", "output": {…}}` (admins, comment required): force a pending, queued, running, waiting or failed step to `SKIPPED` or `SUCCESS` (the output is checked against `outputSchema`). The steps skipped because it failed are evaluated again and a failed run continues. The change is fenced by the step's attempt, so a worker still executing it can no longer report a result. A skipped running job is asked to stop and child runs are cancelled. Both are logged on the run and audited (`run.step_skipped`, `run.step_completed`; `run.paused`, `run.unpaused`).
+
+### Fragments
+
+A fragment is a group of steps shared by several workflows (Admin → Automation → Fragments, `/api/v1/fragments`, or
+`fragments:` in configuration files, where they are managed like the other kinds). Unlike a sub-workflow, it is not a
+separate run: its steps are **inlined** into the run.
+
+```yaml
+fragments:
+  - identifier: platform-approval
+    title: Notify and wait for platform approval
+    params:                                          # what callers pass (a form schema; `default` applies when omitted)
+      properties: { summary: { type: string }, review: { type: string, default: '' } }
+      required: [summary]
+    steps:                                           # any step types, `needs` between these steps only
+      - { id: approve, type: approval, approvers: { teams: [platform] }, message: "{{ params.summary }} — {{ params.review }}" }
+      - { id: record, type: transform, output: { approvedBy: steps.approve.output.by } }
+    outputs:                                         # JSONata over the fragment's own steps
+      approved: steps.approve.output.approved
+
+actions:
+  - identifier: provision-database
+    steps:
+      - { id: review, type: agent, … }
+      - id: approval
+        type: fragment
+        fragment: platform-approval
+        if: 'steps.review.output.risk != "low"'      # gates every inlined step
+        with:                                        # literals, or templates over the caller's context
+          summary: "{{ inputs.engine }} for {{ inputs.service }}"
+      - { id: register, type: invoke, … }            # waits for `approval`; reads steps.approval.output.approved
+```
+
+- **Expansion.** When a run is created, the fragment step is replaced by the fragment's steps with ids
+  `<step id>__<inner id>` (`approval__approve`, `approval__record`; references `steps.<inner id>` are rewritten), then a
+  transform step that keeps the fragment step's id, waits for the fragment's exit steps and computes `outputs`: steps
+  that depend on the fragment step, or read `steps.<id>.output.<name>`, need no change. The fragment's entry steps wait
+  for what the fragment step waited for, and its `if` is added to every inlined step (a skipped fragment is skipped as a
+  whole). Inlined ids must stay valid step ids (41 characters at most): keep ids short.
+- **Parameters.** `with` is kept in the run snapshot and rendered when an inlined step runs, against the caller's
+  context (`inputs`, `entity`, earlier `steps`): inside the fragment the values are `params.<name>` in templates and
+  expressions. `with` cannot reference secrets (`${secret:…}`): reference them in the fragment's own steps. Literal
+  values are checked against the parameter schema when the action is saved; templated ones when they are rendered.
+- **Nesting.** A fragment may include fragments, 3 levels deep at most, never itself (cycle). The `if` of a fragment
+  step inside a fragment cannot use `params`.
+- **Validation.** Saving an action inlines its fragments: unknown fragment, unknown or missing parameters, id
+  collisions and the action's secret allow-list (`secrets`, applied to the inlined steps) fail the save. Saving a
+  fragment through the API checks every workflow that uses it (directly or through other fragments) the same way.
+- **Changes and deletion.** Fragments are versioned (`version`, `GET /fragments/:id/versions`, audit `fragment.*`).
+  A change applies to new runs only: runs keep their inlined copy. Deleting a fragment still used by an action or
+  another fragment is refused with 409 and `usedBy: { actions, fragments }` (`GET /fragments/:id/usage`).
+- The run page shows inlined steps with their prefixed ids and a `fragment <step id>` badge (`RunStep.fragment`).
 
 ### Safety and testing
 

@@ -108,6 +108,10 @@ class AsteriusClient:
         """POST /api/v1/actions/{id}/runs"""
         return self._request("POST", f"/api/v1/actions/{urllib.parse.quote(id, safe='')}/runs", query)
 
+    def post_actions_tests_run_by_id(self, id: str, query: Optional[dict] = None) -> Any:
+        """POST /api/v1/actions/{id}/tests/run"""
+        return self._request("POST", f"/api/v1/actions/{urllib.parse.quote(id, safe='')}/tests/run", query)
+
     def get_actions_versions_by_id(self, id: str, query: Optional[dict] = None) -> Any:
         """GET /api/v1/actions/{id}/versions"""
         return self._request("GET", f"/api/v1/actions/{urllib.parse.quote(id, safe='')}/versions", query)
@@ -364,6 +368,14 @@ class AsteriusClient:
         """GET /api/v1/dashboards/resolve"""
         return self._request("GET", f"/api/v1/dashboards/resolve", query)
 
+    def get_delegations(self, query: Optional[dict] = None) -> Any:
+        """GET /api/v1/delegations"""
+        return self._request("GET", f"/api/v1/delegations", query)
+
+    def delete_delegations_by_user_id(self, user_id: str, query: Optional[dict] = None) -> Any:
+        """DELETE /api/v1/delegations/{userId}"""
+        return self._request("DELETE", f"/api/v1/delegations/{urllib.parse.quote(user_id, safe='')}", query)
+
     def get_deleted_entities(self, query: Optional[dict] = None) -> Any:
         """GET /api/v1/deleted-entities"""
         return self._request("GET", f"/api/v1/deleted-entities", query)
@@ -407,6 +419,30 @@ class AsteriusClient:
     def post_expressions_check(self, query: Optional[dict] = None) -> Any:
         """POST /api/v1/expressions/check"""
         return self._request("POST", f"/api/v1/expressions/check", query)
+
+    def get_fragments(self, query: Optional[dict] = None) -> Any:
+        """GET /api/v1/fragments"""
+        return self._request("GET", f"/api/v1/fragments", query)
+
+    def delete_fragments_by_id(self, id: str, query: Optional[dict] = None) -> Any:
+        """DELETE /api/v1/fragments/{id}"""
+        return self._request("DELETE", f"/api/v1/fragments/{urllib.parse.quote(id, safe='')}", query)
+
+    def get_fragments_by_id(self, id: str, query: Optional[dict] = None) -> Any:
+        """GET /api/v1/fragments/{id}"""
+        return self._request("GET", f"/api/v1/fragments/{urllib.parse.quote(id, safe='')}", query)
+
+    def put_fragments_by_id(self, id: str, body: dict, query: Optional[dict] = None) -> Any:
+        """PUT /api/v1/fragments/{id}"""
+        return self._request("PUT", f"/api/v1/fragments/{urllib.parse.quote(id, safe='')}", query, body)
+
+    def get_fragments_usage_by_id(self, id: str, query: Optional[dict] = None) -> Any:
+        """GET /api/v1/fragments/{id}/usage"""
+        return self._request("GET", f"/api/v1/fragments/{urllib.parse.quote(id, safe='')}/usage", query)
+
+    def get_fragments_versions_by_id(self, id: str, query: Optional[dict] = None) -> Any:
+        """GET /api/v1/fragments/{id}/versions"""
+        return self._request("GET", f"/api/v1/fragments/{urllib.parse.quote(id, safe='')}/versions", query)
 
     def get_home(self, query: Optional[dict] = None) -> Any:
         """GET /api/v1/home"""
@@ -471,6 +507,18 @@ class AsteriusClient:
     def post_api_v1_mcp(self, query: Optional[dict] = None) -> Any:
         """POST /api/v1/mcp"""
         return self._request("POST", f"/api/v1/mcp", query)
+
+    def delete_me_delegation(self, query: Optional[dict] = None) -> Any:
+        """DELETE /api/v1/me/delegation"""
+        return self._request("DELETE", f"/api/v1/me/delegation", query)
+
+    def get_me_delegation(self, query: Optional[dict] = None) -> Any:
+        """GET /api/v1/me/delegation"""
+        return self._request("GET", f"/api/v1/me/delegation", query)
+
+    def put_me_delegation(self, body: dict, query: Optional[dict] = None) -> Any:
+        """PUT /api/v1/me/delegation"""
+        return self._request("PUT", f"/api/v1/me/delegation", query, body)
 
     def get_me_notifications(self, query: Optional[dict] = None) -> Any:
         """GET /api/v1/me/notifications"""
@@ -604,6 +652,14 @@ class AsteriusClient:
         """POST /api/v1/runs/{id}/approve"""
         return self._request("POST", f"/api/v1/runs/{urllib.parse.quote(id, safe='')}/approve", query)
 
+    def get_runs_artifacts_by_id(self, id: str, query: Optional[dict] = None) -> Any:
+        """GET /api/v1/runs/{id}/artifacts"""
+        return self._request("GET", f"/api/v1/runs/{urllib.parse.quote(id, safe='')}/artifacts", query)
+
+    def get_runs_artifacts_by_id_artifact_id(self, id: str, artifact_id: str, query: Optional[dict] = None) -> Any:
+        """GET /api/v1/runs/{id}/artifacts/{artifactId}"""
+        return self._request("GET", f"/api/v1/runs/{urllib.parse.quote(id, safe='')}/artifacts/{urllib.parse.quote(artifact_id, safe='')}", query)
+
     def post_runs_cancel_by_id(self, id: str, query: Optional[dict] = None) -> Any:
         """POST /api/v1/runs/{id}/cancel"""
         return self._request("POST", f"/api/v1/runs/{urllib.parse.quote(id, safe='')}/cancel", query)
@@ -619,6 +675,10 @@ class AsteriusClient:
     def post_runs_logs_by_id(self, id: str, query: Optional[dict] = None) -> Any:
         """POST /api/v1/runs/{id}/logs"""
         return self._request("POST", f"/api/v1/runs/{urllib.parse.quote(id, safe='')}/logs", query)
+
+    def post_runs_pause_by_id(self, id: str, query: Optional[dict] = None) -> Any:
+        """POST /api/v1/runs/{id}/pause"""
+        return self._request("POST", f"/api/v1/runs/{urllib.parse.quote(id, safe='')}/pause", query)
 
     def post_runs_reject_by_id(self, id: str, query: Optional[dict] = None) -> Any:
         """POST /api/v1/runs/{id}/reject"""
@@ -640,6 +700,14 @@ class AsteriusClient:
         """POST /api/v1/runs/{id}/steps/{step}/approve"""
         return self._request("POST", f"/api/v1/runs/{urllib.parse.quote(id, safe='')}/steps/{urllib.parse.quote(step, safe='')}/approve", query)
 
+    def post_runs_steps_artifacts_by_id_step(self, id: str, step: str, query: Optional[dict] = None) -> Any:
+        """POST /api/v1/runs/{id}/steps/{step}/artifacts"""
+        return self._request("POST", f"/api/v1/runs/{urllib.parse.quote(id, safe='')}/steps/{urllib.parse.quote(step, safe='')}/artifacts", query)
+
+    def post_runs_steps_complete_by_id_step(self, id: str, step: str, query: Optional[dict] = None) -> Any:
+        """POST /api/v1/runs/{id}/steps/{step}/complete"""
+        return self._request("POST", f"/api/v1/runs/{urllib.parse.quote(id, safe='')}/steps/{urllib.parse.quote(step, safe='')}/complete", query)
+
     def post_runs_steps_events_by_id_step(self, id: str, step: str, query: Optional[dict] = None) -> Any:
         """POST /api/v1/runs/{id}/steps/{step}/events"""
         return self._request("POST", f"/api/v1/runs/{urllib.parse.quote(id, safe='')}/steps/{urllib.parse.quote(step, safe='')}/events", query)
@@ -659,6 +727,14 @@ class AsteriusClient:
     def post_runs_steps_retry_by_id_step(self, id: str, step: str, query: Optional[dict] = None) -> Any:
         """POST /api/v1/runs/{id}/steps/{step}/retry"""
         return self._request("POST", f"/api/v1/runs/{urllib.parse.quote(id, safe='')}/steps/{urllib.parse.quote(step, safe='')}/retry", query)
+
+    def post_runs_steps_skip_by_id_step(self, id: str, step: str, query: Optional[dict] = None) -> Any:
+        """POST /api/v1/runs/{id}/steps/{step}/skip"""
+        return self._request("POST", f"/api/v1/runs/{urllib.parse.quote(id, safe='')}/steps/{urllib.parse.quote(step, safe='')}/skip", query)
+
+    def post_runs_unpause_by_id(self, id: str, query: Optional[dict] = None) -> Any:
+        """POST /api/v1/runs/{id}/unpause"""
+        return self._request("POST", f"/api/v1/runs/{urllib.parse.quote(id, safe='')}/unpause", query)
 
     def post_scim_token(self, query: Optional[dict] = None) -> Any:
         """POST /api/v1/scim/token"""

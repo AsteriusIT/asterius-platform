@@ -12,6 +12,7 @@ import { getInvoker } from './invokers/index.js';
 import { parseDuration } from './waiting.js';
 import { isFormLike } from './trigger-defs.js';
 import { casesOf, needsOf, stepsOf, type Step } from './workflow.js';
+import { expandWorkflow, withParams } from './fragments.js';
 import type { RunContext } from './types.js';
 import { orgId } from '../orgs/context.js';
 
@@ -62,7 +63,7 @@ export async function dryRun(actionId: string, p: Principal, input: DryRunInput)
   const saved = input.definition ? undefined : await getAction(actionId);
   const def = input.definition ? actionDef.parse({ ...(input.definition as object), identifier: actionId }) : undefined;
   const trigger = def ? def.trigger : (saved?.trigger ?? null);
-  const steps: Step[] = def ? stepsOf(def) : (saved?.steps as Step[]);
+  const steps = (await expandWorkflow(def ? stepsOf(def) : (saved?.steps as Step[]))) as Step[];
   const title = def?.title ?? saved?.title ?? actionId;
   const runTemplates = { vars: def ? def.vars : saved?.vars, outputs: def ? def.outputs : saved?.outputs };
   const blueprint = trigger && 'blueprint' in trigger ? (trigger.blueprint ?? null) : null;
@@ -133,15 +134,16 @@ export async function dryRun(actionId: string, p: Principal, input: DryRunInput)
         skip(s, r, 'branch not taken');
         continue;
       }
+      const sctx = await withParams(ctx, s);
       if (s.if) {
-        r.condition = !!(await evaluate(s.if, ctx));
+        r.condition = !!(await evaluate(s.if, sctx));
         if (!r.condition) {
           r.status = 'skipped';
           ctx.steps[s.id] = { status: 'SKIPPED', output: null, link: null };
           continue;
         }
       }
-      const { rendered, output } = await simulateLoop(s, ctx, resolver, input.mock?.[s.id], r);
+      const { rendered, output } = await simulateLoop(s, sctx, resolver, input.mock?.[s.id], r);
       r.rendered = rendered;
       r.output = output;
       ctx.steps[s.id] = { status: 'SUCCESS', output, link: null };
@@ -169,7 +171,7 @@ export async function dryRun(actionId: string, p: Principal, input: DryRunInput)
 }
 
 /** Inline `forEach` (invoke, agent, transform): each item is simulated (the first 20 are rendered). */
-async function simulateLoop(s: Step, ctx: RunContext, resolver: RefResolver, mock: unknown, r: DryRunStep) {
+export async function simulateLoop(s: Step, ctx: RunContext, resolver: RefResolver, mock: unknown, r: DryRunStep) {
   const loop = s.type === 'invoke' || s.type === 'agent' || s.type === 'transform' ? s.forEach : undefined;
   if (!loop) return simulate(s, ctx, resolver, mock, r);
   const value = await evaluate(loop.items, ctx);
@@ -249,5 +251,7 @@ export async function simulate(s: Step, ctx: RunContext, resolver: RefResolver, 
         children.push((await render({ inputs: s.inputs, entity: s.entity }, { ...ctx, item, index: i }, resolver)).value);
       return { rendered: { action: s.action, count: list.length, children }, output: sample({ runId: '<child run>', status: 'SUCCESS', result: {} }) };
     }
+    case 'fragment': // already inlined by expandWorkflow
+      return { rendered: { fragment: s.fragment }, output: sample(null) };
   }
 }

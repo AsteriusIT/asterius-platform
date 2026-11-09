@@ -22,9 +22,10 @@ import { deleteScorecard, evaluateAllEntities, listScorecards, upsertScorecard }
 import { deletePolicy, listPolicies, upsertPolicy } from './policies/policies.js';
 import { deleteDashboard, listDashboards, upsertDashboard } from './catalog/dashboards.js';
 import { deleteWebhook, getWebhook, listWebhooks, upsertWebhook } from './webhooks/webhooks.js';
+import { deleteFragment, dependencyOrder, listFragments, upsertFragment } from './actions/fragments.js';
 
 /**
- * Configuration as code, per organization. Files (*.yaml / *.yml / *.json) declare `teams`, `blueprints`, `actions`,
+ * Configuration as code, per organization. Files (*.yaml / *.yml / *.json) declare `teams`, `blueprints`, `fragments`, `actions`,
  * `integrations`, `webhooks`, `scorecards`, `policies`, `dashboards` and seed `entities` of one organization:
  *   CONFIG_DIR/*                 the default organization, plus `organizations:` (platform-level declarations)
  *   CONFIG_DIR/orgs/<slug>/**    organization <slug> (a ConfigMap or git-sync volume per tenant)
@@ -94,7 +95,7 @@ export function readConfigDir(dir = config.CONFIG_DIR, opts: { platform?: boolea
       if (!parsed.success) throw new Error(`${file}: ${parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')}`);
       if (!opts.platform && parsed.data.organizations.length) throw new Error(`${file}: organizations can only be declared in the platform configuration`);
       merged.organizations.push(...parsed.data.organizations);
-      for (const kind of ['teams', 'blueprints', 'actions', 'integrations', 'webhooks', 'scorecards', 'policies', 'dashboards'] as const)
+      for (const kind of ['teams', 'blueprints', 'fragments', 'actions', 'integrations', 'webhooks', 'scorecards', 'policies', 'dashboards'] as const)
         for (const item of parsed.data[kind]) {
           const key = `${kind}/${item.identifier}`;
           if (seen.has(key)) throw new Error(`${kind} "${item.identifier}" is declared twice (${seen.get(key)} and ${file})`);
@@ -161,6 +162,16 @@ export async function applyConfig(loaded: LoadedConfig, log: FastifyBaseLogger):
     (b) => upsertBlueprint(b, { ...m, knownTargets }),
     async () => undefined,
   );
+  // Fragments before the actions that include them; removed ones after the actions (deleting a used one is refused).
+  await applyKind(
+    log,
+    errs,
+    'fragment',
+    dependencyOrder(data.fragments),
+    await listFragments(),
+    (f) => upsertFragment(f, m),
+    async () => undefined,
+  );
   await applyKind(
     log,
     errs,
@@ -170,6 +181,13 @@ export async function applyConfig(loaded: LoadedConfig, log: FastifyBaseLogger):
     (a) => upsertAction(a, m),
     (id) => deleteAction(id, m),
   );
+  const fragmentIds = new Set(data.fragments.map((f) => f.identifier));
+  for (const f of await listFragments())
+    if (f.managed && !fragmentIds.has(f.identifier))
+      await deleteFragment(f.identifier, m).then(
+        () => log.info({ component: 'config', kind: 'fragment', identifier: f.identifier }, 'config resource removed (no longer declared)'),
+        (err) => log.warn({ component: 'config', kind: 'fragment', identifier: f.identifier, err }, 'resource is no longer declared but cannot be removed'),
+      );
   await applyKind(
     log,
     errs,
@@ -370,6 +388,7 @@ export async function planConfig(loaded?: LoadedConfig): Promise<PlanItem[]> {
   const d = loaded.data;
   plan('team', d.teams, await listTeams());
   plan('blueprint', d.blueprints, await listBlueprints());
+  plan('fragment', d.fragments, await listFragments());
   plan('action', d.actions, await listActions(), ['trigger', 'steps', 'invoker']);
   plan('integration', d.integrations, await listIntegrations());
   plan('webhook', d.webhooks, await listWebhooks());
@@ -379,7 +398,7 @@ export async function planConfig(loaded?: LoadedConfig): Promise<PlanItem[]> {
   return out;
 }
 
-const KINDS = ['teams', 'blueprints', 'actions', 'integrations', 'webhooks', 'scorecards', 'policies', 'dashboards'] as const;
+const KINDS = ['teams', 'blueprints', 'fragments', 'actions', 'integrations', 'webhooks', 'scorecards', 'policies', 'dashboards'] as const;
 
 /** What a reload of the current organization would change: declared vs currently managed identifiers. Nothing is applied. */
 export async function configDiff() {
@@ -393,6 +412,7 @@ export async function configDiff() {
   const current: Record<(typeof KINDS)[number], { identifier: string; managed: boolean }[]> = {
     teams: await listTeams(),
     blueprints: await listBlueprints(),
+    fragments: await listFragments(),
     actions: await listActions(),
     integrations: await listIntegrations(),
     webhooks: await listWebhooks(),
@@ -433,6 +453,7 @@ export async function importConfig(text: string, dryRun: boolean): Promise<Recor
   for (const t of merged.teams) await upsertTeam(t);
   const knownTargets = new Set([...merged.blueprints.map((b) => b.identifier), ...(await listBlueprints()).map((b) => b.identifier)]);
   for (const b of merged.blueprints) await upsertBlueprint(b, { knownTargets });
+  for (const f of dependencyOrder(merged.fragments)) await upsertFragment(f);
   for (const a of merged.actions) await upsertAction(a);
   for (const i of merged.integrations) await upsertIntegration(i);
   for (const w of merged.webhooks) await upsertWebhook(w);
@@ -601,6 +622,7 @@ export async function exportDefinitions() {
   return {
     teams: (await listTeams()).map((t) => strip(t as never, ['managed', 'members'])),
     blueprints: (await listBlueprints()).map((b) => strip(b as never, ['managed', 'entityCount', 'createdAt', 'updatedAt'])),
+    fragments: (await listFragments()).map((f) => strip(f as never, ['managed', 'version', 'updatedAt'])),
     actions: (await listActions()).map((a) => strip(a as never, ['managed'])),
     integrations: (await listIntegrations()).map((i) => strip(i as never, ['managed', 'lastSync', 'webhookUrl'])),
     webhooks,
@@ -626,8 +648,9 @@ export async function managedCounts() {
      UNION ALL SELECT 'scorecards', count(*) FROM scorecards WHERE managed = 1 AND org_id = ?
      UNION ALL SELECT 'policies', count(*) FROM policies WHERE managed = 1 AND org_id = ?
      UNION ALL SELECT 'dashboards', count(*) FROM dashboards WHERE managed = 1 AND org_id = ?
+     UNION ALL SELECT 'fragments', count(*) FROM fragments WHERE managed = 1 AND org_id = ?
      UNION ALL SELECT 'teams', count(*) FROM teams WHERE managed = 1 AND org_id = ?`,
-    ...Array(8).fill(orgId()),
+    ...Array(9).fill(orgId()),
   );
   return Object.fromEntries(rows.map((r) => [r.k, Number(r.n)]));
 }
