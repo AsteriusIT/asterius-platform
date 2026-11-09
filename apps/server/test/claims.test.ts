@@ -95,7 +95,8 @@ describe('housekeeping (ap-na0.3, ap-na0.6)', () => {
     const statements = spy.mock.calls.map((c) => String(c[0]));
     spy.mockRestore();
     expect(statements.filter((q) => /^\s*(update|insert|delete)/i.test(q))).toEqual([]);
-    expect(statements.length).toBeLessThanOrEqual(8); // a fixed number of bounded queries, not several per run
+    // A fixed number of bounded queries, not several per run (each due-time scan: deadlines, SLAs, approval timers…).
+    expect(statements.length).toBeLessThanOrEqual(10);
     await sql("UPDATE run_steps SET status = 'CANCELLED' WHERE status = 'WAITING_APPROVAL'");
     await sql("UPDATE runs SET status = 'CANCELLED' WHERE status = 'IN_PROGRESS'");
   });

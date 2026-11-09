@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { DESCRIPTOR_SCHEMA } from './integrations/sources/descriptors.js';
-import { actionDef, blueprintDef, configFile, entityInput, integrationDef, policyDef, teamDef, webhookDef } from './schemas.js';
+import { actionDef, blueprintDef, configFile, delegationInput, entityInput, integrationDef, policyDef, teamDef, webhookDef } from './schemas.js';
 
 /**
  * OpenAPI 3.1 description of the REST API. Paths come from the registered Fastify routes (so they cannot drift),
@@ -18,6 +18,7 @@ const COMPONENTS: Record<string, z.ZodType> = {
   Team: teamDef,
   Policy: policyDef,
   EntityInput: entityInput,
+  DelegationInput: delegationInput,
   ConfigFile: configFile,
 };
 
@@ -51,8 +52,14 @@ const EntityOut = z.object({
 });
 const ref = z.object({ blueprint: str, identifier: str });
 const band = z.enum(['elite', 'high', 'medium', 'low']).nullable();
+const person = z.object({ id: str, name: str, email: str });
+const DelegationOut = z
+  .object({ user: person, delegate: person, startsAt: iso.nullable(), endsAt: iso.nullable(), active: z.boolean(), createdAt: iso })
+  .describe('Out-of-office delegation: the delegate decides approvals (and answers inputs) for the user');
 const OUTPUTS: Record<string, z.ZodType> = {
   Entity: EntityOut,
+  Delegation: DelegationOut,
+  MyDelegation: z.object({ delegation: DelegationOut.nullable() }),
   EntityDocs: z.object({ property: str.describe('The `docs`-format property the Markdown came from'), url: str, markdown: str }),
   EntityGraph: z.object({
     root: ref,
@@ -136,6 +143,9 @@ const RESPONSES: Record<string, string> = {
   'GET /api/v1/config/status': 'ConfigStatus',
   'GET /api/v1/teams': 'Team[]',
   'PUT /api/v1/teams/:id': 'Team',
+  'GET /api/v1/me/delegation': 'MyDelegation',
+  'PUT /api/v1/me/delegation': 'MyDelegation',
+  'GET /api/v1/delegations': 'Delegation[]',
 };
 
 /** Which component is the JSON body of a write route (`METHOD url` with Fastify-style `:param`). */
@@ -148,6 +158,7 @@ const BODIES: Record<string, string> = {
   'PUT /api/v1/policies/:id': 'Policy',
   'POST /api/v1/blueprints/:bp/entities': 'EntityInput',
   'PUT /api/v1/blueprints/:bp/entities/:id': 'EntityInput',
+  'PUT /api/v1/me/delegation': 'DelegationInput',
 };
 
 const qp = (name: string, schema: Record<string, unknown>, description: string) => ({ name, in: 'query', required: false, description, schema });

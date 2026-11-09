@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { config, paths } from './config.js';
 import { baseline } from './schema.js';
+import { approvalsMigration } from './migrations/approvals.js';
 import { componentLogger } from './logger.js';
 import { dbSpan } from './tracing.js';
 
@@ -105,6 +106,7 @@ export const MIGRATIONS: Migration[] = [
       await d.exec('ALTER TABLE runs ADD COLUMN vars TEXT');
     },
   },
+  { id: 3, name: 'approval reminders, escalation, delegation and tiers', up: approvalsMigration },
   {
     // Run operations: concurrency groups (slot table), priority, pause.
     id: 4,

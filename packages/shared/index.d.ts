@@ -347,11 +347,55 @@ export interface EffectivePermissions {
   blueprints: Record<string, { read: Access; write: Access; delete: Access; run: Access }>;
 }
 
-export interface ApprovalPolicy {
+/** What an approval nobody decided becomes once it expires (default: fail). */
+export type ApprovalExpiry = 'fail' | 'reject' | 'approve' | 'skip';
+
+/** Reminders, escalation and expiry of an approval (step or pre-start policy). Delays: `30m`, `4h`, `1d`. */
+export interface ApprovalTimers {
+  /** Re-notify the approvers who have not decided yet, every … */
+  remindEvery?: string;
+  /** At most this many reminders (default 3). */
+  maxReminders?: number;
+  /** After `after` without a decision, these approvers become eligible too and are notified. */
+  escalate?: { after: string; approvers: Subjects };
+  onExpiry?: ApprovalExpiry;
+}
+
+export interface ApprovalPolicy extends ApprovalTimers {
   required: boolean;
   approvers?: Subjects;
   minApprovals?: number;
   allowSelfApproval?: boolean;
+  /** The request expires after this delay (then `onExpiry`, default fail). */
+  expireAfter?: string;
+}
+
+/** A sequential approval tier: opens once the previous one reached its minimum. */
+export interface ApprovalTier {
+  name: string;
+  approvers?: Subjects;
+  minApprovals?: number;
+}
+
+/** Progress of an approval (run page): tiers, escalation, reminders. */
+export interface ApprovalProgress {
+  tiers?: { name: string; minApprovals: number; approved: number; state: 'done' | 'open' | 'waiting' }[];
+  escalatedAt?: string | null;
+  escalateAt?: string | null;
+  reminders?: number;
+  nextReminderAt?: string | null;
+  expiresAt?: string | null;
+}
+
+/** Out-of-office delegation: the delegate decides for the user, optionally within a date range. */
+export interface Delegation {
+  user: { id: string; name: string; email: string };
+  delegate: { id: string; name: string; email: string };
+  startsAt: string | null;
+  endsAt: string | null;
+  /** In effect now (inside its date range). */
+  active: boolean;
+  createdAt: string;
 }
 
 export interface InvokerConfig {
@@ -401,8 +445,10 @@ export interface InvokeStep extends WorkflowStepBase {
   forEach?: InlineForEach;
 }
 
-export interface ApprovalStep extends WorkflowStepBase {
+export interface ApprovalStep extends WorkflowStepBase, ApprovalTimers {
   type: 'approval';
+  /** Instead of approvers / minApprovals: tiers decided in order; a reject at any tier rejects. */
+  tiers?: ApprovalTier[];
   approvers?: Subjects;
   minApprovals?: number;
   allowSelfApproval?: boolean;
@@ -487,6 +533,8 @@ export interface InputStep extends WorkflowStepBase {
   message?: string;
   inputs: ObjectSchema;
   assignees?: Subjects;
+  remindEvery?: string;
+  maxReminders?: number;
 }
 
 /** Run another action as a child workflow (optionally once per item of a list) and wait for the result. */
@@ -530,6 +578,8 @@ export interface RunStep {
   /** AI spend of the step in dollars (null: none recorded). */
   costUsd?: number | null;
   approvals: RunApproval[];
+  /** Approval and input steps: tiers, escalation and reminders. */
+  approval?: ApprovalProgress | null;
   canApprove?: boolean;
   /** A failed step the caller may retry. */
   canRetry?: boolean;
@@ -766,6 +816,10 @@ export interface RunApproval {
   decision: 'approved' | 'rejected';
   comment: string;
   at: string;
+  /** Decided by a delegate for this person. */
+  onBehalfOf?: { id: string; name: string } | null;
+  /** Tiered approval steps: the tier (0-based) the decision belongs to. */
+  tier?: number | null;
 }
 
 export interface Run {
@@ -780,6 +834,8 @@ export interface Run {
   link: string | null;
   triggeredBy: { id: string; name: string; email: string };
   approvals: RunApproval[];
+  /** Pre-start approval: escalation, reminders, expiry. */
+  approval?: ApprovalProgress | null;
   result: unknown;
   /** Set on child runs of a sub-workflow step. */
   parent?: { runId: string; stepId: string } | null;
@@ -799,6 +855,8 @@ export interface Run {
   steps?: RunStep[];
   /** Approvals page: the step waiting for the caller's decision (null: the run-level approval). */
   pendingStep?: { id: string; name: string; message: string | null; kind?: 'approval' | 'input' } | null;
+  /** Approvals page: the caller decides as the delegate of this person. */
+  onBehalfOf?: { id: string; name: string } | null;
   canApprove?: boolean;
   canCancel?: boolean;
   /** Requester or admin, finished run. */

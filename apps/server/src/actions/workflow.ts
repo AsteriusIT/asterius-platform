@@ -108,6 +108,12 @@ export function validateWorkflow(steps: Step[]) {
           break;
         case 'approval':
           if (s.message) checkTemplate(s.message);
+          if (s.tiers?.length) {
+            const a = s.approvers;
+            if ((a && (a.roles?.length || a.teams?.length || a.users?.length || a.ownerTeam)) || s.minApprovals > 1)
+              throw new Error('use either tiers or approvers / minApprovals, not both');
+            if (new Set(s.tiers.map((t) => t.name)).size !== s.tiers.length) throw new Error('tier names must be unique');
+          }
           break;
         case 'agent':
           checkTemplate([s.prompt, s.system ?? '', s.apiKey ?? '']);

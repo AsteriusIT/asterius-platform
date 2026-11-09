@@ -1,4 +1,4 @@
-import type { Action, ApprovalPolicy, Run, RunApproval, RunLog, RunPage, RunStatus } from '@asterius/shared';
+import type { Action, ApprovalPolicy, Run, RunApproval, RunLog, RunPage, RunStatus, Subjects } from '@asterius/shared';
 import { config } from '../config.js';
 import { all, forUpdate, json, newId, now, one, run, tx, type Driver, type SqlValue } from '../db.js';
 import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
@@ -19,17 +19,23 @@ import { wake } from './wake.js';
 import { render } from '../lib/expr.js';
 import { acquireSlot, releaseSlot, runsAhead } from './concurrency.js';
 import { notifyPendingDecision } from '../notifications/dispatch.js';
+import { attachDelegators, withDelegators } from '../auth/delegations.js';
+import { armRunApproval } from './approvals.js';
 import {
   approverSubjects,
   canApproveStep,
   canManageRun,
-  canSubmitInput,
+  decidingFor,
+  inputResponder,
   loadSteps,
   resumableSteps,
   runStepsView,
   stepApprovalsOf,
   stepDefs,
+  stepDecider,
   stepMessage,
+  toApproval,
+  type DecisionRow,
   type StepRow,
 } from './steps.js';
 import { decodeCursor, encodeCursor } from '../lib/cursor.js';
@@ -97,6 +103,12 @@ export interface RunRow {
   workflow: string | null;
   /** The evaluated `vars` (set when the workflow starts). */
   vars: string | null;
+  /** Pre-start approval timers (migration 3, see approvals.ts). */
+  remind_at?: string | null;
+  reminders?: number;
+  escalate_at?: string | null;
+  escalated_at?: string | null;
+  approval_expires_at?: string | null;
   user_name?: string;
   user_email?: string;
 }
@@ -106,18 +118,21 @@ const SELECT = 'SELECT r.*, u.name AS user_name, u.email AS user_email FROM runs
 async function approvalsOf(runIds: string[]): Promise<Map<string, RunApproval[]>> {
   const out = new Map<string, RunApproval[]>();
   if (!runIds.length) return out;
-  const rows = await all<{ run_id: string; user_id: string; name: string; decision: RunApproval['decision']; comment: string; at: string }>(
-    `SELECT a.run_id, a.user_id, u.name, a.decision, a.comment, a.at FROM run_approvals a JOIN users u ON u.id = a.user_id
+  const rows = await all<DecisionRow & { run_id: string }>(
+    `SELECT a.run_id, a.user_id, u.name, a.decision, a.comment, a.at, a.on_behalf_of, b.name AS behalf_name
+     FROM run_approvals a JOIN users u ON u.id = a.user_id LEFT JOIN users b ON b.id = a.on_behalf_of
      WHERE a.run_id IN (${runIds.map(() => '?').join(',')}) ORDER BY a.at`,
     ...runIds,
   );
   for (const r of rows) {
     const list = out.get(r.run_id) ?? [];
-    list.push({ userId: r.user_id, userName: r.name, decision: r.decision, comment: r.comment, at: r.at });
+    list.push(toApproval(r));
     out.set(r.run_id, list);
   }
   return out;
 }
+
+export const runApprovalsOf = async (id: string) => (await approvalsOf([id])).get(id) ?? [];
 
 const toRun = (r: RunRow, approvals: RunApproval[]): Run => ({
   id: r.id,
@@ -131,6 +146,16 @@ const toRun = (r: RunRow, approvals: RunApproval[]): Run => ({
   link: r.link,
   triggeredBy: { id: r.triggered_by, name: r.user_name ?? '', email: r.user_email ?? '' },
   approvals,
+  approval:
+    r.status === 'PENDING_APPROVAL' || r.escalated_at || Number(r.reminders ?? 0)
+      ? {
+          escalatedAt: r.escalated_at ?? null,
+          escalateAt: r.escalate_at ?? null,
+          reminders: Number(r.reminders ?? 0),
+          nextReminderAt: r.remind_at ?? null,
+          expiresAt: r.approval_expires_at ?? null,
+        }
+      : null,
   result: json(r.result, null),
   trigger: { type: r.trigger_type ?? 'form', ...json<Record<string, unknown>>(r.trigger_info, {}) },
   actionVersion: r.action_version,
@@ -150,13 +175,18 @@ const approversOf = (policy: ApprovalPolicy) => {
   return a && (a.roles?.length || a.teams?.length || a.users?.length || a.ownerTeam) ? a : { roles: ['admin', 'approver'] };
 };
 
-export function canApprove(p: Principal, r: RunRow, approvals: RunApproval[]) {
-  if (r.status !== 'PENDING_APPROVAL') return false;
+/** Who may approve the pre-start request now: its approvers, plus the escalation approvers once escalated. */
+export const runApproverSets = (r: Pick<RunRow, 'escalated_at'>, policy: ApprovalPolicy): Subjects[] =>
+  r.escalated_at && policy.escalate ? [approversOf(policy), approverSubjects(policy.escalate.approvers)] : [approversOf(policy)];
+
+/** The person whose approval `p` gives (themselves or someone they are the active delegate of), or null. */
+export function runDecider(p: Principal, r: RunRow, approvals: RunApproval[]): Principal | null {
+  if (r.status !== 'PENDING_APPROVAL') return null;
   const policy = json<ApprovalPolicy>(r.approval, { required: false });
-  if (!policy.allowSelfApproval && r.triggered_by === p.id) return false;
-  if (approvals.some((a) => a.userId === p.id)) return false;
-  return matchesSubjects(p, approversOf(policy), r.team);
+  return decidingFor(p, { sets: runApproverSets(r, policy), team: r.team, requester: r.triggered_by, allowSelf: !!policy.allowSelfApproval, approvals });
 }
+
+export const canApprove = (p: Principal, r: RunRow, approvals: RunApproval[]) => !!runDecider(p, r, approvals);
 
 const canCancel = (p: Principal, r: RunRow) => !FINAL.includes(r.status) && (isAdmin(p) || r.triggered_by === p.id);
 
@@ -181,11 +211,20 @@ export async function canViewRun(p: Principal, r: RunRow, approvals: RunApproval
   return false;
 }
 
-/** Entitled to approve (now or at some point): the run-level policy, or an approval step of the workflow. */
+/**
+ * Entitled to approve (now or at some point), directly or as an active delegate: the run-level policy (and its
+ * escalation), or an approval step of the workflow (its approvers, tiers and escalation).
+ */
 function approverOf(p: Principal, r: RunRow) {
   const policy = json<ApprovalPolicy>(r.approval, { required: false });
-  if (policy.required && matchesSubjects(p, approversOf(policy), r.team)) return true;
-  return stepDefs(r).some((d) => d.type === 'approval' && matchesSubjects(p, approverSubjects(d.approvers), r.team));
+  const sets: Subjects[] = policy.required ? [approversOf(policy), ...(policy.escalate ? [approverSubjects(policy.escalate.approvers)] : [])] : [];
+  for (const d of stepDefs(r))
+    if (d.type === 'approval')
+      sets.push(
+        ...(d.tiers?.length ? d.tiers.map((t) => approverSubjects(t.approvers)) : [approverSubjects(d.approvers)]),
+        ...(d.escalate ? [approverSubjects(d.escalate.approvers)] : []),
+      );
+  return [p, ...(p.delegators ?? [])].some((x) => sets.some((s) => matchesSubjects(x, s, r.team)));
 }
 
 const LOG_COLUMNS = 'seq, at, level, message, step_id AS "stepId"';
@@ -206,7 +245,8 @@ export async function runLogsAfter(id: string, seq: number, limit = 500): Promis
   return rows.map((l) => ({ ...l, seq: Number(l.seq) }));
 }
 
-export async function getRun(id: string, p: Principal, opts: { after?: number; logs?: boolean } = {}): Promise<Run> {
+export async function getRun(id: string, p0: Principal, opts: { after?: number; logs?: boolean } = {}): Promise<Run> {
+  const p = await withDelegators(p0);
   const r = await getRunRow(id);
   const approvals = (await approvalsOf([id])).get(id) ?? [];
   if (!(await canViewRun(p, r, approvals))) throw notFound('Run'); // same answer as a missing run: do not reveal existence
@@ -242,7 +282,8 @@ export async function getRun(id: string, p: Principal, opts: { after?: number; l
 }
 
 /** One page of a run's log, oldest first: continue with `after = next` while `next` is not null. */
-export async function getRunLogs(id: string, p: Principal, q: { after: number; limit: number; step?: string }) {
+export async function getRunLogs(id: string, p0: Principal, q: { after: number; limit: number; step?: string }) {
+  const p = await withDelegators(p0);
   const r = await getRunRow(id);
   if (!(await canViewRun(p, r, (await approvalsOf([id])).get(id) ?? []))) throw notFound('Run');
   const rows = await all<RunLog>(
@@ -279,7 +320,8 @@ async function approverRunIds(p: Principal): Promise<string[]> {
   return rows.filter((r) => approverOf(p, r)).map((r) => r.id);
 }
 
-export async function listRuns(q: RunQuery, p: Principal): Promise<RunPage> {
+export async function listRuns(q: RunQuery, p0: Principal): Promise<RunPage> {
+  const p = await withDelegators(p0);
   const where: string[] = ['r.org_id = ?'];
   const params: SqlValue[] = [orgId()];
   if (!isAdmin(p)) {
@@ -346,9 +388,11 @@ const APPROVAL_SCAN = 200;
  * loaded with one query each. No row cap: stops once `limit` items were collected and returns a cursor for the rest.
  */
 export async function pendingApprovals(
-  p: Principal,
+  p0: Principal,
   opts: { limit?: number; cursor?: string; scanLimit?: number } = {},
 ): Promise<{ items: Run[]; nextCursor?: string }> {
+  const p = await withDelegators(p0);
+  const behalf = (as: Principal | null) => (as && as.id !== p.id ? { onBehalfOf: { id: as.id, name: as.name } } : {});
   const limit = opts.limit ?? 200;
   const scanMax = opts.scanLimit ?? Infinity;
   const items: Run[] = [];
@@ -377,14 +421,15 @@ export async function pendingApprovals(
     const stepApprovals = await stepApprovalsOf(inProgress.map((r) => r.id));
     for (const [i, r] of rows.entries()) {
       if (r.status === 'PENDING_APPROVAL') {
-        if (canApprove(p, r, approvals.get(r.id) ?? [])) items.push({ ...toRun(r, approvals.get(r.id) ?? []), canApprove: true, pendingStep: null });
+        const as = runDecider(p, r, approvals.get(r.id) ?? []);
+        if (as) items.push({ ...toRun(r, approvals.get(r.id) ?? []), canApprove: true, pendingStep: null, ...behalf(as) });
       } else {
         for (const row of stepRows.filter((sr) => sr.run_id === r.id)) {
           const def = stepDefs(r).find((d) => d.id === row.step_id);
           if (!def) continue;
           const kind = def.type === 'input' ? 'input' : 'approval';
-          const allowed = kind === 'input' ? canSubmitInput(p, r, def, row) : canApproveStep(p, r, def, row, stepApprovals.get(`${r.id}/${row.step_id}`) ?? []);
-          if (allowed) items.push({ ...toRun(r, []), pendingStep: { id: row.step_id, name: row.name, message: stepMessage(row), kind } });
+          const as = kind === 'input' ? inputResponder(p, r, def, row) : stepDecider(p, r, def, row, stepApprovals.get(`${r.id}/${row.step_id}`) ?? []);
+          if (as) items.push({ ...toRun(r, []), pendingStep: { id: row.step_id, name: row.name, message: stepMessage(row), kind }, ...behalf(as) });
         }
       }
       if (items.length >= limit && i < rows.length - 1) return { items, nextCursor: encodeCursor({ s: 'approvals', d: 'asc', v: [r.created_at, r.id] }) };
@@ -462,8 +507,10 @@ async function notifyRun(r: RunRow) {
     "SELECT u.* FROM users u JOIN memberships m ON m.user_id = u.id WHERE m.org_id = ? AND u.active = 1 AND u.provider != 'service'",
     org.id,
   );
-  for (const u of members) {
-    const p = await principalOf(u, org);
+  // Active delegates are asked too (canApprove accepts a delegate for an eligible delegator).
+  const principals = await attachDelegators(await Promise.all(members.map((u) => principalOf(u, org))));
+  for (const p of principals) {
+    const u = { id: p.id };
     if (wantsApproval && canApprove(p, r, approvals))
       await notify(u.id, {
         kind: 'approval.requested',
@@ -633,6 +680,7 @@ async function insertRun(n: NewRun): Promise<{ id: string; replay?: false } | { 
   await addLog(id, `Triggered by ${p.name} <${p.email}>${where}${via}`);
   if (status === 'PENDING_APPROVAL') {
     await addLog(id, `Waiting for ${n.approval.minApprovals ?? 1} approval(s)`);
+    await armRunApproval(id, n.approval);
     void notifyPendingDecision({
       run: { id, action_title: action.title, team: n.entityTeam, triggered_by: p.id, user_name: p.name },
       kind: 'approval',
@@ -761,11 +809,14 @@ export async function startAutomatedRun(
 }
 
 // ---------- approvals ----------
-export async function decide(p: Principal, runId: string, decision: 'approved' | 'rejected', comment: string): Promise<Run> {
+export async function decide(p0: Principal, runId: string, decision: 'approved' | 'rejected', comment: string): Promise<Run> {
+  const p = await withDelegators(p0);
   const r = await getRunRow(runId);
   const approvals = (await approvalsOf([runId])).get(runId) ?? [];
   if (r.status !== 'PENDING_APPROVAL') throw conflict('This run is not waiting for approval');
-  if (!canApprove(p, r, approvals)) throw forbidden('You cannot approve this run');
+  const as = runDecider(p, r, approvals);
+  if (!as) throw forbidden('You cannot approve this run');
+  const behalf = as.id !== p.id ? as : null;
   if (decision === 'rejected' && !comment.trim()) throw badRequest('Give a reason when rejecting');
   const policy = json<ApprovalPolicy>(r.approval, { required: true });
   // Insert the decision, count and transition in one transaction holding a row lock on the run: concurrent approvers
@@ -773,30 +824,41 @@ export async function decide(p: Principal, runId: string, decision: 'approved' |
   const outcome = await tx(async (d) => {
     const cur = (await d.query<{ status: RunStatus }>(`SELECT status FROM runs WHERE id = ?${forUpdate}`, [runId])).rows[0];
     if (cur?.status !== 'PENDING_APPROVAL') throw conflict('This run is not waiting for approval');
-    const decided = (await d.query<{ user_id: string; decision: string }>('SELECT user_id, decision FROM run_approvals WHERE run_id = ?', [runId])).rows;
-    if (decided.some((a) => a.user_id === p.id)) throw conflict('You already decided on this run');
-    await d.query('INSERT INTO run_approvals (run_id, user_id, decision, comment, at) VALUES (?, ?, ?, ?, ?)', [runId, p.id, decision, comment, now()]);
+    const decided = (
+      await d.query<{ user_id: string; decision: string; on_behalf_of: string | null }>(
+        'SELECT user_id, decision, on_behalf_of FROM run_approvals WHERE run_id = ?',
+        [runId],
+      )
+    ).rows;
+    if (decided.some((a) => [p.id, as.id].includes(a.user_id) || (a.on_behalf_of && [p.id, as.id].includes(a.on_behalf_of))))
+      throw conflict('You already decided on this run');
+    await d.query('INSERT INTO run_approvals (run_id, user_id, decision, comment, at, on_behalf_of) VALUES (?, ?, ?, ?, ?, ?)', [
+      runId,
+      p.id,
+      decision,
+      comment,
+      now(),
+      behalf?.id ?? null,
+    ]);
     const approvedCount = decided.filter((a) => a.decision === 'approved').length + (decision === 'approved' ? 1 : 0);
     let next: RunStatus | null = null;
     if (decision === 'rejected') next = 'REJECTED';
     else if (approvedCount >= (policy.minApprovals ?? 1)) next = 'QUEUED';
     if (next) {
       const t = now();
-      await d.query(`UPDATE runs SET status = ?, ended_at = ?, updated_at = ? WHERE id = ? AND status = 'PENDING_APPROVAL'`, [
-        next,
-        next === 'REJECTED' ? t : null,
-        t,
-        runId,
-      ]);
+      await d.query(
+        `UPDATE runs SET status = ?, ended_at = ?, updated_at = ?, remind_at = NULL, escalate_at = NULL, approval_expires_at = NULL WHERE id = ? AND status = 'PENDING_APPROVAL'`,
+        [next, next === 'REJECTED' ? t : null, t, runId],
+      );
     }
     return next;
   });
   await addLog(
     runId,
-    `${decision === 'approved' ? 'Approved' : 'Rejected'} by ${p.name}${comment ? `: ${comment}` : ''}`,
+    `${decision === 'approved' ? 'Approved' : 'Rejected'} by ${p.name}${behalf ? ` on behalf of ${behalf.name}` : ''}${comment ? `: ${comment}` : ''}`,
     decision === 'approved' ? 'info' : 'warn',
   );
-  await audit(actorOf(p), `run.${decision}`, r.action, { runId, comment });
+  await audit(actorOf(p), `run.${decision}`, r.action, { runId, comment, ...(behalf ? { onBehalfOf: behalf.email } : {}) });
   if (outcome) {
     await addLog(runId, outcome === 'QUEUED' ? 'Approved: queued for execution' : 'Run rejected');
     if (outcome === 'QUEUED') wake();

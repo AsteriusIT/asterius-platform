@@ -243,21 +243,29 @@ export function Approvals() {
           {
             key: 'what',
             label: 'Decision',
-            render: (r: Run) =>
-              r.pendingStep ? (
-                <div>
-                  <Text fz="sm" fw={500}>
-                    Step: {r.pendingStep.name}
-                  </Text>
-                  {r.pendingStep.message && (
-                    <Text fz="xs" c="dimmed" lineClamp={1}>
-                      {r.pendingStep.message.replace(/[*_`#>]/g, '')}
+            render: (r: Run) => (
+              <div>
+                {r.pendingStep ? (
+                  <>
+                    <Text fz="sm" fw={500}>
+                      Step: {r.pendingStep.name}
                     </Text>
-                  )}
-                </div>
-              ) : (
-                <Text fz="sm">Start of the request</Text>
-              ),
+                    {r.pendingStep.message && (
+                      <Text fz="xs" c="dimmed" lineClamp={1}>
+                        {r.pendingStep.message.replace(/[*_`#>]/g, '')}
+                      </Text>
+                    )}
+                  </>
+                ) : (
+                  <Text fz="sm">Start of the request</Text>
+                )}
+                {r.onBehalfOf && (
+                  <Badge size="xs" variant="light" color="grape">
+                    as delegate of {r.onBehalfOf.name}
+                  </Badge>
+                )}
+              </div>
+            ),
           },
           runColumns[2],
           runColumns[3],
@@ -440,7 +448,46 @@ function runTrigger(r: Run): FlowTrigger {
   };
 }
 
-function ApprovalTimeline({ approvals }: { approvals: Run['approvals'] }) {
+/** Tiers, escalation, reminders and expiry of an approval. */
+function ApprovalProgressView({ p }: { p: Run['approval'] }) {
+  if (!p) return null;
+  return (
+    <Stack gap={4}>
+      {p.tiers && (
+        <Group gap="xs">
+          {p.tiers.map((t, i) => (
+            <Badge key={t.name} variant={t.state === 'open' ? 'filled' : 'light'} color={t.state === 'done' ? 'green' : t.state === 'open' ? 'blue' : 'gray'}>
+              {i + 1}. {t.name} · {t.approved}/{t.minApprovals}
+            </Badge>
+          ))}
+        </Group>
+      )}
+      {p.escalatedAt && (
+        <Text fz="xs" c="orange">
+          Escalated <TimeAgo at={p.escalatedAt} />
+        </Text>
+      )}
+      {!p.escalatedAt && p.escalateAt && (
+        <Text fz="xs" c="dimmed">
+          Escalates <TimeAgo at={p.escalateAt} />
+        </Text>
+      )}
+      {(p.reminders ?? 0) > 0 && (
+        <Text fz="xs" c="dimmed">
+          {p.reminders} reminder(s) sent{p.nextReminderAt ? ' · next ' : ''}
+          {p.nextReminderAt && <TimeAgo at={p.nextReminderAt} />}
+        </Text>
+      )}
+      {p.expiresAt && (
+        <Text fz="xs" c="dimmed">
+          Expires <TimeAgo at={p.expiresAt} />
+        </Text>
+      )}
+    </Stack>
+  );
+}
+
+function ApprovalTimeline({ approvals, tiers }: { approvals: Run['approvals']; tiers?: string[] }) {
   return (
     <Timeline bulletSize={20} lineWidth={2}>
       {approvals.map((a) => (
@@ -454,6 +501,19 @@ function ApprovalTimeline({ approvals }: { approvals: Run['approvals'] }) {
               <Text span fz="sm">
                 {a.decision}
               </Text>
+              {a.onBehalfOf && (
+                <>
+                  <Text span fz="sm" c="dimmed">
+                    on behalf of
+                  </Text>
+                  <UserChip user={a.onBehalfOf} />
+                </>
+              )}
+              {a.tier != null && tiers?.[a.tier] && (
+                <Badge size="xs" variant="light">
+                  {tiers[a.tier]}
+                </Badge>
+              )}
             </Group>
           }
         >
@@ -613,6 +673,7 @@ function RunFlow({ r }: { r: Run }) {
                 <ApprovalTimeline approvals={r.approvals} />
               </>
             )}
+            <ApprovalProgressView p={r.approval} />
           </Stack>
         )}
         {panel?.kind === 'logs' && (
@@ -802,9 +863,14 @@ function StepPanel({ run, step, onDone }: { run: Run; step: RunStep; onDone: (r:
           </Group>
         </Stack>
       )}
+      {step.approval && (
+        <Box mt="xs">
+          <ApprovalProgressView p={step.approval} />
+        </Box>
+      )}
       {step.approvals.length > 0 && (
         <Box mt="sm">
-          <ApprovalTimeline approvals={step.approvals} />
+          <ApprovalTimeline approvals={step.approvals} tiers={step.approval?.tiers?.map((t) => t.name)} />
         </Box>
       )}
       {output != null && step.type !== 'approval' && (
