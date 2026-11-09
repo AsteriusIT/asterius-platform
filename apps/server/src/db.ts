@@ -93,7 +93,32 @@ export interface Migration {
  * Baseline policy: the migration history was flattened into migration 1 (schema.ts) on 2026-11-07, before the first
  * production release. From now on append migrations (id 2, 3…) and never edit the baseline once it has shipped.
  */
-export const MIGRATIONS: Migration[] = [{ id: 1, name: 'baseline schema', up: baseline }];
+export const MIGRATIONS: Migration[] = [
+  { id: 1, name: 'baseline schema', up: baseline },
+  {
+    // Run operations: concurrency groups (slot table), priority, pause.
+    id: 4,
+    name: 'run operations',
+    up: async (d) => {
+      for (const sql of [
+        'ALTER TABLE actions ADD COLUMN run_options TEXT', // JSON { concurrency, priority }; NULL: defaults
+        'ALTER TABLE runs ADD COLUMN priority INTEGER NOT NULL DEFAULT 0',
+        'ALTER TABLE runs ADD COLUMN concurrency_group TEXT', // rendered group; NULL: no concurrency limit
+        'ALTER TABLE runs ADD COLUMN concurrency_max INTEGER',
+        'ALTER TABLE runs ADD COLUMN paused_at TEXT',
+        'ALTER TABLE runs ADD COLUMN paused_by TEXT',
+        'CREATE INDEX runs_queue ON runs(status, priority, created_at)',
+        'CREATE INDEX runs_concurrency ON runs(org_id, concurrency_group, status) WHERE concurrency_group IS NOT NULL',
+        // One row per held slot: the primary key makes acquiring a slot a race-free conditional insert across replicas.
+        `CREATE TABLE run_slots (
+           org_id TEXT NOT NULL, grp TEXT NOT NULL, slot INTEGER NOT NULL, run_id TEXT NOT NULL, acquired_at TEXT NOT NULL,
+           PRIMARY KEY (org_id, grp, slot))`,
+        'CREATE UNIQUE INDEX run_slots_run ON run_slots(run_id)',
+      ])
+        await d.exec(sql);
+    },
+  },
+];
 
 /**
  * Apply pending numbered migrations (idempotent; serialized across replicas by an advisory lock on Postgres).

@@ -7,7 +7,8 @@ import { getEntity } from '../catalog/entities.js';
 import { blueprintOf, canTrigger, isRunnable, deleteAction, forViewer, getAction, listActions, upsertAction } from '../actions/actions.js';
 import { nextPageHeaders } from '../lib/cursor.js';
 import { addLog, cancelRun, decide, getRun, getRunLogs, getRunRow, listRuns, pendingApprovals, runLogsAfter, triggerRun } from '../actions/runs.js';
-import { workflowStep } from '../schemas.js';
+import { runPriority, workflowStep } from '../schemas.js';
+import { forceStep, pauseRun, unpauseRun } from '../actions/operations.js';
 import { previewExpression, simulateWorkflow } from '../actions/simulate.js';
 import { runOrg } from '../actions/runs.js';
 import { DEFAULT_ORG, enterOrg, withOrg } from '../orgs/context.js';
@@ -222,7 +223,9 @@ export async function actionRoutes(app: FastifyInstance) {
 
     scoped.post('/actions/:id/runs', { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async (req, reply) => {
       const { id } = idParam.parse(req.params);
-      const body = z.object({ entity: z.string().nullish(), inputs: z.record(z.string(), z.unknown()).default({}) }).parse(req.body ?? {});
+      const body = z
+        .object({ entity: z.string().nullish(), inputs: z.record(z.string(), z.unknown()).default({}), priority: runPriority.optional() })
+        .parse(req.body ?? {});
       const key = z.string().min(1).max(200).optional().parse(req.headers['idempotency-key']);
       const { run, created } = await triggerRun(req.principal, id, body, key);
       return reply.code(created ? 201 : 200).send(run);
@@ -323,6 +326,19 @@ export async function actionRoutes(app: FastifyInstance) {
     scoped.post('/runs/:id/cancel', async (req) => cancelRun(req.principal, idParam.parse(req.params).id, cancelSteps));
     scoped.post('/runs/:id/rerun', async (req, reply) => reply.code(201).send(await rerun(req.principal, idParam.parse(req.params).id)));
     scoped.post('/runs/:id/resume', async (req) => resume(req.principal, idParam.parse(req.params).id));
+    scoped.post('/runs/:id/pause', async (req) => pauseRun(req.principal, idParam.parse(req.params).id));
+    scoped.post('/runs/:id/unpause', async (req) => unpauseRun(req.principal, idParam.parse(req.params).id));
+    /** Operator step control (admins): force a step to SKIPPED or SUCCESS, with a reason. */
+    const forced = z.object({ comment: z.string().trim().min(1, 'Give a reason (comment)').max(2000) });
+    scoped.post('/runs/:id/steps/:step/skip', { preHandler: requireAdmin }, async (req) => {
+      const { id, step } = stepParams.parse(req.params);
+      return forceStep(req.principal, id, step, 'skip', forced.parse(req.body ?? {}).comment);
+    });
+    scoped.post('/runs/:id/steps/:step/complete', { preHandler: requireAdmin }, async (req) => {
+      const { id, step } = stepParams.parse(req.params);
+      const b = forced.extend({ output: z.unknown().optional() }).parse(req.body ?? {});
+      return forceStep(req.principal, id, step, 'complete', b.comment, b.output);
+    });
     scoped.post('/runs/:id/steps/:step/retry', async (req) => {
       const { id, step } = stepParams.parse(req.params);
       return retryStep(req.principal, id, step);

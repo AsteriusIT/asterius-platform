@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { Modal, SimpleGrid, Stack, Text, Textarea, TextInput } from '@mantine/core';
+import { Modal, NumberInput, Select, SimpleGrid, Stack, Switch, Text, Textarea, TextInput } from '@mantine/core';
 import { useNavigate } from 'react-router';
-import type { ActionTrigger, FormTrigger, InvokerConfig, ObjectSchema, PluginInfo, WorkflowStep, WorkflowTrigger } from '@asterius/shared';
+import type { ActionTrigger, FormTrigger, InvokerConfig, ObjectSchema, PluginInfo, RunConcurrency, WorkflowStep, WorkflowTrigger } from '@asterius/shared';
 import { IconPicker } from '../IconPicker';
 import { fieldProblems, type FieldDraft } from './fields';
 import { MONO_INPUT } from './blocks';
@@ -154,6 +154,64 @@ function CreateAction({
         />
       </Stack>
     </Modal>
+  );
+}
+
+const CONCURRENCY_MODES: { value: RunConcurrency['mode']; label: string }[] = [
+  { value: 'queue', label: 'Queue: extra runs wait for a free slot' },
+  { value: 'cancel-in-progress', label: 'Cancel in progress: a new run cancels the older ones' },
+  { value: 'reject', label: 'Reject: refuse new runs while the group is full' },
+];
+
+/** How runs are scheduled: concurrency group (limit, mode) and claim priority. Absent fields keep the defaults. */
+export function RunOptionsFields({
+  doc,
+  onChange,
+}: {
+  doc: { concurrency?: RunConcurrency; priority?: number };
+  onChange: (patch: { concurrency?: RunConcurrency; priority?: number }) => void;
+}) {
+  const c = doc.concurrency;
+  const set = (patch: Partial<RunConcurrency>) => onChange({ concurrency: { max: 1, mode: 'queue', ...c, ...patch } });
+  return (
+    <Stack gap="xs">
+      <Switch
+        label="Limit concurrent runs"
+        description="At most N runs of a group at a time (for example one deployment per environment)"
+        checked={!!c}
+        onChange={(e) => onChange({ concurrency: e.currentTarget.checked ? { max: 1, mode: 'queue' } : undefined })}
+      />
+      {c && (
+        <SimpleGrid cols={{ base: 1, sm: 2 }}>
+          <TextInput
+            label="Group"
+            description="Template; empty: the workflow identifier"
+            placeholder="deploy-{{ entity.identifier }}"
+            value={c.group ?? ''}
+            onChange={(e) => set({ group: e.currentTarget.value || undefined })}
+            styles={MONO_INPUT}
+          />
+          <NumberInput label="At most" min={1} max={100} value={c.max} onChange={(v) => set({ max: Math.max(1, Number(v) || 1) })} />
+          <Select
+            label="When the group is full"
+            data={CONCURRENCY_MODES}
+            value={c.mode}
+            allowDeselect={false}
+            onChange={(v) => v && set({ mode: v as RunConcurrency['mode'] })}
+            style={{ gridColumn: '1 / -1' }}
+          />
+        </SimpleGrid>
+      )}
+      <NumberInput
+        label="Priority"
+        description="Queued runs start by priority (higher first), then age; -100 to 100, default 0"
+        min={-100}
+        max={100}
+        value={doc.priority ?? 0}
+        onChange={(v) => onChange({ priority: Number(v) || undefined })}
+        w={200}
+      />
+    </Stack>
   );
 }
 

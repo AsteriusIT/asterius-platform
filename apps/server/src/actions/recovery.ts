@@ -7,6 +7,7 @@ import { advance } from './engine.js';
 import { addLog, emitRun, getRun, getRunRow, triggerRun, startAutomatedRun, type RunRow } from './runs.js';
 import { canManageRun, loadSteps, resumableSteps, stepDefs, BLOCKED_STATE } from './steps.js';
 import { getAction } from './actions.js';
+import { acquireSlot } from './concurrency.js';
 
 /**
  * Re-running and recovering runs:
@@ -61,6 +62,9 @@ async function resetSteps(runId: string, ids: string[]): Promise<string[]> {
 }
 
 async function reopen(p: Principal, r: RunRow, stepIds: string[], what: string): Promise<Run> {
+  // A finished run of a concurrency group continues only with a free slot of its group.
+  if (RESUMABLE.includes(r.status) && r.concurrency_group && !(await acquireSlot(r.org_id, r.concurrency_group, Number(r.concurrency_max ?? 1), r.id)))
+    throw conflict(`The concurrency group "${r.concurrency_group}" is full; try again later`);
   const reset = await resetSteps(r.id, stepIds);
   if (!reset.length) throw conflict('Nothing to resume: the steps changed meanwhile');
   if (RESUMABLE.includes(r.status)) {

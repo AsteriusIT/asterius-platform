@@ -553,6 +553,21 @@ function legacyToTrigger(raw: unknown) {
   return { ...a, trigger };
 }
 
+/** Bounds of a run's claim priority (higher first). */
+export const RUN_PRIORITY = { min: -100, max: 100 } as const;
+export const runPriority = z.number().int().min(RUN_PRIORITY.min).max(RUN_PRIORITY.max);
+/**
+ * At most `max` runs of a group at a time. `group` is a template over { action, inputs, entity, trigger } (default: the
+ * action identifier). queue: extra runs wait (FIFO by priority); cancel-in-progress: a new run cancels the older ones;
+ * reject: creating a run while the group is full answers 409.
+ */
+export const runConcurrency = z.object({
+  group: z.string().min(1).max(200).optional(),
+  max: z.number().int().min(1).max(100).default(1),
+  mode: z.enum(['queue', 'cancel-in-progress', 'reject']).default('queue'),
+});
+export type RunConcurrencyDef = z.infer<typeof runConcurrency>;
+
 export const actionDef = z.preprocess(
   legacyToTrigger,
   z.object({
@@ -572,6 +587,10 @@ export const actionDef = z.preprocess(
       .max(50)
       .optional(),
     enabled: z.boolean().default(true),
+    /** Concurrency limit of the runs (see runConcurrency). Omitted: unlimited. */
+    concurrency: runConcurrency.optional(),
+    /** Claim order of queued runs (higher first, default 0); admins may override it per run. */
+    priority: runPriority.optional(),
   }),
 );
 export type ActionDef = z.infer<typeof actionDef>;

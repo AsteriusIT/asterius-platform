@@ -9,6 +9,7 @@ import {
   Code,
   Drawer,
   Group,
+  Modal,
   MultiSelect,
   NativeSelect,
   SegmentedControl,
@@ -23,7 +24,19 @@ import {
 import { notifications } from '@mantine/notifications';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, Navigate, useLocation, useNavigate, useParams, useSearchParams } from 'react-router';
-import { IconCheck, IconExternalLink, IconFileText, IconInfoCircle, IconPlayerPlay, IconPlayerStop, IconRepeat, IconX } from '@tabler/icons-react';
+import {
+  IconCheck,
+  IconCircleCheck,
+  IconExternalLink,
+  IconFileText,
+  IconInfoCircle,
+  IconPlayerPause,
+  IconPlayerPlay,
+  IconPlayerSkipForward,
+  IconPlayerStop,
+  IconRepeat,
+  IconX,
+} from '@tabler/icons-react';
 import type { Run, RunStatus, RunStep } from '@asterius/shared';
 import { api, errorText } from '../lib/api';
 import { DataTable } from '../components/DataTable';
@@ -60,7 +73,7 @@ const runColumns = [
       </div>
     ),
   },
-  { key: 's', label: 'Status', render: (r: Run) => <StatusBadge status={r.status} label={r.statusLabel} /> },
+  { key: 's', label: 'Status', render: (r: Run) => <StatusBadge status={r.status} label={r.paused ? 'Paused' : r.statusLabel} /> },
   { key: 'u', label: 'Requested by', render: (r: Run) => <UserChip user={r.triggeredBy} /> },
   { key: 't', label: 'When', render: (r: Run) => <TimeAgo at={r.createdAt} /> },
   { key: 'd', label: 'Duration', render: (r: Run) => <Text fz="sm">{r.startedAt ? duration(r.startedAt, r.endedAt) : '—'}</Text> },
@@ -304,6 +317,7 @@ function RunActions({ r, onDone, size }: { r: Run; onDone: (run: Run) => void; s
   const navigate = useNavigate();
   const cancel = useMutation({ mutationFn: () => api.cancel(r.id), onSuccess: onDone, onError });
   const resume = useMutation({ mutationFn: () => api.resume(r.id), onSuccess: onDone, onError });
+  const pause = useMutation({ mutationFn: () => (r.paused ? api.unpause(r.id) : api.pause(r.id)), onSuccess: onDone, onError });
   const rerun = useMutation({
     mutationFn: () => api.rerun(r.id),
     onSuccess: (run) => {
@@ -329,6 +343,18 @@ function RunActions({ r, onDone, size }: { r: Run; onDone: (run: Run) => void; s
       {r.canResume && (
         <Button size={size} variant="light" leftSection={<IconPlayerPlay size={16} />} loading={resume.isPending} onClick={() => resume.mutate()}>
           Resume
+        </Button>
+      )}
+      {(r.canPause || r.canUnpause) && (
+        <Button
+          size={size}
+          variant="light"
+          color="yellow"
+          leftSection={r.canUnpause ? <IconPlayerPlay size={16} /> : <IconPlayerPause size={16} />}
+          loading={pause.isPending}
+          onClick={() => pause.mutate()}
+        >
+          {r.canUnpause ? 'Unpause' : 'Pause'}
         </Button>
       )}
       {r.canRerun && (
@@ -463,10 +489,21 @@ function RunFlow({ r }: { r: Run }) {
         meta={
           <>
             <StatusBadge status={r.status} />
-            {r.statusLabel && (
+            {r.paused && (
+              <Badge color="yellow" variant="light">
+                paused
+              </Badge>
+            )}
+            {queueLabel(r) ? (
               <Text span fz="xs" c="dimmed" truncate>
-                {r.statusLabel}
+                {queueLabel(r)}
               </Text>
+            ) : (
+              r.statusLabel && (
+                <Text span fz="xs" c="dimmed" truncate>
+                  {r.statusLabel}
+                </Text>
+              )
             )}
           </>
         }
@@ -540,6 +577,8 @@ function RunFlow({ r }: { r: Run }) {
                 <Row k="Started" v={<TimeAgo at={r.startedAt} />} />
                 <Row k="Duration" v={r.startedAt ? duration(r.startedAt, r.endedAt) : '—'} />
                 <Row k="Action" v={<Code>{r.action}</Code>} />
+                {!!r.priority && <Row k="Priority" v={r.priority} />}
+                {r.concurrency && <Row k="Concurrency group" v={`${r.concurrency.group} (at most ${r.concurrency.max} at a time)`} />}
                 {!!r.costUsd && <Row k="AI cost" v={`$${r.costUsd.toFixed(4)}`} />}
               </Table.Tbody>
             </Table>
@@ -648,6 +687,7 @@ function StepPanel({ run, step, onDone }: { run: Run; step: RunStep; onDone: (r:
     onSuccess: onDone,
     onError: (e) => notifications.show({ color: 'red', message: errorText(e) }),
   });
+  const [forcing, setForcing] = useState<'skip' | 'complete' | null>(null);
   const output = step.output as Record<string, unknown> | null;
   const textOnly = output && Object.keys(output).length === 1 && typeof output.text === 'string';
   return (
@@ -675,6 +715,16 @@ function StepPanel({ run, step, onDone }: { run: Run; step: RunStep; onDone: (r:
               Retry step
             </Button>
           )}
+          {step.canSkip && (
+            <Button size="xs" variant="default" leftSection={<IconPlayerSkipForward size={14} />} onClick={() => setForcing('skip')}>
+              Skip
+            </Button>
+          )}
+          {step.canComplete && (
+            <Button size="xs" variant="default" leftSection={<IconCircleCheck size={14} />} onClick={() => setForcing('complete')}>
+              Mark done
+            </Button>
+          )}
           {step.link && (
             <Button size="xs" component="a" href={step.link} target="_blank" variant="default" rightSection={<IconExternalLink size={14} />}>
               Open
@@ -683,6 +733,7 @@ function StepPanel({ run, step, onDone }: { run: Run; step: RunStep; onDone: (r:
         </Group>
       </Group>
 
+      {forcing && <ForceStepDialog run={run} step={step} kind={forcing} onClose={() => setForcing(null)} onDone={onDone} />}
       {step.message && (
         <Box p="sm" my="xs" style={{ background: 'var(--surface)', borderRadius: 12 }}>
           <Markdown>{step.message}</Markdown>
@@ -770,6 +821,69 @@ function StepPanel({ run, step, onDone }: { run: Run; step: RunStep; onDone: (r:
         </Box>
       )}
     </Card>
+  );
+}
+
+/** "Waiting for 2 run(s) in group deploy-prod": a queued run held by its concurrency group. */
+function queueLabel(r: Run) {
+  if (r.status !== 'QUEUED' || !r.concurrency || !r.concurrency.ahead) return null;
+  return `Waiting for ${r.concurrency.ahead} run(s) in group ${r.concurrency.group}`;
+}
+
+/** Admins: force a step to SKIPPED or SUCCESS, with a required reason (logged on the run and audited). */
+function ForceStepDialog(props: { run: Run; step: RunStep; kind: 'skip' | 'complete'; onClose: () => void; onDone: (r: Run) => void }) {
+  const { run, step, kind } = props;
+  const [comment, setComment] = useState('');
+  const [output, setOutput] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const force = useMutation({
+    mutationFn: () => {
+      let value: unknown;
+      if (kind === 'complete' && output.trim()) value = JSON.parse(output) as unknown; // invalid JSON: shown by onError
+      return api.forceStep(run.id, step.id, kind, comment, value);
+    },
+    onSuccess: (r) => {
+      props.onDone(r);
+      props.onClose();
+    },
+    onError: (e) => setError(errorText(e)),
+  });
+  return (
+    <Modal opened onClose={props.onClose} title={<Text fw={600}>{kind === 'skip' ? `Skip "${step.name}"` : `Mark "${step.name}" as done`}</Text>}>
+      <Stack>
+        <Text fz="sm" c="dimmed">
+          {kind === 'skip'
+            ? 'The step ends as skipped and the workflow continues with the next steps.'
+            : 'The step ends as successful with the output below and the workflow continues.'}{' '}
+          {step.status === 'RUNNING' ? 'The work in flight can no longer report a result.' : ''}
+        </Text>
+        <Textarea label="Reason" withAsterisk autosize minRows={2} value={comment} onChange={(e) => setComment(e.currentTarget.value)} />
+        {kind === 'complete' && (
+          <Textarea
+            label="Output (JSON, optional)"
+            description="What later steps read as steps.<id>.output"
+            autosize
+            minRows={3}
+            styles={{ input: { fontFamily: 'var(--mantine-font-family-monospace)' } }}
+            value={output}
+            onChange={(e) => setOutput(e.currentTarget.value)}
+          />
+        )}
+        {error && (
+          <Alert color="red" py="xs">
+            {error}
+          </Alert>
+        )}
+        <Group justify="flex-end">
+          <Button variant="default" onClick={props.onClose}>
+            Cancel
+          </Button>
+          <Button disabled={!comment.trim()} loading={force.isPending} onClick={() => force.mutate()}>
+            {kind === 'skip' ? 'Skip step' : 'Mark as done'}
+          </Button>
+        </Group>
+      </Stack>
+    </Modal>
   );
 }
 

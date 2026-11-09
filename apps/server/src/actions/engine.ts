@@ -24,6 +24,7 @@ import { runAgent, StepError, wrapUntrusted } from './agent.js';
 import { wake } from './wake.js';
 import { notifyPendingDecision } from '../notifications/dispatch.js';
 import { cancelChildrenOf, startSubWorkflow, startWaitingStep } from './waiting.js';
+import { admitGrouped } from './concurrency.js';
 
 /**
  * Workflow engine. A run's steps form a graph (see workflow.ts); the engine moves each step through
@@ -109,6 +110,8 @@ export async function advance(runId: string): Promise<void> {
   const r = await getRunRow(runId);
   if (r.status !== 'IN_PROGRESS' || r.cancel_requested) return;
   const defs = stepDefs(r);
+  // Paused: nothing new starts (unpause advances again); the run still finishes if its last steps just did.
+  if (r.paused_at) return finishOrLabel(runId, defs, r.paused_by);
   let changed = true;
   // Skips cascade (a skipped dependency can unblock or block the next step): loop until stable.
   while (changed) {
@@ -222,7 +225,7 @@ export async function setStep(runId: string, stepId: string, from: StepRow['stat
 }
 
 /** All steps terminal → finish the run; otherwise show what is going on in the run's status label. */
-async function finishOrLabel(runId: string, defs: Step[]) {
+async function finishOrLabel(runId: string, defs: Step[], pausedBy?: string | null) {
   const rows = await loadSteps(runId);
   if (!rows.length) return;
   if (rows.every((s) => isTerminal(s.status))) {
@@ -243,7 +246,14 @@ async function finishOrLabel(runId: string, defs: Step[]) {
   }
   const waiting = rows.filter((s) => s.status === 'WAITING_APPROVAL').map((s) => s.name);
   const running = rows.filter((s) => ['RUNNING', 'QUEUED', 'WAITING'].includes(s.status)).map((s) => s.name);
-  const label = waiting.length ? `Waiting for approval: ${waiting.join(', ')}` : running.length ? `Running: ${running.join(', ')}` : null;
+  const label =
+    pausedBy !== undefined
+      ? `Paused${pausedBy ? ` by ${pausedBy}` : ''}`
+      : waiting.length
+        ? `Waiting for approval: ${waiting.join(', ')}`
+        : running.length
+          ? `Running: ${running.join(', ')}`
+          : null;
   const r = await one<{ status_label: string | null }>('SELECT status_label FROM runs WHERE id = ?', runId);
   if (r && r.status_label !== label) await updateRun(runId, { statusLabel: label });
 }
@@ -685,7 +695,7 @@ async function approvalExtras(runId: string, stepId: string) {
 
 // ---------- cancellation ----------
 /** Best effort: ask the external system to stop a running invoke step (pipeline, job). */
-async function cancelExternal(r: RunRow, row: StepRow) {
+export async function cancelExternal(r: RunRow, row: StepRow) {
   const def = stepDefs(r).find((d) => d.id === row.step_id);
   if (row.status !== 'RUNNING' || def?.type !== 'invoke' || !row.state) return;
   try {
@@ -728,18 +738,24 @@ export const LEASES: Record<Step['type'], number> = {
 // Postgres: concurrent replicas skip rows another claim already locked instead of queueing behind or racing for them.
 const skipLocked = dialect === 'postgres' ? ' FOR UPDATE SKIP LOCKED' : '';
 
-/** Claim up to `limit` QUEUED runs in one statement (QUEUED → IN_PROGRESS) and start their workflows through `spawn`. */
+/**
+ * Claim up to `limit` QUEUED runs (QUEUED → IN_PROGRESS) and start their workflows through `spawn`: runs without a
+ * concurrency group in one statement, then runs of groups that have a free slot (concurrency.ts). Both by priority
+ * (higher first), then age.
+ */
 export async function claimRuns(worker: string, limit: number, spawn: (fn: () => Promise<void>) => void) {
   if (limit <= 0) return 0;
   const t = now();
   const { rows } = await driver.query<{ id: string }>(
-    `WITH picked AS MATERIALIZED (SELECT id FROM runs WHERE status = 'QUEUED' ORDER BY created_at LIMIT ?${skipLocked})
+    `WITH picked AS MATERIALIZED (
+       SELECT id FROM runs WHERE status = 'QUEUED' AND concurrency_group IS NULL ORDER BY priority DESC, created_at LIMIT ?${skipLocked})
      UPDATE runs SET status = 'IN_PROGRESS', worker = ?, started_at = ?, updated_at = ?
-     WHERE status = 'QUEUED' AND id IN (SELECT id FROM picked) RETURNING id`,
+     WHERE status = 'QUEUED' AND concurrency_group IS NULL AND id IN (SELECT id FROM picked) RETURNING id`,
     [limit, worker, t, t],
   );
-  for (const { id } of rows) spawn(() => inRunOrg(id, () => initRun(id)));
-  return rows.length;
+  const ids = [...rows.map((r) => r.id), ...(await admitGrouped(worker, limit - rows.length))];
+  for (const id of ids) spawn(() => inRunOrg(id, () => initRun(id)));
+  return ids.length;
 }
 
 /** Claim up to `slots` due QUEUED steps in one statement (QUEUED → RUNNING with a lease) and execute them through `spawn`. */
@@ -749,6 +765,7 @@ export async function claimSteps(worker: string, slots: number, spawn: (fn: () =
   const { rows } = await driver.query<StepRow>(
     `WITH picked AS MATERIALIZED (
        SELECT run_id, step_id FROM run_steps WHERE status = 'QUEUED' AND (next_at IS NULL OR next_at <= ?)
+         AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.id = run_steps.run_id AND r.paused_at IS NOT NULL)
        ORDER BY next_at NULLS FIRST LIMIT ?${skipLocked})
      UPDATE run_steps SET status = 'RUNNING', attempt = attempt + 1, worker = ?,
        locked_until = CASE type WHEN 'agent' THEN ? WHEN 'transform' THEN ? ELSE ? END,
@@ -831,8 +848,10 @@ export async function stepHousekeeping(log: FastifyBaseLogger) {
         ),
       );
     // Step timeouts (running steps and approvals). Only the replica winning the transition cancels the external job.
+    // Queued steps held by a paused run are not due (unpause extends their deadline by the paused time).
     for (const s of await all<StepRow>(
-      "SELECT * FROM run_steps WHERE status IN ('QUEUED', 'RUNNING', 'WAITING_APPROVAL', 'WAITING') AND deadline_at IS NOT NULL AND deadline_at < ? LIMIT ?",
+      `SELECT * FROM run_steps WHERE status IN ('QUEUED', 'RUNNING', 'WAITING_APPROVAL', 'WAITING') AND deadline_at IS NOT NULL AND deadline_at < ?
+         AND NOT (status = 'QUEUED' AND EXISTS (SELECT 1 FROM runs r WHERE r.id = run_steps.run_id AND r.paused_at IS NOT NULL)) LIMIT ?`,
       t,
       BATCH,
     ))
@@ -846,8 +865,9 @@ export async function stepHousekeeping(log: FastifyBaseLogger) {
         if (r) await cancelExternal(r, s);
       });
     // Run deadline (RUN_TIMEOUT_HOURS): claim by setting cancel_requested so workers stop at once, then terminate.
+    // Paused runs are exempt: unpausing extends the deadline by the paused time.
     for (const r of await all<{ id: string }>(
-      "SELECT id FROM runs WHERE status = 'IN_PROGRESS' AND deadline_at IS NOT NULL AND deadline_at < ? AND cancel_requested = 0 LIMIT ?",
+      "SELECT id FROM runs WHERE status = 'IN_PROGRESS' AND deadline_at IS NOT NULL AND deadline_at < ? AND cancel_requested = 0 AND paused_at IS NULL LIMIT ?",
       t,
       BATCH,
     ))
@@ -872,10 +892,10 @@ export async function stepHousekeeping(log: FastifyBaseLogger) {
           : terminateRun(r.id, 'CANCELLED', null, 'Cancellation completed'),
       );
     // Runs that nothing drives anymore: no steps yet (start interrupted) or no active step (a transition's follow-up
-    // was interrupted, or the workflow completed without being finalized).
+    // was interrupted, or the workflow completed without being finalized). A paused run is driven by its unpause.
     for (const r of await all<{ id: string; n: number }>(
       `SELECT r.id, (SELECT count(*) FROM run_steps s WHERE s.run_id = r.id) AS n FROM runs r
-       WHERE r.status = 'IN_PROGRESS' AND r.cancel_requested = 0 AND r.started_at < ?
+       WHERE r.status = 'IN_PROGRESS' AND r.cancel_requested = 0 AND r.paused_at IS NULL AND r.started_at < ?
          AND NOT EXISTS (SELECT 1 FROM run_steps s WHERE s.run_id = r.id AND s.status IN ('QUEUED', 'RUNNING', 'WAITING_APPROVAL', 'WAITING')) LIMIT ?`,
       later(-60_000),
       BATCH,

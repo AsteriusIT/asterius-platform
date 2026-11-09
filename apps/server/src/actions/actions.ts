@@ -30,6 +30,8 @@ interface Row {
   next_fire_at: string | null;
   version: number;
   allowed_secrets: string | null;
+  /** JSON { concurrency, priority } (migration 4); NULL: defaults. */
+  run_options?: string | null;
 }
 
 /** Stored in the trigger column when a workflow has no trigger yet (draft). */
@@ -65,6 +67,7 @@ function toAction(r: Row): Action {
     ...(declared || !invoker ? {} : { invoker }),
     enabled: bool(r.enabled),
     managed: bool(r.managed),
+    ...json<Pick<Action, 'concurrency' | 'priority'>>(r.run_options ?? null, {}),
   };
 }
 
@@ -163,6 +166,8 @@ export async function upsertAction(
       org,
       def.identifier,
     );
+  const runOptions = def.concurrency || def.priority !== undefined ? JSON.stringify({ concurrency: def.concurrency, priority: def.priority }) : null;
+  await run('UPDATE actions SET run_options = ? WHERE org_id = ? AND identifier = ?', runOptions, org, def.identifier);
   invalidateTriggerCache();
   return { action: await getAction(def.identifier), created: !existing };
 }
