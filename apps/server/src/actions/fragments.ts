@@ -378,3 +378,14 @@ export async function listFragmentVersions(id: string): Promise<FragmentVersion[
   );
   return rows.map((r) => ({ version: Number(r.version), actor: r.actor_email, at: r.created_at, definition: json(r.definition, {}) }));
 }
+
+export async function getFragmentVersion(id: string, version: number): Promise<FragmentVersion> {
+  const r = await one<{ version: number; actor_email: string | null; created_at: string; definition: string }>(
+    'SELECT version, actor_email, created_at, definition FROM fragment_versions WHERE org_id = ? AND fragment = ? AND version = ?',
+    orgId(),
+    id,
+    version,
+  );
+  if (!r) throw notFound(`Version ${version} of fragment ${id}`);
+  return { version: Number(r.version), actor: r.actor_email, at: r.created_at, definition: json(r.definition, {}) };
+}

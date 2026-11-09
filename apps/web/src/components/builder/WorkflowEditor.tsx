@@ -161,6 +161,7 @@ export function StepSettings({
   onEntity,
   warnings,
   update,
+  params,
 }: {
   steps: WorkflowStep[];
   index: number;
@@ -170,6 +171,8 @@ export function StepSettings({
   onEntity: boolean;
   warnings: string[];
   update: (patch: Partial<WorkflowStep>) => void;
+  /** Inside a fragment: its parameter names (`params.<name>`). */
+  params?: string[];
 }) {
   const step = steps[index]!;
   return (
@@ -189,7 +192,7 @@ export function StepSettings({
           styles={MONO_INPUT}
         />
       </SimpleGrid>
-      <Variables steps={steps} index={index} inputFields={inputFields} blueprint={triggerBlueprint} onEntity={onEntity} />
+      <Variables steps={steps} index={index} inputFields={inputFields} params={params} blueprint={triggerBlueprint} onEntity={onEntity} />
       {step.type === 'invoke' && <InvokeEditor step={step} invokers={invokers} onChange={update} />}
       {step.type === 'approval' && <ApprovalEditor step={step} onEntity={onEntity} onChange={update} />}
       {step.type === 'agent' && <AgentEditor step={step} onChange={update} />}
@@ -233,12 +236,14 @@ function Variables({
   steps,
   index,
   inputFields,
+  params,
   blueprint,
   onEntity,
 }: {
   steps: WorkflowStep[];
   index: number;
   inputFields: FieldDraft[];
+  params?: string[];
   blueprint: string | null;
   onEntity: boolean;
 }) {
@@ -257,6 +262,7 @@ function Variables({
     const loop = current && 'forEach' in current && current.forEach ? ['item', 'index'] : [];
     return [
       ...inputFields.filter((f) => f.name).map((f) => `inputs.${f.name}`),
+      ...(params ?? []).map((p) => `params.${p}`),
       ...(onEntity
         ? ['entity.identifier', 'entity.title', 'entity.team', ...Object.keys(bp.data?.schema.properties ?? {}).map((p) => `entity.properties.${p}`)]
         : []),
@@ -269,7 +275,7 @@ function Variables({
       'run.callback.url',
       'run.callback.token',
     ];
-  }, [steps, index, inputFields, onEntity, bp.data]);
+  }, [steps, index, inputFields, params, onEntity, bp.data]);
   return (
     <Stack gap={6} p="sm" style={{ background: 'var(--surface)', borderRadius: 12 }}>
       <Text fz="xs" c="dimmed">

@@ -16,6 +16,8 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import {
+  IconArrowsMaximize,
+  IconArrowsMinimize,
   IconArrowsSplit,
   IconBolt,
   IconCheck,
@@ -51,6 +53,12 @@ export interface FlowStep {
   /** Shown under the name instead of the step type (a status label, an error count…). */
   detail?: string | null;
   badges?: string[];
+  /** A step drawn inside another one (the steps of an expanded fragment): clicking it selects `group`, and it cannot be linked or extended. */
+  group?: string;
+  /** Shown before the type in the node's kicker (the fragment of a grouped step). */
+  groupLabel?: string;
+  /** Fragment steps: whether its own steps are drawn (undefined: no toggle). */
+  expanded?: boolean;
 }
 
 export interface FlowTrigger {
@@ -109,6 +117,11 @@ type NodeData = {
   selected: boolean;
   editable: boolean;
   onAdd?: (type: WorkflowStepType) => void;
+  /** Id selected on click (a grouped step selects its group). */
+  selects: string;
+  inner: boolean;
+  expanded?: boolean;
+  onToggle?: () => void;
 };
 
 function ToneIcon({ tone }: { tone: FlowTone }) {
@@ -141,6 +154,7 @@ const FlowNode = memo(function FlowNode({ data }: NodeProps<Node<NodeData>>) {
           borderWidth: data.tone === 'idle' ? 1 : 2,
           borderStyle: data.tone === 'skipped' ? 'dashed' : 'solid',
           opacity: data.tone === 'skipped' ? 0.65 : 1,
+          background: data.inner ? 'var(--mantine-color-default-hover)' : undefined,
         }}
       >
         <Group gap={8} wrap="nowrap" justify="space-between">
@@ -162,7 +176,27 @@ const FlowNode = memo(function FlowNode({ data }: NodeProps<Node<NodeData>>) {
               )}
             </Box>
           </Group>
-          <ToneIcon tone={data.tone} />
+          <Group gap={4} wrap="nowrap">
+            <ToneIcon tone={data.tone} />
+            {data.onToggle && (
+              <Tooltip label={data.expanded ? 'Hide its steps' : 'Show its steps'}>
+                <ActionIcon
+                  className="nodrag"
+                  size="sm"
+                  variant="subtle"
+                  color="gray"
+                  aria-label={`${data.expanded ? 'Hide' : 'Show'} the steps of ${data.title}`}
+                  aria-expanded={data.expanded}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    data.onToggle!();
+                  }}
+                >
+                  {data.expanded ? <IconArrowsMinimize size={14} /> : <IconArrowsMaximize size={14} />}
+                </ActionIcon>
+              </Tooltip>
+            )}
+          </Group>
         </Group>
         {data.badges.length > 0 && (
           <Group gap={4} mt={6}>
@@ -247,11 +281,13 @@ export function WorkflowFlow(props: {
   onAdd?: (after: string, type: WorkflowStepType) => void;
   onConnect?: (source: string, target: string) => void;
   onDisconnect?: (source: string, target: string) => void;
+  /** Toggle of a fragment step (FlowStep.expanded). */
+  onToggle?: (id: string) => void;
   height?: number | string;
   /** No frame (the flow views, where the canvas is the page). */
   bare?: boolean;
 }) {
-  const { trigger, steps, selected, editable = false, onAdd } = props;
+  const { trigger, steps, selected, editable = false, onAdd, onToggle } = props;
   const colorMode = useComputedColorScheme('light');
 
   const { nodes, edges } = useMemo(() => {
@@ -277,6 +313,8 @@ export function WorkflowFlow(props: {
           selected: selected === TRIGGER_ID,
           editable,
           onAdd: onAdd ? (t) => onAdd(TRIGGER_ID, t) : undefined,
+          selects: TRIGGER_ID,
+          inner: false,
         },
       });
     }
@@ -287,21 +325,27 @@ export function WorkflowFlow(props: {
           type: 'flow',
           position: { x: (c + offset) * COL, y: rowsOf(stage.length, r) },
           deletable: false,
+          connectable: !s.group,
           data: {
             kind: 'step',
-            kicker: STEP_TYPES[s.type].label,
+            kicker: s.groupLabel ? `${s.groupLabel} · ${STEP_TYPES[s.type].label}` : STEP_TYPES[s.type].label,
             title: s.name || s.id,
             detail: s.detail,
             type: s.type,
             tone: s.tone ?? 'idle',
             badges: s.badges ?? [],
-            selected: selected === s.id,
-            editable,
-            onAdd: onAdd ? (t) => onAdd(s.id, t) : undefined,
+            selected: selected === s.id || (!!s.group && selected === s.group),
+            editable: editable && !s.group,
+            onAdd: onAdd && !s.group ? (t) => onAdd(s.id, t) : undefined,
+            selects: s.group ?? s.id,
+            inner: !!s.group,
+            expanded: s.expanded,
+            onToggle: onToggle && s.expanded !== undefined ? () => onToggle(s.id) : undefined,
           },
         }),
       ),
     );
+    const grouped = new Set(steps.filter((s) => s.group).map((s) => s.id));
     const edge = (source: string, target: string, tone: FlowTone): Edge => {
       const stroke = tone === 'idle' ? 'var(--mantine-color-gray-5)' : TONE_COLOR[tone];
       return {
@@ -310,7 +354,8 @@ export function WorkflowFlow(props: {
         target,
         type: 'smoothstep',
         animated: tone === 'running',
-        deletable: editable && source !== TRIGGER_ID,
+        // Links of a fragment's own steps are drawn, not edited (they belong to the fragment).
+        deletable: editable && source !== TRIGGER_ID && !grouped.has(source) && !grouped.has(target),
         style: { stroke, strokeWidth: tone === 'idle' ? 1.5 : 2.5, strokeDasharray: tone === 'skipped' ? '5 4' : undefined },
         markerEnd: { type: MarkerType.ArrowClosed, color: stroke, width: 16, height: 16 },
       };
@@ -321,7 +366,7 @@ export function WorkflowFlow(props: {
       for (const d of s.needs) if (tones.has(d)) edges.push(edge(d, s.id, tones.get(d)!));
     }
     return { nodes, edges };
-  }, [trigger, steps, selected, editable, onAdd]);
+  }, [trigger, steps, selected, editable, onAdd, onToggle]);
 
   return (
     <Box h={props.height ?? 360} className={props.bare ? 'workflow-flow workflow-flow-bare' : 'workflow-flow'} aria-label="Workflow graph">
@@ -341,7 +386,7 @@ export function WorkflowFlow(props: {
         deleteKeyCode={editable ? ['Backspace', 'Delete'] : null}
         snapToGrid
         snapGrid={[GRID, GRID]}
-        onNodeClick={(_, n) => props.onSelect?.(n.id)}
+        onNodeClick={(_, n) => props.onSelect?.(n.data.selects)}
         onConnect={(c) => c.source && c.target && c.source !== TRIGGER_ID && props.onConnect?.(c.source, c.target)}
         onEdgesDelete={(es) => es.forEach((e) => props.onDisconnect?.(e.source, e.target))}
         zoomOnScroll={editable}

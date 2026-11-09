@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Alert, Button, Group, Modal, Stack, Switch, Text } from '@mantine/core';
+import { Alert, Button, Group, Modal, NumberInput, Stack, Switch, Text } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router';
@@ -95,9 +95,16 @@ function RunForm({
   const { isAdmin } = useAuth();
   const inBlackout = !!action.blackout?.active;
   const [override, setOverride] = useState(false);
+  // Admins: claim order of this run among queued ones (empty: the workflow's priority).
+  const [priority, setPriority] = useState<number | null>(null);
   const run = useMutation({
     mutationFn: () =>
-      api.trigger(action.identifier, { entity: entity?.identifier ?? null, inputs: values, ...(inBlackout && override ? { overrideBlackout: true } : {}) }),
+      api.trigger(action.identifier, {
+        entity: entity?.identifier ?? null,
+        inputs: values,
+        ...(inBlackout && override ? { overrideBlackout: true } : {}),
+        ...(isAdmin && priority !== null ? { priority } : {}),
+      }),
     onSuccess: (r) => {
       clearDraft(action.identifier, entityId);
       pushRecent(action.identifier);
@@ -136,6 +143,20 @@ function RunForm({
         </Alert>
       )}
       {Object.keys(inputs.properties ?? {}).length > 0 && <SchemaForm schema={inputs} values={values} onChange={setValues} errors={errors} />}
+      {isAdmin && (
+        <NumberInput
+          label="Priority (admins)"
+          description={`Queued runs start by priority, higher first, then age. Leave empty for the workflow's priority (${action.priority ?? 0}).`}
+          placeholder={String(action.priority ?? 0)}
+          min={-100}
+          max={100}
+          allowDecimal={false}
+          clampBehavior="strict"
+          value={priority ?? ''}
+          onChange={(v) => setPriority(typeof v === 'number' ? v : v === '' ? null : Number(v))}
+          w={{ base: '100%', sm: 240 }}
+        />
+      )}
       {run.error && (
         <Alert color="red" variant="light">
           {errorText(run.error)}

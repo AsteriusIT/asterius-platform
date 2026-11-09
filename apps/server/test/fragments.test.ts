@@ -82,6 +82,16 @@ describe('fragment definitions', () => {
     expect((await admin.put('/api/v1/fragments/greet', greet)).data.version).toBe(1);
     expect((await admin.put('/api/v1/fragments/greet', { ...greet, description: 'Says hello' })).data.version).toBe(2);
     expect((await admin.get('/api/v1/fragments/greet/versions')).data.map((v: { version: number }) => v.version)).toEqual([2, 1]);
+    // Diff and rollback (a new version with the old definition, audited).
+    const diff = await admin.get('/api/v1/fragments/greet/diff?from=1&to=2');
+    expect(diff.data.fields).toEqual([{ path: 'description', before: '', after: 'Says hello' }]);
+    expect((await bob.post('/api/v1/fragments/greet/rollback', { version: 1 })).status).toBe(403);
+    expect((await admin.post('/api/v1/fragments/greet/rollback', { version: 9 })).status).toBe(404);
+    const restored = await admin.post('/api/v1/fragments/greet/rollback', { version: 1 });
+    expect(restored.status, JSON.stringify(restored.data)).toBe(200);
+    expect(restored.data).toMatchObject({ version: 3, description: '' });
+    const rolled = (await admin.get('/api/v1/audit?action=fragment.rolled_back')).data as { target: string }[];
+    expect(rolled.some((a) => a.target === 'greet')).toBe(true);
     expect((await admin.get('/api/v1/fragments')).data.map((f: { identifier: string }) => f.identifier)).toContain('greet');
     const audit = (await admin.get('/api/v1/audit?action=fragment.updated')).data as { target: string }[];
     expect(audit.some((a) => a.target === 'greet')).toBe(true);

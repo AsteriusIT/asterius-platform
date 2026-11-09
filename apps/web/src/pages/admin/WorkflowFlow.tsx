@@ -5,7 +5,7 @@ import { notifications } from '@mantine/notifications';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Navigate, useParams } from 'react-router';
 import { IconCode, IconDeviceFloppy, IconFlask, IconHistory, IconPlus, IconSettings, IconTestPipe, IconTrash, IconX } from '@tabler/icons-react';
-import type { Action, BlackoutWindow, DryRunResult, DryRunStep, WorkflowStep, WorkflowStepType, WorkflowTest } from '@asterius/shared';
+import type { Action, BlackoutWindow, DryRunResult, DryRunStep, Fragment, WorkflowStep, WorkflowStepType, WorkflowTest } from '@asterius/shared';
 import { api, errorText } from '../../lib/api';
 import { connectSteps, controlBadges, disconnectSteps, insertStepAfter, needsOf, STEP_TYPES, stepWarnings, type FlowTone } from '../../lib/workflow';
 import { QueryView } from '../../components/ui';
@@ -159,26 +159,53 @@ function FlowEditor({ value, readOnly, version }: { value: Record<string, unknow
   const disconnect = useCallback((source: string, target: string) => setSteps((steps) => disconnectSteps(steps, source, target)), [setSteps]);
 
   const testOf = useMemo(() => new Map((test?.steps ?? []).map((s) => [s.id, s])), [test]);
-  const flowSteps: FlowStep[] = useMemo(
-    () =>
-      doc.steps.map((s, i) => {
-        const t = testOf.get(s.id);
-        return {
-          id: s.id,
-          name: s.name,
-          type: s.type,
-          needs: needsOf(doc.steps, i),
-          tone: t ? TEST_TONE[t.status] : undefined,
-          detail: t?.errors.length
-            ? `${t.errors.length} problem${t.errors.length > 1 ? 's' : ''}`
-            : t?.status === 'skipped'
-              ? ((t.rendered as { skipped?: string } | undefined)?.skipped ?? 'condition is false')
-              : null,
-          badges: [...(s.if ? ['if'] : []), ...controlBadges(s), ...(s.retries ? [`${s.retries} retries`] : []), ...(s.continueOnError ? ['may fail'] : [])],
-        };
+  // Fragment steps can be expanded to draw the fragment's own steps (as a run inlines them).
+  const usesFragments = doc.steps.some((s) => s.type === 'fragment');
+  const fragments = useQuery({ queryKey: ['fragments'], queryFn: api.fragments, enabled: usesFragments });
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const toggle = useCallback(
+    (id: string) =>
+      setExpanded((e) => {
+        const next = new Set(e);
+        if (!next.delete(id)) next.add(id);
+        return next;
       }),
-    [doc.steps, testOf],
+    [],
   );
+  const flowSteps: FlowStep[] = useMemo(() => {
+    const byId = new Map((fragments.data ?? []).map((f) => [f.identifier, f]));
+    const testView = (id: string) => {
+      const t = testOf.get(id);
+      return {
+        tone: t ? TEST_TONE[t.status] : undefined,
+        detail: t?.errors.length
+          ? `${t.errors.length} problem${t.errors.length > 1 ? 's' : ''}`
+          : t?.status === 'skipped'
+            ? ((t.rendered as { skipped?: string } | undefined)?.skipped ?? 'condition is false')
+            : null,
+      };
+    };
+    return doc.steps.flatMap((s, i): FlowStep[] => {
+      const needs = needsOf(doc.steps, i);
+      const own: FlowStep = {
+        id: s.id,
+        name: s.name,
+        type: s.type,
+        needs,
+        ...testView(s.id),
+        badges: [...(s.if ? ['if'] : []), ...controlBadges(s), ...(s.retries ? [`${s.retries} retries`] : []), ...(s.continueOnError ? ['may fail'] : [])],
+      };
+      if (s.type !== 'fragment') return [own];
+      const def = byId.get(s.fragment);
+      if (!def) return [own];
+      own.expanded = expanded.has(s.id);
+      if (!own.expanded) return [own];
+      const inner = fragmentSteps(s.id, def, needs).map((x) => ({ ...x, ...testView(x.id) }));
+      // The fragment step itself computes the outputs once the fragment's last steps are done.
+      const exits = inner.filter((x) => !inner.some((y) => y.needs.includes(x.id))).map((x) => x.id);
+      return [...inner, { ...own, needs: exits, detail: own.detail ?? 'outputs' }];
+    });
+  }, [doc.steps, testOf, fragments.data, expanded]);
   const form = isFormLike(doc.trigger) ? doc.trigger : null;
   const trigger: FlowTrigger | null = useMemo(
     () =>
@@ -369,6 +396,7 @@ function FlowEditor({ value, readOnly, version }: { value: Record<string, unknow
           onAdd={add}
           onConnect={connect}
           onDisconnect={disconnect}
+          onToggle={toggle}
         />
       </FlowShell>
 
@@ -560,4 +588,21 @@ function TestResult({ step }: { step: DryRunStep }) {
       </Stack>
     </Alert>
   );
+}
+
+/** The steps of a fragment as a run inlines them: ids `<step>__<inner>`, entry steps waiting for what the fragment step waits for. */
+function fragmentSteps(stepId: string, def: Fragment, needs: string[]): FlowStep[] {
+  const prefix = `${stepId}__`;
+  return def.steps.map((x, j) => {
+    const own = needsOf(def.steps, j);
+    return {
+      id: `${prefix}${x.id}`,
+      name: x.name || x.id,
+      type: x.type,
+      needs: own.length ? own.map((n) => `${prefix}${n}`) : needs,
+      group: stepId,
+      groupLabel: def.title,
+      badges: x.if ? ['if'] : [],
+    };
+  });
 }

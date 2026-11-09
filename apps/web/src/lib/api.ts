@@ -32,6 +32,7 @@ import type {
   RunPage,
   Policy,
   Fragment,
+  FragmentVersion,
   Scorecard,
   ScorecardResult,
   ScorecardSummary,
@@ -312,7 +313,7 @@ export const api = {
   action: (id: string) => request<Action>('GET', v1(`/actions/${enc(id)}`)),
   saveAction: (id: string, body: unknown) => request<Action>('PUT', v1(`/actions/${enc(id)}`), body),
   deleteAction: (id: string) => request('DELETE', v1(`/actions/${enc(id)}`)),
-  trigger: (id: string, body: { entity?: string | null; inputs: Record<string, unknown>; overrideBlackout?: boolean }) =>
+  trigger: (id: string, body: { entity?: string | null; inputs: Record<string, unknown>; overrideBlackout?: boolean; priority?: number }) =>
     request<Run>('POST', v1(`/actions/${enc(id)}/runs`), body),
 
   runs: (q: { mine?: boolean; status?: string; action?: string; blueprint?: string; entity?: string; limit?: number; offset?: number }) =>
@@ -358,6 +359,10 @@ export const api = {
   fragments: () => request<Fragment[]>('GET', v1('/fragments')),
   saveFragment: (id: string, body: unknown) => request<Fragment>('PUT', v1(`/fragments/${enc(id)}`), body),
   deleteFragment: (id: string) => request('DELETE', v1(`/fragments/${enc(id)}`)),
+  fragmentVersions: (id: string) => request<FragmentVersion[]>('GET', v1(`/fragments/${enc(id)}/versions`)),
+  fragmentDiff: (id: string, from: number, to: number) =>
+    request<ActionVersionDiff>('GET', v1(`/fragments/${enc(id)}/diff${qs({ from: String(from), to: String(to) })}`)),
+  rollbackFragment: (id: string, version: number) => request<Fragment>('POST', v1(`/fragments/${enc(id)}/rollback`), { version }),
   scorecards: (blueprint?: string) => request<Scorecard[]>('GET', v1(`/scorecards${qs({ blueprint })}`)),
   saveScorecard: (id: string, body: unknown) => request<Scorecard>('PUT', v1(`/scorecards/${enc(id)}`), body),
   deleteScorecard: (id: string) => request('DELETE', v1(`/scorecards/${enc(id)}`)),

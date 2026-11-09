@@ -32,6 +32,7 @@ import { Mono, PageHeader, TimeAgo } from '../../components/ui';
 import { NewTokenAlert, TokenTable } from '../Profile';
 import { ResourceAdmin, strip } from './ResourceAdmin';
 import { TeamBuilder } from '../../components/builder/SimpleBuilders';
+import { DelegationsTable } from '../../components/DelegationCard';
 
 export function TeamsAdmin() {
   return (
@@ -342,4 +343,8 @@ export function SecretsAdmin() {
       />
     </Stack>
   );
+}
+
+export function DelegationsAdmin() {
+  return <DelegationsTable />;
 }

@@ -143,6 +143,7 @@ const RESPONSES: Record<string, string> = {
   'GET /api/v1/fragments': 'FragmentView[]',
   'GET /api/v1/fragments/:id': 'FragmentView',
   'PUT /api/v1/fragments/:id': 'FragmentView',
+  'POST /api/v1/fragments/:id/rollback': 'FragmentView',
   'GET /api/v1/runs': 'RunPage',
   'GET /api/v1/runs/:id': 'Run',
   'GET /api/v1/config/status': 'ConfigStatus',

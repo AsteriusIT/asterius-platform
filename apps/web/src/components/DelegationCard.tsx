@@ -6,7 +6,7 @@ import { IconTrash } from '@tabler/icons-react';
 import type { Delegation } from '@asterius/shared';
 import { api, errorText } from '../lib/api';
 import { DataTable } from './DataTable';
-import { TimeAgo } from './ui';
+import { PageHeader, TimeAgo } from './ui';
 import { UserChip } from './UserChip';
 
 /** `YYYY-MM-DDTHH:mm` (datetime-local) ↔ ISO. */
@@ -97,7 +97,7 @@ export function DelegationCard() {
   );
 }
 
-/** Admins: every delegation of the organization, with a way to remove one. */
+/** Admins: every delegation of the organization, with a way to remove one (Access > Delegations). */
 export function DelegationsTable() {
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ['delegations'], queryFn: api.delegations });
@@ -107,10 +107,12 @@ export function DelegationsTable() {
     onError: (e) => notifications.show({ color: 'red', message: errorText(e) }),
   });
   return (
-    <>
-      <Title order={4} mt="md">
-        Delegations in this organization
-      </Title>
+    <Stack>
+      <PageHeader
+        title="Delegations"
+        refresh={q}
+        description="Out-of-office delegations: while one is in effect, the delegate decides the approvals the person is eligible for. People set theirs on their profile; remove one here when it should no longer apply."
+      />
       <DataTable
         rows={q.data}
         loading={q.isPending}
@@ -135,6 +137,6 @@ export function DelegationsTable() {
           },
         ]}
       />
-    </>
+    </Stack>
   );
 }

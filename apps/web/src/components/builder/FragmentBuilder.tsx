@@ -1,11 +1,13 @@
 import { useMemo, useState } from 'react';
 import { Accordion, ActionIcon, Alert, Badge, Button, Group, Input, Menu, Stack, Text, Textarea } from '@mantine/core';
+import { notifications } from '@mantine/notifications';
 import { useQuery } from '@tanstack/react-query';
-import { IconForms, IconListDetails, IconPlus, IconPuzzle, IconTrash, IconWritingSign } from '@tabler/icons-react';
+import { IconForms, IconHistory, IconListDetails, IconPlus, IconPuzzle, IconTrash, IconWritingSign } from '@tabler/icons-react';
 import type { ObjectSchema, WorkflowStep, WorkflowStepType } from '@asterius/shared';
 import { api } from '../../lib/api';
 import { STEP_TYPES } from '../../lib/workflow';
 import { StepTypeItems } from '../WorkflowFlow';
+import { FragmentHistory } from './ActionHistory';
 import { KeyValueEditor } from './blocks';
 import { FieldsEditor } from './FieldsEditor';
 import { fieldProblems, fieldsToSchema, schemaToFields, type FieldDraft } from './fields';
@@ -95,6 +97,7 @@ function StepsTab({ doc, set }: FormContext<FragmentDoc>) {
                   onEntity={false}
                   warnings={[]}
                   update={(patch) => set({ steps: patchStep(doc.steps, i, patch) })}
+                  params={Object.keys(doc.params.properties ?? {})}
                 />
                 <Group justify="flex-end">
                   <ActionIcon
@@ -191,6 +194,25 @@ export function FragmentBuilder(props: EditorProps) {
             </Input.Wrapper>
           ),
         },
+        ...(props.isNew
+          ? []
+          : [
+              {
+                value: 'history',
+                label: 'History',
+                icon: <IconHistory size={16} />,
+                render: (ctx: FormContext<FragmentDoc>) => (
+                  <FragmentHistory
+                    identifier={ctx.doc.identifier}
+                    readOnly={ctx.readOnly}
+                    onRestored={() => {
+                      notifications.show({ color: 'green', message: `${ctx.doc.identifier} restored` });
+                      props.onClose();
+                    }}
+                  />
+                ),
+              },
+            ]),
       ]}
     />
   );

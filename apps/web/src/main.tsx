@@ -135,6 +135,7 @@ const router = createBrowserRouter([
                   { path: 'webhooks', element: page(definitions, 'WebhooksAdmin') },
                   { path: 'teams', element: page(access, 'TeamsAdmin') },
                   { path: 'users', element: page(access, 'UsersAdmin') },
+                  { path: 'delegations', element: page(access, 'DelegationsAdmin') },
                   { path: 'secrets', element: page(access, 'SecretsAdmin') },
                   { path: 'deleted', element: page(system, 'DeletedAdmin') },
                   { path: 'audit', element: page(system, 'AuditAdmin') },

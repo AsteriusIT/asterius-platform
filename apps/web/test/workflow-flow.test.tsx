@@ -149,6 +149,49 @@ describe('flow editor page', () => {
     expect(within(dialog).getByText('bad template')).toBeTruthy();
   });
 
+  it('expands a fragment step into its own steps, wired as a run inlines them', async () => {
+    vi.spyOn(api, 'meta').mockResolvedValue({ invokers: [] } as never);
+    vi.spyOn(api, 'fragments').mockResolvedValue([
+      {
+        identifier: 'notify',
+        title: 'Notify',
+        description: '',
+        params: { properties: {} },
+        steps: [
+          { id: 'ask', type: 'approval', minApprovals: 1 },
+          { id: 'post', type: 'transform', output: {} },
+        ],
+        outputs: {},
+        version: 2,
+        managed: false,
+        updatedAt: '2026-11-01T00:00:00.000Z',
+      },
+    ] as never);
+    render(
+      renderPage({
+        ...draft,
+        steps: [
+          { id: 'compute', type: 'transform', output: {} },
+          { id: 'n', name: 'Notify team', type: 'fragment', fragment: 'notify' },
+          { id: 'done', type: 'transform', output: {} },
+        ],
+      }),
+    );
+    expect(await screen.findByLabelText('Fragment: Notify team')).toBeTruthy();
+    expect(screen.queryByLabelText('Notify · Approval: ask')).toBeNull();
+
+    fireEvent.click(await screen.findByLabelText('Show the steps of Notify team'));
+    expect(await screen.findByLabelText('Notify · Approval: ask')).toBeTruthy();
+    expect(screen.getByLabelText('Notify · Transform: post')).toBeTruthy();
+    // An inner step selects its fragment step.
+    fireEvent.click(screen.getByLabelText('Notify · Transform: post'));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('Notify team')).toBeTruthy();
+
+    fireEvent.click(screen.getByLabelText('Hide the steps of Notify team'));
+    await waitFor(() => expect(screen.queryByLabelText('Notify · Approval: ask')).toBeNull());
+  });
+
   it('adds a step from the toolbar and opens it', async () => {
     vi.spyOn(api, 'meta').mockResolvedValue({ invokers: [] } as never);
     render(renderPage(draft));

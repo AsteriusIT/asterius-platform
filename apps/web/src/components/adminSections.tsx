@@ -16,6 +16,7 @@ import {
   IconSettingsAutomation,
   IconShieldCheck,
   IconTrashX,
+  IconUserShare,
   IconUsersGroup,
   IconWebhook,
 } from '@tabler/icons-react';
@@ -72,6 +73,7 @@ export const ADMIN_CATEGORIES: AdminCategory[] = [
     tabs: [
       { label: 'Teams', path: '/admin/teams', icon: i(IconUsersGroup) },
       { label: 'Users & service accounts', path: '/admin/users', icon: i(IconKey) },
+      { label: 'Delegations', path: '/admin/delegations', icon: i(IconUserShare) },
       { label: 'Secrets', path: '/admin/secrets', icon: i(IconLock) },
     ],
   },

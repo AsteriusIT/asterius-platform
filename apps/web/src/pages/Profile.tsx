@@ -11,7 +11,7 @@ import { useAppMutation } from '../lib/queryClient';
 import { DataTable } from '../components/DataTable';
 import { PageHeader, TimeAgo } from '../components/ui';
 import { UserChip } from '../components/UserChip';
-import { DelegationCard, DelegationsTable } from '../components/DelegationCard';
+import { DelegationCard } from '../components/DelegationCard';
 
 /** Shows a freshly created token once. */
 export function NewTokenAlert({ token, onClose }: { token: string | null; onClose: () => void }) {
@@ -124,7 +124,7 @@ function NotificationPrefsCard() {
 }
 
 export function Profile() {
-  const { user, isAdmin } = useAuth();
+  const { user } = useAuth();
   const qc = useQueryClient();
   const [name, setName] = useState('');
   const [days, setDays] = useState<number | string>(90);
@@ -150,7 +150,6 @@ export function Profile() {
       </Group>
       <NotificationPrefsCard />
       <DelegationCard />
-      {isAdmin && <DelegationsTable />}
       <Title order={4} mt="md">
         Personal API tokens
       </Title>
