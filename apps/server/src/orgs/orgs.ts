@@ -245,6 +245,7 @@ export async function deleteOrg(id: string) {
     'deliveries',
     'ingest_deliveries',
     'action_versions',
+    'fragment_versions',
     'ai_budgets',
     'ai_reviews',
     'llm_usage',

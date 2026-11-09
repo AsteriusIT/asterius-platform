@@ -1,0 +1,29 @@
+fragments:
+  # Reusable steps: workflows include them with a `type: fragment` step (see provision-database in self-service.yaml).
+  - identifier: platform-approval
+    title: Notify and wait for platform approval
+    description: |
+      Asks the platform team (they are notified in the inbox, by email or Slack per their preferences) and waits for
+      the decision. Outputs whether it was approved and by whom.
+    params:
+      properties:
+        summary: { type: string, title: What is requested (Markdown) }
+        review: { type: string, title: Review notes, default: '' }
+      required: [summary]
+    steps:
+      - id: approve
+        name: Platform approval
+        type: approval
+        approvers: { teams: [platform], roles: [admin] }
+        message: |
+          {{ params.summary }}
+
+          Review: **{{ params.review }}**
+      - id: record
+        name: Record the decision
+        type: transform
+        output:
+          approvedBy: 'steps.approve.output.by'
+    outputs:
+      approved: 'steps.approve.output.approved'
+      approvedBy: 'steps.record.output.approvedBy'

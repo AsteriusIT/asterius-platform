@@ -93,7 +93,40 @@ export interface Migration {
  * Baseline policy: the migration history was flattened into migration 1 (schema.ts) on 2026-11-07, before the first
  * production release. From now on append migrations (id 2, 3…) and never edit the baseline once it has shipped.
  */
-export const MIGRATIONS: Migration[] = [{ id: 1, name: 'baseline schema', up: baseline }];
+export const MIGRATIONS: Migration[] = [
+  { id: 1, name: 'baseline schema', up: baseline },
+  {
+    id: 6,
+    name: 'step fragments',
+    up: async (d) => {
+      await d.exec(`
+CREATE TABLE fragments (
+  org_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  identifier TEXT NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  params TEXT NOT NULL DEFAULT '{"properties":{}}',
+  steps TEXT NOT NULL DEFAULT '[]',
+  outputs TEXT NOT NULL DEFAULT '{}',
+  version INTEGER NOT NULL DEFAULT 1,
+  managed INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (org_id, identifier)
+);
+CREATE TABLE fragment_versions (
+  org_id TEXT NOT NULL,
+  fragment TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  definition TEXT NOT NULL,
+  actor_id TEXT,
+  actor_email TEXT,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (org_id, fragment, version)
+);`);
+    },
+  },
+];
 
 /**
  * Apply pending numbered migrations (idempotent; serialized across replicas by an advisory lock on Postgres).

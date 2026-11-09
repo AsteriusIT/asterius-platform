@@ -19,6 +19,7 @@ import { actionRoutes } from './routes/actions.js';
 import { integrationRoutes } from './routes/integrations.js';
 import { adminRoutes } from './routes/admin.js';
 import { policyRoutes } from './routes/policies.js';
+import { fragmentRoutes } from './routes/fragments.js';
 import { orgRoutes } from './routes/orgs.js';
 import { migrateLiteralWebhookSecrets } from './webhooks/webhooks.js';
 import { openRequestContext } from './orgs/context.js';
@@ -100,8 +101,9 @@ export async function buildApp(opts: AppOptions = {}): Promise<FastifyInstance> 
     if (err instanceof ZodError)
       return reply.code(400).send({ error: err.issues.map((i) => `${i.path.join('.') || 'body'}: ${i.message}`).join('; '), issues: err.issues });
     if (err instanceof HttpError) {
-      const d = err.details as { policy?: string; message?: string } | undefined;
-      // A policy denial names the policy (and its message) so clients can show why.
+      const d = err.details as { policy?: string; message?: string; usedBy?: unknown } | undefined;
+      // A policy denial names the policy (and its message) so clients can show why; a refused delete what uses it.
+      if (err.statusCode === 409 && d?.usedBy) return reply.code(409).send({ error: err.message, usedBy: d.usedBy });
       return reply
         .code(err.statusCode)
         .send(err.statusCode === 403 && d?.policy ? { error: err.message, policy: d.policy, message: d.message } : { error: err.message });
@@ -157,6 +159,7 @@ export async function buildApp(opts: AppOptions = {}): Promise<FastifyInstance> 
     async (v1) => {
       await v1.register(catalogRoutes);
       await v1.register(policyRoutes);
+      await v1.register(fragmentRoutes);
       await v1.register(actionRoutes);
       await v1.register(integrationRoutes);
       await v1.register(notificationRoutes);

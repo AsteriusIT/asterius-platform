@@ -156,6 +156,58 @@ Runs started automatically belong to the "Workflow automation" service account a
 
 Child runs belong to the parent's requester, link to the parent (`parent`), are cancelled with it, and are limited to 5 levels of nesting. Failed runs can be re-run (`POST /runs/:id/rerun`), resumed in place from the failed steps (`POST /runs/:id/resume`) or have one failed step retried (`POST /runs/:id/steps/:step/retry`): requester and admins only.
 
+### Fragments
+
+A fragment is a group of steps shared by several workflows (Admin → Automation → Fragments, `/api/v1/fragments`, or
+`fragments:` in configuration files, where they are managed like the other kinds). Unlike a sub-workflow, it is not a
+separate run: its steps are **inlined** into the run.
+
+```yaml
+fragments:
+  - identifier: platform-approval
+    title: Notify and wait for platform approval
+    params:                                          # what callers pass (a form schema; `default` applies when omitted)
+      properties: { summary: { type: string }, review: { type: string, default: '' } }
+      required: [summary]
+    steps:                                           # any step types, `needs` between these steps only
+      - { id: approve, type: approval, approvers: { teams: [platform] }, message: "{{ params.summary }} — {{ params.review }}" }
+      - { id: record, type: transform, output: { approvedBy: steps.approve.output.by } }
+    outputs:                                         # JSONata over the fragment's own steps
+      approved: steps.approve.output.approved
+
+actions:
+  - identifier: provision-database
+    steps:
+      - { id: review, type: agent, … }
+      - id: approval
+        type: fragment
+        fragment: platform-approval
+        if: 'steps.review.output.risk != "low"'      # gates every inlined step
+        with:                                        # literals, or templates over the caller's context
+          summary: "{{ inputs.engine }} for {{ inputs.service }}"
+      - { id: register, type: invoke, … }            # waits for `approval`; reads steps.approval.output.approved
+```
+
+- **Expansion.** When a run is created, the fragment step is replaced by the fragment's steps with ids
+  `<step id>__<inner id>` (`approval__approve`, `approval__record`; references `steps.<inner id>` are rewritten), then a
+  transform step that keeps the fragment step's id, waits for the fragment's exit steps and computes `outputs`: steps
+  that depend on the fragment step, or read `steps.<id>.output.<name>`, need no change. The fragment's entry steps wait
+  for what the fragment step waited for, and its `if` is added to every inlined step (a skipped fragment is skipped as a
+  whole). Inlined ids must stay valid step ids (41 characters at most): keep ids short.
+- **Parameters.** `with` is kept in the run snapshot and rendered when an inlined step runs, against the caller's
+  context (`inputs`, `entity`, earlier `steps`): inside the fragment the values are `params.<name>` in templates and
+  expressions. `with` cannot reference secrets (`${secret:…}`): reference them in the fragment's own steps. Literal
+  values are checked against the parameter schema when the action is saved; templated ones when they are rendered.
+- **Nesting.** A fragment may include fragments, 3 levels deep at most, never itself (cycle). The `if` of a fragment
+  step inside a fragment cannot use `params`.
+- **Validation.** Saving an action inlines its fragments: unknown fragment, unknown or missing parameters, id
+  collisions and the action's secret allow-list (`secrets`, applied to the inlined steps) fail the save. Saving a
+  fragment through the API checks every workflow that uses it (directly or through other fragments) the same way.
+- **Changes and deletion.** Fragments are versioned (`version`, `GET /fragments/:id/versions`, audit `fragment.*`).
+  A change applies to new runs only: runs keep their inlined copy. Deleting a fragment still used by an action or
+  another fragment is refused with 409 and `usedBy: { actions, fragments }` (`GET /fragments/:id/usage`).
+- The run page shows inlined steps with their prefixed ids and a `fragment <step id>` badge (`RunStep.fragment`).
+
 ### Safety and testing
 
 - `secrets: [NAME, env:OTHER]` on an action restricts the references its steps may use (checked when saving and when rendering).

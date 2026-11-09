@@ -24,6 +24,7 @@ export const STEP_TYPES: Record<WorkflowStepType, { label: string; color: string
   wait: { label: 'Wait', color: 'orange', hint: 'Pause for a duration, until a time, or until an external event arrives' },
   input: { label: 'Input', color: 'cyan', hint: 'Ask the requester or an operator for more data mid-run' },
   workflow: { label: 'Sub-workflow', color: 'indigo', hint: 'Run another workflow (once, or for each item of a list) and use its result' },
+  fragment: { label: 'Fragment', color: 'pink', hint: 'Include reusable steps shared by several workflows (Admin → Fragments)' },
 };
 
 export const STEP_STATUS_COLORS: Record<StepStatus, string> = {

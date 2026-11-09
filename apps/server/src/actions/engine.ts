@@ -24,6 +24,7 @@ import { runAgent, StepError, wrapUntrusted } from './agent.js';
 import { wake } from './wake.js';
 import { notifyPendingDecision } from '../notifications/dispatch.js';
 import { cancelChildrenOf, startSubWorkflow, startWaitingStep } from './waiting.js';
+import { withParams } from './fragments.js';
 
 /**
  * Workflow engine. A run's steps form a graph (see workflow.ts); the engine moves each step through
@@ -53,7 +54,7 @@ const stepLog =
 export async function buildContext(r: RunRow, rows: StepRow[], forStep?: string): Promise<RunContext> {
   const defs = stepDefs(r);
   const entity = r.blueprint && r.entity ? ((await findEntity(r.blueprint, r.entity)) ?? null) : null;
-  return {
+  const ctx: RunContext = {
     // Each step gets its own callback (URL + token scoped to the step).
     run: {
       id: r.id,
@@ -75,6 +76,8 @@ export async function buildContext(r: RunRow, rows: StepRow[], forStep?: string)
       }),
     ),
   };
+  // Steps inlined from a fragment read their parameters as `params`.
+  return withParams(ctx, forStep ? defs.find((d) => d.id === forStep) : undefined);
 }
 
 // ---------- run start ----------
@@ -137,7 +140,7 @@ export async function advance(runId: string): Promise<void> {
         ctx ??= await buildContext(r, rows, def.id);
         let ok: boolean;
         try {
-          ok = !!(await evaluate(def.if, ctx));
+          ok = !!(await evaluate(def.if, await withParams(ctx, def)));
         } catch (err) {
           changed = (await setStep(runId, def.id, 'PENDING', { status: 'FAILURE', status_label: `Condition error: ${errorMessage(err)}` })) || changed;
           continue;
@@ -723,6 +726,7 @@ export const LEASES: Record<Step['type'], number> = {
   wait: 0,
   input: 0,
   workflow: 2 * 60_000,
+  fragment: 0, // inlined when the run is created: never executed
 };
 
 // Postgres: concurrent replicas skip rows another claim already locked instead of queueing behind or racing for them.

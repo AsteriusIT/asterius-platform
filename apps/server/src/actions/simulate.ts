@@ -1,5 +1,6 @@
 import { evaluate, render } from '../lib/expr.js';
 import type { Step } from './workflow.js';
+import { expandWorkflow, withParams } from './fragments.js';
 
 /** Result of simulating one step against sample data. Nothing is executed or stored. */
 export interface SimulatedStep {
@@ -31,14 +32,17 @@ export async function simulateWorkflow(steps: Step[], base: { inputs?: unknown; 
   const done: Record<string, { status: string; output: unknown; link: null }> = {};
   const out: SimulatedStep[] = [];
   const mask = async (kind: string, name: string) => `<${kind}:${name}>`;
-  for (const s of steps) {
-    const ctx = {
-      run: { id: 'dry-run', url: '', idempotencyKey: 'dry-run', callback: { url: '', token: '' } },
-      inputs: base.inputs ?? {},
-      entity: base.entity ?? null,
-      trigger: { user: { id: 'dry-run', email: '', name: 'Dry run' }, at: new Date().toISOString() },
-      steps: done,
-    };
+  for (const s of (await expandWorkflow(steps)) as Step[]) {
+    const ctx = await withParams(
+      {
+        run: { id: 'dry-run', url: '', idempotencyKey: 'dry-run', callback: { url: '', token: '' } },
+        inputs: base.inputs ?? {},
+        entity: base.entity ?? null,
+        trigger: { user: { id: 'dry-run', email: '', name: 'Dry run' }, at: new Date().toISOString() },
+        steps: done,
+      },
+      s,
+    );
     const r: SimulatedStep = { id: s.id, type: s.type, skipped: false };
     try {
       if (s.if && !(await evaluate(s.if, ctx))) {

@@ -30,6 +30,7 @@ import type {
   InputStep,
   WaitStep,
   WorkflowCallStep,
+  FragmentStep,
   AgentTool,
   ApprovalStep,
   InvokeStep,
@@ -41,6 +42,7 @@ import type {
   WorkflowStepType,
 } from '@asterius/shared';
 import { api } from '../../lib/api';
+import { SchemaForm } from '../SchemaForm';
 import { needsOf } from '../../lib/workflow';
 import { fieldProblems, fieldsToSchema, nameFromLabel, schemaToFields, type FieldDraft } from './fields';
 import { FieldsEditor, type FieldsMode } from './FieldsEditor';
@@ -76,9 +78,10 @@ export function newStep(type: WorkflowStepType, steps: WorkflowStep[], invokers:
     wait: 'Wait',
     input: 'Ask for input',
     workflow: 'Run a workflow',
+    fragment: 'Fragment',
   }[type];
   const id = uniqueId(
-    { invoke: 'call', approval: 'approval', agent: 'review', transform: 'compute', wait: 'wait', input: 'ask', workflow: 'sub' }[type],
+    { invoke: 'call', approval: 'approval', agent: 'review', transform: 'compute', wait: 'wait', input: 'ask', workflow: 'sub', fragment: 'frag' }[type],
     steps,
   );
   if (type === 'invoke') {
@@ -90,6 +93,7 @@ export function newStep(type: WorkflowStepType, steps: WorkflowStep[], invokers:
   if (type === 'wait') return { id, name, type, duration: '15m' };
   if (type === 'input') return { id, name, type, inputs: { properties: {} } };
   if (type === 'workflow') return { id, name, type, action: '', inputs: {} };
+  if (type === 'fragment') return { id, name, type, fragment: '', with: {} };
   return { id, name, type, output: {} };
 }
 
@@ -118,6 +122,7 @@ export function stepProblems(steps: WorkflowStep[], invokers: PluginInfo[]): str
     }
     if (s.type === 'wait' && [s.duration, s.until, s.event].filter(Boolean).length !== 1) out.push(`${where}: set exactly one of duration, until or event`);
     if (s.type === 'workflow' && !s.action) out.push(`${where}: choose the workflow to run`);
+    if (s.type === 'fragment' && !s.fragment) out.push(`${where}: choose the fragment to include`);
     if (s.type === 'input') out.push(...fieldProblems(schemaToFields(s.inputs), `${where}: field`));
     if (s.type === 'transform')
       for (const k of Object.keys(s.output ?? {})) if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(k)) out.push(`${where}: invalid output key "${k}"`);
@@ -171,6 +176,7 @@ export function StepSettings({
       {step.type === 'wait' && <WaitEditor step={step} onChange={update} />}
       {step.type === 'input' && <InputEditor step={step} onChange={update} />}
       {step.type === 'workflow' && <WorkflowCallEditor step={step} onChange={update} />}
+      {step.type === 'fragment' && <FragmentStepEditor step={step} onChange={update} />}
       {warnings
         .filter((w) => w.startsWith(`Step "${step.name || step.id}"`))
         .map((w) => (
@@ -484,6 +490,65 @@ function WorkflowCallEditor({ step, onChange }: { step: WorkflowCallStep; onChan
             onChange={(e) => onChange({ forEach: { ...step.forEach!, failFast: e.currentTarget.checked } })}
           />
         </SimpleGrid>
+      )}
+    </Stack>
+  );
+}
+
+/** Include a fragment: pick it, then its parameters as a form (literal values) or as `{{ }}` templates. */
+function FragmentStepEditor({ step, onChange }: { step: FragmentStep; onChange: (p: Partial<FragmentStep>) => void }) {
+  const fragments = useQuery({ queryKey: ['fragments'], queryFn: api.fragments });
+  const fragment = fragments.data?.find((f) => f.identifier === step.fragment);
+  const values = step.with ?? {};
+  const templated = Object.values(values).some((v) => typeof v === 'string' && v.includes('{{'));
+  const [mode, setMode] = useState<'form' | 'templates'>(templated ? 'templates' : 'form');
+  return (
+    <Stack gap="sm">
+      <Select
+        label="Fragment"
+        searchable
+        description={fragment?.description || 'Reusable steps (Admin → Fragments); they run in place of this step'}
+        data={(fragments.data ?? []).map((f) => ({ value: f.identifier, label: `${f.title} (${f.identifier})` }))}
+        value={step.fragment || null}
+        onChange={(v) => onChange({ fragment: v ?? '', with: {} })}
+      />
+      {fragment && (
+        <>
+          <Group justify="space-between">
+            <Title order={6}>Parameters</Title>
+            <SegmentedControl
+              size="xs"
+              value={mode}
+              onChange={(m) => setMode(m as 'form' | 'templates')}
+              data={[
+                { value: 'form', label: 'Values' },
+                { value: 'templates', label: 'Templates' },
+              ]}
+            />
+          </Group>
+          {!Object.keys(fragment.params.properties ?? {}).length ? (
+            <Text fz="sm" c="dimmed">
+              This fragment takes no parameters.
+            </Text>
+          ) : mode === 'form' ? (
+            <SchemaForm schema={fragment.params} values={values} onChange={(v) => onChange({ with: v })} />
+          ) : (
+            <Input.Wrapper
+              label="Parameter templates"
+              description={`Parameters: ${Object.keys(fragment.params.properties).join(', ')}. Templates may use inputs.*, entity.* and steps.*; no secret references`}
+            >
+              <KeyValueEditor value={values} onChange={(o) => onChange({ with: o })} keyPlaceholder="parameter" valuePlaceholder="value or {{ template }}" />
+            </Input.Wrapper>
+          )}
+          {Object.keys(fragment.outputs).length > 0 && (
+            <Text fz="xs" c="dimmed">
+              Outputs:{' '}
+              {Object.keys(fragment.outputs)
+                .map((k) => `steps.${step.id}.output.${k}`)
+                .join(', ')}
+            </Text>
+          )}
+        </>
       )}
     </Stack>
   );

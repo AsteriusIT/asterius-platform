@@ -25,6 +25,7 @@ import {
   IconMinus,
   IconPlayerPlay,
   IconPlus,
+  IconPuzzle,
   IconRobot,
   IconShieldCheck,
   IconSubtask,
@@ -86,6 +87,7 @@ const TYPE_ICON = {
   wait: IconHourglass,
   input: IconForms,
   workflow: IconSubtask,
+  fragment: IconPuzzle,
 } as const;
 
 /** Grid of the canvas; node positions are multiples of it so the halo under a node lines up with the background. */

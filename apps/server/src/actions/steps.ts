@@ -97,6 +97,9 @@ function childrenOf(row: StepRow): { runId: string; status: string; item?: unkno
   return undefined;
 }
 
+/** Top-level fragment step an inlined step belongs to (fragments.ts). */
+const fragmentOf = (def: Step | undefined) => (def as { fragmentOf?: { root: string } } | undefined)?.fragmentOf?.root;
+
 export const stepMessage = (row: StepRow) => json<{ message?: string }>(row.state, {}).message ?? null;
 
 export async function runStepsView(run: RunRow, p: Principal | null): Promise<RunStep[]> {
@@ -113,6 +116,7 @@ export async function runStepsView(run: RunRow, p: Principal | null): Promise<Ru
       name: row.name,
       type: row.type,
       needs: def ? needsOf(defs, i) : [],
+      ...(fragmentOf(def) ? { fragment: fragmentOf(def) } : {}),
       status: row.status,
       statusLabel: row.status_label,
       attempt: Number(row.attempt),

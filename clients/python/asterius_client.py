@@ -408,6 +408,30 @@ class AsteriusClient:
         """POST /api/v1/expressions/check"""
         return self._request("POST", f"/api/v1/expressions/check", query)
 
+    def get_fragments(self, query: Optional[dict] = None) -> Any:
+        """GET /api/v1/fragments"""
+        return self._request("GET", f"/api/v1/fragments", query)
+
+    def delete_fragments_by_id(self, id: str, query: Optional[dict] = None) -> Any:
+        """DELETE /api/v1/fragments/{id}"""
+        return self._request("DELETE", f"/api/v1/fragments/{urllib.parse.quote(id, safe='')}", query)
+
+    def get_fragments_by_id(self, id: str, query: Optional[dict] = None) -> Any:
+        """GET /api/v1/fragments/{id}"""
+        return self._request("GET", f"/api/v1/fragments/{urllib.parse.quote(id, safe='')}", query)
+
+    def put_fragments_by_id(self, id: str, body: dict, query: Optional[dict] = None) -> Any:
+        """PUT /api/v1/fragments/{id}"""
+        return self._request("PUT", f"/api/v1/fragments/{urllib.parse.quote(id, safe='')}", query, body)
+
+    def get_fragments_usage_by_id(self, id: str, query: Optional[dict] = None) -> Any:
+        """GET /api/v1/fragments/{id}/usage"""
+        return self._request("GET", f"/api/v1/fragments/{urllib.parse.quote(id, safe='')}/usage", query)
+
+    def get_fragments_versions_by_id(self, id: str, query: Optional[dict] = None) -> Any:
+        """GET /api/v1/fragments/{id}/versions"""
+        return self._request("GET", f"/api/v1/fragments/{urllib.parse.quote(id, safe='')}/versions", query)
+
     def get_home(self, query: Optional[dict] = None) -> Any:
         """GET /api/v1/home"""
         return self._request("GET", f"/api/v1/home", query)

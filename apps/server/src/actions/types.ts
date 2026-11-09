@@ -17,6 +17,8 @@ export interface RunContext {
   trigger: { user: { id: string; email: string; name: string }; at: string };
   /** Earlier workflow steps: `{{ steps.review.output.risk }}`. */
   steps: Record<string, { status: string; output: unknown; link: string | null; events?: { url: string; token: string } }>;
+  /** Steps inlined from a fragment: the fragment's parameters (`{{ params.channel }}`). */
+  params?: Record<string, unknown>;
 }
 
 export type InvokeStatus = 'IN_PROGRESS' | 'SUCCESS' | 'FAILURE';

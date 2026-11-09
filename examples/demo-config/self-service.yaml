@@ -155,15 +155,15 @@ actions:
             recommendedTier: { type: string, title: Recommended tier, enum: [burstable, general-purpose, memory-optimized] }
           required: [risk, summary, recommendedTier]
 
+      # The reusable approval of fragments.yaml, inlined when the run starts (steps approval__approve, approval__record).
       - id: approval
         name: Platform approval
-        type: approval
+        type: fragment
+        fragment: platform-approval
         if: '$not(steps.review.status = "SUCCESS" and steps.review.output.risk = "low")'
-        approvers: { teams: [platform], roles: [admin] }
-        message: |
-          **{{ inputs.engine }} · {{ inputs.sizeGb }} GB** for `{{ inputs.service }}` in `{{ inputs.environment }}`
-
-          AI review: **{{ steps.review.output.risk ? steps.review.output.risk : "unavailable" }}** — {{ steps.review.output.summary }}
+        with:
+          summary: '**{{ inputs.engine }} · {{ inputs.sizeGb }} GB** for `{{ inputs.service }}` in `{{ inputs.environment }}`'
+          review: 'AI review {{ steps.review.output.risk ? steps.review.output.risk : "unavailable" }} — {{ steps.review.output.summary }}'
 
       - id: register
         name: Register in the catalog

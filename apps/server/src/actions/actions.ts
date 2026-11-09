@@ -6,9 +6,10 @@ import { SYSTEM, type Actor } from '../audit.js';
 import { isFormLike, nextTick, validateTrigger } from './trigger-defs.js';
 import { all, bool, json, now, one, run } from '../db.js';
 import { badRequest, managedError, notFound } from '../lib/errors.js';
-import { actionDef, type ActionDef } from '../schemas.js';
+import { actionDef, type ActionDef, type FragmentDef } from '../schemas.js';
 import { validator } from '../catalog/validation.js';
-import { stepsOf, validateWorkflow } from './workflow.js';
+import { stepsOf, validateWorkflow, type Step } from './workflow.js';
+import { expandWorkflow, fragmentLookup } from './fragments.js';
 import { isAdmin, matchesSubjects, type Principal } from '../auth/users.js';
 import { orgId } from '../orgs/context.js';
 
@@ -119,7 +120,9 @@ export async function upsertAction(
   if (form && form.on !== 'create' && !form.blueprint) throw badRequest(`Forms submitted on an entity ("${form.on}") need a blueprint`);
   if (form) validator(form.inputs as never);
   validateWorkflow(stepsOf(def));
-  assertSecretsAllowed(def.secrets, [def.steps, def.invoker, t0]);
+  // Fragments are inlined to check them (unknown fragment, parameters, ids) and the secrets they reference.
+  const expanded = await expandWorkflow(stepsOf(def));
+  assertSecretsAllowed(def.secrets, [expanded, def.invoker, t0]);
   const existing = await one<Row>('SELECT * FROM actions WHERE org_id = ? AND identifier = ?', org, def.identifier);
   if (existing && bool(existing.managed) && !opts.managed) throw managedError('Action', def.identifier);
   const t = now();
@@ -172,4 +175,21 @@ export async function deleteAction(id: string, opts: { managed?: boolean } = {})
   if (a.managed && !opts.managed) throw managedError('Action', id);
   await run('DELETE FROM actions WHERE org_id = ? AND identifier = ?', orgId(), id); // past runs keep their snapshot
   invalidateTriggerCache();
+}
+
+/**
+ * A changed fragment must still inline into every workflow that uses it (directly or through other fragments):
+ * parameters, ids and the workflows' secret allow-lists. Throws a 400 naming the first workflow it would break.
+ */
+export async function checkFragmentChange(def: FragmentDef) {
+  const rows = await all<Row>('SELECT * FROM actions WHERE org_id = ? AND steps LIKE ?', orgId(), '%"type":"fragment"%');
+  for (const r of rows) {
+    const a = toAction(r);
+    try {
+      const expanded = await expandWorkflow(a.steps as Step[], fragmentLookup(def));
+      assertSecretsAllowed(a.secrets, [expanded]);
+    } catch (err) {
+      throw badRequest(`This change would break workflow "${a.identifier}": ${(err as Error).message}`);
+    }
+  }
 }

@@ -370,6 +370,27 @@ export type Action = {
     output: {
       [key: string]: string;
     };
+  } | {
+    id: string;
+    name?: string;
+    if?: string;
+    needs?: Array<string>;
+    retries?: number;
+    retryDelaySeconds?: number;
+    timeoutMinutes?: number;
+    continueOnError?: boolean;
+    outputSchema?: {
+      properties?: {
+        [key: string]: Action_schema0;
+      };
+      required?: Array<string>;
+      order?: Array<string>;
+    };
+    type: "fragment";
+    fragment: string;
+    with?: {
+      [key: string]: unknown;
+    };
   }>;
   secrets?: Array<string>;
   enabled?: boolean;
@@ -451,6 +472,249 @@ export type Policy = {
   };
   expression: string;
   message?: string;
+};
+
+export type Fragment = {
+  identifier: string;
+  title: string;
+  description?: string;
+  params?: {
+    properties?: {
+      [key: string]: Fragment_schema0;
+    };
+    required?: Array<string>;
+    order?: Array<string>;
+  };
+  steps: Array<{
+    id: string;
+    name?: string;
+    if?: string;
+    needs?: Array<string>;
+    retries?: number;
+    retryDelaySeconds?: number;
+    timeoutMinutes?: number;
+    continueOnError?: boolean;
+    outputSchema?: {
+      properties?: {
+        [key: string]: Fragment_schema0;
+      };
+      required?: Array<string>;
+      order?: Array<string>;
+    };
+    type: "invoke";
+    invoker: {
+      type: string;
+      [key: string]: unknown;
+    };
+  } | {
+    id: string;
+    name?: string;
+    if?: string;
+    needs?: Array<string>;
+    retries?: number;
+    retryDelaySeconds?: number;
+    timeoutMinutes?: number;
+    continueOnError?: boolean;
+    outputSchema?: {
+      properties?: {
+        [key: string]: Fragment_schema0;
+      };
+      required?: Array<string>;
+      order?: Array<string>;
+    };
+    type: "approval";
+    approvers?: {
+      roles?: Array<string>;
+      teams?: Array<string>;
+      users?: Array<string>;
+      ownerTeam?: boolean;
+    };
+    choices?: Array<string>;
+    fields?: {
+      properties?: {
+        [key: string]: Fragment_schema0;
+      };
+      required?: Array<string>;
+      order?: Array<string>;
+    };
+    minApprovals?: number;
+    allowSelfApproval?: boolean;
+    message?: string;
+  } | {
+    id: string;
+    name?: string;
+    if?: string;
+    needs?: Array<string>;
+    retries?: number;
+    retryDelaySeconds?: number;
+    timeoutMinutes?: number;
+    continueOnError?: boolean;
+    outputSchema?: {
+      properties?: {
+        [key: string]: Fragment_schema0;
+      };
+      required?: Array<string>;
+      order?: Array<string>;
+    };
+    type: "agent";
+    model?: string;
+    effort?: "low" | "medium" | "high" | "xhigh" | "max";
+    system?: string;
+    prompt: string;
+    output?: {
+      properties: {
+        [key: string]: {
+          [key: string]: unknown;
+        };
+      };
+      required?: Array<string>;
+      order?: Array<string>;
+    };
+    tools?: Array<"catalog" | "upsert_entity" | "trigger_action" | "http">;
+    guardrails?: {
+      entityBlueprints?: Array<string>;
+      actions?: Array<string>;
+      httpHosts?: Array<string>;
+      httpMethods?: Array<"GET" | "POST" | "PUT" | "PATCH" | "DELETE">;
+      maxWrites?: number;
+    };
+    mcpServers?: Array<{
+      name: string;
+      url: string;
+      token?: string;
+      allowedTools?: Array<string>;
+    }>;
+    maxTurns?: number;
+    maxTokens?: number;
+    maxCostUsd?: number;
+    provider?: "anthropic" | "bedrock" | "vertex";
+    apiKey?: string;
+  } | {
+    id: string;
+    name?: string;
+    if?: string;
+    needs?: Array<string>;
+    retries?: number;
+    retryDelaySeconds?: number;
+    timeoutMinutes?: number;
+    continueOnError?: boolean;
+    outputSchema?: {
+      properties?: {
+        [key: string]: Fragment_schema0;
+      };
+      required?: Array<string>;
+      order?: Array<string>;
+    };
+    type: "wait";
+    duration?: string;
+    until?: string;
+    event?: {
+      name: string;
+      filter?: string;
+    };
+  } | {
+    id: string;
+    name?: string;
+    if?: string;
+    needs?: Array<string>;
+    retries?: number;
+    retryDelaySeconds?: number;
+    timeoutMinutes?: number;
+    continueOnError?: boolean;
+    outputSchema?: {
+      properties?: {
+        [key: string]: Fragment_schema0;
+      };
+      required?: Array<string>;
+      order?: Array<string>;
+    };
+    type: "input";
+    message?: string;
+    inputs?: {
+      properties?: {
+        [key: string]: Fragment_schema0;
+      };
+      required?: Array<string>;
+      order?: Array<string>;
+    };
+    assignees?: {
+      roles?: Array<string>;
+      teams?: Array<string>;
+      users?: Array<string>;
+      ownerTeam?: boolean;
+    };
+  } | {
+    id: string;
+    name?: string;
+    if?: string;
+    needs?: Array<string>;
+    retries?: number;
+    retryDelaySeconds?: number;
+    timeoutMinutes?: number;
+    continueOnError?: boolean;
+    outputSchema?: {
+      properties?: {
+        [key: string]: Fragment_schema0;
+      };
+      required?: Array<string>;
+      order?: Array<string>;
+    };
+    type: "workflow";
+    action: string;
+    inputs?: {
+      [key: string]: unknown;
+    };
+    entity?: string;
+    forEach?: {
+      items: string;
+      maxConcurrency?: number;
+      failFast?: boolean;
+    };
+  } | {
+    id: string;
+    name?: string;
+    if?: string;
+    needs?: Array<string>;
+    retries?: number;
+    retryDelaySeconds?: number;
+    timeoutMinutes?: number;
+    continueOnError?: boolean;
+    outputSchema?: {
+      properties?: {
+        [key: string]: Fragment_schema0;
+      };
+      required?: Array<string>;
+      order?: Array<string>;
+    };
+    type: "transform";
+    output: {
+      [key: string]: string;
+    };
+  } | {
+    id: string;
+    name?: string;
+    if?: string;
+    needs?: Array<string>;
+    retries?: number;
+    retryDelaySeconds?: number;
+    timeoutMinutes?: number;
+    continueOnError?: boolean;
+    outputSchema?: {
+      properties?: {
+        [key: string]: Fragment_schema0;
+      };
+      required?: Array<string>;
+      order?: Array<string>;
+    };
+    type: "fragment";
+    fragment: string;
+    with?: {
+      [key: string]: unknown;
+    };
+  }>;
+  outputs?: {
+    [key: string]: string;
+  };
 };
 
 export type EntityInput = {
@@ -846,6 +1110,27 @@ export type ConfigFile = {
       output: {
         [key: string]: string;
       };
+    } | {
+      id: string;
+      name?: string;
+      if?: string;
+      needs?: Array<string>;
+      retries?: number;
+      retryDelaySeconds?: number;
+      timeoutMinutes?: number;
+      continueOnError?: boolean;
+      outputSchema?: {
+        properties?: {
+          [key: string]: ConfigFile_schema0;
+        };
+        required?: Array<string>;
+        order?: Array<string>;
+      };
+      type: "fragment";
+      fragment: string;
+      with?: {
+        [key: string]: unknown;
+      };
     }>;
     secrets?: Array<string>;
     enabled?: boolean;
@@ -1010,6 +1295,248 @@ export type ConfigFile = {
       type: "markdown";
       content: string;
     }>;
+  }>;
+  fragments?: Array<{
+    identifier: string;
+    title: string;
+    description?: string;
+    params?: {
+      properties?: {
+        [key: string]: ConfigFile_schema0;
+      };
+      required?: Array<string>;
+      order?: Array<string>;
+    };
+    steps: Array<{
+      id: string;
+      name?: string;
+      if?: string;
+      needs?: Array<string>;
+      retries?: number;
+      retryDelaySeconds?: number;
+      timeoutMinutes?: number;
+      continueOnError?: boolean;
+      outputSchema?: {
+        properties?: {
+          [key: string]: ConfigFile_schema0;
+        };
+        required?: Array<string>;
+        order?: Array<string>;
+      };
+      type: "invoke";
+      invoker: {
+        type: string;
+        [key: string]: unknown;
+      };
+    } | {
+      id: string;
+      name?: string;
+      if?: string;
+      needs?: Array<string>;
+      retries?: number;
+      retryDelaySeconds?: number;
+      timeoutMinutes?: number;
+      continueOnError?: boolean;
+      outputSchema?: {
+        properties?: {
+          [key: string]: ConfigFile_schema0;
+        };
+        required?: Array<string>;
+        order?: Array<string>;
+      };
+      type: "approval";
+      approvers?: {
+        roles?: Array<string>;
+        teams?: Array<string>;
+        users?: Array<string>;
+        ownerTeam?: boolean;
+      };
+      choices?: Array<string>;
+      fields?: {
+        properties?: {
+          [key: string]: ConfigFile_schema0;
+        };
+        required?: Array<string>;
+        order?: Array<string>;
+      };
+      minApprovals?: number;
+      allowSelfApproval?: boolean;
+      message?: string;
+    } | {
+      id: string;
+      name?: string;
+      if?: string;
+      needs?: Array<string>;
+      retries?: number;
+      retryDelaySeconds?: number;
+      timeoutMinutes?: number;
+      continueOnError?: boolean;
+      outputSchema?: {
+        properties?: {
+          [key: string]: ConfigFile_schema0;
+        };
+        required?: Array<string>;
+        order?: Array<string>;
+      };
+      type: "agent";
+      model?: string;
+      effort?: "low" | "medium" | "high" | "xhigh" | "max";
+      system?: string;
+      prompt: string;
+      output?: {
+        properties: {
+          [key: string]: {
+            [key: string]: unknown;
+          };
+        };
+        required?: Array<string>;
+        order?: Array<string>;
+      };
+      tools?: Array<"catalog" | "upsert_entity" | "trigger_action" | "http">;
+      guardrails?: {
+        entityBlueprints?: Array<string>;
+        actions?: Array<string>;
+        httpHosts?: Array<string>;
+        httpMethods?: Array<"GET" | "POST" | "PUT" | "PATCH" | "DELETE">;
+        maxWrites?: number;
+      };
+      mcpServers?: Array<{
+        name: string;
+        url: string;
+        token?: string;
+        allowedTools?: Array<string>;
+      }>;
+      maxTurns?: number;
+      maxTokens?: number;
+      maxCostUsd?: number;
+      provider?: "anthropic" | "bedrock" | "vertex";
+      apiKey?: string;
+    } | {
+      id: string;
+      name?: string;
+      if?: string;
+      needs?: Array<string>;
+      retries?: number;
+      retryDelaySeconds?: number;
+      timeoutMinutes?: number;
+      continueOnError?: boolean;
+      outputSchema?: {
+        properties?: {
+          [key: string]: ConfigFile_schema0;
+        };
+        required?: Array<string>;
+        order?: Array<string>;
+      };
+      type: "wait";
+      duration?: string;
+      until?: string;
+      event?: {
+        name: string;
+        filter?: string;
+      };
+    } | {
+      id: string;
+      name?: string;
+      if?: string;
+      needs?: Array<string>;
+      retries?: number;
+      retryDelaySeconds?: number;
+      timeoutMinutes?: number;
+      continueOnError?: boolean;
+      outputSchema?: {
+        properties?: {
+          [key: string]: ConfigFile_schema0;
+        };
+        required?: Array<string>;
+        order?: Array<string>;
+      };
+      type: "input";
+      message?: string;
+      inputs?: {
+        properties?: {
+          [key: string]: ConfigFile_schema0;
+        };
+        required?: Array<string>;
+        order?: Array<string>;
+      };
+      assignees?: {
+        roles?: Array<string>;
+        teams?: Array<string>;
+        users?: Array<string>;
+        ownerTeam?: boolean;
+      };
+    } | {
+      id: string;
+      name?: string;
+      if?: string;
+      needs?: Array<string>;
+      retries?: number;
+      retryDelaySeconds?: number;
+      timeoutMinutes?: number;
+      continueOnError?: boolean;
+      outputSchema?: {
+        properties?: {
+          [key: string]: ConfigFile_schema0;
+        };
+        required?: Array<string>;
+        order?: Array<string>;
+      };
+      type: "workflow";
+      action: string;
+      inputs?: {
+        [key: string]: unknown;
+      };
+      entity?: string;
+      forEach?: {
+        items: string;
+        maxConcurrency?: number;
+        failFast?: boolean;
+      };
+    } | {
+      id: string;
+      name?: string;
+      if?: string;
+      needs?: Array<string>;
+      retries?: number;
+      retryDelaySeconds?: number;
+      timeoutMinutes?: number;
+      continueOnError?: boolean;
+      outputSchema?: {
+        properties?: {
+          [key: string]: ConfigFile_schema0;
+        };
+        required?: Array<string>;
+        order?: Array<string>;
+      };
+      type: "transform";
+      output: {
+        [key: string]: string;
+      };
+    } | {
+      id: string;
+      name?: string;
+      if?: string;
+      needs?: Array<string>;
+      retries?: number;
+      retryDelaySeconds?: number;
+      timeoutMinutes?: number;
+      continueOnError?: boolean;
+      outputSchema?: {
+        properties?: {
+          [key: string]: ConfigFile_schema0;
+        };
+        required?: Array<string>;
+        order?: Array<string>;
+      };
+      type: "fragment";
+      fragment: string;
+      with?: {
+        [key: string]: unknown;
+      };
+    }>;
+    outputs?: {
+      [key: string]: string;
+    };
   }>;
   entities?: Array<{
     identifier: string;
@@ -1245,6 +1772,252 @@ export type PolicyView = {
   managed: boolean;
 };
 
+export type FragmentView = {
+  identifier: string;
+  title: string;
+  description: string;
+  params: {
+    properties: {
+      [key: string]: FragmentView_schema0;
+    };
+    required?: Array<string>;
+    order?: Array<string>;
+  };
+  steps: Array<{
+    id: string;
+    name?: string;
+    if?: string;
+    needs?: Array<string>;
+    retries: number;
+    retryDelaySeconds: number;
+    timeoutMinutes?: number;
+    continueOnError: boolean;
+    outputSchema?: {
+      properties: {
+        [key: string]: FragmentView_schema0;
+      };
+      required?: Array<string>;
+      order?: Array<string>;
+    };
+    type: "invoke";
+    invoker: {
+      type: string;
+      [key: string]: unknown;
+    };
+  } | {
+    id: string;
+    name?: string;
+    if?: string;
+    needs?: Array<string>;
+    retries: number;
+    retryDelaySeconds: number;
+    timeoutMinutes?: number;
+    continueOnError: boolean;
+    outputSchema?: {
+      properties: {
+        [key: string]: FragmentView_schema0;
+      };
+      required?: Array<string>;
+      order?: Array<string>;
+    };
+    type: "approval";
+    approvers?: {
+      roles?: Array<string>;
+      teams?: Array<string>;
+      users?: Array<string>;
+      ownerTeam?: boolean;
+    };
+    choices?: Array<string>;
+    fields?: {
+      properties: {
+        [key: string]: FragmentView_schema0;
+      };
+      required?: Array<string>;
+      order?: Array<string>;
+    };
+    minApprovals: number;
+    allowSelfApproval: boolean;
+    message?: string;
+  } | {
+    id: string;
+    name?: string;
+    if?: string;
+    needs?: Array<string>;
+    retries: number;
+    retryDelaySeconds: number;
+    timeoutMinutes?: number;
+    continueOnError: boolean;
+    outputSchema?: {
+      properties: {
+        [key: string]: FragmentView_schema0;
+      };
+      required?: Array<string>;
+      order?: Array<string>;
+    };
+    type: "agent";
+    model: string;
+    effort: "low" | "medium" | "high" | "xhigh" | "max";
+    system?: string;
+    prompt: string;
+    output?: {
+      properties: {
+        [key: string]: {
+          [key: string]: unknown;
+        };
+      };
+      required?: Array<string>;
+      order?: Array<string>;
+    };
+    tools: Array<"catalog" | "upsert_entity" | "trigger_action" | "http">;
+    guardrails: {
+      entityBlueprints: Array<string>;
+      actions: Array<string>;
+      httpHosts: Array<string>;
+      httpMethods: Array<"GET" | "POST" | "PUT" | "PATCH" | "DELETE">;
+      maxWrites: number;
+    };
+    mcpServers: Array<{
+      name: string;
+      url: string;
+      token?: string;
+      allowedTools?: Array<string>;
+    }>;
+    maxTurns: number;
+    maxTokens: number;
+    maxCostUsd?: number;
+    provider?: "anthropic" | "bedrock" | "vertex";
+    apiKey?: string;
+  } | {
+    id: string;
+    name?: string;
+    if?: string;
+    needs?: Array<string>;
+    retries: number;
+    retryDelaySeconds: number;
+    timeoutMinutes?: number;
+    continueOnError: boolean;
+    outputSchema?: {
+      properties: {
+        [key: string]: FragmentView_schema0;
+      };
+      required?: Array<string>;
+      order?: Array<string>;
+    };
+    type: "wait";
+    duration?: string;
+    until?: string;
+    event?: {
+      name: string;
+      filter?: string;
+    };
+  } | {
+    id: string;
+    name?: string;
+    if?: string;
+    needs?: Array<string>;
+    retries: number;
+    retryDelaySeconds: number;
+    timeoutMinutes?: number;
+    continueOnError: boolean;
+    outputSchema?: {
+      properties: {
+        [key: string]: FragmentView_schema0;
+      };
+      required?: Array<string>;
+      order?: Array<string>;
+    };
+    type: "input";
+    message?: string;
+    inputs: {
+      properties: {
+        [key: string]: FragmentView_schema0;
+      };
+      required?: Array<string>;
+      order?: Array<string>;
+    };
+    assignees?: {
+      roles?: Array<string>;
+      teams?: Array<string>;
+      users?: Array<string>;
+      ownerTeam?: boolean;
+    };
+  } | {
+    id: string;
+    name?: string;
+    if?: string;
+    needs?: Array<string>;
+    retries: number;
+    retryDelaySeconds: number;
+    timeoutMinutes?: number;
+    continueOnError: boolean;
+    outputSchema?: {
+      properties: {
+        [key: string]: FragmentView_schema0;
+      };
+      required?: Array<string>;
+      order?: Array<string>;
+    };
+    type: "workflow";
+    action: string;
+    inputs: {
+      [key: string]: unknown;
+    };
+    entity?: string;
+    forEach?: {
+      items: string;
+      maxConcurrency: number;
+      failFast: boolean;
+    };
+  } | {
+    id: string;
+    name?: string;
+    if?: string;
+    needs?: Array<string>;
+    retries: number;
+    retryDelaySeconds: number;
+    timeoutMinutes?: number;
+    continueOnError: boolean;
+    outputSchema?: {
+      properties: {
+        [key: string]: FragmentView_schema0;
+      };
+      required?: Array<string>;
+      order?: Array<string>;
+    };
+    type: "transform";
+    output: {
+      [key: string]: string;
+    };
+  } | {
+    id: string;
+    name?: string;
+    if?: string;
+    needs?: Array<string>;
+    retries: number;
+    retryDelaySeconds: number;
+    timeoutMinutes?: number;
+    continueOnError: boolean;
+    outputSchema?: {
+      properties: {
+        [key: string]: FragmentView_schema0;
+      };
+      required?: Array<string>;
+      order?: Array<string>;
+    };
+    type: "fragment";
+    fragment: string;
+    with: {
+      [key: string]: unknown;
+    };
+  }>;
+  outputs: {
+    [key: string]: string;
+  };
+  version: number;
+  managed: boolean;
+  updatedAt: string;
+};
+
 export type WebhookView = {
   identifier: string;
   title: string;
@@ -1329,6 +2102,17 @@ export type Action_schema0 = {
   [key: string]: unknown;
 };
 
+export type Fragment_schema0 = {
+  type: "string" | "number" | "integer" | "boolean" | "array" | "object";
+  title?: string;
+  description?: string;
+  format?: string;
+  blueprint?: string;
+  enum?: Array<string | number>;
+  items?: Fragment_schema0;
+  [key: string]: unknown;
+};
+
 export type ConfigFile_schema0 = {
   type: "string" | "number" | "integer" | "boolean" | "array" | "object";
   title?: string;
@@ -1337,6 +2121,17 @@ export type ConfigFile_schema0 = {
   blueprint?: string;
   enum?: Array<string | number>;
   items?: ConfigFile_schema0;
+  [key: string]: unknown;
+};
+
+export type FragmentView_schema0 = {
+  type: "string" | "number" | "integer" | "boolean" | "array" | "object";
+  title?: string;
+  description?: string;
+  format?: string;
+  blueprint?: string;
+  enum?: Array<string | number>;
+  items?: FragmentView_schema0;
   [key: string]: unknown;
 };
 
@@ -1828,6 +2623,36 @@ export class AsteriusClient {
   /** POST /api/v1/expressions/check */
   postExpressionsCheck(query?: Record<string, string | number | undefined>): Promise<unknown> {
     return this.request('POST', `/api/v1/expressions/check`, { query });
+  }
+
+  /** GET /api/v1/fragments */
+  getFragments(query?: Record<string, string | number | undefined>): Promise<Array<FragmentView>> {
+    return this.request('GET', `/api/v1/fragments`, { query });
+  }
+
+  /** DELETE /api/v1/fragments/{id} */
+  deleteFragmentsById(id: string, query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('DELETE', `/api/v1/fragments/${encodeURIComponent(id)}`, { query });
+  }
+
+  /** GET /api/v1/fragments/{id} */
+  getFragmentsById(id: string, query?: Record<string, string | number | undefined>): Promise<FragmentView> {
+    return this.request('GET', `/api/v1/fragments/${encodeURIComponent(id)}`, { query });
+  }
+
+  /** PUT /api/v1/fragments/{id} */
+  putFragmentsById(id: string, body: Fragment, query?: Record<string, string | number | undefined>): Promise<FragmentView> {
+    return this.request('PUT', `/api/v1/fragments/${encodeURIComponent(id)}`, { query, body });
+  }
+
+  /** GET /api/v1/fragments/{id}/usage */
+  getFragmentsUsageById(id: string, query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('GET', `/api/v1/fragments/${encodeURIComponent(id)}/usage`, { query });
+  }
+
+  /** GET /api/v1/fragments/{id}/versions */
+  getFragmentsVersionsById(id: string, query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('GET', `/api/v1/fragments/${encodeURIComponent(id)}/versions`, { query });
   }
 
   /** GET /api/v1/home */
