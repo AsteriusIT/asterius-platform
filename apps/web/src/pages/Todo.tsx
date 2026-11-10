@@ -208,7 +208,7 @@ export function Todo() {
       <Card padding="md">
         <Group justify="space-between">
           <Group gap="sm">
-            <IconBell size={18} stroke={1.6} />
+            <IconBell size={18} />
             <Text fz="sm">{unread ? `${unread} unread notification${unread > 1 ? 's' : ''}` : 'No unread notification'}: run outcomes and updates.</Text>
           </Group>
           <Button size="xs" variant="light" onClick={openNotifications}>

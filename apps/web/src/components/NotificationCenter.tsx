@@ -6,6 +6,7 @@ import { IconBell } from '@tabler/icons-react';
 import { api, type NotificationItem } from '../lib/api';
 import { useAppMutation } from '../lib/queryClient';
 import { Empty, QueryView, TimeAgo } from './ui';
+import { ICON } from './iconScale';
 
 const OPEN_EVENT = 'asterius:open-notifications';
 /** Opens the notification drawer of the header from anywhere (e.g. the To do page). */
@@ -49,7 +50,7 @@ export function NotificationCenter() {
             aria-label={`Notifications${unread ? ` (${unread} unread)` : ''}`}
             data-tour="notifications"
           >
-            <IconBell size={19} stroke={1.6} />
+            <IconBell size={ICON.lg} />
           </ActionIcon>
         </Indicator>
       </Tooltip>

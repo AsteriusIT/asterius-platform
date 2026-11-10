@@ -7,6 +7,7 @@ import { IconSearch } from '@tabler/icons-react';
 import { api } from '../lib/api';
 import type { AdminArea } from '../lib/access';
 import { visibleCategories } from './adminSections';
+import { ICON } from './iconScale';
 
 export interface Command {
   id: string;
@@ -105,7 +106,7 @@ export function CommandPalette({
           data-autofocus
           aria-label="Search pages and entities"
           placeholder="Type to search pages and entities"
-          leftSection={<IconSearch size={16} />}
+          leftSection={<IconSearch size={ICON.md} />}
           value={query}
           onChange={(e) => setQuery(e.currentTarget.value)}
           onKeyDown={(e) => {

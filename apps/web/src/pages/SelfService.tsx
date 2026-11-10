@@ -81,7 +81,7 @@ export function SelfService() {
                         </ActionIcon>
                         {formOf(a)?.approval.required && (
                           <Tooltip label="Requires approval">
-                            <Badge color="yellow" leftSection={<IconShieldCheck size={12} />} style={{ flexShrink: 0 }}>
+                            <Badge color="yellow" leftSection={<IconShieldCheck size={14} />} style={{ flexShrink: 0 }}>
                               approval
                             </Badge>
                           </Tooltip>

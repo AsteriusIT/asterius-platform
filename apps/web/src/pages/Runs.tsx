@@ -390,7 +390,7 @@ function ApprovalTimeline({ approvals, tiers }: { approvals: Run['approvals']; t
         <Timeline.Item
           key={a.userId + a.at}
           color={a.decision === 'approved' ? 'green' : 'red'}
-          bullet={a.decision === 'approved' ? <IconCheck size={12} /> : <IconX size={12} />}
+          bullet={a.decision === 'approved' ? <IconCheck size={14} /> : <IconX size={14} />}
           title={
             <Group gap={6}>
               <UserChip user={{ id: a.userId, name: a.userName }} />

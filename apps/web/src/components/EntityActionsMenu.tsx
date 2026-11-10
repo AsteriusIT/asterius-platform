@@ -4,6 +4,7 @@ import type { Action, Entity, PublicUser } from '@asterius/shared';
 import { canRunOn, formOf, runAccess } from '../lib/permissions';
 import { useTeamTitle } from './RunAccess';
 import { EntityIcon } from './icons';
+import { ICON } from './iconScale';
 
 /**
  * "⋯" menu of the actions that run on one entity (day-2 first, delete actions last in red).
@@ -34,7 +35,7 @@ export function EntityActionsMenu({
         color={formOf(a)?.on === 'delete' ? 'red' : undefined}
         leftSection={<EntityIcon name={a.icon} size={16} />}
         rightSection={
-          formOf(a)?.approval.required ? <IconShieldCheck size={14} color="var(--mantine-color-yellow-6)" aria-label="Requires approval" /> : undefined
+          formOf(a)?.approval.required ? <IconShieldCheck size={ICON.sm} color="var(--mantine-color-yellow-6)" aria-label="Requires approval" /> : undefined
         }
         disabled={!allowed}
         title={access ? `You cannot run this action. ${[access.who.join(' · '), access.ask].filter(Boolean).join('. ')}` : a.description}
@@ -56,7 +57,7 @@ export function EntityActionsMenu({
       <Menu position="bottom-end" width={240} withinPortal>
         <Menu.Target>
           <ActionIcon variant="subtle" color="gray" aria-label={`Actions on ${entity.title}`} title="Actions">
-            <IconDots size={18} />
+            <IconDots size={ICON.lg} />
           </ActionIcon>
         </Menu.Target>
         <Menu.Dropdown>

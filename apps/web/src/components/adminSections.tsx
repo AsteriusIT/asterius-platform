@@ -21,6 +21,7 @@ import {
   IconWebhook,
 } from '@tabler/icons-react';
 import type { AdminArea } from '../lib/access';
+import { ICON } from './iconScale';
 
 export interface AdminTab {
   label: string;
@@ -42,7 +43,7 @@ export interface AdminCategory {
   tabs: AdminTab[];
 }
 
-const i = (I: typeof IconBolt) => <I size={16} stroke={1.6} />;
+const i = (I: typeof IconBolt) => <I size={ICON.md} />;
 
 /** Single source of truth for the admin sidebar, the in-page tabs and the command palette. */
 export const ADMIN_CATEGORIES: AdminCategory[] = [

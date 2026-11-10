@@ -4,6 +4,7 @@ import { isRouteErrorResponse, useRouteError } from 'react-router';
 import { IconAlertTriangle } from '@tabler/icons-react';
 import { errorText } from '../lib/api';
 import { useT } from '../lib/i18n';
+import { ICON_DISPLAY } from './iconScale';
 
 /** Full-page fallback with a reload action. */
 export function ErrorFallback({ error, onReset }: { error: unknown; onReset?: () => void }) {
@@ -12,7 +13,7 @@ export function ErrorFallback({ error, onReset }: { error: unknown; onReset?: ()
   return (
     <Center mih="50vh" p="lg" role="alert">
       <Stack align="center" gap="sm" maw={520}>
-        <IconAlertTriangle size={40} stroke={1.4} />
+        <IconAlertTriangle size={ICON_DISPLAY.lg} />
         <Title order={3}>{t('error.title')}</Title>
         <Text c="dimmed" fz="sm" ta="center">
           {t('error.hint')}

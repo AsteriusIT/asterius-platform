@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { ActionIcon, Badge, Button, Checkbox, CloseButton, Group, Menu, NativeSelect, Popover, Select, Stack, TextInput } from '@mantine/core';
 import { IconColumns, IconDeviceFloppy, IconFilter, IconLink, IconPencil, IconTrash } from '@tabler/icons-react';
 import type { Blueprint, SavedCatalogView, TeamRef } from '@asterius/shared';
+import { ICON } from './iconScale';
 
 /** Active property filters as removable chips plus a small "add filter" popover. */
 export function FilterBar({
@@ -32,7 +33,7 @@ export function FilterBar({
     <Group gap="xs">
       <Popover opened={open} onChange={setOpen} position="bottom-start" withArrow trapFocus>
         <Popover.Target>
-          <Button variant="default" leftSection={<IconFilter size={16} />} onClick={() => setOpen((o) => !o)} disabled={!props.length}>
+          <Button variant="default" leftSection={<IconFilter size={ICON.md} />} onClick={() => setOpen((o) => !o)} disabled={!props.length}>
             Add filter
           </Button>
         </Popover.Target>
@@ -107,7 +108,7 @@ export function ColumnPicker({
     <Popover position="bottom-end" withArrow>
       <Popover.Target>
         <ActionIcon variant="default" size="lg" aria-label="Choose columns" title="Columns">
-          <IconColumns size={18} />
+          <IconColumns size={ICON.lg} />
         </ActionIcon>
       </Popover.Target>
       <Popover.Dropdown>
@@ -178,7 +179,7 @@ export function ViewsMenu({
                 setTeam(v.team?.identifier ?? '');
               }}
             >
-              <IconPencil size={14} />
+              <IconPencil size={ICON.sm} />
             </ActionIcon>
           )}
           {v.canEdit && (
@@ -192,7 +193,7 @@ export function ViewsMenu({
                 onDelete(v);
               }}
             >
-              <IconTrash size={14} />
+              <IconTrash size={ICON.sm} />
             </ActionIcon>
           )}
         </Group>
@@ -212,7 +213,7 @@ export function ViewsMenu({
   return (
     <Menu position="bottom-end" width={300} closeOnItemClick={false}>
       <Menu.Target>
-        <Button variant="default" leftSection={<IconDeviceFloppy size={16} />}>
+        <Button variant="default" leftSection={<IconDeviceFloppy size={ICON.md} />}>
           Views
         </Button>
       </Menu.Target>
@@ -254,7 +255,7 @@ export function ViewsMenu({
             </Button>
           </Group>
         </Stack>
-        <Menu.Item leftSection={<IconLink size={14} />} onClick={onCopyLink}>
+        <Menu.Item leftSection={<IconLink size={ICON.sm} />} onClick={onCopyLink}>
           Copy link to this view
         </Menu.Item>
       </Menu.Dropdown>
