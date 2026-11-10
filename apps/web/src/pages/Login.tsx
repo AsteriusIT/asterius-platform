@@ -155,13 +155,16 @@ export function Login() {
           )}
           {providers.includes('keycloak') && !providers.includes('local') && (
             <Text fz="sm" ta="center">
-              No account? <Anchor href={keycloakUrl({ register: true })}>Create one</Anchor>
+              No account?{' '}
+              <Anchor href={keycloakUrl({ register: true })} fz="inherit">
+                Create one
+              </Anchor>
             </Text>
           )}
           {meta.data?.allowRegistration && providers.includes('local') && (
             <Text fz="sm" ta="center">
               {mode === 'login' ? 'No account? ' : 'Already registered? '}
-              <Anchor component="button" type="button" onClick={() => setMode(mode === 'login' ? 'register' : 'login')}>
+              <Anchor component="button" type="button" fz="inherit" onClick={() => setMode(mode === 'login' ? 'register' : 'login')}>
                 {mode === 'login' ? 'Create one' : 'Sign in'}
               </Anchor>
             </Text>

@@ -1,8 +1,10 @@
 import type { ReactNode } from 'react';
 import { Box, Drawer, Group, Text } from '@mantine/core';
+import { useDialogFocus } from './dialogFocus';
 
 /** The three widths a panel can have: a list, a form or details (default), a table. */
-const WIDTHS = { narrow: 440, default: 620, wide: 780 } as const;
+export const SIDE_PANEL_WIDTHS = { narrow: 440, default: 620, wide: 780 } as const;
+const WIDTHS = SIDE_PANEL_WIDTHS;
 
 /**
  * The one side panel of the portal (right drawer). It owns the chrome: title, subtitle, header actions, close
@@ -22,11 +24,15 @@ export function SidePanel(props: {
   flush?: boolean;
   /** Stays at the bottom while the body scrolls. Content that owns the buttons renders a `SidePanelFooter` itself. */
   footer?: ReactNode;
-  /** `false`: no backdrop, the page behind stays visible and usable (run graph). */
+  /**
+   * `false`: no backdrop, the panel is docked under the top bar and the page behind stays visible and usable (run
+   * graph). With the backdrop (default) the panel covers the whole height, top bar included.
+   */
   overlay?: boolean;
   children?: ReactNode;
 }) {
   const overlay = props.overlay ?? true;
+  const focus = useDialogFocus<HTMLDivElement>();
   return (
     <Drawer.Root
       opened={props.opened}
@@ -35,7 +41,7 @@ export function SidePanel(props: {
       size={WIDTHS[props.width ?? 'default']}
       shadow="xl"
       scrollAreaComponent={Frame}
-      classNames={{ content: 'side-panel' }}
+      classNames={{ content: 'side-panel', inner: overlay ? undefined : 'side-panel-docked' }}
     >
       {overlay && <Drawer.Overlay backgroundOpacity={0.25} blur={2} />}
       <Drawer.Content>
@@ -55,7 +61,7 @@ export function SidePanel(props: {
           )}
           <Drawer.CloseButton aria-label="Close panel" />
         </Drawer.Header>
-        <Drawer.Body className="side-panel-body" data-flush={props.flush || undefined}>
+        <Drawer.Body ref={focus} className="side-panel-body" data-flush={props.flush || undefined}>
           {props.children}
           {props.footer && <SidePanelFooter>{props.footer}</SidePanelFooter>}
         </Drawer.Body>

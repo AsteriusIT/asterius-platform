@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo } from 'react';
+import { memo, useEffect, useMemo, useRef } from 'react';
 import { ActionIcon, Badge, Box, Group, Loader, Menu, Text, ThemeIcon, Tooltip, useComputedColorScheme } from '@mantine/core';
 import {
   Background,
@@ -158,7 +158,7 @@ const FlowNode = memo(function FlowNode({ data }: NodeProps<Node<NodeData>>) {
           background: data.inner ? 'var(--mantine-color-default-hover)' : undefined,
         }}
       >
-        <Group gap="xs" wrap="nowrap" justify="space-between">
+        <Group className="flow-node-head" gap="xs" wrap="nowrap" justify="space-between">
           <Group gap="xs" wrap="nowrap" miw={0}>
             <ThemeIcon size={28} variant="light" color={color}>
               <Icon size={16} />
@@ -253,16 +253,35 @@ export function StepTypeItems({ onPick }: { onPick: (type: WorkflowStepType) => 
 const NODE_TYPES = { flow: FlowNode };
 const FIT = { padding: 0.15, minZoom: 0.7, maxZoom: 1 };
 
-/** Fits the graph again when the canvas is resized or a node is added or removed (fitView only runs at start). */
-function AutoFit({ nodes }: { nodes: number }) {
-  const { fitView } = useReactFlow();
+/**
+ * Fits the graph again when the canvas is resized or a node is added or removed (fitView only runs at start). When
+ * the whole graph does not fit at the smallest zoom of a fit (a side panel took half of the canvas), the node in
+ * `focus` is centred instead, so the step being read is never off screen.
+ */
+function AutoFit({ nodes, focus }: { nodes: number; focus?: string | null }) {
+  const { fitView, getNodes, getNodesBounds } = useReactFlow();
   const width = useStore((s) => s.width);
   const height = useStore((s) => s.height);
+  const fitted = useRef('');
   useEffect(() => {
     if (!width || !height) return;
-    const t = setTimeout(() => void fitView({ ...FIT, duration: 150 }), 50); // after the new nodes are measured
+    // After the new nodes are measured.
+    const t = setTimeout(() => {
+      const all = getNodes();
+      const bounds = getNodesBounds(all);
+      const room = 1 + FIT.padding;
+      const fits = width / (bounds.width * room) >= FIT.minZoom && height / (bounds.height * room) >= FIT.minZoom;
+      const layout = `${width}x${height}/${nodes}`;
+      if (!fits && focus && all.some((n) => n.id === focus)) {
+        void fitView({ nodes: [{ id: focus }], minZoom: FIT.minZoom, maxZoom: FIT.minZoom, duration: 150 });
+      } else if (fitted.current !== layout) {
+        // Only when the canvas or the graph changed: selecting a node does not undo a manual pan or zoom.
+        void fitView({ ...FIT, duration: 150 });
+      }
+      fitted.current = layout;
+    }, 50);
     return () => clearTimeout(t);
-  }, [fitView, width, height, nodes]);
+  }, [fitView, getNodes, getNodesBounds, width, height, nodes, focus]);
   return null;
 }
 
@@ -283,6 +302,8 @@ export function WorkflowFlow(props: {
   height?: number | string;
   /** No frame (the flow views, where the canvas is the page). */
   bare?: boolean;
+  /** Node kept in view when the graph is wider than the canvas (the step open in a side panel). */
+  focus?: string | null;
 }) {
   const { trigger, steps, selected, editable = false, onAdd, onToggle } = props;
   const colorMode = useComputedColorScheme('light');
@@ -392,7 +413,7 @@ export function WorkflowFlow(props: {
       >
         <Background id="flow-grid" variant={BackgroundVariant.Lines} gap={GRID} color="var(--flow-grid-faint)" />
         <Controls showInteractive={false} position="bottom-left" />
-        <AutoFit nodes={nodes.length} />
+        <AutoFit nodes={nodes.length} focus={props.focus} />
       </ReactFlow>
     </Box>
   );

@@ -5,6 +5,7 @@ import { parse, stringify } from 'yaml';
 import { IconAlertTriangle, IconBraces, IconCode } from '@tabler/icons-react';
 import { errorText } from '../../lib/api';
 import { CodeEditor } from '../CodeEditor';
+import { DialogFocus } from '../dialogFocus';
 
 /**
  * The frame shared by the builders (actions, blueprints): large dialog with overlay scrollbars, builder tabs
@@ -47,7 +48,7 @@ export function BuilderModal({
       // The footer is sticky inside the body: no bottom padding under it.
       styles={{ body: { paddingBottom: 0 } }}
     >
-      {children}
+      <DialogFocus>{children}</DialogFocus>
     </Modal>
   );
 }
@@ -117,7 +118,7 @@ export function ManagedNotice() {
 /** Problems + Cancel / Save, stuck to the bottom of the dialog while the content scrolls. */
 export function BuilderFooter(props: { problems: string[]; readOnly?: boolean; saving: boolean; saveLabel: string; onSave: () => void; onClose: () => void }) {
   return (
-    <Box className="builder-footer hairline-top" pos="sticky" bottom={0} pt="sm" pb="lg" mt="md" bg="var(--mantine-color-body)">
+    <Box className="builder-footer hairline-top" pos="sticky" bottom={0} pt="sm" pb="lg" mt="md" bg="var(--surface-overlay)">
       <Stack gap="sm">
         {props.problems.length > 0 && (
           <Alert color="red" variant="light" icon={<IconAlertTriangle size={18} />} title="Fix these before saving">

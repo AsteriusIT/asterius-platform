@@ -11,24 +11,28 @@ export interface UserRef {
   email?: string | null;
 }
 
-export const initials = (name = '') =>
-  name
-    .split(/[\s._@-]+/)
-    .filter(Boolean)
-    .map((p) => p[0])
-    .join('')
-    .slice(0, 2)
-    .toUpperCase();
+/**
+ * The one way to write initials (people, teams, organizations): the first letter of the first two words, or the
+ * first two letters of a single word. Of an email, only the part before the `@` counts.
+ */
+export const initials = (name?: string | null) => {
+  const words = (name ?? '')
+    .split('@')[0]!
+    .split(/[\s._-]+/)
+    .filter(Boolean);
+  return (words.length > 1 ? words[0]![0]! + words[1]![0]! : (words[0] ?? '').slice(0, 2)).toUpperCase();
+};
 
 /**
  * A user shown by display name only, in a bordered pill; hovering (or focusing) it opens a card with the
- * avatar, name and email. A reference without an email (approvals, history) is completed from the user
- * directory, fetched only once a card is opened.
+ * avatar, name and email. A reference without a name (history, audit log: an email or an id) is completed from the
+ * user directory at once, so the same person reads the same everywhere; one without an email (approvals) only once
+ * its card is opened. The directory is one cached request for the whole page.
  */
 export function UserChip({ user, size = 'sm' }: { user: UserRef | string | null | undefined; size?: 'xs' | 'sm' }) {
   const [opened, setOpened] = useState(false);
   const ref: UserRef = typeof user === 'string' ? (user.includes('@') ? { email: user } : { name: user }) : (user ?? {});
-  const needsLookup = opened && !(ref.name && ref.email) && Boolean(ref.id || ref.email || ref.name);
+  const needsLookup = (opened || !ref.name) && !(ref.name && ref.email) && Boolean(ref.id || ref.email || ref.name);
   const lookup = useQuery({ queryKey: ['user-lookup'], queryFn: api.userLookup, staleTime: 60_000, enabled: needsLookup });
   const found = needsLookup
     ? lookup.data?.find((u) => (ref.id && u.id === ref.id) || (ref.email && u.email === ref.email) || (!ref.id && !ref.email && u.name === ref.name))

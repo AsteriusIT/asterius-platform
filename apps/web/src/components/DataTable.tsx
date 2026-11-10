@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import type { MouseEvent, ReactNode } from 'react';
 import { Checkbox, Group, Pagination, Paper, Skeleton, Table, Text, UnstyledButton } from '@mantine/core';
 import { IconArrowDown, IconArrowUp, IconArrowsSort } from '@tabler/icons-react';
 import { Empty, ErrorAlert } from './ui';
@@ -10,7 +10,28 @@ export interface Column<T> {
   width?: number | string;
   /** Header becomes a button that sorts by this key (see `sort` prop). */
   sortable?: boolean;
+  /** The cell may take several lines (a description). By default a cell stays on one line and long text is cut. */
+  wrap?: boolean;
+  /**
+   * Free text of any length (a URL, a description on one line): when the table is short of room this column gives
+   * its width back first and its text is cut, instead of the table scrolling sideways.
+   */
+  truncate?: boolean;
 }
+
+/**
+ * Cells stay on one line (a date never wraps, a badge is never cut; see `.data-table` in styles.css) and long text is
+ * cut with an ellipsis. A cell whose text is cut shows it whole in a tooltip: the native `title`, set on hover so
+ * only cut cells get one.
+ */
+const tipIfCut = (e: MouseEvent<HTMLTableCellElement>) => {
+  const td = e.currentTarget;
+  const cut =
+    td.scrollWidth > td.clientWidth ||
+    [...td.querySelectorAll<HTMLElement>('.mantine-Text-root, .data-table-cut > *')].some((el) => el.scrollWidth > el.clientWidth);
+  if (cut) td.title = td.innerText;
+  else td.removeAttribute('title');
+};
 
 export interface SortState {
   key: string;
@@ -59,8 +80,9 @@ export function DataTable<T>(props: {
   if (props.error) return <ErrorAlert error={props.error} />;
   return (
     <Paper radius="md" className="clip">
-      <Table.ScrollContainer minWidth={640}>
-        <Table>
+      {/* Native scrolling: the overlay scroll area reserves the height of its scrollbar under the last row. */}
+      <Table.ScrollContainer minWidth={640} type="native">
+        <Table className="data-table">
           <Table.Thead>
             <Table.Tr>
               {selection && (
@@ -116,7 +138,7 @@ export function DataTable<T>(props: {
                 <Table.Tr
                   key={props.rowKey(r)}
                   onClick={props.onRowClick ? () => props.onRowClick!(r) : undefined}
-                  style={props.onRowClick ? { cursor: 'pointer' } : undefined}
+                  className={props.onRowClick ? 'clickable' : undefined}
                   data-selected={selection?.selected.has(props.rowKey(r)) || undefined}
                 >
                   {selection && (
@@ -125,7 +147,9 @@ export function DataTable<T>(props: {
                     </Table.Td>
                   )}
                   {columns.map((c) => (
-                    <Table.Td key={c.key}>{c.render(r)}</Table.Td>
+                    <Table.Td key={c.key} data-wrap={c.wrap || undefined} onMouseEnter={c.wrap ? undefined : tipIfCut}>
+                      {c.truncate ? <div className="data-table-cut">{c.render(r)}</div> : c.render(r)}
+                    </Table.Td>
                   ))}
                 </Table.Tr>
               ))}

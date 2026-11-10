@@ -12,6 +12,7 @@ import { clearDraft, loadDraft, saveDraft } from '../lib/drafts';
 import { usePreferences } from '../lib/preferences';
 import { initialValues, SchemaForm, validateValues, type FormValues } from './SchemaForm';
 import { Markdown } from './ui';
+import { DialogFocus } from './dialogFocus';
 
 function approvalText(approval: ApprovalPolicy) {
   const ap = approval.approvers ?? {};
@@ -63,7 +64,11 @@ export function ActionRunModal({
 }) {
   return (
     <Modal opened={!!action} onClose={onClose} title={<Text fw={600}>{action?.title}</Text>} size="lg">
-      {action && <RunForm key={action.identifier} action={action} entity={entity ?? null} prefill={prefill ?? null} onClose={onClose} />}
+      {action && (
+        <DialogFocus>
+          <RunForm key={action.identifier} action={action} entity={entity ?? null} prefill={prefill ?? null} onClose={onClose} />
+        </DialogFocus>
+      )}
     </Modal>
   );
 }

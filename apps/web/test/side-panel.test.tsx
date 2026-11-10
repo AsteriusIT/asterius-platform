@@ -62,6 +62,9 @@ describe('SidePanel', () => {
     );
     await screen.findByRole('dialog');
     expect(document.querySelector('.mantine-Drawer-overlay')).toBeNull();
+    // Docked under the top bar, and the focus goes to the content, not to the close button.
+    expect(document.querySelector('.mantine-Drawer-inner')?.classList.contains('side-panel-docked')).toBe(true);
+    expect(document.querySelector('.side-panel-body')?.hasAttribute('data-autofocus')).toBe(true);
     cleanup();
     renderUi(
       <SidePanel opened onClose={() => {}} title="Step">

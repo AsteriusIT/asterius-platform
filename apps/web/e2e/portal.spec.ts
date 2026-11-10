@@ -75,6 +75,8 @@ test('catalog sorts by a property column and filters by value', async ({ page, r
 test('command palette opens with Ctrl+K and jumps to an entity', async ({ page, request }) => {
   await signIn(page, request);
   await page.goto(`/o/${ORG}/`);
+  // The shortcut is the shell's: wait for it (a key pressed while the app loads is lost).
+  await expect(page.getByRole('heading', { name: /^Hello/ })).toBeVisible();
   await page.keyboard.press('Control+k');
   await page.getByLabel('Search pages and entities').fill('payments');
   await page

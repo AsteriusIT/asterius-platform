@@ -11,6 +11,7 @@ import { EditConflictDialog } from '../../components/EditConflictDialog';
 import { connectSteps, controlBadges, disconnectSteps, insertStepAfter, needsOf, STEP_TYPES, stepWarnings, type FlowTone } from '../../lib/workflow';
 import { QueryView } from '../../components/ui';
 import { FlowShell } from '../../components/FlowShell';
+import { useDialogFocus } from '../../components/dialogFocus';
 import { JsonBlock } from '../../components/CodeEditor';
 import { StepTypeItems, TRIGGER_ID, WorkflowFlow, type FlowStep, type FlowTrigger } from '../../components/WorkflowFlow';
 import { docProblems, GeneralFields, RunOptionsFields, toActionDoc, type ActionDoc } from '../../components/builder/ActionBuilder';
@@ -69,6 +70,8 @@ function FlowEditor({ value, readOnly, version }: { value: Record<string, unknow
   const [dirty, setDirty] = useState(false);
   const [codeTab, setCodeTab] = useState<string | null>('json');
   const [editing, setEditing] = useState<Editing>(null);
+  const triggerFocus = useDialogFocus<HTMLFieldSetElement>();
+  const stepFocus = useDialogFocus<HTMLDivElement>();
   const [testing, setTesting] = useState(false);
   const [test, setTest] = useState<DryRunResult | null>(null);
   const [problems, setProblems] = useState<string[]>([]);
@@ -421,7 +424,7 @@ function FlowEditor({ value, readOnly, version }: { value: Record<string, unknow
         }
       >
         {doc.trigger && (
-          <fieldset disabled={readOnly} className="bare-fieldset">
+          <fieldset ref={triggerFocus} disabled={readOnly} className="bare-fieldset">
             <TriggerEditor
               trigger={doc.trigger}
               onChange={(t) => change({ trigger: t })}
@@ -458,7 +461,7 @@ function FlowEditor({ value, readOnly, version }: { value: Record<string, unknow
         }
       >
         {step && (
-          <Stack>
+          <Stack ref={stepFocus}>
             {testOf.get(step.id) && <TestResult step={testOf.get(step.id)!} />}
             <fieldset disabled={readOnly} className="bare-fieldset">
               <StepSettings

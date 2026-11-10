@@ -28,6 +28,7 @@ import type { PublicUser, Team } from '@asterius/shared';
 import { api, errorText } from '../../lib/api';
 import { useAuth } from '../../lib/auth';
 import { DataTable } from '../../components/DataTable';
+import { initials } from '../../components/UserChip';
 import { Mono, PageHeader, TimeAgo } from '../../components/ui';
 import { NewTokenAlert, TokenTable } from '../Profile';
 import { ResourceAdmin, strip } from './ResourceAdmin';
@@ -46,11 +47,12 @@ export function TeamsAdmin() {
           key: 'm',
           label: 'Members',
           render: (t) => (
-            <Avatar.Group>
+            // A small overlap: the initials of every member stay readable.
+            <Avatar.Group spacing="2xs">
               {t.members.slice(0, 6).map((m) => (
                 <Tooltip key={m.id} label={m.name}>
                   <Avatar size="sm" radius="xl" color="indigo">
-                    {m.name.slice(0, 2).toUpperCase()}
+                    {initials(m.name)}
                   </Avatar>
                 </Tooltip>
               ))}
@@ -156,7 +158,8 @@ export function UsersAdmin() {
                 data={teamOptions}
                 value={u.teams.map((t) => t.identifier)}
                 onChange={(v) => update.mutate({ id: u.id, patch: { teams: v } })}
-                placeholder="—"
+                // Mantine keeps the placeholder after the pills: only an empty field shows it.
+                placeholder={u.teams.length ? undefined : '—'}
               />
             ),
           },

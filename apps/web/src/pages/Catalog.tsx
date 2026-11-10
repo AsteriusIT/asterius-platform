@@ -5,7 +5,7 @@ import { useDebouncedValue } from '@mantine/hooks';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { IconBolt, IconDownload, IconPlus, IconSearch, IconSettings, IconUsers } from '@tabler/icons-react';
-import type { Action, Blueprint, Entity } from '@asterius/shared';
+import type { Action, Blueprint, Entity, PropertySchema } from '@asterius/shared';
 import { api } from '../lib/api';
 import { formOf, isRunnable } from '../lib/permissions';
 import { useAuth } from '../lib/auth';
@@ -31,6 +31,9 @@ const PAGE = 25;
 /** Table columns: title, team, the first visible properties, last update. */
 const defaultProps = (bp: Blueprint) => orderedFields(bp.schema).filter((k) => listableProps(bp).includes(k));
 
+/** Text of any length (a URL, a sentence): its column is the one that is cut when the table is short of room. */
+const isFreeText = (p: PropertySchema) => p.type === 'string' && !p.enum && !p.enumColors && !['date-time', 'team', 'entity'].includes(p.format ?? '');
+
 function columnsFor(bp: Blueprint, props: string[]): Column<Entity>[] {
   return [
     {
@@ -55,6 +58,7 @@ function columnsFor(bp: Blueprint, props: string[]): Column<Entity>[] {
       key: k,
       label: bp.schema.properties[k].title ?? k,
       sortable: true,
+      truncate: isFreeText(bp.schema.properties[k]),
       render: (e: Entity) => <PropertyValue schema={bp.schema.properties[k]} value={e.properties[k]} compact />,
     })),
     ...Object.entries(bp.computed ?? {})

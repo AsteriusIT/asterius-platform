@@ -42,6 +42,7 @@ import {
   IconPlus,
   IconSelector,
   IconShieldLock,
+  IconX,
 } from '@tabler/icons-react';
 import { api } from '../lib/api';
 import { useAuth, useCan } from '../lib/auth';
@@ -88,7 +89,10 @@ export function Layout() {
   const [collapsed, setCollapsed] = useLocalStorage({ key: 'asterius.nav-collapsed', defaultValue: false, getInitialValueInEffect: false });
   const mini = collapsed && !isMobile;
   const toggleMini = () => setCollapsed((c) => !c);
-  useHotkeys([['mod+B', toggleMini]]);
+  useHotkeys([
+    ['mod+B', toggleMini],
+    ['Escape', close], // the navigation drawer of a phone
+  ]);
   const approvals = useQuery({ queryKey: ['approvals'], queryFn: api.approvals, refetchInterval: 30_000 });
   const todoCount = approvals.data?.length ?? 0;
 
@@ -174,6 +178,17 @@ export function Layout() {
       </AppShell.Header>
 
       <AppShell.Navbar className="app-navbar" p="sm" data-mini={mini || undefined}>
+        {/* On a phone the navigation covers the screen, top bar and burger included: it brings its own way out. */}
+        <AppShell.Section hiddenFrom="sm">
+          <Group justify="space-between" wrap="nowrap" gap="3xs">
+            <UnstyledButton component={Link} to="/" onClick={close} px="xs" py="2xs" display="block" aria-label="Home" miw={0}>
+              <BrandMark />
+            </UnstyledButton>
+            <ActionIcon variant="subtle" color="gray" size="lg" onClick={close} aria-label="Close navigation">
+              <IconX size={ICON.lg} />
+            </ActionIcon>
+          </Group>
+        </AppShell.Section>
         <AppShell.Section visibleFrom="sm">
           {mini ? (
             <Stack gap="2xs" align="center">

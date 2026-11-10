@@ -188,7 +188,8 @@ export const STATUS_LABELS: Record<RunStatus, string> = {
 
 export function StatusBadge({ status, label }: { status: RunStatus; label?: string | null }) {
   const badge = (
-    <Badge color={STATUS_COLORS[status]} variant={status === 'IN_PROGRESS' ? 'dot' : 'light'}>
+    // Never cut: in a row, what shrinks is the text next to it.
+    <Badge color={STATUS_COLORS[status]} variant={status === 'IN_PROGRESS' ? 'dot' : 'light'} flex="none">
       {STATUS_LABELS[status]}
     </Badge>
   );

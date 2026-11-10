@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
-import { ActionIcon, Badge, Button, Card, Group, SimpleGrid, Stack, Text, TextInput, ThemeIcon, Title, Tooltip } from '@mantine/core';
+import { ActionIcon, Badge, Box, Button, Card, Group, SimpleGrid, Stack, Text, TextInput, ThemeIcon, Tooltip } from '@mantine/core';
 import { useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router';
 import { parseInputsParam } from '../lib/drafts';
 import { usePreferences } from '../lib/preferences';
-import { IconSearch, IconShieldCheck, IconStar, IconStarFilled } from '@tabler/icons-react';
+import { IconSearch, IconStar, IconStarFilled } from '@tabler/icons-react';
 import type { Action } from '@asterius/shared';
 import { api, type ActionView } from '../lib/api';
 import { workflowSummary } from '../lib/workflow';
@@ -53,60 +53,62 @@ export function SelfService() {
           const groups = new Map<string, ActionView[]>();
           const sorted = [...visible].sort((a, b) => Number(favourites.includes(b.identifier)) - Number(favourites.includes(a.identifier)));
           for (const a of sorted) groups.set(formOf(a)?.blueprint ?? '', [...(groups.get(formOf(a)?.blueprint ?? '') ?? []), a]);
-          const groupsView = [...groups.entries()].map(([bp, items]) => {
+          // One continuous grid, the cards of a blueprint next to each other; each card names its group under its title
+          // (a group of one card would leave most of its own row empty).
+          const cards = [...groups.entries()].flatMap(([bp, items]) => {
             const b = blueprints.data?.find((x) => x.identifier === bp);
-            return (
-              <Stack key={bp} gap="xs">
-                <Title order={5} c="dimmed" fz="sm" fw={500}>
-                  {b?.title ?? (bp || 'General')}
-                </Title>
-                <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }}>
-                  {items.map((a) => (
-                    <Card key={a.identifier} className="hover-card">
-                      <Group justify="space-between" align="flex-start" wrap="nowrap">
-                        <Group gap="sm" wrap="nowrap">
-                          <ThemeIcon variant="light" size="lg">
-                            <EntityIcon name={a.icon ?? b?.icon} />
-                          </ThemeIcon>
-                          <Text fw={600}>{a.title}</Text>
-                        </Group>
-                        <ActionIcon
-                          variant="subtle"
-                          color={favourites.includes(a.identifier) ? 'yellow' : 'gray'}
-                          aria-label={`${favourites.includes(a.identifier) ? 'Remove from' : 'Add to'} favourites: ${a.title}`}
-                          aria-pressed={favourites.includes(a.identifier)}
-                          onClick={() => toggleFavourite(a.identifier)}
-                        >
-                          {favourites.includes(a.identifier) ? <IconStarFilled size={16} /> : <IconStar size={16} />}
-                        </ActionIcon>
-                        {formOf(a)?.approval.required && (
-                          <Tooltip label="Requires approval">
-                            <Badge color="yellow" leftSection={<IconShieldCheck size={14} />} flex="none">
-                              approval
-                            </Badge>
-                          </Tooltip>
-                        )}
-                      </Group>
-                      <Text fz="sm" c="dimmed" mt="sm" lineClamp={3} flex={1}>
-                        {a.description}
-                      </Text>
-                      <Group justify="space-between" mt="md">
-                        <Badge color="gray" variant="outline" size="sm">
-                          {workflowSummary(a)}
+            const group = b?.title ?? (bp || 'General');
+            return items.map((a) => (
+              <Card key={a.identifier} className="hover-card" component="article" aria-label={a.title}>
+                <Group gap="xs" wrap="nowrap">
+                  <ThemeIcon variant="light" size="lg">
+                    <EntityIcon name={a.icon ?? b?.icon} />
+                  </ThemeIcon>
+                  <Box flex={1} miw={0}>
+                    <Text fw={600} truncate title={a.title}>
+                      {a.title}
+                    </Text>
+                    <Text fz="xs" c="dimmed" truncate>
+                      {group}
+                    </Text>
+                  </Box>
+                  <ActionIcon
+                    variant="subtle"
+                    color={favourites.includes(a.identifier) ? 'yellow' : 'gray'}
+                    aria-label={`${favourites.includes(a.identifier) ? 'Remove from' : 'Add to'} favourites: ${a.title}`}
+                    aria-pressed={favourites.includes(a.identifier)}
+                    onClick={() => toggleFavourite(a.identifier)}
+                  >
+                    {favourites.includes(a.identifier) ? <IconStarFilled size={16} /> : <IconStar size={16} />}
+                  </ActionIcon>
+                </Group>
+                <Text fz="sm" c="dimmed" mt="sm" lineClamp={3} flex={1}>
+                  {a.description}
+                </Text>
+                <Group justify="space-between" mt="md">
+                  {/* What Start does; the approval badge sits here so the title keeps its line. */}
+                  <Group gap="2xs" wrap="nowrap">
+                    <Badge color="gray" variant="outline" size="sm" flex="none">
+                      {workflowSummary(a)}
+                    </Badge>
+                    {formOf(a)?.approval.required && (
+                      <Tooltip label="Requires approval">
+                        <Badge color="yellow" size="sm" flex="none">
+                          approval
                         </Badge>
-                        {a.allowedForMe ? (
-                          <Button size="xs" onClick={() => setRun(a)}>
-                            Start
-                          </Button>
-                        ) : (
-                          <RunAccessButton action={a} />
-                        )}
-                      </Group>
-                    </Card>
-                  ))}
-                </SimpleGrid>
-              </Stack>
-            );
+                      </Tooltip>
+                    )}
+                  </Group>
+                  {a.allowedForMe ? (
+                    <Button size="xs" onClick={() => setRun(a)}>
+                      Start
+                    </Button>
+                  ) : (
+                    <RunAccessButton action={a} />
+                  )}
+                </Group>
+              </Card>
+            ));
           });
           return (
             <>
@@ -122,7 +124,7 @@ export function SelfService() {
                   ))}
                 </Group>
               )}
-              {groupsView}
+              <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }}>{cards}</SimpleGrid>
             </>
           );
         }}

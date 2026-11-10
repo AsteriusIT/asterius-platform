@@ -21,10 +21,19 @@ export function FlowShell(props: {
   banner?: ReactNode;
   /** Small help at the bottom. */
   hint?: ReactNode;
+  /** Width (px) taken on the right by a docked side panel: the canvas and its bars shrink so nothing sits under it. */
+  reserve?: number;
   children: ReactNode;
 }) {
   return (
-    <Box pos="relative" w="100%" flex={1} mih="calc(100dvh - var(--app-shell-header-height, 60px) - 14px)">
+    <Box
+      className="flow-shell"
+      pos="relative"
+      flex={1}
+      miw={0}
+      mih="calc(100dvh - var(--app-shell-header-height, 60px) - 14px)"
+      style={{ '--flow-shell-reserve': `${props.reserve ?? 0}px` }}
+    >
       <Box pos="absolute" inset={0}>
         {props.children}
       </Box>

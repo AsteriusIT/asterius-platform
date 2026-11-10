@@ -12,6 +12,7 @@ import {
   NativeSelect,
   SegmentedControl,
   Select,
+  SimpleGrid,
   Stack,
   Table,
   Text,
@@ -43,7 +44,7 @@ import { useUrlParams } from '../lib/urlState';
 import { useRunStream } from '../lib/runStream';
 import { LogViewer } from '../components/LogViewer';
 import { Section } from '../components/Section';
-import { SidePanel } from '../components/SidePanel';
+import { SIDE_PANEL_WIDTHS, SidePanel } from '../components/SidePanel';
 import { duration, Markdown, PageHeader, QueryView, StatusBadge, STATUS_COLORS, STATUS_LABELS, SurfaceBox, TimeAgo } from '../components/ui';
 import { TRIGGER_ID, WorkflowFlow, type FlowStep, type FlowTrigger } from '../components/WorkflowFlow';
 import { FlowShell } from '../components/FlowShell';
@@ -81,6 +82,9 @@ export const runColumns = [
   { key: 'd', label: 'Duration', render: (r: Run) => <Text fz="sm">{r.startedAt ? duration(r.startedAt, r.endedAt) : '—'}</Text> },
 ];
 
+/** The filters grow in the row of the scope switch and go to their own row under this width (px). */
+const FILTERS_FLEX = '1 1 640px';
+
 export function Runs() {
   const [params, set] = useUrlParams();
   const navigate = useNavigate();
@@ -111,7 +115,8 @@ export function Runs() {
   return (
     <Stack>
       <PageHeader title="Runs" description="Every self-service request and its execution." refresh={q} />
-      <Group>
+      {/* The four filters share the row left by the scope switch, in equal widths; short of room they wrap together under it. */}
+      <Group align="flex-start">
         <SegmentedControl
           value={scope}
           onChange={(v) => set('scope', v)}
@@ -121,41 +126,39 @@ export function Runs() {
             { value: 'all', label: 'Everyone' },
           ]}
         />
-        <MultiSelect
-          placeholder="Any status"
-          aria-label="Filter by status"
-          clearable
-          data={(Object.keys(STATUS_COLORS) as RunStatus[]).map((k) => ({ value: k, label: STATUS_LABELS[k] }))}
-          value={status}
-          onChange={(v) => set('status', v.join(','))}
-          w={320}
-        />
-        <Select
-          placeholder="Any blueprint"
-          aria-label="Filter by blueprint"
-          clearable
-          data={(blueprints.data ?? []).map((b) => ({ value: b.identifier, label: b.title }))}
-          value={blueprint}
-          onChange={(v) => set('blueprint', v ?? '')}
-          w={200}
-        />
-        <TextInput
-          placeholder="Entity identifier"
-          aria-label="Filter by entity"
-          value={entity ?? ''}
-          onChange={(e) => set('entity', e.currentTarget.value)}
-          w={200}
-        />
-        <Select
-          placeholder="Any action"
-          aria-label="Filter by action"
-          searchable
-          clearable
-          data={(actions.data ?? []).map((a) => ({ value: a.identifier, label: a.title }))}
-          value={action}
-          onChange={(v) => set('action', v ?? '')}
-          w={240}
-        />
+        <SimpleGrid cols={{ base: 1, xs: 2, md: 4 }} spacing="sm" flex={FILTERS_FLEX} miw={0}>
+          <MultiSelect
+            placeholder={status.length ? undefined : 'Any status'}
+            aria-label="Filter by status"
+            clearable
+            data={(Object.keys(STATUS_COLORS) as RunStatus[]).map((k) => ({ value: k, label: STATUS_LABELS[k] }))}
+            value={status}
+            onChange={(v) => set('status', v.join(','))}
+          />
+          <Select
+            placeholder="Any blueprint"
+            aria-label="Filter by blueprint"
+            clearable
+            data={(blueprints.data ?? []).map((b) => ({ value: b.identifier, label: b.title }))}
+            value={blueprint}
+            onChange={(v) => set('blueprint', v ?? '')}
+          />
+          <TextInput
+            placeholder="Entity identifier"
+            aria-label="Filter by entity"
+            value={entity ?? ''}
+            onChange={(e) => set('entity', e.currentTarget.value)}
+          />
+          <Select
+            placeholder="Any action"
+            aria-label="Filter by action"
+            searchable
+            clearable
+            data={(actions.data ?? []).map((a) => ({ value: a.identifier, label: a.title }))}
+            value={action}
+            onChange={(v) => set('action', v ?? '')}
+          />
+        </SimpleGrid>
       </Group>
       <DataTable
         rows={q.data?.items}
@@ -498,10 +501,12 @@ function RunFlow({ r }: { r: Run }) {
           )
         }
         hint="Click a node for its details and logs."
+        reserve={panel ? SIDE_PANEL_WIDTHS.default : 0}
       >
         <WorkflowFlow
           bare
           height="100%"
+          focus={selected}
           trigger={runTrigger(r)}
           steps={flowSteps}
           selected={selected}

@@ -297,6 +297,44 @@ h4,
 .mantine-Table-tbody .mantine-Table-tr[data-selected]:hover {
   background: var(--table-row-selected-hover);
 }
+/* DataTable cells stay on one line: a date never wraps, a badge is never cut, and the columns take the width of
+   their content (the table scrolls sideways when the page is too narrow). Long text is cut at CELL_MAX with an
+   ellipsis; DataTable gives a cut cell its whole text as a tooltip. A column declared `wrap` keeps its lines. */
+.data-table .mantine-Table-td {
+  max-width: 420px; /* geometric: about 55 characters, the longest text a cell shows before it is cut */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.data-table .mantine-Table-td[data-wrap] {
+  max-width: none;
+  white-space: normal;
+}
+.data-table .mantine-Table-td :where(p, div).mantine-Text-root {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* A badge in a cell keeps its whole label (its label column could shrink to nothing otherwise). */
+.mantine-Table-td .mantine-Badge-root {
+  flex: none;
+  min-width: max-content;
+}
+/* A `truncate` column: a grid whose only track may shrink, so the column gives its width back before the others
+   and its text is cut (down to CUT_MIN). */
+.data-table-cut {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 48px; /* geometric: what stays readable of a cut text ("1.14…") */
+}
+.data-table-cut > * {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* A stack of avatars sits on a raised surface (a table): the ring between two of them takes its colour. */
+.mantine-Avatar-root[data-within-group] {
+  border-color: var(--surface-raised);
+  background: var(--surface-raised);
+}
 /* DataTable: sortable header (the arrows wake up on hover/focus), footer inside the frame. */
 .data-table-sort {
   color: inherit;
@@ -336,7 +374,6 @@ h4,
   line-height: var(--mantine-line-height-lg);
   white-space: pre-wrap;
   word-break: break-word;
-  background: var(--code-bg);
 }
 .log-dim {
   opacity: 0.55;
@@ -471,6 +508,7 @@ h4,
 .workflow-flow {
   --flow-grid-faint: color-mix(in srgb, var(--mantine-color-text) 5%, transparent);
   --flow-grid-strong: color-mix(in srgb, var(--mantine-color-text) 16%, transparent);
+  --flow-handle-y: 37px; /* node padding (xs) + border + half of .flow-node-head */
   border-radius: var(--mantine-radius-lg);
   overflow: hidden;
   background: var(--surface);
@@ -493,6 +531,10 @@ h4,
 .workflow-flow .react-flow__node {
   cursor: pointer;
 }
+/* The library's credit: no box of its own on the canvas (it was a light patch in dark). */
+.workflow-flow .react-flow__attribution {
+  background: transparent;
+}
 .flow-node-halo {
   position: absolute;
   inset: -48px;
@@ -510,10 +552,16 @@ h4,
   border: 1px solid var(--mantine-color-default-border);
   transition: box-shadow 0.15s;
 }
+/* Every node reserves three lines (kicker, title, detail) and centres what it has: the handles sit at one height
+   (--flow-handle-y, the middle of that block), so the links of a row are straight whatever a node shows below. */
+.flow-node-head {
+  min-height: 52px; /* 3xs kicker + sm title + 2xs caption */
+}
 .flow-node[data-selected] {
   box-shadow: 0 0 0 4px color-mix(in srgb, var(--mantine-color-brand-6) 18%, transparent);
 }
 .workflow-flow .react-flow__handle {
+  top: var(--flow-handle-y);
   width: 8px;
   height: 8px;
   background: var(--mantine-color-body);
@@ -522,7 +570,7 @@ h4,
 .flow-node-add {
   position: absolute;
   right: -34px;
-  top: 50%;
+  top: var(--flow-handle-y);
   transform: translateY(-50%);
   opacity: 0;
   transition: opacity 0.15s;
@@ -585,8 +633,20 @@ h4,
 [data-mantine-color-scheme='dark'] .mantine-Radio-radio[data-error] {
   border-color: var(--mantine-color-error);
 }
-[data-mantine-color-scheme='dark'] .mantine-Switch-root {
+/* Mantine sets the track colour on the track itself: an override on the root never reached it. */
+[data-mantine-color-scheme='dark'] .mantine-Switch-input:not(:checked):not(:disabled) + .mantine-Switch-track {
   --switch-bg: var(--border-strong);
+}
+/* `dot` badges ("In progress", "live") are outlined: the default border is the colour of a raised surface in dark. */
+[data-mantine-color-scheme='dark'] .mantine-Badge-root[data-variant='dot'] {
+  border-color: var(--border-strong);
+}
+/* Inside a panel or a modal the surface is already a step above the page: fields are drawn on it, with a border
+   that shows, instead of adding a third tone (panel, field, inset block). `:where` keeps the focus and error
+   borders (inputs, above) in charge. */
+:where([data-mantine-color-scheme='dark'] :is(.side-panel-body, .mantine-Modal-body)) .mantine-Input-input {
+  background-color: transparent;
+  border-color: var(--border-strong);
 }
 [data-mantine-color-scheme='dark'] .mantine-Input-input:disabled,
 [data-mantine-color-scheme='dark'] .mantine-Input-input[data-disabled] {
@@ -606,6 +666,22 @@ h4,
 /* ---- end keyboard focus ---- */
 
 /* ==== side panels, sections, modals (components/SidePanel.tsx, Section.tsx, LogViewer.tsx) — begin ==== */
+/* A panel without backdrop is docked under the top bar (60px, AppShell header): search, notifications and theme
+   stay in reach. A panel with its backdrop covers the whole height. */
+.mantine-Drawer-inner.side-panel-docked {
+  top: 60px;
+}
+/* The flow views give the docked panel its width (components/FlowShell.tsx) once there is room for both. */
+@media (min-width: 75em) {
+  .flow-shell {
+    /* 12px: the margin of the page panel, which the docked panel covers. */
+    margin-right: max(0px, var(--flow-shell-reserve, 0px) - 12px);
+  }
+}
+/* The content of a dialog takes the focus when it opens (components/dialogFocus.tsx): no ring on a container. */
+.dialog-focus:focus {
+  outline: none;
+}
 /* Panel: the header stays, the body scrolls, the footer sticks to the bottom. */
 .side-panel {
   overflow: hidden;
@@ -685,11 +761,13 @@ h4,
 .log-viewer-toolbar {
   padding-bottom: var(--mantine-spacing-xs);
 }
+/* Among other sections the log takes the height of its lines, up to LOG_MAX, on the same inset surface as a
+   `SurfaceBox`; in a flush panel it fills the height, edge to edge. */
 .log-viewer-box {
-  height: 420px;
+  max-height: 420px; /* geometric: about 20 lines before the box scrolls */
   overflow: auto;
   border-radius: var(--mantine-radius-md);
-  background: var(--code-bg);
+  background: var(--surface);
 }
 .log-viewer[data-fill] {
   flex: 1 1 0;
@@ -702,7 +780,7 @@ h4,
 }
 .log-viewer[data-fill] .log-viewer-box {
   flex: 1;
-  height: auto;
+  max-height: none;
   min-height: 0;
   border-radius: 0;
 }

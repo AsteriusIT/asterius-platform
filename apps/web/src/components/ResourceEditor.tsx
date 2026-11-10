@@ -4,6 +4,7 @@ import { notifications } from '@mantine/notifications';
 import { parse, stringify } from 'yaml';
 import { errorText } from '../lib/api';
 import { CodeEditor } from './CodeEditor';
+import { DialogFocus } from './dialogFocus';
 
 /**
  * Edit any configurable resource as YAML (blueprints, actions, integrations, webhooks, teams): the same
@@ -21,7 +22,11 @@ export function ResourceEditor<T>(props: {
 }) {
   return (
     <Modal opened={!!props.value} onClose={props.onClose} title={<Text fw={600}>{props.title}</Text>} size="xl">
-      {props.value && <EditorBody {...props} value={props.value} />}
+      {props.value && (
+        <DialogFocus>
+          <EditorBody {...props} value={props.value} />
+        </DialogFocus>
+      )}
     </Modal>
   );
 }

@@ -17,6 +17,10 @@ export const waitingOnText = (w?: WaitingOn | null) => {
   return parts.length ? `waiting on ${parts.join(', ')}` : 'waiting';
 };
 
+/** Widths of the page panel from which the personal strip has two, then four columns (container query). */
+const STRIP_2_COLS = '560px';
+const STRIP_4_COLS = '1160px';
+
 /** A compact list of a strip card, one line per item. */
 function StripList<T>({ items, empty, render }: { items: T[]; empty: string; render: (item: T) => ReactNode }) {
   if (!items.length)
@@ -28,11 +32,12 @@ function StripList<T>({ items, empty, render }: { items: T[]; empty: string; ren
   return <Stack gap="2xs">{items.map(render)}</Stack>;
 }
 
-function StripCard({ title, to, linkLabel, children }: { title: string; to: string; linkLabel: string; children: ReactNode }) {
+/** `title` is short enough for a quarter of the page; `label` names the card in full for assistive technology. */
+function StripCard({ title, label, to, linkLabel, children }: { title: string; label: string; to: string; linkLabel: string; children: ReactNode }) {
   return (
-    <Card padding="md" component="section" aria-label={title}>
+    <Card padding="md" component="section" aria-label={label}>
       <Group justify="space-between" mb="xs" wrap="nowrap" gap="xs">
-        <Text fw={600} fz="sm" truncate>
+        <Text fw={600} fz="sm" truncate title={label}>
           {title}
         </Text>
         <Anchor component={Link} to={to} fz="xs" flex="none">
@@ -48,8 +53,9 @@ function StripCard({ title, to, linkLabel, children }: { title: string; to: stri
 export function PersonalStrip({ home }: { home: HomeSummary }) {
   const decisions = home.pendingApprovals;
   return (
-    <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }}>
-      <StripCard title="Waiting for your decision" to="/todo" linkLabel="Open to do">
+    // Columns follow the width of the page panel, not of the window: two until there is room for four (sidebar open or folded).
+    <SimpleGrid type="container" cols={{ base: 1, [STRIP_2_COLS]: 2, [STRIP_4_COLS]: 4 }}>
+      <StripCard title="Waiting for you" label="Waiting for your decision" to="/todo" linkLabel="Open to do">
         <Group gap="sm" wrap="nowrap">
           <ThemeIcon variant="light" size="lg" color={decisions ? 'yellow' : 'gray'}>
             <IconChecklist size={18} />
@@ -62,7 +68,12 @@ export function PersonalStrip({ home }: { home: HomeSummary }) {
           </div>
         </Group>
       </StripCard>
-      <StripCard title={`Your requests waiting on others (${home.waitingOnOthers.length})`} to="/todo" linkLabel="See all">
+      <StripCard
+        title={`Waiting on others (${home.waitingOnOthers.length})`}
+        label={`Your requests waiting on others (${home.waitingOnOthers.length})`}
+        to="/todo"
+        linkLabel="See all"
+      >
         <StripList
           items={home.waitingOnOthers.slice(0, 4)}
           empty="None of your requests is waiting."
@@ -78,13 +89,13 @@ export function PersonalStrip({ home }: { home: HomeSummary }) {
           )}
         />
       </StripCard>
-      <StripCard title="Your latest runs" to="/runs?scope=mine" linkLabel="All runs">
+      <StripCard title="Your latest runs" label="Your latest runs" to="/runs?scope=mine" linkLabel="All runs">
         <StripList
           items={home.myRuns.slice(0, 4)}
           empty="No runs yet: start from Self-service."
           render={(r) => (
             <Group key={r.id} justify="space-between" wrap="nowrap" gap="xs">
-              <Anchor component={Link} to={`/runs/${r.id}`} fz="sm" truncate miw={0}>
+              <Anchor component={Link} to={`/runs/${r.id}`} fz="sm" truncate miw={0} title={`${r.actionTitle}${r.entity ? ` · ${r.entity}` : ''}`}>
                 {r.actionTitle}
                 {r.entity ? ` · ${r.entity}` : ''}
               </Anchor>
@@ -93,7 +104,7 @@ export function PersonalStrip({ home }: { home: HomeSummary }) {
           )}
         />
       </StripCard>
-      <StripCard title="Changed in your teams" to="/catalog" linkLabel="Catalog">
+      <StripCard title="Changed in your teams" label="Changed in your teams" to="/catalog" linkLabel="Catalog">
         <StripList
           items={home.teamEntities.slice(0, 4)}
           empty="Nothing owned by your teams changed recently."
