@@ -1378,3 +1378,31 @@ export type WidgetData =
   | { type: 'table'; blueprint: string; items: Entity[]; total: number }
   | ({ type: 'insights' } & Insights)
   | { type: 'markdown' };
+
+// ---- preferences/views ----
+/** Per-user, per-organization preferences (GET/PUT /api/v1/me/preferences). Form drafts stay in the browser. */
+export interface UserPreferences {
+  /** Favourite actions (identifiers). */
+  favourites?: string[];
+  /** Recently started actions, most recent first. */
+  recentActions?: string[];
+  /** Columns picked for the catalog table of a blueprint: `catalog.columns.<blueprint>`. */
+  [key: `catalog.columns.${string}`]: string[] | undefined;
+}
+
+/** A saved catalog view: a named catalog query string, private or shared with one team. */
+export interface SavedCatalogView {
+  id: string;
+  name: string;
+  blueprint: string;
+  /** Catalog URL query string (search, team, sort, filters…), without the page. */
+  query: string;
+  team: TeamRef | null;
+  owner: { id: string; name: string };
+  /** Owned by the caller. */
+  mine: boolean;
+  /** The caller may rename, re-share or delete it (owner or admin). */
+  canEdit: boolean;
+  createdAt: string;
+  updatedAt: string;
+}

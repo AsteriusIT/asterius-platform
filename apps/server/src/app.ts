@@ -37,6 +37,7 @@ function trustProxy(v: string): boolean | string[] | ((address: string, hop: num
 import { registerTriggerListeners } from './actions/triggers.js';
 import { registerNotificationListeners } from './notifications/dispatch.js';
 import { notificationRoutes } from './routes/notifications.js';
+import { preferenceRoutes } from './routes/preferences.js';
 import { scimRoutes } from './auth/scim.js';
 import { collectRoutes, registerOpenApi } from './openapi.js';
 
@@ -163,6 +164,7 @@ export async function buildApp(opts: AppOptions = {}): Promise<FastifyInstance> 
       await v1.register(actionRoutes);
       await v1.register(integrationRoutes);
       await v1.register(notificationRoutes);
+      await v1.register(preferenceRoutes);
       await v1.register(aiRoutes);
       await v1.register(mcpRoutes);
       await v1.register(adminRoutes, { reloadConfig: opts.reloadConfig ?? (async () => undefined) });
