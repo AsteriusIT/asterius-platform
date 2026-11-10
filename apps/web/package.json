@@ -9,7 +9,9 @@
     "typecheck": "tsc -b --noEmit",
     "preview": "vite preview",
     "test": "vitest run",
-    "e2e": "playwright test",
+    "e2e": "playwright test --project=functional",
+    "e2e:visual": "playwright test --project=visual",
+    "e2e:update": "playwright test --project=visual --update-snapshots",
     "icons:vendor": "node scripts/gen-vendor-icons.mjs && prettier --write src/components/vendorIcons.generated.ts"
   },
   "devDependencies": {
