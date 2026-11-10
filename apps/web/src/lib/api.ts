@@ -52,6 +52,7 @@ import type {
   RunArtifact,
   WorkflowTestReport,
 } from '@asterius/shared';
+import { urlOrg } from './orgUrl';
 
 export interface SimulationResult {
   steps: { id: string; type: string; skipped: boolean; error?: string; preview?: unknown }[];
@@ -122,7 +123,10 @@ export const setCsrf = (t: string | undefined) => {
   if (t) csrf = t;
 };
 
-/** The organization the UI works in (slug), sent as X-Asterius-Org. The server falls back to the last one used. */
+/**
+ * The default organization (slug) for new visits and unprefixed URLs. A tab works in the organization of its URL
+ * (`/o/<slug>`, see tabOrg); the server falls back to the last one used when neither is known.
+ */
 const ORG_KEY = 'asterius.org';
 export const orgStore = {
   get: () => {
@@ -142,6 +146,9 @@ export const orgStore = {
   },
 };
 
+/** The organization of this tab, sent as X-Asterius-Org: the one of its URL, else the remembered default. */
+export const tabOrg = () => urlOrg() ?? orgStore.get();
+
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -157,10 +164,12 @@ export const setUnauthorizedHandler = (fn: () => void) => {
   onUnauthorized = fn;
 };
 
-export async function request<T>(method: string, path: string, body?: unknown, retried = false): Promise<T> {
+/** `noOrg`: send no organization (the server picks the user's last one). */
+export async function request<T>(method: string, path: string, body?: unknown, noOrg = false): Promise<T> {
   const token = tokenStore.get();
   const viaCookie = token === COOKIE_SESSION;
-  const org = orgStore.get();
+  const fromUrl = urlOrg();
+  const org = noOrg ? null : (fromUrl ?? orgStore.get());
   const res = await fetch(path, {
     method,
     credentials: 'same-origin',
@@ -176,8 +185,9 @@ export async function request<T>(method: string, path: string, body?: unknown, r
   const text = await res.text();
   const data = text && (res.headers.get('content-type') ?? '').includes('json') ? JSON.parse(text) : text;
   const err = data as { error?: string; code?: string };
-  // Removed from the remembered organization (or it was deleted): forget it and let the server pick another.
-  if (res.status === 403 && org && !retried && /member of this organization/.test(err?.error ?? '')) {
+  // Removed from the remembered organization (or it was deleted): forget it and let the server pick another. The
+  // organization of the URL is never swapped silently: the page says the user is not a member (OrgGate).
+  if (res.status === 403 && org && !fromUrl && /member of this organization/.test(err?.error ?? '')) {
     orgStore.set(null);
     return request<T>(method, path, body, true);
   }
@@ -188,7 +198,7 @@ export async function request<T>(method: string, path: string, body?: unknown, r
 /** Download an authenticated file (run artifacts): fetched with the session, then saved by the browser. */
 export async function downloadArtifact(runId: string, a: Pick<RunArtifact, 'id' | 'name'>) {
   const token = tokenStore.get();
-  const org = orgStore.get();
+  const org = tabOrg();
   const res = await fetch(`/api/v1/runs/${encodeURIComponent(runId)}/artifacts/${encodeURIComponent(a.id)}`, {
     credentials: 'same-origin',
     headers: { ...(token && token !== COOKIE_SESSION ? { authorization: `Bearer ${token}` } : {}), ...(org ? { 'x-asterius-org': org } : {}) },
@@ -236,6 +246,8 @@ export const api = {
     }).then((r) => (setCsrf(r.csrfToken), r)),
   logout: () => request<{ ok: true; redirect?: string }>('POST', '/api/auth/logout'),
   me: () => request<PublicUser & { csrfToken?: string }>('GET', '/api/auth/me').then((u) => (setCsrf(u.csrfToken), u)),
+  /** The signed-in user outside the tab's organization (to list theirs when they are not a member of it). */
+  meOutsideOrg: () => request<PublicUser & { csrfToken?: string }>('GET', '/api/auth/me', undefined, true).then((u) => (setCsrf(u.csrfToken), u)),
   setTourCompleted: (completed: boolean) => request<PublicUser>('PUT', '/api/auth/me/tour', { completed }),
 
   home: () => request<HomeSummary>('GET', v1('/home')),

@@ -137,6 +137,6 @@ describe('platform notifications', () => {
     expect((await carol.post(`/api/v1/runs/${id}/approve`, {})).status).toBe(200);
     await finished(alice, id);
     const done = await waitFor(async () => mails.find((m) => m.to[0] === 'alice@example.com' && m.subject === 'Needs OK succeeded'));
-    expect(done.text).toContain(`/runs/${id}`);
+    expect(done.text).toMatch(new RegExp(`http://platform\\.test/o/[a-z0-9-]+/runs/${id}`)); // opens in the run's organization
   });
 });

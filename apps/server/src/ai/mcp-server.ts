@@ -5,6 +5,7 @@ import { getRun, listRuns, pendingApprovals, triggerRun } from '../actions/runs.
 import { runCatalogTool } from './tools.js';
 import { truncate } from './model.js';
 import { errorMessage } from '../lib/errors.js';
+import { appUrl } from '../orgs/orgs.js';
 
 /**
  * The platform as a Model Context Protocol server (Streamable HTTP transport, stateless JSON responses).
@@ -84,7 +85,7 @@ const TOOLS: ToolDef[] = [
       const a = z.object({ action: z.string().min(1), entity: z.string().nullish(), inputs: z.record(z.string(), z.unknown()).default({}) }).parse(i);
       await getAction(a.action); // 404 for unknown actions
       const r = await triggerRun(p, a.action, { entity: a.entity ?? null, inputs: a.inputs });
-      return { runId: r.run.id, status: r.run.status, url: `/runs/${r.run.id}` };
+      return { runId: r.run.id, status: r.run.status, url: await appUrl(`/runs/${r.run.id}`) };
     },
   },
   {
@@ -112,13 +113,14 @@ const TOOLS: ToolDef[] = [
     annotations: { readOnlyHint: true },
     run: async (i, p) => {
       const { items } = await pendingApprovals(p, { limit: Math.min(Math.max(Number(i.limit) || 20, 1), 100) });
+      const runs = await appUrl('/runs/');
       return items.map((r) => ({
         id: r.id,
         action: r.actionTitle,
         entity: r.entity,
         status: r.status,
         requestedBy: r.triggeredBy?.email,
-        url: `/runs/${r.id}`,
+        url: `${runs}${r.id}`,
       }));
     },
   },

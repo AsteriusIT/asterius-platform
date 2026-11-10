@@ -45,6 +45,13 @@ organization) and an optional platform `superadmin` flag.
   run across tenants. Background work enters the organization of what it processes (`inRunOrg` for run workers and
   housekeeping, the sync and schedule schedulers, the inbound-event and delivery workers, the config loader) or loops
   over organizations (`forEachOrg`: scorecard passes, AI catalog reviews). Caches are keyed by organization.
+- **Organization in the URL.** Every organization-scoped UI page lives under `/o/<slug>/…` (the router `basename`,
+  so app links stay relative to the tab's organization); the tab sends that slug as `X-Asterius-Org`, and localStorage
+  only remembers the default for new visits. Unprefixed URLs (old bookmarks, links already sent) move to the default
+  organization; login, auth callbacks, `/welcome`, `/orgs/new` and `/platform/…` stay outside the prefix
+  (`apps/web/src/lib/orgUrl.ts`, `components/OrgGate.tsx`). Server-built absolute links (emails, Slack, `run.url`,
+  step links, MCP results) use `appUrl()` (`orgs/orgs.ts`); in-app notification links stay org-relative paths, since
+  the inbox is listed per organization.
 - **Data.** Named resources have `org_id` in their primary key (teams, blueprints, entities, actions, integrations,
   webhooks, secrets, scorecards, dashboards, action versions, tombstones, AI budgets…); records keyed by an id carry an
   `org_id` column (runs, tokens, audit, entity history, AI usage and reviews, inbox notifications); notification

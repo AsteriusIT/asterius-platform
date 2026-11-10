@@ -52,6 +52,7 @@ import { controlBadges, splitJobLog, STEP_STATUS_COLORS, STEP_STATUS_LABELS, STE
 import { PropertyValue } from '../components/PropertyValue';
 import { initialValues, SchemaForm, validateValues, type FormValues } from '../components/SchemaForm';
 import { UserChip } from '../components/UserChip';
+import { appHref } from '../lib/orgUrl';
 
 const PAGE = 30;
 const onError = (e: unknown) => notifications.show({ color: 'red', message: errorText(e) });
@@ -341,8 +342,8 @@ function RunActions({ r, onDone, size }: { r: Run; onDone: (run: Run) => void; s
         <Button
           size={size}
           component="a"
-          href={r.link}
-          target={r.link.startsWith(window.location.origin) ? undefined : '_blank'}
+          href={appHref(r.link)}
+          target={r.link.startsWith('/') || r.link.startsWith(window.location.origin) ? undefined : '_blank'}
           variant="default"
           rightSection={<IconExternalLink size={16} />}
         >
@@ -802,7 +803,7 @@ function StepPanel({ run, step, onDone }: { run: Run; step: RunStep; onDone: (r:
             </Button>
           )}
           {step.link && (
-            <Button size="xs" component="a" href={step.link} target="_blank" variant="default" rightSection={<IconExternalLink size={14} />}>
+            <Button size="xs" component="a" href={appHref(step.link)} target="_blank" variant="default" rightSection={<IconExternalLink size={14} />}>
               Open
             </Button>
           )}

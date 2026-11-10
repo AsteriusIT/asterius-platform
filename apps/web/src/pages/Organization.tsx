@@ -112,7 +112,6 @@ function CreateOrgForm({ onCreated }: { onCreated: (o: Organization) => void }) 
 
 export function NewOrganization() {
   const { switchOrg } = useAuth();
-  const navigate = useNavigate();
   const meta = useQuery({ queryKey: ['meta'], queryFn: api.meta, staleTime: Infinity });
   const { isSuperadmin } = useAuth();
   const allowed = meta.data?.orgCreation !== 'superadmin' || isSuperadmin;
@@ -123,8 +122,7 @@ export function NewOrganization() {
         <Card>
           <CreateOrgForm
             onCreated={(o) => {
-              switchOrg(o.slug);
-              void navigate('/admin/organization');
+              switchOrg(o.slug, '/admin/organization');
             }}
           />
         </Card>

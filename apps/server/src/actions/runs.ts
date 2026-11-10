@@ -41,7 +41,7 @@ import {
   type StepRow,
 } from './steps.js';
 import { decodeCursor, encodeCursor } from '../lib/cursor.js';
-import { findOrg, orgRef } from '../orgs/orgs.js';
+import { appUrl, findOrg, orgRef } from '../orgs/orgs.js';
 import { orgId, withOrg } from '../orgs/context.js';
 import { activeBlackout } from './blackouts.js';
 import { listArtifacts } from './artifacts.js';
@@ -973,7 +973,8 @@ export async function updateRun(runId: string, u: RunUpdate): Promise<boolean> {
   return true;
 }
 
-export const runUrl = (id: string) => `${config.PUBLIC_URL}/runs/${id}`;
+/** Absolute URL of a run page, in the run's organization (the current one). */
+export const runUrl = (id: string) => appUrl(`/runs/${id}`);
 
 const currentOrgRef = async () => orgRef((await findOrg(orgId()))!);
 
