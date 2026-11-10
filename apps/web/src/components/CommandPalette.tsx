@@ -5,7 +5,9 @@ import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router';
 import { IconSearch } from '@tabler/icons-react';
 import { api } from '../lib/api';
-import { ADMIN_CATEGORIES } from './adminSections';
+import type { AdminArea } from '../lib/access';
+import { visibleCategories } from './adminSections';
+import { ICON } from './iconScale';
 
 export interface Command {
   id: string;
@@ -14,21 +16,24 @@ export interface Command {
   to: string;
 }
 
-/** Fixed navigation commands; admin ones only for admins. */
-export function navCommands(isAdmin: boolean): Command[] {
+/** Fixed navigation commands; admin pages only those the user may open (`true`: all, `false`: none). */
+export function navCommands(can: boolean | ((area: AdminArea) => boolean)): Command[] {
+  const allowed = typeof can === 'boolean' ? () => can : can;
   const base: Command[] = [
     { id: 'home', label: 'Home', to: '/' },
     { id: 'self-service', label: 'Self-service', hint: 'Run an action', to: '/self-service' },
     { id: 'runs', label: 'Runs', to: '/runs' },
-    { id: 'approvals', label: 'Approvals', to: '/approvals' },
+    { id: 'todo', label: 'To do', hint: 'Approvals and requests waiting', to: '/todo' },
     { id: 'profile', label: 'Profile and API tokens', to: '/profile' },
   ];
-  const admin: Command[] = ADMIN_CATEGORIES.flatMap((c) => c.tabs).map((t) => ({
-    id: `admin-${t.path.split('/').pop()}`,
-    label: `Admin: ${t.label}`,
-    to: t.path,
-  }));
-  return isAdmin ? [...base, ...admin] : base;
+  const admin: Command[] = visibleCategories(allowed)
+    .flatMap((c) => c.tabs)
+    .map((t) => ({
+      id: `admin-${t.path.split('/').pop()}`,
+      label: `Admin: ${t.label}`,
+      to: t.path,
+    }));
+  return [...base, ...admin];
 }
 
 /** True when the key event comes from a text field (so single-key shortcuts must not fire). */
@@ -37,7 +42,16 @@ const typing = (t: EventTarget | null) => t instanceof HTMLElement && (t.isConte
 /**
  * Ctrl/Cmd+K (or "/") palette: jump to pages and, while typing, to catalog entities. Arrow keys move, Enter opens.
  */
-export function CommandPalette({ isAdmin, opened, onOpenChange }: { isAdmin: boolean; opened: boolean; onOpenChange: (o: boolean) => void }) {
+export function CommandPalette({
+  can,
+  opened,
+  onOpenChange,
+}: {
+  /** Admin pages the user may open (see useAuth().can). */
+  can: boolean | ((area: AdminArea) => boolean);
+  opened: boolean;
+  onOpenChange: (o: boolean) => void;
+}) {
   const navigate = useNavigate();
   const [query, setQuery] = useState('');
   const [debounced] = useDebouncedValue(query.trim(), 200);
@@ -65,7 +79,7 @@ export function CommandPalette({ isAdmin, opened, onOpenChange }: { isAdmin: boo
 
   const items: (Command & { badge?: string })[] = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const nav = navCommands(isAdmin).filter((c) => !q || c.label.toLowerCase().includes(q));
+    const nav = navCommands(can).filter((c) => !q || c.label.toLowerCase().includes(q));
     const found = (entities.data?.items ?? []).map((e) => ({
       id: `${e.blueprint}/${e.identifier}`,
       label: e.title,
@@ -74,7 +88,7 @@ export function CommandPalette({ isAdmin, opened, onOpenChange }: { isAdmin: boo
       to: `/catalog/${e.blueprint}/${encodeURIComponent(e.identifier)}`,
     }));
     return [...found, ...nav];
-  }, [query, isAdmin, entities.data]);
+  }, [query, can, entities.data]);
 
   useEffect(() => setIndex(0), [items.length, query]);
 
@@ -92,7 +106,7 @@ export function CommandPalette({ isAdmin, opened, onOpenChange }: { isAdmin: boo
           data-autofocus
           aria-label="Search pages and entities"
           placeholder="Type to search pages and entities"
-          leftSection={<IconSearch size={16} />}
+          leftSection={<IconSearch size={ICON.md} />}
           value={query}
           onChange={(e) => setQuery(e.currentTarget.value)}
           onKeyDown={(e) => {

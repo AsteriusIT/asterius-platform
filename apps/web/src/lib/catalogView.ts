@@ -1,6 +1,6 @@
 import type { Blueprint, Entity } from '@asterius/shared';
 
-/** URL/state helpers for the catalog table: sort, property filters, column preferences, CSV. */
+/** URL/state helpers for the catalog table: sort, property filters, CSV. Columns and saved views live on the server. */
 
 export interface Sort {
   key: string;
@@ -39,45 +39,8 @@ export const formatFilters = (f: Record<string, string>) => Object.entries(f).ma
 export const listableProps = (bp: Blueprint) =>
   Object.keys(bp.schema.properties).filter((k) => !bp.schema.properties[k].hidden && bp.schema.properties[k].format !== 'markdown');
 
-const colsKey = (bp: string) => `asterius.catalog.columns.${bp}`;
-export function loadColumns(bp: string): string[] | null {
-  try {
-    const v = JSON.parse(localStorage.getItem(colsKey(bp)) ?? 'null');
-    return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : null;
-  } catch {
-    return null;
-  }
-}
-export function saveColumns(bp: string, cols: string[] | null) {
-  try {
-    if (cols) localStorage.setItem(colsKey(bp), JSON.stringify(cols));
-    else localStorage.removeItem(colsKey(bp));
-  } catch {
-    /* private mode */
-  }
-}
-
-export interface SavedView {
-  name: string;
-  /** Serialized URL search params (without page). */
-  search: string;
-}
-const viewsKey = (bp: string) => `asterius.catalog.views.${bp}`;
-export function loadViews(bp: string): SavedView[] {
-  try {
-    const v = JSON.parse(localStorage.getItem(viewsKey(bp)) ?? '[]');
-    return Array.isArray(v) ? v : [];
-  } catch {
-    return [];
-  }
-}
-export function saveViews(bp: string, views: SavedView[]) {
-  try {
-    localStorage.setItem(viewsKey(bp), JSON.stringify(views));
-  } catch {
-    /* private mode */
-  }
-}
+/** `team=@mine`: entities owned by any of the viewer's teams (resolved by the server, so the link works for anyone). */
+export const MY_TEAMS = '@mine';
 
 const csvCell = (v: unknown): string => {
   const s = v == null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v);

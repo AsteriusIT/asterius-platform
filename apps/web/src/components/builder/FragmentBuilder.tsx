@@ -142,6 +142,13 @@ export function FragmentBuilder(props: EditorProps) {
       size="xl"
       noun="fragment"
       toDoc={toFragmentDoc}
+      versioned={{
+        reload: async (id) => {
+          const { managed: _m, updatedAt: _u, ...rest } = await api.fragment(id);
+          return rest;
+        },
+        diff: api.fragmentDiff,
+      }}
       problems={problems}
       header={
         <Alert variant="light" color="gray" icon={<IconPuzzle size={16} />} p="xs">

@@ -1,0 +1,52 @@
+# Local cluster only (added to the configuration ConfigMap by install.sh, not part of config/):
+# the components install.sh runs, each with its README in the entity's Docs tab (a `docs`-format property,
+# fetched server-side through the SSRF guard). No workflow acts on these entities.
+
+blueprints:
+  - identifier: platform-component
+    title: Platform component
+    icon: stack-2
+    description: What the local cluster runs, with each component's documentation.
+    schema:
+      properties:
+        url: { type: string, title: URL, format: url }
+        namespace: { type: string, title: Namespace }
+        docs: { type: string, title: Documentation, format: docs, description: URL of a markdown file (GitHub/GitLab blob URLs work), shown in the Docs tab }
+      order: [url, namespace, docs]
+
+entities:
+  - blueprint: platform-component
+    identifier: asterius-platform
+    title: Asterius Platform
+    properties:
+      url: https://platform.k8s.orb.local
+      namespace: asterius-platform
+      docs: https://github.com/AsteriusIT/asterius-platform/blob/main/README.md
+  - blueprint: platform-component
+    identifier: grafana
+    title: Grafana
+    properties:
+      url: https://platform-grafana.k8s.orb.local
+      namespace: observability
+      docs: https://github.com/grafana/grafana/blob/main/README.md
+  - blueprint: platform-component
+    identifier: sonarqube
+    title: SonarQube
+    properties:
+      url: https://sonarqube.k8s.orb.local
+      namespace: sonarqube
+      docs: https://github.com/SonarSource/sonarqube/blob/master/README.md
+  - blueprint: platform-component
+    identifier: nexus
+    title: Nexus Repository
+    properties:
+      url: https://nexus.k8s.orb.local
+      namespace: nexus
+      docs: https://github.com/sonatype/nexus-public/blob/main/README.md
+  - blueprint: platform-component
+    identifier: openbao
+    title: OpenBao
+    properties:
+      url: https://openbao.k8s.orb.local
+      namespace: openbao
+      docs: https://github.com/openbao/openbao/blob/main/README.md

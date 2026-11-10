@@ -3,6 +3,7 @@ import { IconCheck, IconCopy, IconMail } from '@tabler/icons-react';
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { api } from '../lib/api';
+import { ICON } from './iconScale';
 
 export interface UserRef {
   id?: string | null;
@@ -75,7 +76,7 @@ export function UserChip({ user, size = 'sm' }: { user: UserRef | string | null 
             </Text>
             {email ? (
               <Group gap={4} wrap="nowrap">
-                <IconMail size={14} style={{ flexShrink: 0, opacity: 0.6 }} />
+                <IconMail size={ICON.sm} style={{ flexShrink: 0, opacity: 0.6 }} />
                 <Anchor href={`mailto:${email}`} fz="sm" truncate>
                   {email}
                 </Anchor>
@@ -83,7 +84,7 @@ export function UserChip({ user, size = 'sm' }: { user: UserRef | string | null 
                   {({ copied, copy }) => (
                     <Tooltip label={copied ? 'Copied' : 'Copy email'} withArrow>
                       <ActionIcon variant="subtle" color={copied ? 'teal' : 'gray'} size="sm" onClick={copy} aria-label="Copy email">
-                        {copied ? <IconCheck size={14} /> : <IconCopy size={14} />}
+                        {copied ? <IconCheck size={ICON.sm} /> : <IconCopy size={ICON.sm} />}
                       </ActionIcon>
                     </Tooltip>
                   )}

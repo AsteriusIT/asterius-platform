@@ -1,6 +1,7 @@
 import type { ActionVersion, ActionVersionDiff } from '@asterius/shared';
 import { all, json, now, one, run } from '../db.js';
 import { badRequest, conflict, notFound } from '../lib/errors.js';
+import { staleVersion } from '../lib/conflict.js';
 import type { Actor } from '../audit.js';
 import type { ActionDef } from '../schemas.js';
 import { orgId } from '../orgs/context.js';
@@ -54,6 +55,22 @@ export async function recordVersion(id: string, version: number, doc: string, ac
   } catch {
     throw conflict('The action was changed by someone else meanwhile; reload and try again');
   }
+}
+
+/** The 412 of a save whose If-Match is not the stored version: who saved the current version, and when. */
+export async function staleAction(id: string, expected: number) {
+  const cur = await one<{ version: number }>('SELECT version FROM actions WHERE org_id = ? AND identifier = ?', orgId(), id);
+  const current = cur ? Number(cur.version) : null;
+  const last =
+    current === null
+      ? undefined
+      : await one<{ actor_id: string | null; actor_email: string | null; at: string }>(
+          'SELECT actor_id, actor_email, created_at AS at FROM action_versions WHERE org_id = ? AND action = ? AND version = ?',
+          orgId(),
+          id,
+          current,
+        );
+  return staleVersion(`Action ${id} is at version ${current ?? 'none'}, not ${expected}; reload and retry`, current, last);
 }
 
 const toVersion = (r: VersionRow): ActionVersion => ({

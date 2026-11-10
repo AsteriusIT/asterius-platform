@@ -767,6 +767,15 @@ export interface RunConcurrency {
   mode: 'queue' | 'cancel-in-progress' | 'reject';
 }
 
+/** Body of a 412 answer to a write whose If-Match version is stale (`{ error, conflict }`). */
+export interface EditConflict {
+  /** The stored version (null: the resource no longer exists). */
+  currentVersion: number | null;
+  /** Who made the current version (null when unknown). */
+  changedBy: { email: string | null; name: string | null } | null;
+  changedAt: string | null;
+}
+
 export interface ActionVersion {
   version: number;
   actor: string | null;
@@ -867,6 +876,8 @@ export interface Run {
   pendingStep?: { id: string; name: string; message: string | null; kind?: 'approval' | 'input' } | null;
   /** Approvals page: the caller decides as the delegate of this person. */
   onBehalfOf?: { id: string; name: string } | null;
+  /** GET /runs/waiting: who the requester's run waits on (the open decision's approvers or the input step's assignees). */
+  waitingOn?: WaitingOn | null;
   canApprove?: boolean;
   canCancel?: boolean;
   /** Requester or admin, finished run. */
@@ -1149,9 +1160,21 @@ export interface AiPrice {
 
 export interface HomeSummary {
   blueprints: { identifier: string; title: string; icon: string | null; count: number }[];
+  /** Decisions waiting for the caller (capped at 100: 100 means "100 or more"). */
   pendingApprovals: number;
   myRuns: Run[];
   recentEntities: Entity[];
+  /** The caller's requests waiting on someone else's decision or input (newest first, at most 20). */
+  waitingOnOthers: Run[];
+  /** Recently changed entities owned by the caller's teams (empty without teams). */
+  teamEntities: Entity[];
+}
+
+/** Who a run waits on: role names, team identifiers and user emails (an `ownerTeam` rule is resolved to the run's team). */
+export interface WaitingOn {
+  roles: string[];
+  teams: string[];
+  users: string[];
 }
 
 // ---------- scorecards ----------
@@ -1364,3 +1387,31 @@ export type WidgetData =
   | { type: 'table'; blueprint: string; items: Entity[]; total: number }
   | ({ type: 'insights' } & Insights)
   | { type: 'markdown' };
+
+// ---- preferences/views ----
+/** Per-user, per-organization preferences (GET/PUT /api/v1/me/preferences). Form drafts stay in the browser. */
+export interface UserPreferences {
+  /** Favourite actions (identifiers). */
+  favourites?: string[];
+  /** Recently started actions, most recent first. */
+  recentActions?: string[];
+  /** Columns picked for the catalog table of a blueprint: `catalog.columns.<blueprint>`. */
+  [key: `catalog.columns.${string}`]: string[] | undefined;
+}
+
+/** A saved catalog view: a named catalog query string, private or shared with one team. */
+export interface SavedCatalogView {
+  id: string;
+  name: string;
+  blueprint: string;
+  /** Catalog URL query string (search, team, sort, filters…), without the page. */
+  query: string;
+  team: TeamRef | null;
+  owner: { id: string; name: string };
+  /** Owned by the caller. */
+  mine: boolean;
+  /** The caller may rename, re-share or delete it (owner or admin). */
+  canEdit: boolean;
+  createdAt: string;
+  updatedAt: string;
+}

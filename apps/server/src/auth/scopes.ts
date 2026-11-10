@@ -46,6 +46,8 @@ export function requiredScope(method: string, url: string): Scope {
     return path.endsWith('/runs') ? 'runs:trigger' : 'admin';
   }
   if (read && (first === 'teams' || path === 'users/lookup')) return 'catalog:read';
+  // Saved catalog views and the caller's own UI preferences (favourites, columns): catalog-level personal data.
+  if (first === 'views' || path === 'me/preferences') return read ? 'catalog:read' : 'catalog:write';
   return 'admin';
 }
 

@@ -20,12 +20,19 @@ import {
   IconUsersGroup,
   IconWebhook,
 } from '@tabler/icons-react';
+import type { AdminArea } from '../lib/access';
+import { ICON } from './iconScale';
 
 export interface AdminTab {
   label: string;
   /** Existing page route, e.g. /admin/actions. */
   path: string;
   icon: ReactNode;
+  /**
+   * Who may open the tab, besides admins (default: admins only). It must match the server guard of every API call the
+   * page makes, so a delegated role never lands on a page that answers 403.
+   */
+  area?: AdminArea;
 }
 export interface AdminCategory {
   id: string;
@@ -36,7 +43,7 @@ export interface AdminCategory {
   tabs: AdminTab[];
 }
 
-const i = (I: typeof IconBolt) => <I size={16} stroke={1.6} />;
+const i = (I: typeof IconBolt) => <I size={ICON.md} />;
 
 /** Single source of truth for the admin sidebar, the in-page tabs and the command palette. */
 export const ADMIN_CATEGORIES: AdminCategory[] = [
@@ -46,7 +53,7 @@ export const ADMIN_CATEGORIES: AdminCategory[] = [
     path: '/admin/model',
     icon: i(IconSchema),
     tabs: [
-      { label: 'Blueprints', path: '/admin/blueprints', icon: i(IconSchema) },
+      { label: 'Blueprints', path: '/admin/blueprints', icon: i(IconSchema), area: 'blueprints' },
       { label: 'Dashboards', path: '/admin/dashboards', icon: i(IconLayoutDashboard) },
       { label: 'Scorecards', path: '/admin/scorecards', icon: i(IconMedal) },
     ],
@@ -59,7 +66,7 @@ export const ADMIN_CATEGORIES: AdminCategory[] = [
     tabs: [
       { label: 'Actions', path: '/admin/actions', icon: i(IconBolt) },
       { label: 'Fragments', path: '/admin/fragments', icon: i(IconPuzzle) },
-      { label: 'Integrations', path: '/admin/integrations', icon: i(IconPlugConnected) },
+      { label: 'Integrations', path: '/admin/integrations', icon: i(IconPlugConnected), area: 'integrations' },
       { label: 'Webhooks', path: '/admin/webhooks', icon: i(IconWebhook) },
       { label: 'Deliveries', path: '/admin/deliveries', icon: i(IconSend) },
       { label: 'Notifications', path: '/admin/notifications', icon: i(IconBell) },
@@ -108,3 +115,17 @@ export function categoryForPath(pathname: string): AdminCategory | undefined {
 }
 
 export const tabIsActive = matches;
+
+type Can = (area: AdminArea) => boolean;
+
+/** The categories and tabs the user may open (categories without any permitted tab are left out). */
+export function visibleCategories(can: Can): AdminCategory[] {
+  return ADMIN_CATEGORIES.map((c) => ({ ...c, tabs: c.tabs.filter((t) => can(t.area ?? 'admin')) })).filter((c) => c.tabs.length > 0);
+}
+
+/** May the user open this /admin URL: a tab page (or a page below it), or a category with at least one permitted tab? */
+export function mayOpenAdminPath(pathname: string, can: Can): boolean {
+  const path = pathname.replace(/\/+$/, '');
+  const visible = visibleCategories(can);
+  return visible.some((c) => c.path === path || c.tabs.some((t) => matches(path, t.path)));
+}

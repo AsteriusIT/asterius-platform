@@ -6,7 +6,19 @@ import { actorOf, authenticate, bearer, isAdmin, requireAdmin, requireUser } fro
 import { getEntity } from '../catalog/entities.js';
 import { blueprintOf, canTrigger, isRunnable, deleteAction, forViewer, getAction, listActions, upsertAction } from '../actions/actions.js';
 import { nextPageHeaders } from '../lib/cursor.js';
-import { addLog, cancelRun, decide, getRun, getRunLogs, getRunRow, listRuns, pendingApprovals, runLogsAfter, triggerRun } from '../actions/runs.js';
+import {
+  addLog,
+  cancelRun,
+  decide,
+  getRun,
+  getRunLogs,
+  getRunRow,
+  listRuns,
+  pendingApprovals,
+  runLogsAfter,
+  triggerRun,
+  waitingOnOthers,
+} from '../actions/runs.js';
 import { runPriority, workflowStep } from '../schemas.js';
 import { forceStep, pauseRun, unpauseRun } from '../actions/operations.js';
 import { previewExpression, simulateWorkflow } from '../actions/simulate.js';
@@ -21,6 +33,7 @@ import { deliverEvent, submitInput } from '../actions/waiting.js';
 import { receiveWebhook } from '../actions/triggers.js';
 import { checkRunToken, checkStepToken } from '../secrets.js';
 import { conflict, forbidden, notFound } from '../lib/errors.js';
+import { ifMatchOf } from '../lib/conflict.js';
 import { entityParam, idParam, page } from './util.js';
 import { addArtifact, artifactBodyLimit, contentDisposition, getArtifact, listArtifacts } from '../actions/artifacts.js';
 import { canManageRun } from '../actions/steps.js';
@@ -184,7 +197,10 @@ export async function actionRoutes(app: FastifyInstance) {
     scoped.get('/actions/:id', async (req) => forViewer(await getAction(idParam.parse(req.params).id), req.principal));
     scoped.put('/actions/:id', { preHandler: requireAdmin }, async (req) => {
       const { id } = idParam.parse(req.params);
-      const { action, created } = await upsertAction({ ...(req.body as object), identifier: id }, { actor: actorOf(req.principal) });
+      const { action, created } = await upsertAction(
+        { ...(req.body as object), identifier: id },
+        { actor: actorOf(req.principal), ifMatch: ifMatchOf(req.headers['if-match']) },
+      );
       await audit(actorOf(req.principal), created ? 'action.created' : 'action.updated', id);
       return action;
     });
@@ -284,6 +300,8 @@ export async function actionRoutes(app: FastifyInstance) {
       const q = page
         .extend({
           mine: z.enum(['true', 'false']).optional(),
+          /** Only runs of the caller's teams. */
+          myTeams: z.enum(['true', 'false']).optional(),
           status: z.string().optional(),
           action: z.string().optional(),
           blueprint: z.string().optional(),
@@ -296,7 +314,10 @@ export async function actionRoutes(app: FastifyInstance) {
         })
         .parse(req.query);
       const status = q.status ? z.array(z.enum(RUN_STATUSES)).parse(q.status.split(',')) : undefined;
-      const result = await listRuns({ ...q, status, mine: q.mine === 'true' ? req.principal.id : undefined }, req.principal);
+      const result = await listRuns(
+        { ...q, status, mine: q.mine === 'true' ? req.principal.id : undefined, teams: q.myTeams === 'true' ? req.principal.teams : undefined },
+        req.principal,
+      );
       nextPageHeaders(req, reply, result.nextCursor);
       return result;
     });
@@ -381,6 +402,11 @@ export async function actionRoutes(app: FastifyInstance) {
         .header('cache-control', 'private, no-store')
         .header('x-artifact-sha256', artifact.sha256)
         .send(content);
+    });
+    /** The caller's requests waiting on someone else's approval or input, with who they wait on. */
+    scoped.get('/runs/waiting', async (req) => {
+      const q = z.object({ limit: z.coerce.number().int().min(1).max(200).default(50) }).parse(req.query);
+      return waitingOnOthers(req.principal, q.limit);
     });
     scoped.get('/approvals', async (req, reply) => {
       const q = z.object({ limit: z.coerce.number().int().min(1).max(500).default(200), cursor: z.string().max(500).optional() }).parse(req.query);

@@ -75,8 +75,10 @@ describe('EntityActionsMenu', () => {
     fireEvent.click(screen.getByLabelText('Actions on Payments DB'));
     await waitFor(() => expect(screen.getByRole('menuitem', { name: /Increase storage/ }).hasAttribute('disabled')).toBe(false));
     const items = screen.getAllByRole('menuitem').map((i) => i.textContent);
-    expect(items).toEqual(['Increase storage', 'Failover', 'Delete database']);
+    // An action I cannot run says who can.
+    expect(items).toEqual(['Increase storage', 'FailoverWho can run it: Role: admin', 'Delete database']);
     expect(screen.getByRole('menuitem', { name: /Failover/ }).hasAttribute('disabled')).toBe(true);
+    expect(screen.getByRole('menuitem', { name: /Failover/ }).getAttribute('title')).toMatch(/^You cannot run this action\. Role: admin\. Ask one of them/);
     expect(screen.getByLabelText('Requires approval')).toBeTruthy();
     fireEvent.click(screen.getByRole('menuitem', { name: /Increase storage/ }));
     expect(onRun).toHaveBeenCalledWith(actions[0]);

@@ -1,5 +1,8 @@
 import { useState, type ReactNode } from 'react';
 import { Badge, SimpleGrid, Stack, Tabs, TextInput } from '@mantine/core';
+import type { ActionVersionDiff, EditConflict } from '@asterius/shared';
+import { conflictOf } from '../../lib/api';
+import { EditConflictDialog } from '../EditConflictDialog';
 import { MONO_INPUT } from './blocks';
 import { BuilderFooter, BuilderModal, CodePanels, CodeTabs, ManagedNotice, ReadOnlyFieldset, slugify, useCodeView, useSave } from './shell';
 
@@ -12,8 +15,26 @@ export type EditorProps = {
   value: Record<string, unknown> | null;
   isNew: boolean;
   readOnly?: boolean;
-  onSave: (identifier: string, body: Record<string, unknown>) => Promise<unknown>;
+  /** `ifMatch`: the version the editor loaded (versioned resources; a newer stored version refuses the save with 412). */
+  onSave: (identifier: string, body: Record<string, unknown>, opts?: { ifMatch?: number }) => Promise<unknown>;
   onClose: () => void;
+};
+
+/**
+ * Optimistic concurrency of a versioned resource (fragments): `value.version` is the version loaded, sent back with
+ * the save; when someone saved a newer one meanwhile the EditConflictDialog offers to reload it or overwrite it.
+ */
+export interface Versioned {
+  /** The current stored document (with its `version`), for "Reload their version". */
+  reload: (identifier: string) => Promise<Record<string, unknown>>;
+  /** What changed between two versions, for "See their changes". */
+  diff?: (identifier: string, from: number, to: number) => Promise<ActionVersionDiff>;
+}
+
+const versionOf = (v: Record<string, unknown>) => (typeof v.version === 'number' ? v.version : undefined);
+const withoutVersion = (v: Record<string, unknown>) => {
+  const { version: _, ...rest } = v;
+  return rest;
 };
 
 export const SLUG = /^[a-z][a-z0-9_-]{0,63}$/;
@@ -54,6 +75,7 @@ export function FormBuilder<D extends Doc>(
     tabs: FormTab<D>[];
     size?: string;
     header?: ReactNode;
+    versioned?: Versioned;
   },
 ) {
   const title = props.isNew ? `New ${props.noun}` : `${props.readOnly ? 'View' : 'Edit'} ${String(props.value?.identifier ?? '')}`;
@@ -65,8 +87,10 @@ export function FormBuilder<D extends Doc>(
 }
 
 function Body<D extends Doc>(props: Parameters<typeof FormBuilder<D>>[0] & { value: Record<string, unknown> }) {
-  const { isNew, readOnly } = props;
-  const [doc, setDoc] = useState<D>(() => props.toDoc(props.value));
+  const { isNew, readOnly, versioned } = props;
+  const [doc, setDoc] = useState<D>(() => props.toDoc(versioned ? withoutVersion(props.value) : props.value));
+  const [base, setBase] = useState(() => (versioned ? versionOf(props.value) : undefined));
+  const [conflict, setConflict] = useState<EditConflict | null>(null);
   const [tab, setTab] = useState<string | null>(props.tabs[0].value);
   // Remount the form after a JSON / YAML edit so uncontrolled sub-editors (key/value rows…) reload.
   const [generation, setGeneration] = useState(0);
@@ -81,7 +105,24 @@ function Body<D extends Doc>(props: Parameters<typeof FormBuilder<D>>[0] & { val
       setGeneration((g) => g + 1);
     },
   });
-  const saver = useSave(() => props.onSave(doc.identifier, body()), props.onClose);
+  const saver = useSave(
+    () => (base === undefined ? props.onSave(doc.identifier, body()) : props.onSave(doc.identifier, body(), { ifMatch: base })),
+    props.onClose,
+    (e) => {
+      const c = conflictOf(e);
+      if (c) setConflict(c);
+      return !!c;
+    },
+  );
+  /** After a conflict: drop my edits and continue from their version. */
+  const reload = async () => {
+    const fresh = await versioned!.reload(doc.identifier);
+    setDoc(props.toDoc(withoutVersion(fresh)));
+    setBase(versionOf(fresh));
+    setGeneration((g) => g + 1);
+    if (tab === 'json' || tab === 'yaml') setTab(props.tabs[0].value); // the code text would show my version
+    setConflict(null);
+  };
   const save = () => {
     const found = props.problems(doc);
     if (code.error && (tab === 'json' || tab === 'yaml')) found.unshift(`${tab.toUpperCase()}: ${code.error}`);
@@ -129,6 +170,20 @@ function Body<D extends Doc>(props: Parameters<typeof FormBuilder<D>>[0] & { val
         onSave={save}
         onClose={props.onClose}
       />
+      {versioned && (
+        <EditConflictDialog
+          conflict={conflict}
+          noun={props.noun}
+          onReload={reload}
+          onOverwrite={async () => {
+            await props.onSave(doc.identifier, body());
+            setConflict(null);
+            props.onClose();
+          }}
+          onCancel={() => setConflict(null)}
+          loadDiff={versioned.diff && base !== undefined ? (current) => versioned.diff!(doc.identifier, base, current) : undefined}
+        />
+      )}
     </Stack>
   );
 }

@@ -183,7 +183,7 @@ export function IntegrationForm({ doc, patch, isNew }: { doc: Doc; patch: (p: Do
                     size="compact-xs"
                     variant="subtle"
                     color="red"
-                    leftSection={<IconTrash size={12} />}
+                    leftSection={<IconTrash size={14} />}
                     onClick={() => patch({ mappings: mappings.filter((_, j) => j !== i) })}
                   >
                     Remove

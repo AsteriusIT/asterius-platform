@@ -40,16 +40,14 @@ export function tourSteps(opts: { name: string; isAdmin: boolean }): TourStep[] 
       ),
     },
     {
-      target: 'approvals',
-      title: 'Approvals',
-      body: 'Requests waiting for your decision: a counter appears on this icon. Your own requests are approved by someone else.',
-      placement: 'bottom',
+      target: 'todo',
+      title: 'Your to do list',
+      body: 'Requests and steps waiting for your decision (the counter shows how many), and your own requests waiting on someone else, with who they wait on.',
     },
     {
       target: 'runs',
       title: 'Follow your runs',
-      body: 'Every request becomes a run: its status, live logs, approvals and a link to the pipeline or the resource it created.',
-      placement: 'bottom',
+      body: 'Every request becomes a run: its status, live logs, approvals and a link to the pipeline or the resource it created. See yours, your teams’ or everyone’s.',
     },
     ...(opts.isAdmin
       ? [

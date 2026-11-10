@@ -1,6 +1,6 @@
-import { config as platform } from '../../config.js';
 import { all } from '../../db.js';
 import { orgId } from '../../orgs/context.js';
+import { appUrl } from '../../orgs/orgs.js';
 import { deleteEntity, findEntity, upsertEntity } from '../../catalog/entities.js';
 import { enforceEntityDelete, enforceEntityWrite } from '../../policies/policies.js';
 import { requireFields, str, type Invoker } from '../types.js';
@@ -75,7 +75,7 @@ export const catalogInvoker: Invoker = {
     await log(`${created ? 'Created' : 'Updated'} ${blueprint}/${identifier}`);
     return {
       status: 'SUCCESS',
-      link: `${platform.PUBLIC_URL}/catalog/${blueprint}/${encodeURIComponent(entity.identifier)}`,
+      link: await appUrl(`/catalog/${blueprint}/${encodeURIComponent(entity.identifier)}`),
       result: { entity: { blueprint, identifier: entity.identifier } },
     };
   },

@@ -1,4 +1,4 @@
-import type { Action, ApprovalPolicy, Run, RunApproval, RunLog, RunPage, RunStatus, Subjects } from '@asterius/shared';
+import type { Action, ApprovalPolicy, Run, RunApproval, RunLog, RunPage, RunStatus, Subjects, WaitingOn } from '@asterius/shared';
 import { config } from '../config.js';
 import { all, forUpdate, json, newId, now, one, run, tx, type Driver, type SqlValue } from '../db.js';
 import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
@@ -33,6 +33,7 @@ import {
   resumableSteps,
   runStepsView,
   stepApprovalsOf,
+  stepApproverSets,
   stepDefs,
   stepDecider,
   stepMessage,
@@ -41,7 +42,7 @@ import {
   type StepRow,
 } from './steps.js';
 import { decodeCursor, encodeCursor } from '../lib/cursor.js';
-import { findOrg, orgRef } from '../orgs/orgs.js';
+import { appUrl, findOrg, orgRef } from '../orgs/orgs.js';
 import { orgId, withOrg } from '../orgs/context.js';
 import { activeBlackout } from './blackouts.js';
 import { listArtifacts } from './artifacts.js';
@@ -301,6 +302,8 @@ export async function getRunLogs(id: string, p0: Principal, q: { after: number; 
 
 export interface RunQuery {
   mine?: string;
+  /** Only runs whose team is one of these (an empty list matches nothing). The viewer policy still applies. */
+  teams?: string[];
   status?: RunStatus[];
   action?: string;
   blueprint?: string;
@@ -351,6 +354,13 @@ export async function listRuns(q: RunQuery, p0: Principal): Promise<RunPage> {
     params.push(v);
   };
   if (q.mine) add('r.triggered_by = ?', q.mine);
+  if (q.teams) {
+    if (!q.teams.length) where.push('1 = 0');
+    else {
+      where.push(`r.team IN (${q.teams.map(() => '?').join(',')})`);
+      params.push(...q.teams);
+    }
+  }
   if (q.action) add('r.action = ?', q.action);
   if (q.blueprint) add('r.blueprint = ?', q.blueprint);
   if (q.entity) add('r.entity = ?', q.entity);
@@ -442,6 +452,76 @@ export async function pendingApprovals(
       return rows.length === APPROVAL_SCAN ? { items, nextCursor: encodeCursor({ s: 'approvals', d: 'asc', v: after }) } : { items };
     if (rows.length < APPROVAL_SCAN) return { items };
   }
+}
+
+/** The approvers or assignees of an open decision, as one list (an `ownerTeam` rule becomes the run's team). */
+function waitingOnOf(sets: (Subjects | undefined)[], team: string | null): WaitingOn {
+  const roles = new Set<string>();
+  const teams = new Set<string>();
+  const users = new Set<string>();
+  for (const s of sets) {
+    s?.roles?.forEach((r) => roles.add(r));
+    s?.teams?.forEach((t) => teams.add(t));
+    s?.users?.forEach((u) => users.add(u));
+    if (s?.ownerTeam && team) teams.add(team);
+  }
+  return { roles: [...roles], teams: [...teams], users: [...users] };
+}
+
+/**
+ * The principal's own requests waiting on someone else: pending their pre-start approval, or stopped at an approval or
+ * input step. Each item carries the step (`pendingStep`) and who it waits on (`waitingOn`). Decisions the requester
+ * can make themselves (self-approval, an input step addressed to them) are left out: they are in `pendingApprovals`.
+ */
+export async function waitingOnOthers(p0: Principal, limit = 50): Promise<Run[]> {
+  const p = await withDelegators(p0);
+  const rows = await all<RunRow>(
+    `${SELECT} WHERE r.org_id = ? AND r.triggered_by = ? AND (r.status = 'PENDING_APPROVAL'
+        OR r.status = 'IN_PROGRESS' AND EXISTS (SELECT 1 FROM run_steps s WHERE s.run_id = r.id AND s.status IN ('WAITING_APPROVAL', 'WAITING')))
+      ORDER BY r.created_at DESC, r.id DESC LIMIT ?`,
+    orgId(),
+    p.id,
+    limit,
+  );
+  if (!rows.length) return [];
+  const approvals = await approvalsOf(rows.map((r) => r.id));
+  const inProgress = rows.filter((r) => r.status === 'IN_PROGRESS');
+  const stepRows = inProgress.length
+    ? await all<StepRow>(
+        `SELECT * FROM run_steps WHERE status IN ('WAITING_APPROVAL', 'WAITING') AND run_id IN (${inProgress.map(() => '?').join(',')}) ORDER BY run_id, position`,
+        ...inProgress.map((r) => r.id),
+      )
+    : [];
+  const stepApprovals = await stepApprovalsOf(inProgress.map((r) => r.id));
+  const items: Run[] = [];
+  for (const r of rows) {
+    const runApprovals = approvals.get(r.id) ?? [];
+    if (r.status === 'PENDING_APPROVAL') {
+      if (runDecider(p, r, runApprovals)) continue;
+      const sets = runApproverSets(r, json<ApprovalPolicy>(r.approval, { required: false }));
+      items.push({ ...toRun(r, runApprovals), pendingStep: null, waitingOn: waitingOnOf(sets, r.team) });
+      continue;
+    }
+    for (const row of stepRows.filter((sr) => sr.run_id === r.id)) {
+      const def = stepDefs(r).find((d) => d.id === row.step_id);
+      if (!def || (def.type !== 'approval' && def.type !== 'input')) continue;
+      const decisions = stepApprovals.get(`${r.id}/${row.step_id}`) ?? [];
+      let sets: (Subjects | undefined)[];
+      if (def.type === 'input') {
+        if (inputResponder(p, r, def, row)) continue;
+        sets = [def.assignees];
+      } else {
+        if (stepDecider(p, r, def, row, decisions)) continue;
+        sets = stepApproverSets(def, row, decisions);
+      }
+      items.push({
+        ...toRun(r, runApprovals),
+        pendingStep: { id: row.step_id, name: row.name, message: stepMessage(row), kind: def.type },
+        waitingOn: waitingOnOf(sets, r.team),
+      });
+    }
+  }
+  return items;
 }
 
 /** Number of decisions waiting for this principal (home badge); counts at most `max` and reports whether more exist. */
@@ -973,7 +1053,8 @@ export async function updateRun(runId: string, u: RunUpdate): Promise<boolean> {
   return true;
 }
 
-export const runUrl = (id: string) => `${config.PUBLIC_URL}/runs/${id}`;
+/** Absolute URL of a run page, in the run's organization (the current one). */
+export const runUrl = (id: string) => appUrl(`/runs/${id}`);
 
 const currentOrgRef = async () => orgRef((await findOrg(orgId()))!);
 

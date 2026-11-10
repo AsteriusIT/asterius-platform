@@ -12,6 +12,7 @@ import { DataTable } from '../components/DataTable';
 import { PageHeader, TimeAgo } from '../components/ui';
 import { UserChip } from '../components/UserChip';
 import { DelegationCard } from '../components/DelegationCard';
+import { RoleBadges } from '../components/RoleBadges';
 
 /** Shows a freshly created token once. */
 export function NewTokenAlert({ token, onClose }: { token: string | null; onClose: () => void }) {
@@ -142,6 +143,7 @@ export function Profile() {
       <PageHeader title={user?.name} description={user?.email} />
       <Group gap="xs">
         <Badge color={user?.role === 'admin' ? 'grape' : 'gray'}>{user?.role}</Badge>
+        <RoleBadges roles={user?.roles} />
         {user?.teams.map((t) => (
           <Badge key={t.identifier} color="gray">
             {t.title}

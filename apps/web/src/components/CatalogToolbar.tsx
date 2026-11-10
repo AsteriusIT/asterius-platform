@@ -1,8 +1,8 @@
 import { useState } from 'react';
-import { ActionIcon, Badge, Button, Checkbox, CloseButton, Group, Menu, Popover, Select, Stack, TextInput } from '@mantine/core';
-import { IconColumns, IconDeviceFloppy, IconFilter, IconLink, IconTrash } from '@tabler/icons-react';
-import type { Blueprint } from '@asterius/shared';
-import { type SavedView } from '../lib/catalogView';
+import { ActionIcon, Badge, Button, Checkbox, CloseButton, Group, Menu, NativeSelect, Popover, Select, Stack, TextInput } from '@mantine/core';
+import { IconColumns, IconDeviceFloppy, IconFilter, IconLink, IconPencil, IconTrash } from '@tabler/icons-react';
+import type { Blueprint, SavedCatalogView, TeamRef } from '@asterius/shared';
+import { ICON } from './iconScale';
 
 /** Active property filters as removable chips plus a small "add filter" popover. */
 export function FilterBar({
@@ -33,7 +33,7 @@ export function FilterBar({
     <Group gap="xs">
       <Popover opened={open} onChange={setOpen} position="bottom-start" withArrow trapFocus>
         <Popover.Target>
-          <Button variant="default" leftSection={<IconFilter size={16} />} onClick={() => setOpen((o) => !o)} disabled={!props.length}>
+          <Button variant="default" leftSection={<IconFilter size={ICON.md} />} onClick={() => setOpen((o) => !o)} disabled={!props.length}>
             Add filter
           </Button>
         </Popover.Target>
@@ -92,7 +92,7 @@ export function FilterBar({
   );
 }
 
-/** Choose which property columns the table shows (persisted per blueprint by the caller). */
+/** Choose which property columns the table shows (saved per blueprint in the user's preferences by the caller). */
 export function ColumnPicker({
   bp,
   props,
@@ -108,7 +108,7 @@ export function ColumnPicker({
     <Popover position="bottom-end" withArrow>
       <Popover.Target>
         <ActionIcon variant="default" size="lg" aria-label="Choose columns" title="Columns">
-          <IconColumns size={18} />
+          <IconColumns size={ICON.lg} />
         </ActionIcon>
       </Popover.Target>
       <Popover.Dropdown>
@@ -130,74 +130,132 @@ export function ColumnPicker({
   );
 }
 
-/** Saved views: named URL states kept in this browser; the page URL itself is the shareable link. */
+/**
+ * Saved views: named catalog URL states stored on the server, private or shared with one of the user's teams. The
+ * list holds the user's views and those shared with their teams (marked with the team). Saving under the name of one
+ * of my views updates it (query and sharing); the pencil loads a view's name and sharing into the form.
+ */
 export function ViewsMenu({
   views,
+  teams,
   onApply,
   onSave,
   onDelete,
   onCopyLink,
 }: {
-  views: SavedView[];
-  onApply: (v: SavedView) => void;
-  onSave: (name: string) => void;
-  onDelete: (name: string) => void;
+  views: SavedCatalogView[];
+  /** Teams the user may share with. */
+  teams: TeamRef[];
+  onApply: (v: SavedCatalogView) => void;
+  onSave: (name: string, team: string | null) => void;
+  onDelete: (v: SavedCatalogView) => void;
   onCopyLink: () => void;
 }) {
   const [name, setName] = useState('');
+  const [team, setTeam] = useState('');
+  const mine = views.filter((v) => v.mine);
+  const shared = views.filter((v) => !v.mine);
+  const existing = mine.find((v) => v.name === name.trim());
+  const item = (v: SavedCatalogView) => (
+    <Menu.Item
+      key={v.id}
+      onClick={() => onApply(v)}
+      title={v.mine ? undefined : `Shared by ${v.owner.name}`}
+      rightSection={
+        <Group gap={4} wrap="nowrap">
+          {v.team && (
+            <Badge size="xs" variant="light" tt="none">
+              {v.team.title}
+            </Badge>
+          )}
+          {v.mine && (
+            <ActionIcon
+              size="sm"
+              variant="subtle"
+              aria-label={`Edit view ${v.name}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                setName(v.name);
+                setTeam(v.team?.identifier ?? '');
+              }}
+            >
+              <IconPencil size={ICON.sm} />
+            </ActionIcon>
+          )}
+          {v.canEdit && (
+            <ActionIcon
+              size="sm"
+              variant="subtle"
+              color="red"
+              aria-label={`Delete view ${v.name}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete(v);
+              }}
+            >
+              <IconTrash size={ICON.sm} />
+            </ActionIcon>
+          )}
+        </Group>
+      }
+    >
+      {v.name}
+    </Menu.Item>
+  );
+  const shareOptions = [
+    { value: '', label: 'Only me' },
+    ...teams.map((t) => ({ value: t.identifier, label: `Share with ${t.title}` })),
+    // Keep the team a view is already shared with selectable even if the user left it.
+    ...(existing?.team && !teams.some((t) => t.identifier === existing.team?.identifier)
+      ? [{ value: existing.team.identifier, label: `Share with ${existing.team.title}` }]
+      : []),
+  ];
   return (
-    <Menu position="bottom-end" width={260} closeOnItemClick={false}>
+    <Menu position="bottom-end" width={300} closeOnItemClick={false}>
       <Menu.Target>
-        <Button variant="default" leftSection={<IconDeviceFloppy size={16} />}>
+        <Button variant="default" leftSection={<IconDeviceFloppy size={ICON.md} />}>
           Views
         </Button>
       </Menu.Target>
       <Menu.Dropdown>
         {views.length === 0 && <Menu.Label>No saved views</Menu.Label>}
-        {views.map((v) => (
-          <Menu.Item
-            key={v.name}
-            onClick={() => onApply(v)}
-            rightSection={
-              <ActionIcon
-                size="sm"
-                variant="subtle"
-                color="red"
-                aria-label={`Delete view ${v.name}`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onDelete(v.name);
-                }}
-              >
-                <IconTrash size={14} />
-              </ActionIcon>
-            }
-          >
-            {v.name}
-          </Menu.Item>
-        ))}
+        {mine.length > 0 && <Menu.Label>My views</Menu.Label>}
+        {mine.map(item)}
+        {shared.length > 0 && <Menu.Label>Shared with my teams</Menu.Label>}
+        {shared.map(item)}
         <Menu.Divider />
-        <Group p="xs" gap="xs" wrap="nowrap">
+        <Stack p="xs" gap="xs">
           <TextInput
             size="xs"
             placeholder="Name this view"
             aria-label="View name"
             value={name}
             onChange={(e) => setName(e.currentTarget.value)}
-            style={{ flex: 1 }}
+            maxLength={100}
           />
-          <Button
-            size="xs"
-            disabled={!name.trim()}
-            onClick={() => {
-              onSave(name.trim());
-              setName('');
-            }}
-          >
-            Save
-          </Button>
-        </Group>
-        <Menu.Item leftSection={<IconLink size={14} />} onClick={onCopyLink}>
+          <Group gap="xs" wrap="nowrap">
+            <NativeSelect
+              size="xs"
+              aria-label="Share with"
+              data={shareOptions}
+              value={team}
+              onChange={(e) => setTeam(e.currentTarget.value)}
+              style={{ flex: 1 }}
+            />
+            <Button
+              size="xs"
+              disabled={!name.trim()}
+              onClick={() => {
+                onSave(name.trim(), team || null);
+                setName('');
+                setTeam('');
+              }}
+            >
+              {existing ? 'Update' : 'Save'}
+            </Button>
+          </Group>
+        </Stack>
+        <Menu.Item leftSection={<IconLink size={ICON.sm} />} onClick={onCopyLink}>
           Copy link to this view
         </Menu.Item>
       </Menu.Dropdown>

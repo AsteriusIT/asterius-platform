@@ -37,6 +37,7 @@ function trustProxy(v: string): boolean | string[] | ((address: string, hop: num
 import { registerTriggerListeners } from './actions/triggers.js';
 import { registerNotificationListeners } from './notifications/dispatch.js';
 import { notificationRoutes } from './routes/notifications.js';
+import { preferenceRoutes } from './routes/preferences.js';
 import { scimRoutes } from './auth/scim.js';
 import { collectRoutes, registerOpenApi } from './openapi.js';
 
@@ -101,9 +102,11 @@ export async function buildApp(opts: AppOptions = {}): Promise<FastifyInstance> 
     if (err instanceof ZodError)
       return reply.code(400).send({ error: err.issues.map((i) => `${i.path.join('.') || 'body'}: ${i.message}`).join('; '), issues: err.issues });
     if (err instanceof HttpError) {
-      const d = err.details as { policy?: string; message?: string; usedBy?: unknown } | undefined;
+      const d = err.details as { policy?: string; message?: string; usedBy?: unknown; conflict?: unknown } | undefined;
       // A policy denial names the policy (and its message) so clients can show why; a refused delete what uses it.
       if (err.statusCode === 409 && d?.usedBy) return reply.code(409).send({ error: err.message, usedBy: d.usedBy });
+      // A stale If-Match says who changed the resource and when, so editors can explain the conflict.
+      if (err.statusCode === 412 && d?.conflict) return reply.code(412).send({ error: err.message, conflict: d.conflict });
       return reply
         .code(err.statusCode)
         .send(err.statusCode === 403 && d?.policy ? { error: err.message, policy: d.policy, message: d.message } : { error: err.message });
@@ -163,6 +166,7 @@ export async function buildApp(opts: AppOptions = {}): Promise<FastifyInstance> 
       await v1.register(actionRoutes);
       await v1.register(integrationRoutes);
       await v1.register(notificationRoutes);
+      await v1.register(preferenceRoutes);
       await v1.register(aiRoutes);
       await v1.register(mcpRoutes);
       await v1.register(adminRoutes, { reloadConfig: opts.reloadConfig ?? (async () => undefined) });
