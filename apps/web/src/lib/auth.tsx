@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { OrgRef, PublicUser } from '@asterius/shared';
 import { api, orgStore, setUnauthorizedHandler, tokenStore } from './api';
+import { canAdminister, type AdminArea } from './access';
 
 interface AuthState {
   user: PublicUser | null;
@@ -9,6 +10,11 @@ interface AuthState {
   /** Admin of the current organization (super-admins are admins everywhere). */
   isAdmin: boolean;
   isSuperadmin: boolean;
+  /**
+   * May the user administer this part of the current organization (admins: everything; delegated roles: their area)?
+   * The single source of truth for admin navigation, route guards and admin-only controls.
+   */
+  can: (area: AdminArea) => boolean;
   /** Organization the UI works in; null: the account has none yet. */
   org: OrgRef | null;
   signIn: (token: string) => void;
@@ -65,6 +71,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       loading: !!token && me.isPending,
       isAdmin: me.data?.role === 'admin' && !!me.data.organization,
       isSuperadmin: !!me.data?.superadmin,
+      can: (area: AdminArea) => !!token && canAdminister(me.data, area),
       org: me.data?.organization ?? null,
       signIn,
       signOut,
@@ -74,6 +81,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
+
+/**
+ * `can` of the current user. Outside an AuthProvider (isolated component tests) everything is allowed, the way the
+ * components behaved before delegated roles.
+ */
+export function useCan(): (area: AdminArea) => boolean {
+  return useContext(Ctx)?.can ?? allowAll;
+}
+const allowAll = () => true;
 
 export function useAuth() {
   const v = useContext(Ctx);
