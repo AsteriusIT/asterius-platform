@@ -21,7 +21,8 @@ import {
 } from '@mantine/core';
 import { useDisclosure, useHotkeys, useLocalStorage, useMediaQuery } from '@mantine/hooks';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ADMIN_CATEGORIES, tabIsActive } from './adminSections';
+import { tabIsActive, visibleCategories } from './adminSections';
+import { RoleBadges } from './RoleBadges';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router';
 import {
   IconActivity,
@@ -47,7 +48,7 @@ import {
   IconShieldLock,
 } from '@tabler/icons-react';
 import { api } from '../lib/api';
-import { useAuth } from '../lib/auth';
+import { useAuth, useCan } from '../lib/auth';
 import { Tour } from './Tour';
 import { tourSteps } from './tourSteps';
 import { useT } from '../lib/i18n';
@@ -71,6 +72,9 @@ export function Layout() {
   const isMobile = useMediaQuery('(max-width: 48em)');
   const qc = useQueryClient();
   const { user, isAdmin, isSuperadmin, org, signOut, switchOrg } = useAuth();
+  const can = useCan();
+  // Administration: the categories with at least one tab the user may open (admins: all; delegated roles: theirs).
+  const adminCategories = visibleCategories(can);
   const { colorScheme, setColorScheme } = useMantineColorScheme();
   const location = useLocation();
   const navigate = useNavigate();
@@ -139,7 +143,7 @@ export function Layout() {
       >
         {t('app.skipToContent')}
       </a>
-      <CommandPalette isAdmin={isAdmin} opened={paletteOpen} onOpenChange={setPaletteOpen} />
+      <CommandPalette can={can} opened={paletteOpen} onOpenChange={setPaletteOpen} />
       <AppShell.Header className="app-header">
         <Group h="100%" px="lg" justify="space-between" wrap="nowrap" gap="md">
           <Group gap="sm" wrap="nowrap">
@@ -325,10 +329,10 @@ export function Layout() {
             'catalog',
           )}
 
-          {isAdmin && (
+          {adminCategories.length > 0 && (
             <div data-tour="admin">
               {section('Administration')}
-              {ADMIN_CATEGORIES.map((c) =>
+              {adminCategories.map((c) =>
                 link(
                   c.tabs[0].path,
                   c.title,
@@ -376,6 +380,7 @@ export function Layout() {
                   <Badge size="sm" color={isAdmin ? 'brand' : 'gray'}>
                     {user?.role}
                   </Badge>
+                  <RoleBadges roles={user?.roles} size="sm" />
                   {user?.teams.map((t) => (
                     <Badge key={t.identifier} size="sm" color="gray">
                       {t.title}

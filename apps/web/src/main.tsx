@@ -14,7 +14,7 @@ import { createQueryClient } from './lib/queryClient';
 import { ErrorBoundary, RouteError } from './components/ErrorBoundary';
 import { AuthProvider, useAuth } from './lib/auth';
 import { useDocumentBrand } from './components/Brand';
-import { SectionTabs } from './components/SectionTabs';
+import { AdminRoute, CategoryRedirect } from './components/SectionTabs';
 import { ADMIN_CATEGORIES } from './components/adminSections';
 import { Layout } from './components/Layout';
 import { Loading } from './components/ui';
@@ -53,17 +53,6 @@ function RequireAuth() {
   // Signed in without an organization: create one or wait for an invitation.
   if (!user.organization && location.pathname !== '/welcome') return <Navigate to="/welcome" replace />;
   return <Outlet />;
-}
-
-/** Admin pages without the section tabs (the workflow editor). */
-function RequireAdminPage() {
-  const { isAdmin } = useAuth();
-  return isAdmin ? <Outlet /> : <Navigate to="/" replace />;
-}
-
-function RequireAdmin() {
-  const { isAdmin } = useAuth();
-  return isAdmin ? <SectionTabs /> : <Navigate to="/" replace />;
 }
 
 function RequireSuperadmin() {
@@ -106,7 +95,7 @@ const router = createBrowserRouter([
               { path: '/runs/:id/flow', element: page(runs, 'RunFlowPage') },
               {
                 // The workflow editor fills the content panel: no admin section tabs.
-                element: <RequireAdminPage />,
+                element: <AdminRoute tabs={false} />,
                 children: [
                   { path: '/admin/actions/:id', element: page(workflowFlow, 'WorkflowFlowPage') },
                   { path: '/admin/actions/:id/flow', element: page(workflowFlow, 'WorkflowFlowRedirect') },
@@ -122,9 +111,9 @@ const router = createBrowserRouter([
               },
               {
                 path: '/admin',
-                element: <RequireAdmin />,
+                element: <AdminRoute />,
                 children: [
-                  ...ADMIN_CATEGORIES.map((c) => ({ path: c.id, element: <Navigate to={c.tabs[0].path} replace /> })),
+                  ...ADMIN_CATEGORIES.map((c) => ({ path: c.id, element: <CategoryRedirect category={c} /> })),
                   { path: 'blueprints', element: page(definitions, 'BlueprintsAdmin') },
                   { path: 'actions', element: page(definitions, 'ActionsAdmin') },
                   { path: 'integrations', element: page(definitions, 'IntegrationsAdmin') },

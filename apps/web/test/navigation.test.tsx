@@ -3,9 +3,12 @@ import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
 import { AuthProvider } from '../src/lib/auth';
 import { Layout } from '../src/components/Layout';
 import { CatalogHome } from '../src/pages/Catalog';
-import { Navigate, Route, Routes } from 'react-router';
-import { SectionTabs } from '../src/components/SectionTabs';
-import { ADMIN_CATEGORIES } from '../src/components/adminSections';
+import { Route, Routes } from 'react-router';
+import { AdminRoute, CategoryRedirect } from '../src/components/SectionTabs';
+import { ADMIN_CATEGORIES, visibleCategories } from '../src/components/adminSections';
+import { navCommands } from '../src/components/CommandPalette';
+import { canAdminister } from '../src/lib/access';
+import { BlueprintBuilder } from '../src/components/builder/BlueprintBuilder';
 import { renderUi } from './render';
 
 const json = (body: unknown) => new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json' } });
@@ -82,9 +85,9 @@ describe('navigation', () => {
       <AuthProvider>
         <Routes>
           <Route element={<Layout />}>
-            <Route path="/admin" element={<SectionTabs />}>
+            <Route path="/admin" element={<AdminRoute />}>
               {ADMIN_CATEGORIES.map((c) => (
-                <Route key={c.id} path={c.id} element={<Navigate to={c.tabs[0].path} replace />} />
+                <Route key={c.id} path={c.id} element={<CategoryRedirect category={c} />} />
               ))}
               {ADMIN_CATEGORIES.flatMap((c) => c.tabs).map((t) => (
                 <Route key={t.path} path={t.path.replace('/admin/', '')} element={<div>page {t.label}</div>} />
@@ -130,5 +133,112 @@ describe('navigation', () => {
     app('/');
     await screen.findByRole('link', { name: 'Catalog' });
     expect(screen.queryByRole('link', { name: 'Automation' })).toBeNull();
+  });
+
+  /** Signed in as a member of Acme holding these delegated roles. */
+  const asMember = (roles: string[]) => {
+    const orig = globalThis.fetch;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => (url.startsWith('/api/auth/me') ? json({ ...me, name: 'Bo Member', role: 'member', roles }) : (orig as typeof fetch)(url))),
+    );
+  };
+
+  it('shows a blueprint owner the Blueprints page only, and keeps Secrets closed', async () => {
+    asMember(['blueprint-owner']);
+    app('/admin/blueprints');
+    expect(await screen.findByText('page Blueprints')).toBeTruthy();
+    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Blueprints']);
+    expect(screen.getByRole('link', { name: 'Catalog model' }).getAttribute('href')).toBe('/admin/blueprints');
+    for (const t of ['Automation', 'Access', 'Governance', 'Settings']) expect(screen.queryByRole('link', { name: t })).toBeNull();
+    cleanup();
+
+    app('/admin/secrets');
+    expect(await screen.findByText('other')).toBeTruthy(); // sent home
+    expect(screen.queryByText('page Secrets')).toBeNull();
+  });
+
+  it('sends a category URL to the first tab the role may open', async () => {
+    asMember(['integration-admin']);
+    app('/admin/automation');
+    expect(await screen.findByText('page Integrations')).toBeTruthy();
+    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Integrations']);
+    expect(screen.getByRole('link', { name: 'Automation' }).getAttribute('href')).toBe('/admin/integrations');
+    expect(screen.queryByRole('link', { name: 'Catalog model' })).toBeNull();
+  });
+
+  it('keeps admin-only pages closed to an integration admin (Deliveries, the workflow editor)', async () => {
+    asMember(['integration-admin']);
+    app('/admin/deliveries');
+    expect(await screen.findByText('other')).toBeTruthy();
+  });
+
+  it('shows the delegated roles readably in the account menu', async () => {
+    asMember(['blueprint-owner', 'approver', 'release-manager']);
+    app('/');
+    fireEvent.click(await screen.findByLabelText('Account'));
+    expect(await screen.findByLabelText('Role: Blueprint owner')).toBeTruthy();
+    expect(screen.getByLabelText('Role: Approver')).toBeTruthy();
+    expect(screen.getByLabelText('Role: release-manager')).toBeTruthy(); // custom role: its slug
+  });
+
+  it('hides the admin-only AI draft from a blueprint owner editing a blueprint', async () => {
+    const editor = () =>
+      renderUi(
+        <AuthProvider>
+          <BlueprintBuilder isNew value={{ identifier: '', title: '' }} onSave={async () => undefined} onClose={() => undefined} />
+        </AuthProvider>,
+      );
+    const orig = globalThis.fetch;
+    const withAi = (role: string, roles: string[]) =>
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (url: string) =>
+          url.startsWith('/api/auth/me')
+            ? json({ ...me, role, roles })
+            : url.startsWith('/api/v1/ai/status')
+              ? json({ enabled: true, provider: 'anthropic', assistantModel: 'm' })
+              : (orig as typeof fetch)(url),
+        ),
+      );
+    withAi('admin', []);
+    editor();
+    expect(await screen.findByText('Draft with AI')).toBeTruthy();
+    cleanup();
+
+    withAi('member', ['blueprint-owner']);
+    editor();
+    expect(await screen.findByLabelText(/^Title/)).toBeTruthy();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.queryByText('Draft with AI')).toBeNull();
+  });
+
+  it('gives a plain member or an approver no Administration section', async () => {
+    asMember(['approver']);
+    app('/');
+    await screen.findByRole('link', { name: 'Catalog' });
+    expect(screen.queryByText('Administration')).toBeNull();
+    for (const c of ADMIN_CATEGORIES) expect(screen.queryByRole('link', { name: c.title })).toBeNull();
+  });
+});
+
+describe('admin access by role', () => {
+  const user = (role: 'admin' | 'member', roles: string[] = []) => ({ role, roles, organization: { id: 'o1', slug: 'acme', name: 'Acme' } });
+  const can = (u: ReturnType<typeof user>) => (area: Parameters<typeof canAdminister>[1]) => canAdminister(u, area);
+  const tabs = (u: ReturnType<typeof user>) => visibleCategories(can(u)).flatMap((c) => c.tabs.map((t) => t.label));
+
+  it('matches the server guards', () => {
+    expect(tabs(user('admin'))).toEqual(ADMIN_CATEGORIES.flatMap((c) => c.tabs.map((t) => t.label)));
+    expect(tabs(user('member'))).toEqual([]);
+    expect(tabs(user('member', ['approver', 'custom-role']))).toEqual([]);
+    expect(tabs(user('member', ['blueprint-owner']))).toEqual(['Blueprints']);
+    expect(tabs(user('member', ['integration-admin']))).toEqual(['Integrations']);
+    expect(tabs(user('member', ['integration-admin', 'blueprint-owner']))).toEqual(['Blueprints', 'Integrations']);
+    expect(canAdminister({ ...user('admin'), organization: null }, 'blueprints')).toBe(false); // no organization yet
+  });
+
+  it('lists only the permitted admin pages in the command palette', () => {
+    const admin = navCommands(can(user('member', ['blueprint-owner']))).filter((c) => c.id.startsWith('admin'));
+    expect(admin.map((c) => c.to)).toEqual(['/admin/blueprints']);
   });
 });

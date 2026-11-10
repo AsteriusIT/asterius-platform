@@ -12,6 +12,7 @@ import { FormEditor } from '../../components/builder/FormEditor';
 import { IntegrationForm } from '../../components/builder/IntegrationForm';
 import { WebhookForm } from '../../components/builder/WebhookForm';
 import { api, errorText } from '../../lib/api';
+import { useCan } from '../../lib/auth';
 import { DataTable } from '../../components/DataTable';
 import { EntityIcon } from '../../components/icons';
 import { Mono, TimeAgo } from '../../components/ui';
@@ -233,6 +234,8 @@ export function IntegrationsAdmin() {
 }
 
 function IntegrationDrawer({ integration, onClose }: { integration: Integration | null; onClose: () => void }) {
+  // The AI mapping assistant is admin-only on the server (integration admins write mappings themselves).
+  const mayUseAi = useCan()('admin');
   const syncs = useQuery({
     queryKey: ['syncs', integration?.identifier],
     queryFn: () => api.syncs(integration!.identifier),
@@ -263,7 +266,7 @@ function IntegrationDrawer({ integration, onClose }: { integration: Integration 
               </Text>
             </Stack>
           )}
-          <MappingSuggest />
+          {mayUseAi && <MappingSuggest />}
           <Text fz="sm" fw={500}>
             History
           </Text>
