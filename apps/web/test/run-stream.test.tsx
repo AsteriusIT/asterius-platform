@@ -18,6 +18,13 @@ describe('applyRunMessage', () => {
     const next = applyRunMessage(run({ logs: [line('a')] as Run['logs'] }), { event: 'log', data: JSON.stringify([line('b')]) });
     expect(next?.logs?.map((l) => l.message)).toEqual(['a', 'b']);
   });
+  it('skips lines it already holds (the stream replays from the first line)', () => {
+    const seq = (n: number) => ({ ...line(`l${n}`), seq: n });
+    const held = run({ logs: [seq(1), seq(2)] as Run['logs'] });
+    const next = applyRunMessage(held, { event: 'log', data: JSON.stringify([seq(1), seq(2), seq(3)]) });
+    expect(next?.logs?.map((l) => l.message)).toEqual(['l1', 'l2', 'l3']);
+    expect(applyRunMessage(held, { event: 'log', data: JSON.stringify([seq(1), seq(2)]) })).toBe(held);
+  });
   it('keeps the logs when a snapshot arrives', () => {
     const next = applyRunMessage(run({ logs: [line('a')] as Run['logs'] }), { event: 'run', data: JSON.stringify(run({ status: 'SUCCESS', logs: [] })) });
     expect(next?.status).toBe('SUCCESS');

@@ -35,7 +35,7 @@ export function parseSse(buffer: string): { messages: SseMessage[]; rest: string
   return { messages, rest };
 }
 
-/** Apply one stream message to the cached run (logs are appended, snapshots keep the logs read so far). */
+/** Apply one stream message to the cached run (new log lines are appended, snapshots keep the logs read so far). */
 export function applyRunMessage(current: Run | undefined, msg: SseMessage): Run | undefined {
   if (msg.event === 'run') {
     const snap = JSON.parse(msg.data) as Run;
@@ -43,7 +43,11 @@ export function applyRunMessage(current: Run | undefined, msg: SseMessage): Run 
   }
   if (msg.event === 'log' && current) {
     const lines = JSON.parse(msg.data) as RunLog[];
-    return { ...current, logs: [...(current.logs ?? []), ...lines] };
+    // The stream starts from the first line: skip those the page already holds (initial fetch, polling).
+    const held = current.logs ?? [];
+    const last = held.length ? (held[held.length - 1]!.seq ?? 0) : 0;
+    const fresh = lines.filter((l) => l.seq === undefined || l.seq > last);
+    return fresh.length ? { ...current, logs: [...held, ...fresh] } : current;
   }
   return current;
 }
