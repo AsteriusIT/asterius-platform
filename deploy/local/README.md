@@ -36,7 +36,8 @@ The platform's configuration is the ConfigMap `asterius-platform-config-files`: 
 Grafana integration of `examples/grafana/platform/` (blueprints and integrations for Grafana folders, dashboards,
 data sources, alert rules and alert notifications) and the SonarQube integration of `examples/sonarqube/platform/`
 (projects, quality gates, analyses) and the Nexus integration of `examples/nexus/platform/` (repositories,
-components). The script also provisions the Grafana, SonarQube and Nexus sides; see
+components), plus [config/platform-components.yaml](config/platform-components.yaml): the components of this
+cluster as catalog entities whose Docs tab shows each one's README. The script also provisions the Grafana, SonarQube and Nexus sides; see
 [examples/grafana/README.md](../../examples/grafana/README.md),
 [examples/sonarqube/README.md](../../examples/sonarqube/README.md) and
 [examples/nexus/README.md](../../examples/nexus/README.md). It accepts the Nexus Community Edition EULA on your behalf.
