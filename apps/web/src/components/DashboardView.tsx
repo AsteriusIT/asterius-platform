@@ -142,7 +142,7 @@ function RunsList({ data }: { data: Data<'runs'> | Data<'approvals'> }) {
         ]}
       />
       {data.total > data.items.length && (
-        <Anchor component={Link} to={data.type === 'approvals' ? '/approvals' : '/runs'} fz="sm" mt="xs" display="block">
+        <Anchor component={Link} to={data.type === 'approvals' ? '/todo' : '/runs'} fz="sm" mt="xs" display="block">
           All {data.total}
         </Anchor>
       )}

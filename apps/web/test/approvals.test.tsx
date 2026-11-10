@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
 import type { Run } from '@asterius/shared';
-import { Approvals } from '../src/pages/Runs';
+import { Decisions as Approvals } from '../src/pages/Todo';
 import { api } from '../src/lib/api';
 import { renderUi } from './render';
 

@@ -63,6 +63,8 @@ export async function findEntity(blueprint: string, identifier: string): Promise
 export interface EntityQuery extends EntityQueryBody {
   /** Restrict results to what this principal may read (omit for internal callers such as syncs). */
   viewer?: Principal;
+  /** Owned by one of these teams (internal callers, e.g. the home page; `team` is the single-team API filter). */
+  teams?: string[];
   limit: number;
   offset: number;
 }
@@ -72,14 +74,16 @@ export async function searchEntities(q: EntityQuery): Promise<EntityPage> {
   let where = c.where;
   const params = [...c.params];
   const base = { where: c.where, params: [...c.params] };
-  const vf = q.viewer ? await readFilter(q.viewer) : undefined;
-  if (vf) {
-    const clause = where ? ` AND ${vf.sql}` : `WHERE ${vf.sql}`;
+  const extra = (sql: string, vals: SqlValue[]) => {
+    const clause = where ? ` AND ${sql}` : `WHERE ${sql}`;
     where += clause;
     base.where += clause;
-    params.push(...vf.params);
-    base.params.push(...vf.params);
-  }
+    params.push(...vals);
+    base.params.push(...vals);
+  };
+  if (q.teams) extra(q.teams.length ? `team IN (${q.teams.map(() => '?').join(',')})` : '1 = 0', q.teams);
+  const vf = q.viewer ? await readFilter(q.viewer) : undefined;
+  if (vf) extra(vf.sql, vf.params);
   if (q.cursor) {
     if (!c.keyset) throw badRequest(`Cursor pagination is not available when sorting by ${c.sort}; use offset`);
     const cur = decodeCursor(q.cursor, { s: c.sort, d: c.dir, n: c.keyset.length });

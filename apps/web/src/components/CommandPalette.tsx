@@ -20,7 +20,7 @@ export function navCommands(isAdmin: boolean): Command[] {
     { id: 'home', label: 'Home', to: '/' },
     { id: 'self-service', label: 'Self-service', hint: 'Run an action', to: '/self-service' },
     { id: 'runs', label: 'Runs', to: '/runs' },
-    { id: 'approvals', label: 'Approvals', to: '/approvals' },
+    { id: 'todo', label: 'To do', hint: 'Approvals and requests waiting', to: '/todo' },
     { id: 'profile', label: 'Profile and API tokens', to: '/profile' },
   ];
   const admin: Command[] = ADMIN_CATEGORIES.flatMap((c) => c.tabs).map((t) => ({

@@ -88,17 +88,18 @@ export function Layout() {
   const toggleMini = () => setCollapsed((c) => !c);
   useHotkeys([['mod+B', toggleMini]]);
   const approvals = useQuery({ queryKey: ['approvals'], queryFn: api.approvals, refetchInterval: 30_000 });
+  const todoCount = approvals.data?.length ?? 0;
 
   const active = (to: string) => (to === '/' ? location.pathname === '/' : location.pathname === to || location.pathname.startsWith(`${to}/`));
-  const link = (to: string, label: string, icon: React.ReactNode, right?: React.ReactNode, tour?: string, isActive?: boolean) => (
-    <Tooltip key={to} label={label} position="right" disabled={!mini} openDelay={0}>
+  const link = (to: string, label: string, icon: React.ReactNode, right?: React.ReactNode, tour?: string, isActive?: boolean, ariaLabel?: string) => (
+    <Tooltip key={to} label={ariaLabel ?? label} position="right" disabled={!mini} openDelay={0}>
       <NavLink
         data-tour={tour}
         className="nav-link"
         component={Link}
         to={to}
         label={mini ? undefined : label}
-        aria-label={label}
+        aria-label={ariaLabel ?? label}
         leftSection={icon}
         rightSection={mini ? undefined : right}
         active={isActive ?? active(to)}
@@ -169,27 +170,7 @@ export function Layout() {
             />
           </form>
           <Group gap={4} wrap="nowrap">
-            <Tooltip label={approvals.data?.length ? `Approvals · ${approvals.data.length} waiting for you` : 'Approvals'}>
-              <Indicator label={approvals.data?.length} size={16} color="yellow" offset={5} disabled={!approvals.data?.length} inline>
-                <ActionIcon
-                  component={Link}
-                  to="/approvals"
-                  data-tour="approvals"
-                  variant={active('/approvals') ? 'light' : 'subtle'}
-                  color="gray"
-                  size="lg"
-                  aria-label={`Approvals${approvals.data?.length ? ` (${approvals.data.length} waiting)` : ''}`}
-                >
-                  <IconChecklist size={19} stroke={1.6} />
-                </ActionIcon>
-              </Indicator>
-            </Tooltip>
             <NotificationCenter />
-            <Tooltip label="Runs">
-              <ActionIcon component={Link} to="/runs" data-tour="runs" variant={active('/runs') ? 'light' : 'subtle'} color="gray" size="lg" aria-label="Runs">
-                <IconActivity size={19} stroke={1.6} />
-              </ActionIcon>
-            </Tooltip>
             <Tooltip label="Refresh data">
               <ActionIcon variant="subtle" color="gray" size="lg" onClick={refreshAll} aria-label="Refresh data" aria-busy={refreshing}>
                 <IconRefresh size={19} stroke={1.6} className={refreshing ? 'spin' : undefined} />
@@ -311,7 +292,23 @@ export function Layout() {
 
         <AppShell.Section grow component={ScrollArea} mt={4} mx={-4} px={4}>
           {link('/', 'Home', <IconHome size={18} stroke={1.6} />)}
+          {link(
+            '/todo',
+            'To do',
+            <Indicator size={8} color="yellow" offset={2} disabled={!mini || !todoCount}>
+              <IconChecklist size={18} stroke={1.6} />
+            </Indicator>,
+            todoCount ? (
+              <Badge size="sm" color="yellow" variant="filled" aria-hidden>
+                {todoCount > 99 ? '99+' : todoCount}
+              </Badge>
+            ) : undefined,
+            'todo',
+            undefined,
+            todoCount ? `To do (${todoCount} waiting for you)` : undefined,
+          )}
           {link('/self-service', 'Self-service', <IconRocket size={18} stroke={1.6} />, undefined, 'self-service')}
+          {link('/runs', 'Runs', <IconActivity size={18} stroke={1.6} />, undefined, 'runs')}
 
           {link(
             '/catalog',

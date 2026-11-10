@@ -45,7 +45,7 @@ import {
   scorecardSummary,
   upsertScorecard,
 } from '../catalog/scorecards.js';
-import { countPendingApprovals, listRuns } from '../actions/runs.js';
+import { countPendingApprovals, listRuns, waitingOnOthers } from '../actions/runs.js';
 import { blueprintDef, entityInput, entityQueryBody, insightsConfig, slug, SORT_RE, type EntityInput } from '../schemas.js';
 import type { Entity } from '@asterius/shared';
 import { enforceEntityDelete, enforceEntityWrite } from '../policies/policies.js';
@@ -81,12 +81,21 @@ export async function catalogRoutes(app: FastifyInstance) {
 
   app.get('/home', async (req): Promise<HomeSummary> => {
     const bps = await visibleBlueprints(req.principal, await homeBlueprints());
-    const recent = await searchEntities({ sort: 'updated', limit: 8, offset: 0, viewer: req.principal });
+    const p = req.principal;
+    const [recent, pendingApprovals, myRuns, waiting, team] = await Promise.all([
+      searchEntities({ sort: 'updated', limit: 8, offset: 0, viewer: p, count: false }),
+      countPendingApprovals(p),
+      listRuns({ mine: p.id, limit: 8, offset: 0, count: false }, p),
+      waitingOnOthers(p, 20),
+      p.teams.length ? searchEntities({ sort: 'updated', teams: p.teams, limit: 8, offset: 0, viewer: p, count: false }) : undefined,
+    ]);
     return {
       blueprints: bps.map((b) => ({ identifier: b.identifier, title: b.title, icon: b.icon, count: b.entityCount ?? 0 })),
-      pendingApprovals: await countPendingApprovals(req.principal),
-      myRuns: (await listRuns({ mine: req.principal.id, limit: 8, offset: 0 }, req.principal)).items,
+      pendingApprovals,
+      myRuns: myRuns.items,
       recentEntities: recent.items,
+      waitingOnOthers: waiting,
+      teamEntities: team?.items ?? [],
     };
   });
 

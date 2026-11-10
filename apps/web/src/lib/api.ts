@@ -316,11 +316,15 @@ export const api = {
   trigger: (id: string, body: { entity?: string | null; inputs: Record<string, unknown>; overrideBlackout?: boolean; priority?: number }) =>
     request<Run>('POST', v1(`/actions/${enc(id)}/runs`), body),
 
-  runs: (q: { mine?: boolean; status?: string; action?: string; blueprint?: string; entity?: string; limit?: number; offset?: number }) =>
+  runs: (q: { mine?: boolean; myTeams?: boolean; status?: string; action?: string; blueprint?: string; entity?: string; limit?: number; offset?: number }) =>
     request<RunPage>('GET', v1(`/runs${qs(q)}`)),
   /** `after`: only log lines past this sequence number (incremental polling). */
   run: (id: string, after?: number) => request<Run>('GET', v1(`/runs/${enc(id)}${after !== undefined ? `?after=${after}` : ''}`)),
   approvals: () => request<Run[]>('GET', v1('/approvals')),
+  // ---- todo/home ----
+  /** The caller's requests waiting on someone else's approval or input (`waitingOn` says on whom). */
+  runsWaiting: (limit?: number) => request<Run[]>('GET', v1(`/runs/waiting${qs({ limit })}`)),
+  // ---- end todo/home ----
   approve: (id: string, comment: string) => request<Run>('POST', v1(`/runs/${enc(id)}/approve`), { comment }),
   reject: (id: string, comment: string) => request<Run>('POST', v1(`/runs/${enc(id)}/reject`), { comment }),
   rerun: (id: string) => request<Run>('POST', v1(`/runs/${enc(id)}/rerun`), {}),
