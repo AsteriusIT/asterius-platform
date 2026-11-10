@@ -44,7 +44,7 @@ import { DataTable } from '../components/DataTable';
 import { useUrlParams } from '../lib/urlState';
 import { useRunStream } from '../lib/runStream';
 import { LogViewer } from '../components/LogViewer';
-import { duration, Empty, Markdown, PageHeader, QueryView, StatusBadge, STATUS_COLORS, STATUS_LABELS, TimeAgo } from '../components/ui';
+import { duration, Markdown, PageHeader, QueryView, StatusBadge, STATUS_COLORS, STATUS_LABELS, TimeAgo } from '../components/ui';
 import { TRIGGER_ID, WorkflowFlow, type FlowStep, type FlowTrigger } from '../components/WorkflowFlow';
 import { FlowShell } from '../components/FlowShell';
 import { ExplainRun } from '../components/AiAssistant';
@@ -57,7 +57,7 @@ const PAGE = 30;
 const onError = (e: unknown) => notifications.show({ color: 'red', message: errorText(e) });
 const ACTIVE: RunStatus[] = ['PENDING_APPROVAL', 'QUEUED', 'IN_PROGRESS'];
 
-const runColumns = [
+export const runColumns = [
   {
     key: 'a',
     label: 'Action',
@@ -96,6 +96,7 @@ export function Runs() {
     queryFn: () =>
       api.runs({
         mine: scope === 'mine',
+        myTeams: scope === 'team',
         status: status.join(',') || undefined,
         action: action ?? undefined,
         blueprint: blueprint ?? undefined,
@@ -115,6 +116,7 @@ export function Runs() {
           onChange={(v) => set('scope', v)}
           data={[
             { value: 'mine', label: 'Mine' },
+            { value: 'team', label: 'My teams' },
             { value: 'all', label: 'Everyone' },
           ]}
         />
@@ -163,113 +165,6 @@ export function Runs() {
         empty="No runs"
         columns={runColumns}
         page={{ page, pageSize: PAGE, total: q.data?.total ?? 0, onChange: (p) => set('page', String(p)) }}
-      />
-    </Stack>
-  );
-}
-
-const approvalKey = (r: Run) => `${r.id}/${r.pendingStep?.id ?? ''}`;
-
-export function Approvals() {
-  const q = useQuery({ queryKey: ['approvals'], queryFn: api.approvals, refetchInterval: 15_000 });
-  const navigate = useNavigate();
-  const qc = useQueryClient();
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [comment, setComment] = useState('');
-  const decide = useMutation({
-    mutationFn: async (d: 'approve' | 'reject') => {
-      const targets = (q.data ?? []).filter((r) => selected.has(approvalKey(r)));
-      const results = await Promise.allSettled(
-        targets.map((r) => {
-          if (r.pendingStep) return d === 'approve' ? api.approveStep(r.id, r.pendingStep.id, comment) : api.rejectStep(r.id, r.pendingStep.id, comment);
-          return d === 'approve' ? api.approve(r.id, comment) : api.reject(r.id, comment);
-        }),
-      );
-      return { d, ok: results.filter((x) => x.status === 'fulfilled').length, failed: results.filter((x) => x.status === 'rejected').length };
-    },
-    onSuccess: ({ d, ok, failed }) => {
-      notifications.show({
-        color: failed ? 'orange' : 'green',
-        message: `${ok} ${d === 'approve' ? 'approved' : 'rejected'}${failed ? `, ${failed} failed` : ''}`,
-      });
-      setSelected(new Set());
-      setComment('');
-      void qc.invalidateQueries({ queryKey: ['approvals'] });
-      void qc.invalidateQueries({ queryKey: ['runs'] });
-    },
-    onError,
-  });
-  return (
-    <Stack>
-      <PageHeader title="Approvals" description="Requests and workflow steps waiting for a decision you can make." refresh={q} />
-      {selected.size > 0 && (
-        <Group align="flex-end">
-          <Text fz="sm">{selected.size} selected</Text>
-          <Textarea
-            aria-label="Comment for the decision"
-            placeholder="Comment (required to reject)"
-            value={comment}
-            onChange={(e) => setComment(e.currentTarget.value)}
-            autosize
-            minRows={1}
-            style={{ flex: 1, maxWidth: 420 }}
-          />
-          <Button color="green" size="xs" leftSection={<IconCheck size={14} />} loading={decide.isPending} onClick={() => decide.mutate('approve')}>
-            Approve selected
-          </Button>
-          <Button
-            color="red"
-            variant="light"
-            size="xs"
-            leftSection={<IconX size={14} />}
-            loading={decide.isPending}
-            disabled={!comment.trim()}
-            onClick={() => decide.mutate('reject')}
-          >
-            Reject selected
-          </Button>
-        </Group>
-      )}
-      <DataTable
-        selection={{ selected, onChange: setSelected }}
-        rows={q.data}
-        loading={q.isPending}
-        error={q.error}
-        rowKey={approvalKey}
-        onRowClick={(r) => navigate(`/runs/${r.id}${r.pendingStep ? `?step=${r.pendingStep.id}` : ''}`)}
-        empty={<Empty title="Nothing to approve">You are all caught up.</Empty>}
-        columns={[
-          runColumns[0],
-          {
-            key: 'what',
-            label: 'Decision',
-            render: (r: Run) => (
-              <div>
-                {r.pendingStep ? (
-                  <>
-                    <Text fz="sm" fw={500}>
-                      Step: {r.pendingStep.name}
-                    </Text>
-                    {r.pendingStep.message && (
-                      <Text fz="xs" c="dimmed" lineClamp={1}>
-                        {r.pendingStep.message.replace(/[*_`#>]/g, '')}
-                      </Text>
-                    )}
-                  </>
-                ) : (
-                  <Text fz="sm">Start of the request</Text>
-                )}
-                {r.onBehalfOf && (
-                  <Badge size="xs" variant="light" color="grape">
-                    as delegate of {r.onBehalfOf.name}
-                  </Badge>
-                )}
-              </div>
-            ),
-          },
-          runColumns[2],
-          runColumns[3],
-        ]}
       />
     </Stack>
   );

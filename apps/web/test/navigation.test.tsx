@@ -67,6 +67,28 @@ describe('navigation', () => {
     expect(screen.getByLabelText('Expand sidebar')).toBeTruthy();
   });
 
+  it('has To do (with its count) right after Home and Runs after Self-service in the sidebar, not in the header', async () => {
+    const orig = globalThis.fetch;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => (url.startsWith('/api/v1/approvals') ? json([{ id: 'r1' }, { id: 'r2' }]) : (orig as typeof fetch)(url))),
+    );
+    renderUi(
+      <AuthProvider>
+        <Layout />
+      </AuthProvider>,
+    );
+    const todo = await screen.findByRole('link', { name: 'To do (2 waiting for you)' });
+    expect(todo.getAttribute('href')).toBe('/todo');
+    expect(todo.textContent).toContain('2');
+    const nav = [...document.querySelectorAll('.app-navbar a.nav-link')].map((a) => a.getAttribute('href'));
+    expect(nav.slice(0, 5)).toEqual(['/', '/todo', '/self-service', '/runs', '/catalog']);
+    expect(document.querySelector('.app-header a[href="/approvals"]')).toBeNull();
+    expect(document.querySelector('.app-header a[href="/runs"]')).toBeNull();
+    expect(document.querySelector('[data-tour="todo"]')).toBeTruthy();
+    expect(document.querySelector('[data-tour="runs"]')?.getAttribute('href')).toBe('/runs');
+  });
+
   it('lists every kind on the catalog page, filterable', async () => {
     renderUi(
       <AuthProvider>

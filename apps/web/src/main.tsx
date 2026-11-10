@@ -34,6 +34,7 @@ const catalog = () => import('./pages/Catalog');
 const entity = () => import('./pages/EntityPage');
 const selfService = () => import('./pages/SelfService');
 const runs = () => import('./pages/Runs');
+const todo = () => import('./pages/Todo');
 const profile = () => import('./pages/Profile');
 const definitions = () => import('./pages/admin/Definitions');
 const workflowFlow = () => import('./pages/admin/WorkflowFlow');
@@ -101,7 +102,8 @@ const router = createBrowserRouter([
                   { path: '/admin/actions/:id/flow', element: page(workflowFlow, 'WorkflowFlowRedirect') },
                 ],
               },
-              { path: '/approvals', element: page(runs, 'Approvals') },
+              { path: '/todo', element: page(todo, 'Todo') },
+              { path: '/approvals', element: <Navigate to="/todo" replace /> },
               { path: '/profile', element: page(profile, 'Profile') },
               { path: '/orgs/new', element: page(organization, 'NewOrganization') },
               {
