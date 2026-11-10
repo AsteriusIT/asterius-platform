@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ActionIcon, Anchor, Badge, Code, CopyButton, Drawer, Group, Select, Stack, Text, Tooltip } from '@mantine/core';
+import { ActionIcon, Anchor, Badge, Code, CopyButton, Group, Select, Text, Tooltip } from '@mantine/core';
 import { AiDraft, JsonPreview } from '../../components/AiAssistant';
 import { notifications } from '@mantine/notifications';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -13,6 +13,8 @@ import { IntegrationForm } from '../../components/builder/IntegrationForm';
 import { WebhookForm } from '../../components/builder/WebhookForm';
 import { api, errorText } from '../../lib/api';
 import { DataTable } from '../../components/DataTable';
+import { Section } from '../../components/Section';
+import { SidePanel } from '../../components/SidePanel';
 import { EntityIcon } from '../../components/icons';
 import { Mono, TimeAgo } from '../../components/ui';
 import { ResourceAdmin, strip } from './ResourceAdmin';
@@ -240,15 +242,12 @@ function IntegrationDrawer({ integration, onClose }: { integration: Integration 
     refetchInterval: 5000,
   });
   return (
-    <Drawer opened={!!integration} onClose={onClose} position="right" size="xl" title={<Text fw={600}>{integration?.title}</Text>}>
+    <SidePanel opened={!!integration} onClose={onClose} width="wide" title={integration?.title} subtitle={integration?.identifier} actions={<MappingSuggest />}>
       {integration && (
-        <Stack>
+        <>
           {integration.webhookUrl && (
-            <Stack gap={4}>
-              <Text fz="sm" fw={500}>
-                Webhook URL
-              </Text>
-              <Group gap="xs" wrap="nowrap">
+            <Section title="Webhook URL">
+              <Group gap="xs" wrap="nowrap" mb={4}>
                 <Code style={{ overflowWrap: 'anywhere' }}>{integration.webhookUrl}</Code>
                 <CopyButton value={integration.webhookUrl}>
                   {({ copy }) => (
@@ -261,39 +260,36 @@ function IntegrationDrawer({ integration, onClose }: { integration: Integration 
               <Text fz="xs" c="dimmed">
                 Authenticate with <Code>X-Asterius-Token: &lt;secret&gt;</Code>, or an HMAC signature header (<Code>signatureHeader</Code> in the config).
               </Text>
-            </Stack>
+            </Section>
           )}
-          <MappingSuggest />
-          <Text fz="sm" fw={500}>
-            History
-          </Text>
-          <DataTable
-            rows={syncs.data}
-            loading={syncs.isPending}
-            rowKey={(s) => s.id}
-            empty="Never synced"
-            columns={[
-              { key: 'a', label: 'When', render: (s) => <TimeAgo at={s.startedAt} /> },
-              { key: 't', label: 'Trigger', render: (s) => s.trigger },
-              {
-                key: 's',
-                label: 'Status',
-                render: (s) => <Badge color={s.status === 'success' ? 'green' : s.status === 'running' ? 'blue' : 'red'}>{s.status}</Badge>,
-              },
-              { key: 'n', label: 'Upserted / deleted / failed', render: (s) => `${s.stats.upserted} / ${s.stats.deleted} / ${s.stats.failed}` },
-            ]}
-          />
+          <Section title="History">
+            <DataTable
+              rows={syncs.data}
+              loading={syncs.isPending}
+              rowKey={(s) => s.id}
+              empty="Never synced"
+              columns={[
+                { key: 'a', label: 'When', render: (s) => <TimeAgo at={s.startedAt} /> },
+                { key: 't', label: 'Trigger', render: (s) => s.trigger },
+                {
+                  key: 's',
+                  label: 'Status',
+                  render: (s) => <Badge color={s.status === 'success' ? 'green' : s.status === 'running' ? 'blue' : 'red'}>{s.status}</Badge>,
+                },
+                { key: 'n', label: 'Upserted / deleted / failed', render: (s) => `${s.stats.upserted} / ${s.stats.deleted} / ${s.stats.failed}` },
+              ]}
+            />
+          </Section>
           {syncs.data?.[0]?.logs.length ? (
-            <>
-              <Text fz="sm" fw={500}>
-                Last run log
-              </Text>
-              <pre style={{ fontSize: 12, margin: 0, whiteSpace: 'pre-wrap' }}>{syncs.data[0].logs.join('\n')}</pre>
-            </>
+            <Section title="Last run log">
+              <pre className="code-block" style={{ fontSize: 12 }}>
+                {syncs.data[0].logs.join('\n')}
+              </pre>
+            </Section>
           ) : null}
-        </Stack>
+        </>
       )}
-    </Drawer>
+    </SidePanel>
   );
 }
 
@@ -462,27 +458,25 @@ function MappingSuggest() {
   const blueprints = useQuery({ queryKey: ['blueprints'], queryFn: api.blueprints });
   const [blueprint, setBlueprint] = useState<string | null>(null);
   return (
-    <Group>
-      <AiDraft
-        label="Suggest a mapping with AI"
-        title="Suggest a mapping"
-        help="Paste one JSON item as the source returns it and choose the blueprint it becomes. Copy the proposed mapping into the integration after checking the preview."
-        placeholder='{ "name": "orders-api", "owner": { "login": "payments" }, "language": "Go" }'
-        extra={
-          <Select
-            label="Blueprint"
-            data={(blueprints.data ?? []).map((b) => ({ value: b.identifier, label: b.title }))}
-            value={blueprint}
-            onChange={setBlueprint}
-            searchable
-          />
-        }
-        disabled={!blueprint && !blueprints.data?.length}
-        run={(text) => api.aiSuggestMapping({ blueprint: blueprint ?? '', sample: JSON.parse(text) as unknown })}
-        preview={(d) => <JsonPreview value={{ mapping: d.mapping, preview: d.preview }} />}
-        onDraft={(d) => void navigator.clipboard?.writeText(JSON.stringify(d.mapping, null, 2)).then(() => notifications.show({ message: 'Mapping copied' }))}
-      />
-    </Group>
+    <AiDraft
+      label="Suggest a mapping with AI"
+      title="Suggest a mapping"
+      help="Paste one JSON item as the source returns it and choose the blueprint it becomes. Copy the proposed mapping into the integration after checking the preview."
+      placeholder='{ "name": "orders-api", "owner": { "login": "payments" }, "language": "Go" }'
+      extra={
+        <Select
+          label="Blueprint"
+          data={(blueprints.data ?? []).map((b) => ({ value: b.identifier, label: b.title }))}
+          value={blueprint}
+          onChange={setBlueprint}
+          searchable
+        />
+      }
+      disabled={!blueprint && !blueprints.data?.length}
+      run={(text) => api.aiSuggestMapping({ blueprint: blueprint ?? '', sample: JSON.parse(text) as unknown })}
+      preview={(d) => <JsonPreview value={{ mapping: d.mapping, preview: d.preview }} />}
+      onDraft={(d) => void navigator.clipboard?.writeText(JSON.stringify(d.mapping, null, 2)).then(() => notifications.show({ message: 'Mapping copied' }))}
+    />
   );
 }
 
@@ -561,7 +555,7 @@ function DeliveriesDrawer({ webhook, onClose }: { webhook: Webhook | null; onClo
     refetchInterval: 5000,
   });
   return (
-    <Drawer opened={!!webhook} onClose={onClose} position="right" size="xl" title={<Text fw={600}>Deliveries · {webhook?.title}</Text>}>
+    <SidePanel opened={!!webhook} onClose={onClose} width="wide" flush title="Deliveries" subtitle={webhook?.title}>
       <DataTable
         rows={q.data}
         loading={q.isPending}
@@ -599,6 +593,6 @@ function DeliveriesDrawer({ webhook, onClose }: { webhook: Webhook | null; onClo
           },
         ]}
       />
-    </Drawer>
+    </SidePanel>
   );
 }

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Alert, Button, Drawer, Group, Select, Stack, Tabs, Text, TextInput } from '@mantine/core';
+import { Alert, Button, Select, Stack, Tabs, TextInput } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { useQuery } from '@tanstack/react-query';
 import { parse, stringify } from 'yaml';
@@ -7,6 +7,7 @@ import type { Blueprint, Entity, RelationValue } from '@asterius/shared';
 import { api, errorText } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { CodeEditor } from './CodeEditor';
+import { SidePanel, SidePanelFooter } from './SidePanel';
 import { EntityMultiSelect, EntitySelect, initialValues, SchemaForm, validateValues, type FormValues } from './SchemaForm';
 
 /** The editable part of an entity: what the API accepts in a PUT / POST. */
@@ -39,15 +40,14 @@ export const bodyOf = (bp: Blueprint, d: EntityDraft, existing?: Entity | null) 
  */
 export function EntityEditor(props: { blueprint: Blueprint; entity?: Entity | null; opened: boolean; onClose: () => void; onSaved: (e: Entity) => void }) {
   return (
-    <Drawer
+    <SidePanel
       opened={props.opened}
       onClose={props.onClose}
-      position="right"
-      size="lg"
-      title={<Text fw={600}>{props.entity ? `Edit ${props.entity.title}` : `New ${props.blueprint.title}`}</Text>}
+      title={props.entity ? `Edit ${props.entity.title}` : `New ${props.blueprint.title}`}
+      subtitle={props.entity ? `${props.blueprint.title} · ${props.entity.identifier}` : undefined}
     >
       {props.opened && <EditorBody {...props} />}
-    </Drawer>
+    </SidePanel>
   );
 }
 
@@ -139,7 +139,7 @@ function EditorBody({
   };
 
   return (
-    <Stack>
+    <>
       <Tabs value={tab} onChange={switchTab}>
         <Tabs.List mb="md">
           <Tabs.Tab value="form">Form</Tabs.Tab>
@@ -203,14 +203,14 @@ function EditorBody({
           {error}
         </Alert>
       )}
-      <Group justify="flex-end">
+      <SidePanelFooter>
         <Button variant="default" onClick={onClose}>
           Cancel
         </Button>
         <Button onClick={save} loading={saving}>
           {entity ? 'Save' : 'Create'}
         </Button>
-      </Group>
-    </Stack>
+      </SidePanelFooter>
+    </>
   );
 }

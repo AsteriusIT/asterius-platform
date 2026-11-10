@@ -1,11 +1,13 @@
 import { useState } from 'react';
-import { ActionIcon, Button, Divider, Drawer, Group, Indicator, Stack, Switch, Text, Tooltip, UnstyledButton } from '@mantine/core';
+import { ActionIcon, Button, Indicator, Stack, Switch, Text, Tooltip, UnstyledButton } from '@mantine/core';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router';
 import { IconBell } from '@tabler/icons-react';
 import { api, type NotificationItem } from '../lib/api';
 import { useAppMutation } from '../lib/queryClient';
 import { Empty, QueryView, TimeAgo } from './ui';
+import { Section } from './Section';
+import { SidePanel } from './SidePanel';
 
 /** Bell with an unread badge and an inbox drawer: approvals to decide, run outcomes, plus email/Slack preferences. */
 export function NotificationCenter() {
@@ -44,65 +46,69 @@ export function NotificationCenter() {
           </ActionIcon>
         </Indicator>
       </Tooltip>
-      <Drawer opened={open} onClose={() => setOpen(false)} position="right" title="Notifications" size="md">
-        <Stack gap="xs">
-          <Group justify="space-between">
-            <Text fz="sm" c="dimmed">
-              {unread ? `${unread} unread` : 'All caught up'}
-            </Text>
-            <Button size="compact-sm" variant="subtle" disabled={!unread} onClick={() => read.mutate({ all: true })}>
-              Mark all as read
-            </Button>
-          </Group>
-          <QueryView q={inbox}>
-            {(d) =>
-              d.items.length === 0 ? (
-                <Empty title="No notification yet">Approvals to decide and run outcomes appear here.</Empty>
-              ) : (
-                <Stack gap={2} role="list" aria-label="Notifications">
-                  {d.items.map((n) => (
-                    <UnstyledButton
-                      key={n.id}
-                      role="listitem"
-                      onClick={() => openItem(n)}
-                      p="xs"
-                      style={{ borderRadius: 'var(--mantine-radius-sm)', background: n.read ? undefined : 'var(--mantine-primary-color-light)' }}
-                    >
-                      <Text fz="sm" fw={n.read ? 400 : 600}>
-                        {n.title}
-                      </Text>
-                      {n.body && (
-                        <Text fz="xs" c="dimmed">
-                          {n.body}
-                        </Text>
-                      )}
+      <SidePanel
+        opened={open}
+        onClose={() => setOpen(false)}
+        width="narrow"
+        title="Notifications"
+        subtitle={unread ? `${unread} unread` : 'All caught up'}
+        actions={
+          <Button size="compact-sm" variant="subtle" disabled={!unread} onClick={() => read.mutate({ all: true })}>
+            Mark all as read
+          </Button>
+        }
+      >
+        <QueryView q={inbox}>
+          {(d) =>
+            d.items.length === 0 ? (
+              <Empty title="No notification yet">Approvals to decide and run outcomes appear here.</Empty>
+            ) : (
+              <Stack gap={2} role="list" aria-label="Notifications">
+                {d.items.map((n) => (
+                  <UnstyledButton
+                    key={n.id}
+                    role="listitem"
+                    onClick={() => openItem(n)}
+                    p="xs"
+                    style={{ borderRadius: 'var(--mantine-radius-sm)', background: n.read ? undefined : 'var(--mantine-primary-color-light)' }}
+                  >
+                    <Text fz="sm" fw={n.read ? 400 : 600}>
+                      {n.title}
+                    </Text>
+                    {n.body && (
                       <Text fz="xs" c="dimmed">
-                        <TimeAgo at={n.createdAt} />
+                        {n.body}
                       </Text>
-                    </UnstyledButton>
-                  ))}
-                </Stack>
-              )
-            }
-          </QueryView>
-          <Divider my="sm" label="Also notify me by" labelPosition="left" />
-          <Switch
-            label="Email"
-            checked={prefs.data?.email ?? false}
-            disabled={!prefs.data || savePrefs.isPending}
-            onChange={(e) => prefs.data && savePrefs.mutate({ ...prefs.data, email: e.currentTarget.checked })}
-          />
-          <Switch
-            label="Slack"
-            checked={prefs.data?.slack ?? false}
-            disabled={!prefs.data || savePrefs.isPending}
-            onChange={(e) => prefs.data && savePrefs.mutate({ ...prefs.data, slack: e.currentTarget.checked })}
-          />
-          <Text fz="xs" c="dimmed">
-            Preferences are saved now; email and Slack delivery start once those channels are configured on the platform.
-          </Text>
-        </Stack>
-      </Drawer>
+                    )}
+                    <Text fz="xs" c="dimmed">
+                      <TimeAgo at={n.createdAt} />
+                    </Text>
+                  </UnstyledButton>
+                ))}
+              </Stack>
+            )
+          }
+        </QueryView>
+        <Section title="Also notify me by">
+          <Stack gap="xs">
+            <Switch
+              label="Email"
+              checked={prefs.data?.email ?? false}
+              disabled={!prefs.data || savePrefs.isPending}
+              onChange={(e) => prefs.data && savePrefs.mutate({ ...prefs.data, email: e.currentTarget.checked })}
+            />
+            <Switch
+              label="Slack"
+              checked={prefs.data?.slack ?? false}
+              disabled={!prefs.data || savePrefs.isPending}
+              onChange={(e) => prefs.data && savePrefs.mutate({ ...prefs.data, slack: e.currentTarget.checked })}
+            />
+            <Text fz="xs" c="dimmed">
+              Preferences are saved now; email and Slack delivery start once those channels are configured on the platform.
+            </Text>
+          </Stack>
+        </Section>
+      </SidePanel>
     </>
   );
 }

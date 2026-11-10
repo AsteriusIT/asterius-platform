@@ -643,3 +643,20 @@ The `external` source and invoker call a service of yours over HTTP, so plugins 
 - Invoker: `POST {url}/start` with `{ config, run, action, inputs, entity, trigger, steps }`, then `POST {url}/poll` with `{ config, state, run }` while the answer is `IN_PROGRESS`, and optionally `POST {url}/cancel`. Answers are `{ status: "IN_PROGRESS" | "SUCCESS" | "FAILURE", state?, link?, statusLabel?, result? }`.
 
 `config` is the configuration without `url`, `auth` and `headers`.
+
+## UI conventions
+
+Pages compose the shared components of `apps/web/src/components`; three rules keep panels and dialogs from nesting containers.
+
+- **Content renders bare.** A content component (`LogViewer`, a table, a form, the details of a step) brings no `Card` and no title of its own. It never knows where it sits.
+- **The container owns the title and the actions.** A page section, a `SidePanel` or a modal gives the title, the subtitle and the actions (a "live" badge, a filter, a download). One title per container: no "Logs" bar under a panel already called "All logs".
+- **No card inside a panel or a modal.** Inside them, content is split with `Section` (title, actions, content), flat and separated by spacing and a hairline. Cards are for pages. Bordered tiles that are list items of a form (a rule, a widget, a template to pick) stay, without shadow.
+
+The components:
+
+- `SidePanel` (`components/SidePanel.tsx`) is the only side panel; do not use Mantine's `Drawer` directly. Props: `title`, `subtitle`, `actions` (header, right of the title), `width` (`narrow` for a list, `default`, `wide` for a table), `flush` (no padding: a log or a table goes edge to edge and may fill the height), `footer` (pinned at the bottom) and `overlay={false}` (the page behind stays visible and usable, as on a run). The header stays and the body scrolls. Content that owns its buttons (a form with its state) renders `SidePanelFooter` as its last element.
+- `Section` (`components/Section.tsx`): `title`, `actions`, children. On a page that wants a card, the page wraps it: `<Card><Section title="Logs">…</Section></Card>`.
+- `LogViewer`: toolbar (search, follow, download) and the log. In a flush panel pass `fill` (`<SidePanel flush title="All logs"><LogViewer fill … /></SidePanel>`); among other sections, wrap it in `<Section title="Logs">`.
+- Modals: the `title` prop is the only title (the theme styles it; no heading repeated in the body), buttons go at the bottom right. The large builders use `BuilderModal` (`components/builder/shell.tsx`), which keeps its footer visible.
+
+The CSS these components need is one delimited block at the end of `apps/web/src/styles.css`.
