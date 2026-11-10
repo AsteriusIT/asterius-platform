@@ -4,7 +4,7 @@ import { MantineProvider } from '@mantine/core';
 import { ModalsProvider } from '@mantine/modals';
 import { Notifications } from '@mantine/notifications';
 import { QueryClientProvider } from '@tanstack/react-query';
-import { createBrowserRouter, Navigate, Outlet, RouterProvider, useLocation } from 'react-router';
+import { createBrowserRouter, Navigate, Outlet, RouterProvider, useHref, useLocation, type RouteObject } from 'react-router';
 import '@fontsource-variable/inter';
 import '@mantine/core/styles.css';
 import '@mantine/notifications/styles.css';
@@ -14,11 +14,14 @@ import { createQueryClient } from './lib/queryClient';
 import { ErrorBoundary, RouteError } from './components/ErrorBoundary';
 import { AuthProvider, useAuth } from './lib/auth';
 import { useDocumentBrand } from './components/Brand';
-import { SectionTabs } from './components/SectionTabs';
+import { AdminRoute, CategoryRedirect } from './components/SectionTabs';
 import { ADMIN_CATEGORIES } from './components/adminSections';
 import { Layout } from './components/Layout';
 import { Loading } from './components/ui';
 import { AuthCallback, Login } from './pages/Login';
+import { OrgGate } from './components/OrgGate';
+import { orgStore } from './lib/api';
+import { bootRoute, legacyRedirect, loginPath } from './lib/orgUrl';
 
 // Every page is a separate chunk loaded on first visit.
 const page = <M,>(load: () => Promise<M>, name: keyof M) => {
@@ -34,6 +37,7 @@ const catalog = () => import('./pages/Catalog');
 const entity = () => import('./pages/EntityPage');
 const selfService = () => import('./pages/SelfService');
 const runs = () => import('./pages/Runs');
+const todo = () => import('./pages/Todo');
 const profile = () => import('./pages/Profile');
 const definitions = () => import('./pages/admin/Definitions');
 const workflowFlow = () => import('./pages/admin/WorkflowFlow');
@@ -48,22 +52,12 @@ const queryClient = createQueryClient();
 function RequireAuth() {
   const { user, loading } = useAuth();
   const location = useLocation();
+  const here = useHref(location.pathname + location.search + location.hash); // with the /o/<slug> prefix
   if (loading) return <Loading />;
-  if (!user) return <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />;
+  if (!user) return <Navigate to={loginPath(here)} replace state={{ from: here }} />;
   // Signed in without an organization: create one or wait for an invitation.
   if (!user.organization && location.pathname !== '/welcome') return <Navigate to="/welcome" replace />;
   return <Outlet />;
-}
-
-/** Admin pages without the section tabs (the workflow editor). */
-function RequireAdminPage() {
-  const { isAdmin } = useAuth();
-  return isAdmin ? <Outlet /> : <Navigate to="/" replace />;
-}
-
-function RequireAdmin() {
-  const { isAdmin } = useAuth();
-  return isAdmin ? <SectionTabs /> : <Navigate to="/" replace />;
 }
 
 function RequireSuperadmin() {
@@ -75,12 +69,19 @@ function Root() {
   useDocumentBrand();
   return (
     <AuthProvider>
-      <Outlet />
+      <OrgGate />
     </AuthProvider>
   );
 }
 
-const router = createBrowserRouter([
+// Organization pages live under /o/<slug> (the router basename); unprefixed legacy URLs move to the default one.
+const boot = bootRoute(window.location, orgStore.get());
+if (boot.replace) {
+  legacyRedirect.from = window.location.pathname + window.location.search + window.location.hash;
+  window.history.replaceState(window.history.state, '', boot.replace);
+}
+
+const routes: RouteObject[] = [
   {
     element: <Root />,
     errorElement: <RouteError />,
@@ -106,13 +107,14 @@ const router = createBrowserRouter([
               { path: '/runs/:id/flow', element: page(runs, 'RunFlowPage') },
               {
                 // The workflow editor fills the content panel: no admin section tabs.
-                element: <RequireAdminPage />,
+                element: <AdminRoute tabs={false} />,
                 children: [
                   { path: '/admin/actions/:id', element: page(workflowFlow, 'WorkflowFlowPage') },
                   { path: '/admin/actions/:id/flow', element: page(workflowFlow, 'WorkflowFlowRedirect') },
                 ],
               },
-              { path: '/approvals', element: page(runs, 'Approvals') },
+              { path: '/todo', element: page(todo, 'Todo') },
+              { path: '/approvals', element: <Navigate to="/todo" replace /> },
               { path: '/profile', element: page(profile, 'Profile') },
               { path: '/orgs/new', element: page(organization, 'NewOrganization') },
               {
@@ -122,9 +124,9 @@ const router = createBrowserRouter([
               },
               {
                 path: '/admin',
-                element: <RequireAdmin />,
+                element: <AdminRoute />,
                 children: [
-                  ...ADMIN_CATEGORIES.map((c) => ({ path: c.id, element: <Navigate to={c.tabs[0].path} replace /> })),
+                  ...ADMIN_CATEGORIES.map((c) => ({ path: c.id, element: <CategoryRedirect category={c} /> })),
                   { path: 'blueprints', element: page(definitions, 'BlueprintsAdmin') },
                   { path: 'actions', element: page(definitions, 'ActionsAdmin') },
                   { path: 'integrations', element: page(definitions, 'IntegrationsAdmin') },
@@ -153,7 +155,8 @@ const router = createBrowserRouter([
       },
     ],
   },
-]);
+];
+const router = createBrowserRouter(routes, { basename: boot.basename });
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

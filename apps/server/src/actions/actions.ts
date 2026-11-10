@@ -1,7 +1,7 @@
 import type { Action, ActionTrigger, InvokerConfig, WorkflowStep, WorkflowTest, WorkflowTrigger } from '@asterius/shared';
 import { invalidateTriggerCache } from './triggers.js';
 import { assertSecretsAllowed } from './limits.js';
-import { definitionDoc, nextVersion, recordVersion } from './versions.js';
+import { definitionDoc, nextVersion, recordVersion, staleAction } from './versions.js';
 import { SYSTEM, type Actor } from '../audit.js';
 import { isFormLike, nextTick, validateTrigger } from './trigger-defs.js';
 import { blackoutStatus, validateBlackouts } from './blackouts.js';
@@ -126,7 +126,7 @@ export async function getAction(id: string): Promise<Action> {
 
 export async function upsertAction(
   input: unknown,
-  opts: { managed?: boolean; actor?: Actor; note?: string } = {},
+  opts: { managed?: boolean; actor?: Actor; note?: string; /** Only save over this version (412 otherwise). */ ifMatch?: number } = {},
 ): Promise<{ action: Action; created: boolean }> {
   const def: ActionDef = actionDef.parse(input);
   const t0 = def.trigger;
@@ -155,11 +155,18 @@ export async function upsertAction(
   assertSecretsAllowed(def.secrets, [expanded, def.invoker, t0]);
   const existing = await one<Row>('SELECT * FROM actions WHERE org_id = ? AND identifier = ?', org, def.identifier);
   if (existing && bool(existing.managed) && !opts.managed) throw managedError('Action', def.identifier);
+  if (opts.ifMatch !== undefined && (existing ? Number(existing.version) : undefined) !== opts.ifMatch) throw await staleAction(def.identifier, opts.ifMatch);
   const t = now();
   const doc = definitionDoc(def);
   const next = await nextVersion(def.identifier, existing ? Number(existing.version) : undefined, doc);
   // The (action, version) key makes concurrent edits of the same version fail instead of overwriting each other.
-  if (next.isNew) await recordVersion(def.identifier, next.version, doc, opts.actor ?? SYSTEM, opts.note);
+  if (next.isNew)
+    try {
+      await recordVersion(def.identifier, next.version, doc, opts.actor ?? SYSTEM, opts.note);
+    } catch (err) {
+      if (opts.ifMatch !== undefined) throw await staleAction(def.identifier, opts.ifMatch);
+      throw err;
+    }
   const vals = [
     def.title,
     def.description,

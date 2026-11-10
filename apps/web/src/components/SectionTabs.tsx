@@ -1,22 +1,26 @@
-import { Link, Outlet, useLocation } from 'react-router';
+import { Link, Navigate, Outlet, useLocation } from 'react-router';
 import { Tabs, Text } from '@mantine/core';
-import { categoryForPath, tabIsActive } from './adminSections';
+import { useAuth, useCan } from '../lib/auth';
+import { Loading } from './ui';
+import { categoryForPath, mayOpenAdminPath, tabIsActive, type AdminCategory } from './adminSections';
 
-/** Layout for /admin/*: route-driven tabs (one per page of the category) above the page itself. */
+/** Layout for /admin/*: route-driven tabs (one per page of the category the user may open) above the page itself. */
 export function SectionTabs() {
   const { pathname } = useLocation();
+  const can = useCan();
   const category = categoryForPath(pathname);
-  const current = category?.tabs.find((t) => tabIsActive(pathname, t.path));
+  const tabs = category?.tabs.filter((t) => can(t.area ?? 'admin')) ?? [];
+  const current = tabs.find((t) => tabIsActive(pathname, t.path));
   return (
     <>
-      {category && (
+      {category && tabs.length > 0 && (
         <nav aria-label={category.title} style={{ marginBottom: 'var(--mantine-spacing-md)' }}>
           <Text fz="xs" fw={600} tt="uppercase" c="dimmed" mb={6}>
             {category.title}
           </Text>
           <Tabs value={current?.path ?? null} keepMounted={false}>
             <Tabs.List>
-              {category.tabs.map((t) => (
+              {tabs.map((t) => (
                 <Tabs.Tab
                   key={t.path}
                   value={t.path}
@@ -34,4 +38,23 @@ export function SectionTabs() {
       <Outlet />
     </>
   );
+}
+
+/**
+ * Route guard of /admin/*: admins, or a delegated role granting the page's tab (or one tab of a category URL); others
+ * go home. `tabs={false}` for pages drawn without the section tabs (the workflow editor).
+ */
+export function AdminRoute({ tabs = true }: Readonly<{ tabs?: boolean }>) {
+  const { pathname } = useLocation();
+  const { can, loading } = useAuth();
+  if (loading) return <Loading />;
+  if (!mayOpenAdminPath(pathname, can)) return <Navigate to="/" replace />;
+  return tabs ? <SectionTabs /> : <Outlet />;
+}
+
+/** Category URL (/admin/model…): the first of its tabs the user may open. */
+export function CategoryRedirect({ category }: { category: AdminCategory }) {
+  const can = useCan();
+  const first = category.tabs.find((t) => can(t.area ?? 'admin'));
+  return <Navigate to={first?.path ?? '/'} replace />;
 }

@@ -272,9 +272,9 @@ else
     --data "$nexus_password" >/dev/null
 fi
 
-log "Platform configuration (config/ + examples/{grafana,sonarqube,nexus}/platform)"
+log "Platform configuration (config/ + examples/{grafana,sonarqube,nexus}/platform + deploy/local/config)"
 k -n "$NS" create configmap asterius-platform-config-files \
-  $(for f in "$ROOT"/config/*.yaml "$GDIR"/platform/*.json "$SDIR"/platform/*.json "$NDIR"/platform/*.json; do printf -- '--from-file=%s ' "$f"; done) \
+  $(for f in "$ROOT"/config/*.yaml "$HERE"/config/*.yaml "$GDIR"/platform/*.json "$SDIR"/platform/*.json "$NDIR"/platform/*.json; do printf -- '--from-file=%s ' "$f"; done) \
   --dry-run=client -o yaml | k apply -f - >/dev/null
 
 log "Asterius Platform"

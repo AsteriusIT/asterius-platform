@@ -84,6 +84,15 @@ export async function recordVersion(d: Driver, v: VersionInput) {
   return version;
 }
 
+/** Who made the latest recorded change of an entity, and when (for conflict answers). */
+export const lastChange = (blueprint: string, entity: string) =>
+  one<{ actor_id: string | null; actor_email: string | null; at: string }>(
+    'SELECT actor_id, actor_email, at FROM entity_versions WHERE org_id = ? AND blueprint = ? AND entity = ? ORDER BY version DESC LIMIT 1',
+    orgId(),
+    blueprint,
+    entity,
+  );
+
 interface Row {
   version: number;
   op: VersionOp;

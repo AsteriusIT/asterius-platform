@@ -320,5 +320,5 @@ export function EntityIcon({ name, size = 18 }: { name?: string | null; size?: n
   if (isImageIcon(name))
     return <img src={name} width={size} height={size} alt="" style={{ objectFit: 'contain', borderRadius: 4, flexShrink: 0, display: 'block' }} />;
   const C = (name && ICONS[name]) || IconBox;
-  return <C size={size} stroke={1.6} />;
+  return <C size={size} />;
 }

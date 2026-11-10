@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ActionIcon, Button, Indicator, Stack, Switch, Text, Tooltip, UnstyledButton } from '@mantine/core';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router';
@@ -8,10 +8,20 @@ import { useAppMutation } from '../lib/queryClient';
 import { Empty, QueryView, TimeAgo } from './ui';
 import { Section } from './Section';
 import { SidePanel } from './SidePanel';
+import { ICON } from './iconScale';
+
+const OPEN_EVENT = 'asterius:open-notifications';
+/** Opens the notification drawer of the header from anywhere (e.g. the To do page). */
+export const openNotifications = () => window.dispatchEvent(new Event(OPEN_EVENT));
 
 /** Bell with an unread badge and an inbox drawer: approvals to decide, run outcomes, plus email/Slack preferences. */
 export function NotificationCenter() {
   const [open, setOpen] = useState(false);
+  useEffect(() => {
+    const show = () => setOpen(true);
+    window.addEventListener(OPEN_EVENT, show);
+    return () => window.removeEventListener(OPEN_EVENT, show);
+  }, []);
   const qc = useQueryClient();
   const navigate = useNavigate();
   const inbox = useQuery({ queryKey: ['notifications'], queryFn: () => api.notifications({ limit: 50 }), refetchInterval: 30_000 });
@@ -42,7 +52,7 @@ export function NotificationCenter() {
             aria-label={`Notifications${unread ? ` (${unread} unread)` : ''}`}
             data-tour="notifications"
           >
-            <IconBell size={19} stroke={1.6} />
+            <IconBell size={ICON.lg} />
           </ActionIcon>
         </Indicator>
       </Tooltip>

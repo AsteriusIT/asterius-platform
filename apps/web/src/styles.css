@@ -65,16 +65,38 @@ h4,
   margin: 0 auto;
 }
 
-/* Navigation: neutral hover/active (no colored fills), rounded items. */
+/* ==== icons and sidebar items (ap-y69.3) — start ==== */
+/* Every Tabler icon: a block-level box that never shrinks in a flex row (no baseline gap under an inline svg, no
+   squeezed icon next to a long label) and one stroke width. Sizes come from components/iconScale.ts. */
+.tabler-icon {
+  display: block;
+  flex-shrink: 0;
+  stroke-width: 1.75;
+}
+/* An icon written inside a sentence (rare) stays on the line of its text. */
+.mantine-Text-root > .tabler-icon,
+.mantine-Anchor-root > .tabler-icon {
+  display: inline-block;
+  vertical-align: -0.15em;
+}
+
+/* Sidebar items (components/NavItem.tsx): neutral hover/active (no colored fills), rounded. Only the icon slot and
+   the label are in the flow; the badge, the dot and the trailing content are absolutely positioned. */
 .nav-link {
-  border-radius: 10px;
-  padding: 8px 12px;
+  --nav-icon: 18px;
+  --nav-pad: 12px;
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 40px;
+  padding: 0 var(--nav-pad);
   margin-bottom: 1px;
+  border-radius: 10px;
   color: var(--mantine-color-text);
   font-weight: 500;
-}
-.nav-link .mantine-NavLink-label {
-  font-size: 14px;
+  text-decoration: none;
 }
 .nav-link:hover {
   background: var(--surface-2);
@@ -82,26 +104,86 @@ h4,
 .nav-link[data-active],
 .nav-link[data-active]:hover {
   background: var(--surface-3);
-  color: var(--mantine-color-text);
 }
-.nav-link[data-active] .mantine-NavLink-section {
-  color: var(--mantine-color-text);
+.nav-link[data-two-line] {
+  padding-block: 8px;
+}
+.nav-link[data-end] {
+  padding-inline-end: 44px;
+}
+/* Icons and avatars are centered on the same axis: a wider avatar overflows its slot evenly, the label does not move. */
+.nav-item-icon {
+  position: relative;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--nav-icon);
+  height: var(--nav-icon);
+}
+.nav-item-icon > * {
+  flex: none;
+}
+.nav-item-icon > .tabler-icon {
+  width: var(--nav-icon);
+  height: var(--nav-icon);
+}
+.nav-item-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.nav-item-label,
+.nav-item-description {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nav-item-label {
+  font-size: 14px;
+  line-height: 20px;
+}
+.nav-link[data-two-line] .nav-item-label {
+  font-weight: 600;
+}
+.nav-item-description {
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 400;
+  color: var(--text-3);
+}
+.nav-item-end {
+  position: absolute;
+  inset-inline-end: var(--nav-pad);
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-3);
+}
+.nav-item-dot {
+  position: absolute;
+  top: -4px;
+  inset-inline-end: -5px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--mantine-color-yellow-filled);
+  border: 2px solid var(--surface);
+  pointer-events: none;
+}
+/* Folded sidebar: icon-only items, centered, same height as the open ones (folding does not move the rows). */
+.nav-link[data-mini] {
+  justify-content: center;
+  padding: 0;
 }
 .nav-section-rule {
   height: 1px;
   margin: 10px 12px;
   background: var(--hairline);
-}
-/* Folded sidebar: icon-only items, centered. */
-.app-navbar[data-mini] .nav-link {
-  justify-content: center;
-  padding: 10px;
-}
-.app-navbar[data-mini] .nav-link .mantine-NavLink-section {
-  margin-inline-end: 0;
-}
-.app-navbar[data-mini] .nav-link .mantine-NavLink-body {
-  display: none;
 }
 .app-navbar {
   transition: width 0.15s ease;
@@ -112,6 +194,7 @@ h4,
   color: var(--text-3);
   padding: 16px 12px 6px;
 }
+/* ==== icons and sidebar items (ap-y69.3) — end ==== */
 
 /* ---- inputs: soft border, neutral focus ---- */
 .mantine-Input-input {

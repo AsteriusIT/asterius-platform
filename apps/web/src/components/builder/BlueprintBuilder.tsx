@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { IconArrowDown, IconArrowUp, IconInfoCircle, IconLock, IconLink, IconListDetails, IconPlus, IconSettings, IconTrash } from '@tabler/icons-react';
 import type { BlueprintPermissions, BlueprintRelation, EntityMigration, ObjectSchema } from '@asterius/shared';
 import { api, errorText, type ImpactReport } from '../../lib/api';
+import { useCan } from '../../lib/auth';
 import { ImpactDialog } from './ImpactDialog';
 import { IconPicker } from '../IconPicker';
 import { Empty } from '../ui';
@@ -152,6 +153,8 @@ function Builder({
   const [generation, setGeneration] = useState(0);
   const [idTouched, setIdTouched] = useState(!isNew || !!initial.identifier);
   const entityCount = typeof value.entityCount === 'number' ? value.entityCount : 0;
+  // AI authoring helpers are admin-only on the server; blueprint owners edit by hand.
+  const mayDraft = useCan()('admin');
 
   const set = (patch: Partial<BlueprintDoc>) => setDoc((d) => ({ ...d, ...patch }));
   const body = (): Record<string, unknown> => {
@@ -205,7 +208,7 @@ function Builder({
   return (
     <Stack>
       {readOnly && <ManagedNotice />}
-      {isNew && !readOnly && (
+      {isNew && !readOnly && mayDraft && (
         <Group justify="flex-end">
           <AiDraft
             label="Draft with AI"

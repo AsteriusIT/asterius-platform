@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { Run, RunLog } from '@asterius/shared';
-import { tokenStore } from './api';
+import { COOKIE_SESSION, tabOrg, tokenStore } from './api';
 
 export interface SseMessage {
   event: string;
@@ -64,8 +64,14 @@ export function useRunStream(id: string, enabled: boolean): boolean {
       for (let attempt = 0; !abort.signal.aborted && !finished; attempt++) {
         try {
           const token = tokenStore.get();
+          const org = tabOrg();
           const res = await fetch(`/api/v1/runs/${encodeURIComponent(id)}/events`, {
-            headers: { accept: 'text/event-stream', ...(token ? { authorization: `Bearer ${token}` } : {}), ...(lastId ? { 'last-event-id': lastId } : {}) },
+            headers: {
+              accept: 'text/event-stream',
+              ...(token && token !== COOKIE_SESSION ? { authorization: `Bearer ${token}` } : {}),
+              ...(org ? { 'x-asterius-org': org } : {}),
+              ...(lastId ? { 'last-event-id': lastId } : {}),
+            },
             signal: abort.signal,
           });
           if (!res.ok || !res.body) throw new Error(`stream ${res.status}`);

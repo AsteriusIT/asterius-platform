@@ -112,7 +112,6 @@ function CreateOrgForm({ onCreated }: { onCreated: (o: Organization) => void }) 
 
 export function NewOrganization() {
   const { switchOrg } = useAuth();
-  const navigate = useNavigate();
   const meta = useQuery({ queryKey: ['meta'], queryFn: api.meta, staleTime: Infinity });
   const { isSuperadmin } = useAuth();
   const allowed = meta.data?.orgCreation !== 'superadmin' || isSuperadmin;
@@ -123,8 +122,7 @@ export function NewOrganization() {
         <Card>
           <CreateOrgForm
             onCreated={(o) => {
-              switchOrg(o.slug);
-              void navigate('/admin/organization');
+              switchOrg(o.slug, '/admin/organization');
             }}
           />
         </Card>
@@ -803,7 +801,7 @@ function ConfigTab({ org }: { org: Organization }) {
       <Group justify="space-between">
         {st ? (
           <Group gap="xs">
-            <Badge color={st.ok ? 'green' : 'red'} leftSection={st.ok ? <IconCheck size={12} /> : undefined}>
+            <Badge color={st.ok ? 'green' : 'red'} leftSection={st.ok ? <IconCheck size={14} /> : undefined}>
               {st.ok ? 'in sync' : 'failed'}
             </Badge>
             <Text fz="sm" c="dimmed">
@@ -867,7 +865,7 @@ function McpTab({ org }: { org: Organization }) {
     <Stack maw={820}>
       <Group gap="sm" wrap="nowrap" align="flex-start">
         <ThemeIcon size={36}>
-          <IconRobot size={20} />
+          <IconRobot size={18} />
         </ThemeIcon>
         <Text fz="sm" c="dimmed">
           AI assistants (Claude, IDE agents) connect over the Model Context Protocol to search the catalog, read entities, start self-service actions and follow

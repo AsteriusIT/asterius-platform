@@ -15,7 +15,7 @@ function Host() {
   return (
     <>
       <span>{o ? 'open' : 'closed'}</span>
-      <CommandPalette isAdmin={false} opened={o} onOpenChange={setO} />
+      <CommandPalette can={false} opened={o} onOpenChange={setO} />
     </>
   );
 }

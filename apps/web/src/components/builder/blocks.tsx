@@ -22,6 +22,7 @@ import { useQuery } from '@tanstack/react-query';
 import { IconPlus, IconTrash } from '@tabler/icons-react';
 import type { PluginField, Subjects } from '@asterius/shared';
 import { api } from '../../lib/api';
+import { useCan } from '../../lib/auth';
 import { CodeEditor } from '../CodeEditor';
 
 /** Small editors shared by the builders (actions today; integrations can reuse them). */
@@ -153,11 +154,15 @@ export function SubjectsEditor({
 
 /** `${secret:NAME}` picker, free text allowed (env references, literal values for tests). */
 function SecretInput({ field, value, onChange }: { field: PluginField; value: string; onChange: (v: string) => void }) {
-  const secrets = useQuery({ queryKey: ['secrets'], queryFn: api.secrets, staleTime: 30_000 });
+  // Listing secrets is admin-only: delegated roles (integration admins) type the reference.
+  const listSecrets = useCan()('admin');
+  const secrets = useQuery({ queryKey: ['secrets'], queryFn: api.secrets, staleTime: 30_000, enabled: listSecrets });
   return (
     <Autocomplete
       label={field.label}
-      description={field.help ?? 'Pick a secret (Admin → Secrets) or type ${env:NAME}'}
+      description={
+        field.help ?? (listSecrets ? 'Pick a secret (Admin → Secrets) or type ${env:NAME}' : 'Type ${secret:NAME} (ask an admin for the name) or ${env:NAME}')
+      }
       withAsterisk={field.required}
       placeholder="${secret:NAME}"
       data={(secrets.data ?? []).map((s) => `\${secret:${s.name}}`)}

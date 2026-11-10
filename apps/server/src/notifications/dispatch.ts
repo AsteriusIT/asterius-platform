@@ -1,6 +1,5 @@
 import type { Subjects } from '@asterius/shared';
 import { all } from '../db.js';
-import { config } from '../config.js';
 import { errorMessage } from '../lib/errors.js';
 import { onEvent } from '../events.js';
 import { matchesSubjects, principalOf, type UserRow } from '../auth/users.js';
@@ -9,7 +8,7 @@ import { dmSlack, mailConfigured, sendMail } from './channels.js';
 import { getNotificationPrefs, getNotificationSettings } from './settings.js';
 import { orgId } from '../orgs/context.js';
 import { activeDelegates } from '../auth/delegations.js';
-import { findOrg, orgRef } from '../orgs/orgs.js';
+import { appUrl, findOrg, orgRef } from '../orgs/orgs.js';
 import { notify } from '../inbox.js';
 
 /**
@@ -39,7 +38,7 @@ async function deliver(to: Recipient, channels: Channel[], subject: string, body
   }
 }
 
-const runLink = (id: string) => `${config.PUBLIC_URL}/runs/${id}`;
+const runLink = (id: string) => appUrl(`/runs/${id}`);
 const MAX_RECIPIENTS = 50;
 
 /**
@@ -107,7 +106,7 @@ export async function notifyPendingDecision(o: {
     const prefs = await getNotificationPrefs(u.id);
     if (!prefs.approvals.length) continue;
     sent++;
-    await deliver(u, prefs.approvals, subject, delegator ? `${body}\nYou are asked as the delegate of ${delegator}.` : body, runLink(o.run.id));
+    await deliver(u, prefs.approvals, subject, delegator ? `${body}\nYou are asked as the delegate of ${delegator}.` : body, await runLink(o.run.id));
   }
 }
 
@@ -126,7 +125,7 @@ async function notifyRunFinished(r: FinishedRun) {
   if (r.parent || !OUTCOME[r.status]) return; // child runs report through their parent
   const prefs = await getNotificationPrefs(r.triggeredBy.id);
   if (!prefs.runs.length) return;
-  await deliver(r.triggeredBy, prefs.runs, `${r.actionTitle} ${OUTCOME[r.status]}`, r.statusLabel ?? '', runLink(r.id));
+  await deliver(r.triggeredBy, prefs.runs, `${r.actionTitle} ${OUTCOME[r.status]}`, r.statusLabel ?? '', await runLink(r.id));
 }
 
 let registered = false;
@@ -154,6 +153,6 @@ export async function notifySlaBreach(o: { runId: string; requester: string; tit
     const fresh = await notify(u.id, { kind: 'sla.breached', title: o.title, body: o.body, link: `/runs/${o.runId}`, dedupe: `sla:${o.dedupe}` });
     if (!fresh) continue;
     const prefs = await getNotificationPrefs(u.id);
-    if (prefs.runs.length) await deliver(u, prefs.runs, o.title, o.body, runLink(o.runId));
+    if (prefs.runs.length) await deliver(u, prefs.runs, o.title, o.body, await runLink(o.runId));
   }
 }

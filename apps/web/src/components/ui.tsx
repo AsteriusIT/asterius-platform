@@ -7,6 +7,7 @@ import { IconAlertTriangle, IconInbox, IconRefresh } from '@tabler/icons-react';
 import type { RunStatus } from '@asterius/shared';
 import { errorText } from '../lib/api';
 import { EntityIcon } from './icons';
+import { ICON, ICON_DISPLAY } from './iconScale';
 
 /** Small building blocks shared by every page. */
 
@@ -27,7 +28,7 @@ export function RefreshButton({ queries, label = 'Refresh' }: { queries: Refresh
   return (
     <Tooltip label={label}>
       <ActionIcon variant="default" size={36} onClick={() => void refresh()} aria-label={label} aria-busy={fetching}>
-        <IconRefresh size={17} stroke={1.7} className={fetching ? 'spin' : undefined} />
+        <IconRefresh size={ICON.md} className={fetching ? 'spin' : undefined} />
       </ActionIcon>
     </Tooltip>
   );
@@ -98,7 +99,7 @@ export function Loading() {
 
 export function ErrorAlert({ error }: { error: unknown }) {
   return (
-    <Alert color="red" icon={<IconAlertTriangle size={18} />} title="Something went wrong">
+    <Alert color="red" icon={<IconAlertTriangle size={ICON.lg} />} title="Something went wrong">
       {errorText(error)}
     </Alert>
   );
@@ -107,7 +108,7 @@ export function ErrorAlert({ error }: { error: unknown }) {
 export function Empty({ title, children }: { title: string; children?: ReactNode }) {
   return (
     <Stack align="center" gap={6} py="xl" c="dimmed">
-      <IconInbox size={32} stroke={1.4} />
+      <IconInbox size={ICON_DISPLAY.md} />
       <Text fw={500}>{title}</Text>
       {children && <Text fz="sm">{children}</Text>}
     </Stack>

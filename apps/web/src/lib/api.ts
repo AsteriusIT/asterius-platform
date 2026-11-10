@@ -49,9 +49,13 @@ import type {
   NotificationSettings,
   EntityGraph as SharedGraph,
   DryRunResult,
+  EditConflict,
   RunArtifact,
   WorkflowTestReport,
+  UserPreferences,
+  SavedCatalogView,
 } from '@asterius/shared';
+import { urlOrg } from './orgUrl';
 
 export interface SimulationResult {
   steps: { id: string; type: string; skipped: boolean; error?: string; preview?: unknown }[];
@@ -122,7 +126,10 @@ export const setCsrf = (t: string | undefined) => {
   if (t) csrf = t;
 };
 
-/** The organization the UI works in (slug), sent as X-Asterius-Org. The server falls back to the last one used. */
+/**
+ * The default organization (slug) for new visits and unprefixed URLs. A tab works in the organization of its URL
+ * (`/o/<slug>`, see tabOrg); the server falls back to the last one used when neither is known.
+ */
 const ORG_KEY = 'asterius.org';
 export const orgStore = {
   get: () => {
@@ -142,11 +149,16 @@ export const orgStore = {
   },
 };
 
+/** The organization of this tab, sent as X-Asterius-Org: the one of its URL, else the remembered default. */
+export const tabOrg = () => urlOrg() ?? orgStore.get();
+
 export class ApiError extends Error {
   constructor(
     public status: number,
     message: string,
     public code?: string,
+    /** The parsed error body (e.g. the `conflict` of a 412). */
+    public body?: unknown,
   ) {
     super(message);
   }
@@ -157,10 +169,17 @@ export const setUnauthorizedHandler = (fn: () => void) => {
   onUnauthorized = fn;
 };
 
-export async function request<T>(method: string, path: string, body?: unknown, retried = false): Promise<T> {
+/** `noOrg`: send no organization (the server picks the user's last one); `headers`: extra headers (If-Match…). */
+export async function request<T>(
+  method: string,
+  path: string,
+  body?: unknown,
+  opts: { noOrg?: boolean; retried?: boolean; headers?: Record<string, string> } = {},
+): Promise<T> {
   const token = tokenStore.get();
   const viaCookie = token === COOKIE_SESSION;
-  const org = orgStore.get();
+  const fromUrl = urlOrg();
+  const org = opts.noOrg ? null : (fromUrl ?? orgStore.get());
   const res = await fetch(path, {
     method,
     credentials: 'same-origin',
@@ -169,6 +188,7 @@ export async function request<T>(method: string, path: string, body?: unknown, r
       ...(viaCookie && csrf ? { 'x-csrf-token': csrf } : {}),
       ...(org ? { 'x-asterius-org': org } : {}),
       ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
+      ...opts.headers,
     },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
@@ -176,19 +196,20 @@ export async function request<T>(method: string, path: string, body?: unknown, r
   const text = await res.text();
   const data = text && (res.headers.get('content-type') ?? '').includes('json') ? JSON.parse(text) : text;
   const err = data as { error?: string; code?: string };
-  // Removed from the remembered organization (or it was deleted): forget it and let the server pick another.
-  if (res.status === 403 && org && !retried && /member of this organization/.test(err?.error ?? '')) {
+  // Removed from the remembered organization (or it was deleted): forget it and let the server pick another. The
+  // organization of the URL is never swapped silently: the page says the user is not a member (OrgGate).
+  if (res.status === 403 && org && !fromUrl && !opts.retried && /member of this organization/.test(err?.error ?? '')) {
     orgStore.set(null);
-    return request<T>(method, path, body, true);
+    return request<T>(method, path, body, { ...opts, retried: true });
   }
-  if (!res.ok) throw new ApiError(res.status, err?.error ?? `${res.status} ${res.statusText}`, err?.code);
+  if (!res.ok) throw new ApiError(res.status, err?.error ?? `${res.status} ${res.statusText}`, err?.code, data);
   return data as T;
 }
 
 /** Download an authenticated file (run artifacts): fetched with the session, then saved by the browser. */
 export async function downloadArtifact(runId: string, a: Pick<RunArtifact, 'id' | 'name'>) {
   const token = tokenStore.get();
-  const org = orgStore.get();
+  const org = tabOrg();
   const res = await fetch(`/api/v1/runs/${encodeURIComponent(runId)}/artifacts/${encodeURIComponent(a.id)}`, {
     credentials: 'same-origin',
     headers: { ...(token && token !== COOKIE_SESSION ? { authorization: `Bearer ${token}` } : {}), ...(org ? { 'x-asterius-org': org } : {}) },
@@ -236,6 +257,8 @@ export const api = {
     }).then((r) => (setCsrf(r.csrfToken), r)),
   logout: () => request<{ ok: true; redirect?: string }>('POST', '/api/auth/logout'),
   me: () => request<PublicUser & { csrfToken?: string }>('GET', '/api/auth/me').then((u) => (setCsrf(u.csrfToken), u)),
+  /** The signed-in user outside the tab's organization (to list theirs when they are not a member of it). */
+  meOutsideOrg: () => request<PublicUser & { csrfToken?: string }>('GET', '/api/auth/me', undefined, { noOrg: true }).then((u) => (setCsrf(u.csrfToken), u)),
   setTourCompleted: (completed: boolean) => request<PublicUser>('PUT', '/api/auth/me/tour', { completed }),
 
   home: () => request<HomeSummary>('GET', v1('/home')),
@@ -316,11 +339,15 @@ export const api = {
   trigger: (id: string, body: { entity?: string | null; inputs: Record<string, unknown>; overrideBlackout?: boolean; priority?: number }) =>
     request<Run>('POST', v1(`/actions/${enc(id)}/runs`), body),
 
-  runs: (q: { mine?: boolean; status?: string; action?: string; blueprint?: string; entity?: string; limit?: number; offset?: number }) =>
+  runs: (q: { mine?: boolean; myTeams?: boolean; status?: string; action?: string; blueprint?: string; entity?: string; limit?: number; offset?: number }) =>
     request<RunPage>('GET', v1(`/runs${qs(q)}`)),
   /** `after`: only log lines past this sequence number (incremental polling). */
   run: (id: string, after?: number) => request<Run>('GET', v1(`/runs/${enc(id)}${after !== undefined ? `?after=${after}` : ''}`)),
   approvals: () => request<Run[]>('GET', v1('/approvals')),
+  // ---- todo/home ----
+  /** The caller's requests waiting on someone else's approval or input (`waitingOn` says on whom). */
+  runsWaiting: (limit?: number) => request<Run[]>('GET', v1(`/runs/waiting${qs({ limit })}`)),
+  // ---- end todo/home ----
   approve: (id: string, comment: string) => request<Run>('POST', v1(`/runs/${enc(id)}/approve`), { comment }),
   reject: (id: string, comment: string) => request<Run>('POST', v1(`/runs/${enc(id)}/reject`), { comment }),
   rerun: (id: string) => request<Run>('POST', v1(`/runs/${enc(id)}/rerun`), {}),
@@ -461,6 +488,31 @@ export const api = {
   enableSso: () => request<Organization>('POST', v1('/org/sso/enable')),
   addSsoProvider: (p: SsoProviderInput) => request<SsoProvider>('POST', v1('/org/sso/providers'), p),
   removeSsoProvider: (alias: string) => request<{ ok: true }>('DELETE', v1(`/org/sso/providers/${enc(alias)}`)),
+  // ---- preferences/views ----
+  preferences: () => request<UserPreferences>('GET', v1('/me/preferences')),
+  /** Partial update: each key is replaced, `null` removes it; returns the full set. */
+  updatePreferences: (patch: Record<string, unknown>) => request<UserPreferences>('PUT', v1('/me/preferences'), patch),
+  views: (blueprint?: string) => request<SavedCatalogView[]>('GET', v1(`/views${qs({ blueprint })}`)),
+  createView: (body: { name: string; blueprint: string; query: string; team?: string | null }) => request<SavedCatalogView>('POST', v1('/views'), body),
+  updateView: (id: string, patch: { name?: string; query?: string; team?: string | null }) => request<SavedCatalogView>('PUT', v1(`/views/${enc(id)}`), patch),
+  deleteView: (id: string) => request<{ ok: true }>('DELETE', v1(`/views/${enc(id)}`)),
+  // ---- edit conflicts ----
+  // Saves pinned to the version the editor loaded (If-Match): a 412 carries an EditConflict (see conflictOf).
+  // Without a version they behave like the plain saves (overwrite).
+  saveEntityAt: (bp: string, id: string, body: unknown, version?: number) =>
+    request<Entity>('PUT', v1(`/blueprints/${enc(bp)}/entities/${enc(id)}`), body, { headers: ifMatch(version) }),
+  saveActionAt: (id: string, body: unknown, version?: number) => request<Action>('PUT', v1(`/actions/${enc(id)}`), body, { headers: ifMatch(version) }),
+  fragment: (id: string) => request<Fragment>('GET', v1(`/fragments/${enc(id)}`)),
+  saveFragmentAt: (id: string, body: unknown, version?: number) => request<Fragment>('PUT', v1(`/fragments/${enc(id)}`), body, { headers: ifMatch(version) }),
 };
+
+const ifMatch = (version?: number): Record<string, string> => (version === undefined ? {} : { 'if-match': `"${version}"` });
+
+/** The conflict of a save refused because someone else saved a newer version (412 with `conflict`), else null. */
+export function conflictOf(e: unknown): EditConflict | null {
+  if (!(e instanceof ApiError) || e.status !== 412) return null;
+  const c = (e.body as { conflict?: EditConflict } | undefined)?.conflict;
+  return c && typeof c === 'object' ? c : null;
+}
 
 export const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));

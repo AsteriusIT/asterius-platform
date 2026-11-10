@@ -31,7 +31,8 @@ blueprints:
         process: { type: string, title: Process, enum: [Agile, Scrum, Basic, CMMI] }
         visibility: { type: string, title: Visibility, enum: [private, public], enumColors: { private: gray, public: orange } }
         organization: { type: string, title: Organization, format: url, hidden: true }
-      order: [url, process, visibility, description]
+        docs: { type: string, title: Documentation, format: docs, description: URL of a markdown file reachable without credentials, shown in the Docs tab }
+      order: [url, process, visibility, description, docs]
 
   - identifier: ado-repository
     title: Azure DevOps repository
@@ -42,6 +43,7 @@ blueprints:
         url: { type: string, title: URL, format: url }
         name: { type: string, title: Name }
         projectName: { type: string, title: Project name, hidden: true }
+        docs: { type: string, title: Documentation, format: docs, description: URL of a markdown file reachable without credentials (e.g. a public GitHub README), shown in the Docs tab }
       required: [name, projectName]
     relations:
       project: { title: Project, target: ado-project }

@@ -5,6 +5,7 @@ import { Navigate, useLocation, useNavigate, useSearchParams } from 'react-route
 import { IconBrandGithub, IconBrandWindows, IconKey, IconShieldLock } from '@tabler/icons-react';
 import { api, errorText } from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { safeReturnTo } from '../lib/orgUrl';
 import { BrandLogo, useBrand } from '../components/Brand';
 
 export function Login() {
@@ -21,7 +22,8 @@ export function Login() {
   const [ssoEmail, setSsoEmail] = useState('');
   const [error, setError] = useState<string | null>(params.get('error'));
   const [busy, setBusy] = useState(false);
-  const from = (location.state as { from?: string } | null)?.from ?? '/';
+  // Where to go once signed in: a full path (`/o/<slug>/…` for an organization page), from the router or the URL.
+  const from = (location.state as { from?: string } | null)?.from ?? safeReturnTo(params.get('returnTo')) ?? '/';
 
   if (user) return <Navigate to={from} replace />;
   const providers = meta.data?.authProviders ?? [];
@@ -180,7 +182,7 @@ export function AuthCallback() {
     const returnTo = h.get('returnTo') ?? '/';
     history.replaceState(null, '', window.location.pathname);
     if (token) signIn(token);
-    navigate(token ? (returnTo.startsWith('/') && !returnTo.startsWith('//') ? returnTo : '/') : '/login?error=Sign-in%20failed', { replace: true });
+    navigate(token ? (safeReturnTo(returnTo) ?? '/') : '/login?error=Sign-in%20failed', { replace: true });
   }, [signIn, navigate]);
   return null;
 }

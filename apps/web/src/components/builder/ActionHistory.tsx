@@ -10,7 +10,7 @@ import { UserChip } from '../UserChip';
 
 /** Version history of a workflow or a fragment: who changed it and when, a diff with the previous version, and rollback. */
 
-function DiffView({ diff }: { diff: ActionVersionDiff }) {
+export function DiffView({ diff }: { diff: ActionVersionDiff }) {
   const empty = !diff.fields.length && !diff.stepsAdded.length && !diff.stepsRemoved.length && !diff.stepsChanged.length && !diff.stepsReordered;
   if (empty) return <Text fz="sm">No difference.</Text>;
   const show = (v: unknown) => (v === undefined ? '(none)' : typeof v === 'string' ? v : JSON.stringify(v));

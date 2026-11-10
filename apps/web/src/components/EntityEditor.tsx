@@ -3,8 +3,9 @@ import { Alert, Button, Select, Stack, Tabs, TextInput } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { useQuery } from '@tanstack/react-query';
 import { parse, stringify } from 'yaml';
-import type { Blueprint, Entity, RelationValue } from '@asterius/shared';
-import { api, errorText } from '../lib/api';
+import type { Blueprint, EditConflict, Entity, RelationValue } from '@asterius/shared';
+import { api, conflictOf, errorText } from '../lib/api';
+import { EditConflictDialog } from './EditConflictDialog';
 import { useAuth } from '../lib/auth';
 import { CodeEditor } from './CodeEditor';
 import { SidePanel, SidePanelFooter } from './SidePanel';
@@ -74,6 +75,9 @@ function EditorBody({
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  // The stored entity the edit started from (its version is sent as If-Match); replaced by "Reload their version".
+  const [base, setBase] = useState<Entity | null | undefined>(entity);
+  const [conflict, setConflict] = useState<EditConflict | null>(null);
   const patch = (p: Partial<EntityDraft>) => setDraft((d) => ({ ...d, ...p }));
 
   /** Leaving the YAML tab: read the text back into the form. */
@@ -95,13 +99,34 @@ function EditorBody({
   };
   const switchTab = (t: string | null) => {
     setError(null);
-    if (t === 'yaml') setYaml(stringify(bodyOf(bp, draft, entity), { lineWidth: 120 }));
+    if (t === 'yaml') setYaml(stringify(bodyOf(bp, draft, base), { lineWidth: 120 }));
     else if (tab === 'yaml') {
       const d = fromYaml();
       if (!d) return;
       setDraft(d);
     }
     setTab(t);
+  };
+
+  /** Write the entity; an edit is pinned to the version it started from unless `force` (overwrite after a conflict). */
+  const write = async (d: EntityDraft, force = false) => {
+    const body = bodyOf(bp, d, base);
+    const saved = base
+      ? await api.saveEntityAt(bp.identifier, base.identifier, body, force ? undefined : base.version)
+      : await api.createEntity(bp.identifier, body);
+    notifications.show({ color: 'green', message: `${saved.title} saved` });
+    onSaved(saved);
+    onClose();
+  };
+
+  /** After a conflict: drop my edits and continue from their version. */
+  const reload = async () => {
+    if (!base) return;
+    const fresh = await api.entity(bp.identifier, base.identifier);
+    setBase(fresh);
+    setDraft(draftOf(bp, fresh));
+    if (tab === 'yaml') setYaml(stringify(bodyOf(bp, draftOf(bp, fresh), fresh), { lineWidth: 120 }));
+    setConflict(null);
   };
 
   const save = async () => {
@@ -111,6 +136,7 @@ function EditorBody({
       const parsed = fromYaml();
       if (!parsed) return;
       d = parsed;
+      setDraft(parsed);
     }
     const found = validateValues(bp.schema, d.properties);
     for (const [name, r] of Object.entries(bp.relations)) if (r.required && !d.relations[name]?.length) found[`relation:${name}`] = 'Required';
@@ -119,13 +145,11 @@ function EditorBody({
     if (Object.keys(found).length) return setError('Fix the highlighted fields');
     setSaving(true);
     try {
-      const body = bodyOf(bp, d, entity);
-      const saved = entity ? await api.saveEntity(bp.identifier, entity.identifier, body) : await api.createEntity(bp.identifier, body);
-      notifications.show({ color: 'green', message: `${saved.title} saved` });
-      onSaved(saved);
-      onClose();
+      await write(d);
     } catch (e) {
-      setError(errorText(e));
+      const c = conflictOf(e);
+      if (c) setConflict(c);
+      else setError(errorText(e));
     } finally {
       setSaving(false);
     }
@@ -203,6 +227,16 @@ function EditorBody({
           {error}
         </Alert>
       )}
+      <EditConflictDialog
+        conflict={conflict}
+        noun="entity"
+        onReload={reload}
+        onOverwrite={async () => {
+          await write(draft, true);
+          setConflict(null);
+        }}
+        onCancel={() => setConflict(null)}
+      />
       <SidePanelFooter>
         <Button variant="default" onClick={onClose}>
           Cancel

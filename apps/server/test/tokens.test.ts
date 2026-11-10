@@ -29,6 +29,10 @@ describe('API token scopes', () => {
     expect(requiredScope('PUT', '/api/v1/blueprints/service/entities/s1')).toBe('catalog:write');
     expect(requiredScope('PUT', '/api/v1/blueprints/service')).toBe('admin');
     expect(requiredScope('POST', '/api/v1/actions/x/runs')).toBe('runs:trigger');
+    expect(requiredScope('GET', '/api/v1/views?blueprint=service')).toBe('catalog:read');
+    expect(requiredScope('POST', '/api/v1/views')).toBe('catalog:write');
+    expect(requiredScope('GET', '/api/v1/me/preferences')).toBe('catalog:read');
+    expect(requiredScope('PUT', '/api/v1/me/preferences')).toBe('catalog:write');
     expect(requiredScope('GET', '/api/v1/runs')).toBe('runs:read');
     expect(requiredScope('GET', '/api/v1/secrets')).toBe('admin');
     expect(requiredScope('POST', '/api/v1/tokens')).toBe('admin');

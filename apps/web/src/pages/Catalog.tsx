@@ -4,29 +4,15 @@ import { notifications } from '@mantine/notifications';
 import { useDebouncedValue } from '@mantine/hooks';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
-import { IconBolt, IconDownload, IconPlus, IconSearch, IconSettings } from '@tabler/icons-react';
+import { IconBolt, IconDownload, IconPlus, IconSearch, IconSettings, IconUsers } from '@tabler/icons-react';
 import type { Action, Blueprint, Entity } from '@asterius/shared';
 import { api } from '../lib/api';
 import { formOf, isRunnable } from '../lib/permissions';
 import { useAuth } from '../lib/auth';
 import { DataTable, type Column } from '../components/DataTable';
 import { ColumnPicker, FilterBar, ViewsMenu } from '../components/CatalogToolbar';
-import {
-  downloadText,
-  formatFilters,
-  formatSort,
-  listableProps,
-  loadColumns,
-  loadViews,
-  nextSort,
-  parseFilters,
-  parseSort,
-  saveColumns,
-  saveViews,
-  toApiSort,
-  toCsv,
-  type SavedView,
-} from '../lib/catalogView';
+import { downloadText, formatFilters, formatSort, listableProps, MY_TEAMS, nextSort, parseFilters, parseSort, toApiSort, toCsv } from '../lib/catalogView';
+import { columnsKey, usePreferences } from '../lib/preferences';
 import { useUrlParams } from '../lib/urlState';
 import { canRunOn } from '../lib/permissions';
 import { notifyError } from '../lib/queryClient';
@@ -113,12 +99,14 @@ function CatalogTable({ bp }: { bp: Blueprint }) {
     setRunAction(a);
   };
   const allProps = useMemo(() => defaultProps(bp), [bp]);
-  const [pickedCols, setPickedCols] = useState<string[] | null>(() => loadColumns(bp.identifier));
+  const { prefs, update: updatePrefs } = usePreferences();
+  const pickedCols = prefs[columnsKey(bp.identifier)] ?? null;
   const visibleProps = (pickedCols ?? allProps.slice(0, 5)).filter((k) => allProps.includes(k));
   const sort = parseSort(params.get('sort'));
   const filters = useMemo(() => parseFilters(params.getAll('f')), [params]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [views, setViews] = useState<SavedView[]>(() => loadViews(bp.identifier));
+  const viewsKey = ['views', bp.identifier];
+  const views = useQuery({ queryKey: viewsKey, queryFn: () => api.views(bp.identifier), enabled: !!user });
   const baseColumns: Column<Entity>[] = [
     ...columnsFor(bp, visibleProps),
     ...(entityActions.data?.length
@@ -191,18 +179,29 @@ function CatalogTable({ bp }: { bp: Blueprint }) {
     }
   };
 
-  const saveView = (name: string) => {
+  /** Save the current URL state; under the name of one of my views it updates that view (query and sharing). */
+  const saveView = async (name: string, shareWith: string | null) => {
     const search = new URLSearchParams(params);
     search.delete('page');
-    const next = [...views.filter((v) => v.name !== name), { name, search: search.toString() }];
-    setViews(next);
-    saveViews(bp.identifier, next);
+    const existing = views.data?.find((v) => v.mine && v.name === name);
+    try {
+      if (existing) await api.updateView(existing.id, { query: search.toString(), team: shareWith });
+      else await api.createView({ name, blueprint: bp.identifier, query: search.toString(), team: shareWith });
+      notifications.show({ message: shareWith ? `View “${name}” saved and shared` : `View “${name}” saved` });
+    } catch (e) {
+      notifyError(e, 'Could not save the view');
+    }
+    void qc.invalidateQueries({ queryKey: viewsKey });
   };
-  const deleteView = (name: string) => {
-    const next = views.filter((v) => v.name !== name);
-    setViews(next);
-    saveViews(bp.identifier, next);
+  const deleteView = async (id: string) => {
+    try {
+      await api.deleteView(id);
+    } catch (e) {
+      notifyError(e, 'Could not delete the view');
+    }
+    void qc.invalidateQueries({ queryKey: viewsKey });
   };
+  const myTeams = user?.teams ?? [];
 
   const selectedEntities = (entities.data?.items ?? []).filter((e) => selected.has(e.identifier));
   // Bulk actions: day-2 / delete actions that need no input.
@@ -274,33 +273,41 @@ function CatalogTable({ bp }: { bp: Blueprint }) {
           aria-label={`Search ${bp.title.toLowerCase()}`}
           style={{ flex: 1, maxWidth: 360 }}
         />
+        {myTeams.length > 0 && (
+          <Button
+            variant={team === MY_TEAMS ? 'light' : 'default'}
+            aria-pressed={team === MY_TEAMS}
+            leftSection={<IconUsers size={16} />}
+            title={`Owned by ${myTeams.map((t) => t.title).join(', ')}`}
+            onClick={() => set('team', team === MY_TEAMS ? null : MY_TEAMS)}
+          >
+            My teams
+          </Button>
+        )}
         <Select
           placeholder="All teams"
+          aria-label="Owner team"
           clearable
-          data={(teams.data ?? []).map((t) => ({ value: t.identifier, label: t.title }))}
+          data={[
+            ...(myTeams.length ? [{ value: MY_TEAMS, label: 'My teams' }] : []),
+            ...(teams.data ?? []).map((t) => ({ value: t.identifier, label: t.title })),
+          ]}
           value={team}
           onChange={(v) => set('team', v)}
           w={200}
         />
         <ViewsMenu
-          views={views}
-          onApply={(v) => setParams(new URLSearchParams(v.search), { replace: true })}
-          onSave={saveView}
-          onDelete={deleteView}
+          views={views.data ?? []}
+          teams={myTeams}
+          onApply={(v) => setParams(new URLSearchParams(v.query), { replace: true })}
+          onSave={(name, shareWith) => void saveView(name, shareWith)}
+          onDelete={(v) => void deleteView(v.id)}
           onCopyLink={() => {
             void navigator.clipboard?.writeText(window.location.href);
             notifications.show({ message: 'Link copied' });
           }}
         />
-        <ColumnPicker
-          bp={bp}
-          props={allProps}
-          visible={visibleProps}
-          onChange={(cols) => {
-            setPickedCols(cols);
-            saveColumns(bp.identifier, cols);
-          }}
-        />
+        <ColumnPicker bp={bp} props={allProps} visible={visibleProps} onChange={(cols) => updatePrefs({ [columnsKey(bp.identifier)]: cols })} />
         <Button variant="default" leftSection={<IconDownload size={16} />} onClick={() => void exportCsv()}>
           Export CSV
         </Button>

@@ -1,6 +1,7 @@
 import type { Fragment, FragmentVersion, ObjectSchema } from '@asterius/shared';
 import { all, bool, json, now, one, run } from '../db.js';
 import { badRequest, conflict, errorMessage, HttpError, managedError, notFound } from '../lib/errors.js';
+import { staleVersion } from '../lib/conflict.js';
 import { checkExpression, checkTemplate, hasRefs, render, type RefResolver } from '../lib/expr.js';
 import { validator } from '../catalog/validation.js';
 import { fragmentDef, STEP_ID, type FragmentDef } from '../schemas.js';
@@ -281,15 +282,32 @@ export async function fragmentUsers(id: string): Promise<{ actions: string[]; fr
   return { actions: actions.filter((a) => uses(a.steps)).map((a) => a.identifier), fragments: fragments.filter((f) => uses(f.steps)).map((f) => f.identifier) };
 }
 
+/** The 412 of a save whose If-Match is not the stored version: who saved the current version, and when. */
+async function staleFragment(id: string, expected: number) {
+  const cur = await one<{ version: number }>('SELECT version FROM fragments WHERE org_id = ? AND identifier = ?', orgId(), id);
+  const current = cur ? Number(cur.version) : null;
+  const last =
+    current === null
+      ? undefined
+      : await one<{ actor_id: string | null; actor_email: string | null; at: string }>(
+          'SELECT actor_id, actor_email, created_at AS at FROM fragment_versions WHERE org_id = ? AND fragment = ? AND version = ?',
+          orgId(),
+          id,
+          current,
+        );
+  return staleVersion(`Fragment ${id} is at version ${current ?? 'none'}, not ${expected}; reload and retry`, current, last);
+}
+
 export async function upsertFragment(
   input: unknown,
-  opts: { managed?: boolean; actor?: Actor } = {},
+  opts: { managed?: boolean; actor?: Actor; /** Only save over this version (412 otherwise). */ ifMatch?: number } = {},
 ): Promise<{ fragment: Fragment; created: boolean; changed: boolean }> {
   const def = fragmentDef.parse(input);
   await validateFragment(def);
   const org = orgId();
   const existing = await one<Row>('SELECT * FROM fragments WHERE org_id = ? AND identifier = ?', org, def.identifier);
   if (existing && bool(existing.managed) && !opts.managed) throw managedError('Fragment', def.identifier);
+  if (opts.ifMatch !== undefined && (existing ? Number(existing.version) : undefined) !== opts.ifMatch) throw await staleFragment(def.identifier, opts.ifMatch);
   const doc = JSON.stringify(def);
   let version: number;
   let changed = true;
@@ -315,6 +333,7 @@ export async function upsertFragment(
         now(),
       );
     } catch {
+      if (opts.ifMatch !== undefined) throw await staleFragment(def.identifier, opts.ifMatch);
       throw conflict('The fragment was changed by someone else meanwhile; reload and try again');
     }
   }

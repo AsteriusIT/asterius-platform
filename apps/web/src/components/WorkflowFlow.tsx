@@ -220,7 +220,7 @@ const FlowNode = memo(function FlowNode({ data }: NodeProps<Node<NodeData>>) {
               aria-label={`Add a step after ${data.title}`}
               onClick={(e) => e.stopPropagation()}
             >
-              <IconPlus size={12} />
+              <IconPlus size={14} />
             </ActionIcon>
           </Menu.Target>
           <Menu.Dropdown onClick={(e) => e.stopPropagation()}>

@@ -169,7 +169,31 @@ const KEYSETS: Record<'title' | 'updated' | 'identifier', string[]> = {
   updated: ['updated_at', 'blueprint', 'identifier'],
 };
 
-export async function compileEntityQuery(q: EntityQueryBody): Promise<Compiled> {
+/** `team=@mine`: the owner teams of the viewer (keeps "my teams" links shareable: each viewer gets their own teams). */
+export const MY_TEAMS = '@mine';
+
+/**
+ * Owner-team filter: one team, a comma-separated list, or `@mine` (resolved against `myTeams`; no viewer or no team
+ * matches nothing).
+ */
+export function teamFilter(team: string | undefined, myTeams: string[] | undefined): string[] | null {
+  if (!team) return null;
+  const list =
+    team === MY_TEAMS
+      ? (myTeams ?? [])
+      : [
+          ...new Set(
+            team
+              .split(',')
+              .map((t) => t.trim())
+              .filter(Boolean),
+          ),
+        ];
+  if (list.length > MAX_IN) throw badRequest(`The team filter takes at most ${MAX_IN} teams`);
+  return list;
+}
+
+export async function compileEntityQuery(q: EntityQueryBody, myTeams?: string[]): Promise<Compiled> {
   // Always the current organization (and first: every entity index starts with org_id).
   const where: string[] = ['org_id = ?'];
   const params: SqlValue[] = [orgId()];
@@ -177,9 +201,12 @@ export async function compileEntityQuery(q: EntityQueryBody): Promise<Compiled> 
     where.push('blueprint = ?');
     params.push(q.blueprint);
   }
-  if (q.team) {
-    where.push('team = ?');
-    params.push(q.team);
+  const teams = teamFilter(q.team, myTeams);
+  if (teams) {
+    if (!teams.length) where.push('1 = 0');
+    else if (teams.length === 1) where.push('team = ?');
+    else where.push(`team IN (${teams.map(() => '?').join(',')})`);
+    params.push(...teams);
   }
   if (q.source) {
     where.push('source = ?');

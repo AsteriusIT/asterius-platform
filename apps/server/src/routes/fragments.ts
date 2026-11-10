@@ -6,6 +6,7 @@ import { checkFragmentChange } from '../actions/actions.js';
 import { deleteFragment, fragmentUsers, getFragment, getFragmentVersion, listFragments, listFragmentVersions, upsertFragment } from '../actions/fragments.js';
 import { diffDefinitions } from '../actions/versions.js';
 import { fragmentDef, type FragmentDef } from '../schemas.js';
+import { ifMatchOf } from '../lib/conflict.js';
 import { idParam } from './util.js';
 
 const versionNumber = z.coerce.number().int().min(1);
@@ -13,9 +14,9 @@ const versionNumber = z.coerce.number().int().min(1);
 /** Step fragments (admins only: they hold workflow configuration). */
 export async function fragmentRoutes(app: FastifyInstance) {
   /** Save a definition: workflows using it must still be valid with it (new runs only: runs keep their inlined copy). */
-  const save = async (def: FragmentDef, req: { principal: Parameters<typeof actorOf>[0] }) => {
+  const save = async (def: FragmentDef, req: { principal: Parameters<typeof actorOf>[0] }, ifMatch?: number) => {
     await checkFragmentChange(def);
-    return upsertFragment(def, { actor: actorOf(req.principal) });
+    return upsertFragment(def, { actor: actorOf(req.principal), ifMatch });
   };
 
   app.get('/fragments', { preHandler: requireAdmin }, async () => listFragments());
@@ -45,7 +46,7 @@ export async function fragmentRoutes(app: FastifyInstance) {
   app.put('/fragments/:id', { preHandler: requireAdmin }, async (req) => {
     const { id } = idParam.parse(req.params);
     const def = fragmentDef.parse({ ...(req.body as object), identifier: id });
-    const { fragment, created, changed } = await save(def, req);
+    const { fragment, created, changed } = await save(def, req, ifMatchOf(req.headers['if-match']));
     if (created || changed) await audit(actorOf(req.principal), created ? 'fragment.created' : 'fragment.updated', id, { version: fragment.version });
     return fragment;
   });
