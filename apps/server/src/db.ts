@@ -214,6 +214,38 @@ CREATE TABLE fragment_versions (
       `);
     },
   },
+  {
+    id: 8,
+    name: 'user preferences and saved catalog views',
+    async up(d) {
+      // Per-user, per-organization key/value preferences (favourite and recent actions, catalog columns per blueprint);
+      // keys and value sizes are validated by preferences.ts. Saved catalog views: a named catalog query string, owned
+      // by a user, optionally shared with one team of the organization (team NULL: private).
+      await d.exec(`
+        CREATE TABLE user_preferences (
+          org_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+          user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          pref_key TEXT NOT NULL,
+          value TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (org_id, user_id, pref_key)
+        );
+        CREATE TABLE saved_views (
+          id TEXT PRIMARY KEY,
+          org_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+          owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          blueprint TEXT NOT NULL,
+          name TEXT NOT NULL,
+          query TEXT NOT NULL,
+          team TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE UNIQUE INDEX saved_views_name ON saved_views(org_id, owner_id, blueprint, name);
+        CREATE INDEX saved_views_team ON saved_views(org_id, team) WHERE team IS NOT NULL;
+      `);
+    },
+  },
 ];
 
 /**

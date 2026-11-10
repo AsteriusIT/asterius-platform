@@ -51,6 +51,8 @@ import type {
   DryRunResult,
   RunArtifact,
   WorkflowTestReport,
+  UserPreferences,
+  SavedCatalogView,
 } from '@asterius/shared';
 
 export interface SimulationResult {
@@ -461,6 +463,14 @@ export const api = {
   enableSso: () => request<Organization>('POST', v1('/org/sso/enable')),
   addSsoProvider: (p: SsoProviderInput) => request<SsoProvider>('POST', v1('/org/sso/providers'), p),
   removeSsoProvider: (alias: string) => request<{ ok: true }>('DELETE', v1(`/org/sso/providers/${enc(alias)}`)),
+  // ---- preferences/views ----
+  preferences: () => request<UserPreferences>('GET', v1('/me/preferences')),
+  /** Partial update: each key is replaced, `null` removes it; returns the full set. */
+  updatePreferences: (patch: Record<string, unknown>) => request<UserPreferences>('PUT', v1('/me/preferences'), patch),
+  views: (blueprint?: string) => request<SavedCatalogView[]>('GET', v1(`/views${qs({ blueprint })}`)),
+  createView: (body: { name: string; blueprint: string; query: string; team?: string | null }) => request<SavedCatalogView>('POST', v1('/views'), body),
+  updateView: (id: string, patch: { name?: string; query?: string; team?: string | null }) => request<SavedCatalogView>('PUT', v1(`/views/${enc(id)}`), patch),
+  deleteView: (id: string) => request<{ ok: true }>('DELETE', v1(`/views/${enc(id)}`)),
 };
 
 export const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));

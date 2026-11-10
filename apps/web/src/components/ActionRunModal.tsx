@@ -8,7 +8,8 @@ import type { Action, ApprovalPolicy, ObjectSchema } from '@asterius/shared';
 import { api, errorText } from '../lib/api';
 import { formOf } from '../lib/permissions';
 import { useAuth } from '../lib/auth';
-import { clearDraft, loadDraft, pushRecent, saveDraft } from '../lib/drafts';
+import { clearDraft, loadDraft, saveDraft } from '../lib/drafts';
+import { usePreferences } from '../lib/preferences';
 import { initialValues, SchemaForm, validateValues, type FormValues } from './SchemaForm';
 import { Markdown } from './ui';
 
@@ -93,6 +94,7 @@ function RunForm({
   const navigate = useNavigate();
   const qc = useQueryClient();
   const { isAdmin } = useAuth();
+  const { pushRecent } = usePreferences();
   const inBlackout = !!action.blackout?.active;
   const [override, setOverride] = useState(false);
   // Admins: claim order of this run among queued ones (empty: the workflow's priority).

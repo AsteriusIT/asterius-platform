@@ -1,12 +1,13 @@
 import { ActionIcon, Menu, Text } from '@mantine/core';
 import { IconDots, IconShieldCheck } from '@tabler/icons-react';
 import type { Action, Entity, PublicUser } from '@asterius/shared';
-import { canRunOn, formOf } from '../lib/permissions';
+import { canRunOn, formOf, runAccess } from '../lib/permissions';
+import { useTeamTitle } from './RunAccess';
 import { EntityIcon } from './icons';
 
 /**
  * "⋯" menu of the actions that run on one entity (day-2 first, delete actions last in red).
- * Actions the user may not run stay visible but disabled, so people know they exist.
+ * Actions the user may not run stay visible but disabled, so people know they exist, with who can run them.
  */
 export function EntityActionsMenu({
   entity,
@@ -21,10 +22,12 @@ export function EntityActionsMenu({
 }) {
   const day2 = actions.filter((a) => formOf(a)?.on === 'day-2');
   const deletes = actions.filter((a) => formOf(a)?.on === 'delete');
+  const teamTitle = useTeamTitle();
   if (!day2.length && !deletes.length) return null;
 
   const item = (a: Action) => {
     const allowed = canRunOn(a, user, entity.team);
+    const access = allowed ? null : runAccess(a, teamTitle, entity);
     return (
       <Menu.Item
         key={a.identifier}
@@ -34,10 +37,15 @@ export function EntityActionsMenu({
           formOf(a)?.approval.required ? <IconShieldCheck size={14} color="var(--mantine-color-yellow-6)" aria-label="Requires approval" /> : undefined
         }
         disabled={!allowed}
-        title={allowed ? a.description : 'You are not allowed to run this action'}
+        title={access ? `You cannot run this action. ${[access.who.join(' · '), access.ask].filter(Boolean).join('. ')}` : a.description}
         onClick={() => onRun(a)}
       >
         {a.title}
+        {access && (
+          <Text fz="xs" c="dimmed">
+            {access.who.length ? `Who can run it: ${access.who.join(' · ')}` : access.ask}
+          </Text>
+        )}
       </Menu.Item>
     );
   };

@@ -68,7 +68,7 @@ export interface EntityQuery extends EntityQueryBody {
 }
 
 export async function searchEntities(q: EntityQuery): Promise<EntityPage> {
-  const c = await compileEntityQuery(q);
+  const c = await compileEntityQuery(q, q.viewer?.teams);
   let where = c.where;
   const params = [...c.params];
   const base = { where: c.where, params: [...c.params] };

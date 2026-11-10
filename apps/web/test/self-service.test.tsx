@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { validateValues } from '../src/components/SchemaForm';
-import { clearDraft, loadDraft, loadFavourites, loadRecent, parseInputsParam, pushRecent, saveDraft, toggleFavourite } from '../src/lib/drafts';
+import { clearDraft, loadDraft, parseInputsParam, saveDraft } from '../src/lib/drafts';
 
 afterEach(() => localStorage.clear());
 
@@ -36,12 +36,5 @@ describe('drafts', () => {
     expect(parseInputsParam('{"a":1}')).toEqual({ a: 1 });
     expect(parseInputsParam('[1]')).toBeNull();
     expect(parseInputsParam('nope')).toBeNull();
-  });
-  it('toggles favourites and keeps 5 recents', () => {
-    expect(toggleFavourite('a')).toEqual(['a']);
-    expect(toggleFavourite('a')).toEqual([]);
-    expect(loadFavourites()).toEqual([]);
-    for (const id of ['1', '2', '3', '4', '5', '6', '1']) pushRecent(id);
-    expect(loadRecent()).toEqual(['1', '6', '5', '4', '3']);
   });
 });

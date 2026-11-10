@@ -1,4 +1,8 @@
-/** Per-browser conveniences for self-service: form drafts, favourite actions and recently used ones. */
+/**
+ * Form drafts of self-service actions, kept in this browser on purpose: they are per device and may hold half-typed
+ * (possibly sensitive) values that should not be sent to the server before the user submits them. Favourite and
+ * recent actions are server-side preferences (preferences.ts).
+ */
 
 function read<T>(key: string, fallback: T): T {
   try {
@@ -31,18 +35,4 @@ export function parseInputsParam(raw: string | null): Record<string, unknown> | 
   } catch {
     return null;
   }
-}
-
-const FAV = 'asterius.favourites';
-const RECENT = 'asterius.recent-actions';
-export const loadFavourites = () => read<string[]>(FAV, []);
-export function toggleFavourite(id: string): string[] {
-  const cur = loadFavourites();
-  const next = cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id];
-  write(FAV, next);
-  return next;
-}
-export const loadRecent = () => read<string[]>(RECENT, []);
-export function pushRecent(id: string) {
-  write(RECENT, [id, ...loadRecent().filter((x) => x !== id)].slice(0, 5));
 }

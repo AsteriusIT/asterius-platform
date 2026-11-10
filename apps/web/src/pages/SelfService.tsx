@@ -2,13 +2,15 @@ import { useEffect, useState } from 'react';
 import { ActionIcon, Badge, Button, Card, Group, SimpleGrid, Stack, Text, TextInput, ThemeIcon, Title, Tooltip } from '@mantine/core';
 import { useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router';
-import { loadFavourites, loadRecent, parseInputsParam, toggleFavourite } from '../lib/drafts';
+import { parseInputsParam } from '../lib/drafts';
+import { usePreferences } from '../lib/preferences';
 import { IconSearch, IconShieldCheck, IconStar, IconStarFilled } from '@tabler/icons-react';
 import type { Action } from '@asterius/shared';
 import { api, type ActionView } from '../lib/api';
 import { workflowSummary } from '../lib/workflow';
 import { formOf, isRunnable } from '../lib/permissions';
 import { ActionRunModal } from '../components/ActionRunModal';
+import { RunAccessButton } from '../components/RunAccess';
 import { EntityIcon } from '../components/icons';
 import { Empty, PageHeader, QueryView } from '../components/ui';
 
@@ -18,7 +20,7 @@ export function SelfService() {
   const blueprints = useQuery({ queryKey: ['blueprints'], queryFn: api.blueprints, staleTime: 30_000 });
   const [run, setRun] = useState<Action | null>(null);
   const [filter, setFilter] = useState('');
-  const [favourites, setFavourites] = useState(loadFavourites);
+  const { favourites, recent: recentIds, toggleFavourite } = usePreferences();
   const [params, setParams] = useSearchParams();
   const prefill = parseInputsParam(params.get('inputs'));
   const wanted = params.get('action');
@@ -47,9 +49,7 @@ export function SelfService() {
         {(list) => {
           const visible = list.filter((a) => isRunnable(a) && `${a.title} ${a.description}`.toLowerCase().includes(filter.toLowerCase()));
           if (!visible.length) return <Empty title="No self-service action" />;
-          const recent = loadRecent()
-            .map((id) => visible.find((a) => a.identifier === id))
-            .filter((a): a is ActionView => !!a);
+          const recent = recentIds.map((id) => visible.find((a) => a.identifier === id)).filter((a): a is ActionView => !!a?.allowedForMe);
           const groups = new Map<string, ActionView[]>();
           const sorted = [...visible].sort((a, b) => Number(favourites.includes(b.identifier)) - Number(favourites.includes(a.identifier)));
           for (const a of sorted) groups.set(formOf(a)?.blueprint ?? '', [...(groups.get(formOf(a)?.blueprint ?? '') ?? []), a]);
@@ -75,7 +75,7 @@ export function SelfService() {
                           color={favourites.includes(a.identifier) ? 'yellow' : 'gray'}
                           aria-label={`${favourites.includes(a.identifier) ? 'Remove from' : 'Add to'} favourites: ${a.title}`}
                           aria-pressed={favourites.includes(a.identifier)}
-                          onClick={() => setFavourites(toggleFavourite(a.identifier))}
+                          onClick={() => toggleFavourite(a.identifier)}
                         >
                           {favourites.includes(a.identifier) ? <IconStarFilled size={16} /> : <IconStar size={16} />}
                         </ActionIcon>
@@ -94,11 +94,13 @@ export function SelfService() {
                         <Badge color="gray" variant="outline" size="sm">
                           {workflowSummary(a)}
                         </Badge>
-                        <Tooltip label="You are not allowed to run this action" disabled={a.allowedForMe}>
-                          <Button size="xs" disabled={!a.allowedForMe} onClick={() => setRun(a)}>
+                        {a.allowedForMe ? (
+                          <Button size="xs" onClick={() => setRun(a)}>
                             Start
                           </Button>
-                        </Tooltip>
+                        ) : (
+                          <RunAccessButton action={a} />
+                        )}
                       </Group>
                     </Card>
                   ))}
@@ -114,7 +116,7 @@ export function SelfService() {
                     Recent
                   </Text>
                   {recent.map((a) => (
-                    <Button key={a.identifier} size="compact-sm" variant="default" disabled={!a.allowedForMe} onClick={() => setRun(a)}>
+                    <Button key={a.identifier} size="compact-sm" variant="default" onClick={() => setRun(a)}>
                       {a.title}
                     </Button>
                   ))}
