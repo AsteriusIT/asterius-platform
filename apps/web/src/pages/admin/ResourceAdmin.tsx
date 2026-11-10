@@ -111,7 +111,7 @@ export function ResourceAdmin<T extends Resource>(props: {
       label: '',
       width: 120,
       render: (r) => (
-        <Group gap={4} justify="flex-end" wrap="nowrap" onClick={(e) => e.stopPropagation()}>
+        <Group gap="3xs" justify="flex-end" wrap="nowrap" onClick={(e) => e.stopPropagation()}>
           {props.rowActions?.(r)}
           <Tooltip label={r.managed ? 'View' : 'Edit'}>
             <ActionIcon variant="subtle" onClick={() => void open(r)} aria-label="Edit">

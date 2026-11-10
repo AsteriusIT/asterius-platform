@@ -32,7 +32,7 @@ export function RunAccessButton({ action, entity }: { action: Action; entity?: {
               <Text fz="xs" c="dimmed">
                 Who can run it
               </Text>
-              <List size="sm" spacing={2}>
+              <List size="sm" spacing="4xs">
                 {who.map((w) => (
                   <List.Item key={w}>{w}</List.Item>
                 ))}

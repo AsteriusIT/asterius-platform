@@ -1,7 +1,11 @@
 import { useMemo, useState, type ReactNode } from 'react';
-import { Badge, Card, Group, Modal, SimpleGrid, Stack, Text, TextInput, UnstyledButton } from '@mantine/core';
+import { Badge, Card, Center, Group, Modal, SimpleGrid, Stack, Text, TextInput, UnstyledButton } from '@mantine/core';
 import { IconSearch } from '@tabler/icons-react';
 import { EntityIcon } from './icons';
+import { Kicker } from './ui';
+
+/** Square slot (px) of a template's logo: a 26px image or a Tabler icon, centered. */
+const ICON_SLOT = 28;
 
 export interface PickerItem {
   label: string;
@@ -56,21 +60,17 @@ export function TemplatePicker<T extends PickerItem>({
         )}
         {groups.map(([group, list]) => (
           <Stack key={group} gap="xs">
-            {group && (
-              <Text fz="xs" fw={600} tt="uppercase" c="dimmed">
-                {group}
-              </Text>
-            )}
+            {group && <Kicker>{group}</Kicker>}
             <SimpleGrid cols={{ base: 1, sm: 2, md: 3 }} spacing="sm">
               {list.map((t) => (
-                <UnstyledButton key={t.label} onClick={() => onPick(t)} aria-label={t.label} style={{ display: 'block' }}>
+                <UnstyledButton key={t.label} onClick={() => onPick(t)} aria-label={t.label} display="block">
                   <Card withBorder padding="sm" className="hover-card" h="100%">
                     <Group gap="sm" wrap="nowrap" align="flex-start">
-                      <span style={{ width: 28, height: 28, display: 'grid', placeItems: 'center', flexShrink: 0 }}>
+                      <Center component="span" w={ICON_SLOT} h={ICON_SLOT} flex="none">
                         {typeof t.icon === 'string' ? <EntityIcon name={t.icon} size={26} /> : t.icon}
-                      </span>
-                      <div style={{ minWidth: 0 }}>
-                        <Group gap={6} wrap="nowrap">
+                      </Center>
+                      <div className="min-w-0">
+                        <Group gap="2xs" wrap="nowrap">
                           <Text fz="sm" fw={600}>
                             {t.label}
                           </Text>

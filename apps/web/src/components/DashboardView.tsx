@@ -5,7 +5,7 @@ import type { Dashboard, DashboardWidget, DoraBand, WidgetData } from '@asterius
 import { api } from '../lib/api';
 import { DataTable } from './DataTable';
 import { PropertyValue } from './PropertyValue';
-import { Empty, ErrorAlert, Loading, Markdown, StatusBadge, TimeAgo } from './ui';
+import { Empty, ErrorAlert, Loading, Markdown, StatusBadge, StatValue, TimeAgo } from './ui';
 
 type Data<T extends string> = Extract<WidgetData, { type: T }>;
 
@@ -66,16 +66,11 @@ function WidgetBody({ widget, data }: { widget: DashboardWidget; data: WidgetDat
 }
 
 function Count({ data }: { data: Data<'count'> }) {
-  if (!data.groups)
-    return (
-      <Text fz={34} fw={700}>
-        {data.value}
-      </Text>
-    );
+  if (!data.groups) return <StatValue size="lg">{data.value}</StatValue>;
   if (!data.groups.length) return <Empty title="No data" />;
   const max = Math.max(...data.groups.map((g) => g.count));
   return (
-    <Stack gap={6}>
+    <Stack gap="2xs">
       {data.groups.slice(0, 10).map((g) => (
         <div key={g.key}>
           <Group justify="space-between" gap="xs">
@@ -198,9 +193,7 @@ function Stat({ label, value, hint, band }: { label: string; value: string; hint
       <Text fz="xs" c="dimmed">
         {label}
       </Text>
-      <Text fz={26} fw={700}>
-        {value}
-      </Text>
+      <StatValue>{value}</StatValue>
       <Group justify="space-between" gap="xs">
         <Text fz="xs" c="dimmed">
           {hint}

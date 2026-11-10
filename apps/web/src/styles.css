@@ -1,6 +1,7 @@
 /* LibreChat-like finish on top of Mantine (tokens in theme.ts). Only what component props cannot express. */
 body {
   background: var(--mantine-color-body);
+  /* Text that names no size (rare: components pass `fz`): one step between sm and md. */
   font-size: 15px;
   font-feature-settings: 'cv11', 'ss01';
   -webkit-font-smoothing: antialiased;
@@ -39,7 +40,7 @@ h4,
   padding: var(--mantine-spacing-xl);
   background: var(--mantine-color-body);
   border: 1px solid var(--hairline);
-  border-radius: 16px;
+  border-radius: var(--mantine-radius-lg);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
   min-width: 0;
 }
@@ -54,7 +55,7 @@ h4,
   .app-panel {
     margin: 0 8px 8px;
     padding: var(--mantine-spacing-md);
-    border-radius: 14px;
+    border-radius: var(--mantine-radius-md);
   }
   .app-panel.app-panel-flush {
     padding: 0;
@@ -88,12 +89,12 @@ h4,
   position: relative;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--mantine-spacing-sm);
   width: 100%;
   min-height: 40px;
   padding: 0 var(--nav-pad);
   margin-bottom: 1px;
-  border-radius: 10px;
+  border-radius: var(--mantine-radius-md);
   color: var(--mantine-color-text);
   font-weight: 500;
   text-decoration: none;
@@ -141,14 +142,14 @@ h4,
   white-space: nowrap;
 }
 .nav-item-label {
-  font-size: 14px;
+  font-size: var(--mantine-font-size-sm);
   line-height: 20px;
 }
 .nav-link[data-two-line] .nav-item-label {
   font-weight: 600;
 }
 .nav-item-description {
-  font-size: 12px;
+  font-size: var(--mantine-font-size-xs);
   line-height: 16px;
   font-weight: 400;
   color: var(--text-3);
@@ -160,7 +161,7 @@ h4,
   transform: translateY(-50%);
   display: flex;
   align-items: center;
-  font-size: 12px;
+  font-size: var(--mantine-font-size-xs);
   font-weight: 400;
   color: var(--text-3);
 }
@@ -189,10 +190,10 @@ h4,
   transition: width 0.15s ease;
 }
 .nav-section {
-  font-size: 12px;
+  font-size: var(--mantine-font-size-xs);
   font-weight: 500;
   color: var(--text-3);
-  padding: 16px 12px 6px;
+  padding: var(--mantine-spacing-md) var(--mantine-spacing-sm) var(--mantine-spacing-2xs);
 }
 /* ==== icons and sidebar items (ap-y69.3) — end ==== */
 
@@ -213,6 +214,10 @@ h4,
 }
 
 /* Search boxes (top bar, catalog, self-service): the sidebar tone with a soft outline. */
+.header-search {
+  flex: 1;
+  max-width: 520px;
+}
 .header-search .mantine-Input-input,
 .search-input .mantine-Input-input {
   background: var(--surface);
@@ -240,8 +245,8 @@ h4,
 .canvas-placeholder {
   display: block;
   width: 100%;
-  padding: 10px 12px;
-  border-radius: 12px;
+  padding: var(--mantine-spacing-xs) var(--mantine-spacing-sm);
+  border-radius: var(--mantine-radius-md);
   background: var(--mantine-color-body);
   border: 1px solid var(--mantine-color-default-border);
   transition: border-color 0.15s;
@@ -257,7 +262,7 @@ h4,
 .canvas-placeholder {
   border-style: dashed;
   border-width: 1.5px;
-  padding: 16px 12px;
+  padding: var(--mantine-spacing-md) var(--mantine-spacing-sm);
   color: var(--mantine-color-brand-7);
 }
 
@@ -269,7 +274,7 @@ h4,
   --table-highlight-on-hover-color: var(--table-row-hover);
 }
 .mantine-Table-th {
-  font-size: 12.5px;
+  font-size: var(--mantine-font-size-dense);
   font-weight: 500;
   color: var(--mantine-color-dimmed);
 }
@@ -295,7 +300,7 @@ h4,
 /* DataTable: sortable header (the arrows wake up on hover/focus), footer inside the frame. */
 .data-table-sort {
   color: inherit;
-  border-radius: 6px;
+  border-radius: var(--mantine-radius-xs);
 }
 .data-table-sort:hover {
   color: var(--mantine-color-text);
@@ -324,7 +329,20 @@ h4,
   background: var(--code-bg);
 }
 .log-view {
+  margin: 0;
+  padding: var(--mantine-spacing-sm);
+  min-height: 100%;
+  font-size: var(--mantine-font-size-dense);
+  line-height: var(--mantine-line-height-lg);
+  white-space: pre-wrap;
+  word-break: break-word;
   background: var(--code-bg);
+}
+.log-dim {
+  opacity: 0.55;
+}
+.log-step {
+  opacity: 0.7;
 }
 
 /* JSON / YAML: highlighted <pre> under a transparent <textarea>, same cell, same metrics. */
@@ -347,13 +365,13 @@ h4,
 .code-editor-layer,
 .code-block {
   font-family: var(--mantine-font-family-monospace);
-  font-size: 12.5px;
-  line-height: 1.6;
+  font-size: var(--mantine-font-size-dense);
+  line-height: var(--mantine-line-height-lg);
   tab-size: 2;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   margin: 0;
-  padding: 10px 12px;
+  padding: var(--mantine-spacing-xs) var(--mantine-spacing-sm);
 }
 .code-editor-layer {
   grid-area: 1 / 1;
@@ -373,7 +391,7 @@ h4,
 }
 .code-inline {
   font-family: var(--mantine-font-family-monospace);
-  font-size: 12px;
+  font-size: var(--mantine-font-size-xs);
   padding: 1px 5px;
   border-radius: var(--mantine-radius-sm);
   background: var(--code-bg);
@@ -420,7 +438,7 @@ h4,
   font-size: 0.9em;
   background: var(--code-bg);
   padding: 1px 5px;
-  border-radius: 6px;
+  border-radius: var(--mantine-radius-xs);
 }
 /* Service logos with dark parts (AWS wordmark…): lightened in dark mode, brand hues kept. */
 [data-mantine-color-scheme='dark'] .vendor-invert-dark {
@@ -453,7 +471,7 @@ h4,
 .workflow-flow {
   --flow-grid-faint: color-mix(in srgb, var(--mantine-color-text) 5%, transparent);
   --flow-grid-strong: color-mix(in srgb, var(--mantine-color-text) 16%, transparent);
-  border-radius: 16px;
+  border-radius: var(--mantine-radius-lg);
   overflow: hidden;
   background: var(--surface);
   border: 1px solid var(--hairline);
@@ -469,7 +487,7 @@ h4,
 .workflow-flow .react-flow__controls {
   box-shadow: none;
   border: 1px solid var(--hairline);
-  border-radius: 8px;
+  border-radius: var(--mantine-radius-sm);
   overflow: hidden;
 }
 .workflow-flow .react-flow__node {
@@ -486,8 +504,8 @@ h4,
   mask-image: radial-gradient(closest-side, #000 45%, transparent);
 }
 .flow-node {
-  padding: 10px 12px;
-  border-radius: 12px;
+  padding: var(--mantine-spacing-xs) var(--mantine-spacing-sm);
+  border-radius: var(--mantine-radius-md);
   background: var(--mantine-color-body);
   border: 1px solid var(--mantine-color-default-border);
   transition: box-shadow 0.15s;
@@ -599,8 +617,8 @@ h4,
 }
 .side-panel .side-panel-header {
   flex: none;
-  min-height: 60px;
-  padding: 8px var(--mantine-spacing-md);
+  min-height: 60px; /* the height of the top bar: a title and its subtitle fit without growing it */
+  padding: var(--mantine-spacing-2xs) var(--mantine-spacing-md);
   gap: var(--mantine-spacing-sm);
   border-bottom: 1px solid var(--hairline);
 }
@@ -665,7 +683,7 @@ h4,
 }
 /* Log viewer: a bare toolbar and the log. `data-fill`: takes the height of a flush panel. */
 .log-viewer-toolbar {
-  padding-bottom: 8px;
+  padding-bottom: var(--mantine-spacing-xs);
 }
 .log-viewer-box {
   height: 420px;
@@ -680,7 +698,7 @@ h4,
   flex-direction: column;
 }
 .log-viewer[data-fill] .log-viewer-toolbar {
-  padding: 8px var(--mantine-spacing-md);
+  padding: var(--mantine-spacing-xs) var(--mantine-spacing-md);
 }
 .log-viewer[data-fill] .log-viewer-box {
   flex: 1;
@@ -689,3 +707,110 @@ h4,
   border-radius: 0;
 }
 /* ==== side panels, sections, modals — end ==== */
+
+/* ==== component parts that are plain elements (no Mantine props to carry the tokens) — begin ==== */
+/* "Skip to content": off screen until it takes the keyboard focus (components/Layout.tsx). */
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 1000;
+  padding: var(--mantine-spacing-xs);
+  background: var(--mantine-color-body);
+}
+.skip-link:focus {
+  left: var(--mantine-spacing-xs);
+}
+/* Logos and uploaded icons (components/icons.tsx, Brand.tsx): a box that never shrinks, like `.tabler-icon`. */
+.icon-img {
+  display: block;
+  flex-shrink: 0;
+  object-fit: contain;
+}
+.icon-img[data-upload] {
+  border-radius: 4px; /* geometric: a quarter of the smallest icon (16px), under the radius scale on purpose */
+}
+/* The pill of a user (components/UserChip.tsx). */
+.user-chip {
+  align-items: center;
+  gap: var(--mantine-spacing-2xs);
+  border: 1px solid var(--mantine-color-default-border);
+  border-radius: var(--mantine-radius-xl);
+  vertical-align: middle;
+}
+/* Icon picker: a button that looks like the inputs next to it (36px: the height of a `sm` input). */
+.icon-picker-button {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--mantine-spacing-xs);
+  height: 36px;
+  padding: 0 var(--mantine-spacing-sm);
+  border: 1px solid var(--mantine-color-default-border);
+  border-radius: var(--mantine-radius-md);
+  background: var(--mantine-color-body);
+}
+/* Flow views (components/FlowShell.tsx): the floating chrome lets clicks through to the canvas, its bars take them. */
+.flow-shell-top,
+.flow-shell-hint {
+  pointer-events: none;
+}
+.flow-shell-bar {
+  pointer-events: auto;
+}
+.flow-shell-center {
+  transform: translateX(-50%);
+}
+/* Footer of the large builders (components/builder/shell.tsx): above the scrolling content. */
+.builder-footer {
+  z-index: 2;
+}
+/* ==== component parts — end ==== */
+
+/* ---- utilities ----
+   One-declaration helpers for what Mantine style props cannot express. Prefer a prop when there is one
+   (`flex={1}`, `miw={0}`, `bdrs="md"`, `bg`, `td`, `lh`); inline `style` is for values computed from data or state. */
+.min-w-0 {
+  min-width: 0; /* a flex child that may shrink under its content (so its text truncates) */
+}
+.flex-fill {
+  flex: 1;
+  min-width: 0;
+}
+.items-end {
+  align-items: flex-end;
+}
+.span-all {
+  grid-column: 1 / -1;
+}
+.wrap-anywhere {
+  overflow-wrap: anywhere;
+}
+.pre-wrap {
+  white-space: pre-wrap;
+}
+.align-top {
+  vertical-align: top;
+}
+.clip {
+  overflow: hidden;
+}
+.scroll-x {
+  overflow-x: auto;
+}
+.scroll-y {
+  overflow-y: auto;
+}
+.clickable {
+  cursor: pointer;
+}
+.hairline-top {
+  border-top: 1px solid var(--hairline);
+}
+.bare-fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+/* ---- end utilities ---- */

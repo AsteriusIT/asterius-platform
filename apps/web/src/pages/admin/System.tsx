@@ -11,7 +11,7 @@ import { auditToCsv } from '../../lib/auditCsv';
 import { notifyError, useAppMutation } from '../../lib/queryClient';
 import { DataTable } from '../../components/DataTable';
 import { InlineCode } from '../../components/CodeEditor';
-import { Mono, PageHeader, QueryView, TimeAgo } from '../../components/ui';
+import { Mono, PageHeader, QueryView, StatValue, TimeAgo } from '../../components/ui';
 import { UserChip } from '../../components/UserChip';
 
 const PAGE = 50;
@@ -97,7 +97,7 @@ export function AuditAdmin() {
             key: 't',
             label: 'Target',
             render: (a) => (
-              <Text fz="sm" style={{ overflowWrap: 'anywhere' }}>
+              <Text fz="sm" className="wrap-anywhere">
                 {a.target ?? '—'}
               </Text>
             ),
@@ -294,9 +294,7 @@ export function ConfigAdmin() {
             <SimpleGrid cols={{ base: 2, sm: 5 }}>
               {Object.entries(i.managed).map(([k, n]) => (
                 <Card key={k} padding="md">
-                  <Text fz={24} fw={700}>
-                    {n}
-                  </Text>
+                  <StatValue>{n}</StatValue>
                   <Text fz="sm" c="dimmed">
                     managed {k}
                   </Text>

@@ -44,7 +44,7 @@ import { useRunStream } from '../lib/runStream';
 import { LogViewer } from '../components/LogViewer';
 import { Section } from '../components/Section';
 import { SidePanel } from '../components/SidePanel';
-import { duration, Markdown, PageHeader, QueryView, StatusBadge, STATUS_COLORS, STATUS_LABELS, TimeAgo } from '../components/ui';
+import { duration, Markdown, PageHeader, QueryView, StatusBadge, STATUS_COLORS, STATUS_LABELS, SurfaceBox, TimeAgo } from '../components/ui';
 import { TRIGGER_ID, WorkflowFlow, type FlowStep, type FlowTrigger } from '../components/WorkflowFlow';
 import { FlowShell } from '../components/FlowShell';
 import { ExplainRun } from '../components/AiAssistant';
@@ -348,7 +348,7 @@ function runTrigger(r: Run): FlowTrigger {
 function ApprovalProgressView({ p }: { p: Run['approval'] }) {
   if (!p) return null;
   return (
-    <Stack gap={4}>
+    <Stack gap="3xs">
       {p.tiers && (
         <Group gap="xs">
           {p.tiers.map((t, i) => (
@@ -392,7 +392,7 @@ function ApprovalTimeline({ approvals, tiers }: { approvals: Run['approvals']; t
           color={a.decision === 'approved' ? 'green' : 'red'}
           bullet={a.decision === 'approved' ? <IconCheck size={14} /> : <IconX size={14} />}
           title={
-            <Group gap={6}>
+            <Group gap="2xs">
               <UserChip user={{ id: a.userId, name: a.userName }} />
               <Text span fz="sm">
                 {a.decision}
@@ -544,7 +544,7 @@ function RunFlow({ r }: { r: Run }) {
           <>
             {r.canApprove && <RequestApproval r={r} onDone={refresh} />}
             {['SUCCESS', 'FAILURE', 'CANCELLED', 'REJECTED'].includes(r.status) && <ExplainRun runId={r.id} failed={r.status === 'FAILURE'} />}
-            <Table withRowBorders={false} verticalSpacing={4} highlightOnHover={false} fz="sm">
+            <Table withRowBorders={false} verticalSpacing="3xs" highlightOnHover={false} fz="sm">
               <Table.Tbody>
                 <Row k="Requested by" v={<UserChip user={r.triggeredBy} />} />
                 {r.trigger && r.trigger.type !== 'form' && <Row k="Started by" v={r.trigger.type} />}
@@ -569,7 +569,7 @@ function RunFlow({ r }: { r: Run }) {
             </Table>
             <Section title="Inputs">
               {Object.keys(r.inputs).length ? (
-                <Table withRowBorders={false} verticalSpacing={4} highlightOnHover={false} fz="sm">
+                <Table withRowBorders={false} verticalSpacing="3xs" highlightOnHover={false} fz="sm">
                   <Table.Tbody>
                     {Object.entries(r.inputs).map(([k, v]) => (
                       <Row key={k} k={k} v={<PropertyValue value={v} />} />
@@ -698,9 +698,9 @@ function StepPanel({ run, step, onDone }: { run: Run; step: RunStep; onDone: (r:
 
       {forcing && <ForceStepDialog run={run} step={step} kind={forcing} onClose={() => setForcing(null)} onDone={onDone} />}
       {step.message && (
-        <Box p="sm" my="xs" style={{ background: 'var(--surface)', borderRadius: 12 }}>
+        <SurfaceBox my="xs">
           <Markdown>{step.message}</Markdown>
-        </Box>
+        </SurfaceBox>
       )}
       {step.type === 'input' && step.canSubmit && (
         <Stack gap="xs" mt="xs">
@@ -713,7 +713,7 @@ function StepPanel({ run, step, onDone }: { run: Run; step: RunStep; onDone: (r:
         </Stack>
       )}
       {step.children && step.children.length > 0 && (
-        <Stack gap={4} mt="xs">
+        <Stack gap="3xs" mt="xs">
           <Text fz="sm" fw={500}>
             {step.children.length > 1 ? 'Child runs' : 'Child run'}
           </Text>
@@ -768,15 +768,15 @@ function StepPanel({ run, step, onDone }: { run: Run; step: RunStep; onDone: (r:
       )}
       {output != null && step.type !== 'approval' && (
         <Box mt="sm">
-          <Text fz="sm" fw={500} mb={4}>
+          <Text fz="sm" fw={500} mb="3xs">
             Output
           </Text>
           {textOnly ? (
-            <Box p="sm" style={{ background: 'var(--surface)', borderRadius: 12 }}>
+            <SurfaceBox>
               <Markdown>{String(output.text)}</Markdown>
-            </Box>
+            </SurfaceBox>
           ) : typeof output === 'object' && !Array.isArray(output) ? (
-            <Table withRowBorders={false} verticalSpacing={4} highlightOnHover={false}>
+            <Table withRowBorders={false} verticalSpacing="3xs" highlightOnHover={false}>
               <Table.Tbody>
                 {Object.entries(output).map(([k, v]) => (
                   <Row key={k} k={k} v={<PropertyValue value={v} />} />
@@ -808,13 +808,13 @@ function StepArtifacts({ runId, artifacts }: { runId: string; artifacts: RunArti
   if (!artifacts.length) return null;
   return (
     <Section title="Artifacts">
-      <Table withRowBorders={false} verticalSpacing={4} highlightOnHover={false} fz="sm">
+      <Table withRowBorders={false} verticalSpacing="3xs" highlightOnHover={false} fz="sm">
         <Table.Tbody>
           {artifacts.map((a) => (
             <Table.Tr key={a.id}>
-              <Table.Td style={{ overflowWrap: 'anywhere' }}>
+              <Table.Td className="wrap-anywhere">
                 <Anchor component="button" fz="sm" onClick={() => void downloadArtifact(runId, a).catch(onError)}>
-                  <Group gap={4} wrap="nowrap">
+                  <Group gap="3xs" wrap="nowrap">
                     <IconDownload size={14} />
                     {a.name}
                   </Group>
@@ -899,10 +899,10 @@ function ForceStepDialog(props: { run: Run; step: RunStep; kind: 'skip' | 'compl
 function Row({ k, v }: { k: string; v: React.ReactNode }) {
   return (
     <Table.Tr>
-      <Table.Td c="dimmed" w="40%" fz="sm" style={{ verticalAlign: 'top' }}>
+      <Table.Td c="dimmed" w="40%" fz="sm" className="align-top">
         {k}
       </Table.Td>
-      <Table.Td fz="sm" style={{ overflowWrap: 'anywhere' }}>
+      <Table.Td fz="sm" className="wrap-anywhere">
         {v}
       </Table.Td>
     </Table.Tr>

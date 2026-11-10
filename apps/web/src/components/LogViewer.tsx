@@ -61,7 +61,8 @@ export function LogViewer({
           aria-label="Search logs"
           value={query}
           onChange={(e) => setQuery(e.currentTarget.value)}
-          style={{ flex: 1, maxWidth: 260 }}
+          flex={1}
+          maw={260}
         />
         <Group gap="xs" wrap="nowrap">
           {query && (
@@ -93,18 +94,15 @@ export function LogViewer({
           if (follow && el.scrollHeight - el.scrollTop - el.clientHeight > 40) setFollow(false);
         }}
       >
-        <pre
-          className="log-view"
-          style={{ margin: 0, padding: 14, minHeight: '100%', fontSize: 12.5, lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
-        >
-          {shown.length === 0 && <span style={{ opacity: 0.55 }}>{lines.length ? 'No line matches.' : 'No log lines yet.'}</span>}
+        <pre className="log-view">
+          {shown.length === 0 && <span className="log-dim">{lines.length ? 'No line matches.' : 'No log lines yet.'}</span>}
           {shown.length > visible.length && (
-            <div style={{ opacity: 0.55 }}>… {shown.length - visible.length} earlier lines hidden (download the log to see them)</div>
+            <div className="log-dim">… {shown.length - visible.length} earlier lines hidden (download the log to see them)</div>
           )}
           {visible.map((l, i) => (
             <div key={i} style={{ color: LOG_COLORS[l.level] }}>
-              <span style={{ opacity: 0.55 }}>{new Date(l.at).toLocaleTimeString()} </span>
-              {showStep && l.stepId && <span style={{ opacity: 0.7 }}>[{l.stepId}] </span>}
+              <span className="log-dim">{new Date(l.at).toLocaleTimeString()} </span>
+              {showStep && l.stepId && <span className="log-step">[{l.stepId}] </span>}
               {l.message}
             </div>
           ))}

@@ -96,7 +96,7 @@ function Body(props: {
           <Tabs.Tab value="yaml">YAML</Tabs.Tab>
         </Tabs.List>
         <Tabs.Panel value="form">
-          <fieldset disabled={props.readOnly} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
+          <fieldset disabled={props.readOnly} className="bare-fieldset">
             {props.form(doc, (p) => setDoc((d) => ({ ...d, ...p })))}
           </fieldset>
         </Tabs.Panel>
@@ -105,7 +105,7 @@ function Body(props: {
         </Tabs.Panel>
       </Tabs>
       {error && (
-        <Alert color="red" variant="light" style={{ whiteSpace: 'pre-wrap' }}>
+        <Alert color="red" variant="light" className="pre-wrap">
           {error}
         </Alert>
       )}

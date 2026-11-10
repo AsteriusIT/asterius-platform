@@ -1,10 +1,10 @@
 import { useState, type ReactNode } from 'react';
-import { Alert, Box, Button, Card, Group, Modal, Stack, Text, Textarea, TextInput } from '@mantine/core';
+import { Alert, Button, Card, Group, Modal, Stack, Text, Textarea, TextInput } from '@mantine/core';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { IconSparkles } from '@tabler/icons-react';
 import { api, errorText } from '../lib/api';
 import { JsonBlock } from './CodeEditor';
-import { Markdown } from './ui';
+import { Markdown, SurfaceBox } from './ui';
 
 /** The AI helpers of the portal. They only render when the platform has a model configured. */
 
@@ -89,12 +89,12 @@ export function ExplainRun({ runId, failed }: { runId: string; failed: boolean }
       )}
       {explain.data && (
         // Shown in the run's side panel: a flat block, no card.
-        <Box p="sm" style={{ background: 'var(--surface)', borderRadius: 12 }}>
+        <SurfaceBox>
           <Markdown>{explain.data.answer}</Markdown>
           <Text fz="xs" c="dimmed" mt="xs">
             AI generated from the run steps and logs, verify before acting{cost(explain.data.costUsd)}
           </Text>
-        </Box>
+        </SurfaceBox>
       )}
     </Stack>
   );

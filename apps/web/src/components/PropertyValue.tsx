@@ -16,7 +16,7 @@ export function PropertyValue({ schema, value, compact }: { schema?: PropertySch
   const format = schema?.format;
   if (Array.isArray(value))
     return (
-      <Group gap={4}>
+      <Group gap="3xs">
         {value.map((v, i) => (
           <PropertyValue key={i} schema={schema?.items && { ...schema.items, enumColors: schema.items.enumColors ?? schema.enumColors }} value={v} compact />
         ))}
@@ -29,7 +29,7 @@ export function PropertyValue({ schema, value, compact }: { schema?: PropertySch
   if (schema?.enum || schema?.enumColors) return <Badge color={schema.enumColors?.[s] ?? 'gray'}>{s}</Badge>;
   if (format === 'url' || format === 'docs')
     return (
-      <Anchor href={s} target="_blank" rel="noreferrer" fz="sm" style={{ overflowWrap: 'anywhere' }}>
+      <Anchor href={s} target="_blank" rel="noreferrer" fz="sm" className="wrap-anywhere">
         {compact ? s.replace(/^https?:\/\//, '').slice(0, 48) : s}
       </Anchor>
     );
@@ -57,7 +57,7 @@ export function PropertyValue({ schema, value, compact }: { schema?: PropertySch
     );
   if (format === 'yaml') return compact ? <InlineCode code={s.split('\n')[0] ?? ''} language="yaml" /> : <CodeBlock code={s} language="yaml" />;
   return (
-    <Text span fz="sm" style={{ overflowWrap: 'anywhere' }}>
+    <Text span fz="sm" className="wrap-anywhere">
       {s}
     </Text>
   );

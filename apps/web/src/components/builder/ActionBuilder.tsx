@@ -198,7 +198,7 @@ export function RunOptionsFields({
             value={c.mode}
             allowDeselect={false}
             onChange={(v) => v && set({ mode: v as RunConcurrency['mode'] })}
-            style={{ gridColumn: '1 / -1' }}
+            className="span-all"
           />
         </SimpleGrid>
       )}

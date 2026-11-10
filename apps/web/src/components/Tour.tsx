@@ -145,7 +145,7 @@ export function Tour({ steps, opened, onClose }: { steps: TourStep[]; opened: bo
             left: rect.left - PAD,
             width: rect.width + PAD * 2,
             height: rect.height + PAD * 2,
-            borderRadius: 12,
+            borderRadius: 'var(--mantine-radius-md)',
             boxShadow: '0 0 0 9999px rgba(0, 0, 0, 0.45)',
             outline: '2px solid var(--mantine-color-brand-6)',
             pointerEvents: 'none',
@@ -166,22 +166,24 @@ export function Tour({ steps, opened, onClose }: { steps: TourStep[]; opened: bo
         pos="fixed"
         style={{ zIndex: 1002, top: pos.top, left: pos.left, maxWidth: `calc(100vw - ${MARGIN * 2}px)`, outline: 'none', transition }}
       >
-        <Text fz="xs" c="dimmed" fw={500} mb={6}>
+        <Text fz="xs" c="dimmed" fw={500} mb="2xs">
           {index + 1} of {steps.length}
         </Text>
-        <Title order={4} id="tour-title" mb={6}>
+        <Title order={4} id="tour-title" mb="2xs">
           {step.title}
         </Title>
-        <Text fz="sm" c="dimmed" component="div" style={{ lineHeight: 1.6 }}>
+        <Text fz="sm" c="dimmed" component="div" lh="lg">
           {step.body}
         </Text>
-        <Group gap={5} mt="md" aria-hidden>
+        <Group gap="3xs" mt="md" aria-hidden>
           {steps.map((_, i) => (
             <Box
               key={i}
               h={6}
               w={i === index ? 18 : 6}
-              style={{ borderRadius: 3, background: i === index ? 'var(--mantine-color-brand-6)' : 'var(--surface-3)', transition }}
+              bdrs="xl"
+              bg={i === index ? 'var(--mantine-color-brand-6)' : 'var(--surface-3)'}
+              style={{ transition }}
             />
           ))}
         </Group>

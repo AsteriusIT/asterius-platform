@@ -36,6 +36,7 @@ import {
 } from '@tabler/icons-react';
 import type { WorkflowStepType } from '@asterius/shared';
 import { STEP_TYPES, stagesOf, type FlowTone } from '../lib/workflow';
+import { Caption, Kicker } from './ui';
 
 /**
  * The workflow as a graph (React Flow): the trigger, then the steps left to right, one column per stage. Used by the
@@ -157,26 +158,22 @@ const FlowNode = memo(function FlowNode({ data }: NodeProps<Node<NodeData>>) {
           background: data.inner ? 'var(--mantine-color-default-hover)' : undefined,
         }}
       >
-        <Group gap={8} wrap="nowrap" justify="space-between">
-          <Group gap={8} wrap="nowrap" style={{ minWidth: 0 }}>
+        <Group gap="xs" wrap="nowrap" justify="space-between">
+          <Group gap="xs" wrap="nowrap" miw={0}>
             <ThemeIcon size={28} variant="light" color={color}>
               <Icon size={16} />
             </ThemeIcon>
-            <Box style={{ minWidth: 0 }}>
-              <Text fz={10} tt="uppercase" fw={600} c="dimmed" lh={1.2} truncate>
+            <Box miw={0}>
+              <Kicker size="3xs" lh={1.2} truncate>
                 {data.kicker}
-              </Text>
+              </Kicker>
               <Text fz="sm" fw={600} truncate>
                 {data.title}
               </Text>
-              {data.detail && (
-                <Text fz={11} c="dimmed" truncate>
-                  {data.detail}
-                </Text>
-              )}
+              {data.detail && <Caption truncate>{data.detail}</Caption>}
             </Box>
           </Group>
-          <Group gap={4} wrap="nowrap">
+          <Group gap="3xs" wrap="nowrap">
             <ToneIcon tone={data.tone} />
             {data.onToggle && (
               <Tooltip label={data.expanded ? 'Hide its steps' : 'Show its steps'}>
@@ -199,7 +196,7 @@ const FlowNode = memo(function FlowNode({ data }: NodeProps<Node<NodeData>>) {
           </Group>
         </Group>
         {data.badges.length > 0 && (
-          <Group gap={4} mt={6}>
+          <Group gap="3xs" mt="2xs">
             {data.badges.map((b) => (
               <Badge key={b} size="xs" variant="light" color="gray">
                 {b}

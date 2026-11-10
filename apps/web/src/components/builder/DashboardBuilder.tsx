@@ -159,7 +159,7 @@ function General(ctx: FormContext<DashboardDoc>) {
     <Stack gap="md">
       <IdentityFields {...ctx} placeholder="Platform overview" />
       <Textarea label="Description" autosize minRows={2} value={doc.description} onChange={(e) => set({ description: e.currentTarget.value })} />
-      <Stack gap={6}>
+      <Stack gap="2xs">
         <Text fz="sm" fw={500}>
           Where is it shown?
         </Text>
@@ -243,7 +243,7 @@ function Widgets({ doc, set }: FormContext<DashboardDoc>) {
         return (
           <Card key={id} withBorder padding="sm" data-testid="widget">
             <Group justify="space-between" wrap="nowrap">
-              <Group gap="xs" style={{ cursor: 'pointer', flex: 1 }} onClick={() => setOpen((o) => ({ ...o, [id]: !isOpen }))}>
+              <Group gap="xs" className="clickable" flex={1} onClick={() => setOpen((o) => ({ ...o, [id]: !isOpen }))}>
                 {isOpen ? <IconChevronDown size={16} /> : <IconChevronRight size={16} />}
                 {info?.icon}
                 <Text fw={500}>{String(w.title || info?.label || w.type)}</Text>
@@ -254,7 +254,7 @@ function Widgets({ doc, set }: FormContext<DashboardDoc>) {
                   width {String(w.width ?? 6)}
                 </Badge>
               </Group>
-              <Group gap={2} wrap="nowrap">
+              <Group gap="4xs" wrap="nowrap">
                 <Tooltip label="Move up">
                   <ActionIcon variant="subtle" color="gray" disabled={i === 0} onClick={() => move(i, -1)} aria-label="Move widget up">
                     <IconArrowUp size={16} />
@@ -352,7 +352,7 @@ function WidgetForm({ widget, onChange }: { widget: Widget; onChange: (w: Widget
     />
   );
   const filters = (
-    <Stack gap={4}>
+    <Stack gap="3xs">
       <Text fz="sm" fw={500}>
         Filters
       </Text>
@@ -464,7 +464,7 @@ function WidgetForm({ widget, onChange }: { widget: Widget; onChange: (w: Widget
             onChange={(e) => setKey('content', e.currentTarget.value)}
             styles={MONO_INPUT}
           />
-          <Stack gap={4}>
+          <Stack gap="3xs">
             <Text fz="sm" fw={500}>
               Preview
             </Text>

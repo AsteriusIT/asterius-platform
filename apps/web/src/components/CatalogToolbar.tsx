@@ -162,7 +162,7 @@ export function ViewsMenu({
       onClick={() => onApply(v)}
       title={v.mine ? undefined : `Shared by ${v.owner.name}`}
       rightSection={
-        <Group gap={4} wrap="nowrap">
+        <Group gap="3xs" wrap="nowrap">
           {v.team && (
             <Badge size="xs" variant="light" tt="none">
               {v.team.title}
@@ -234,14 +234,7 @@ export function ViewsMenu({
             maxLength={100}
           />
           <Group gap="xs" wrap="nowrap">
-            <NativeSelect
-              size="xs"
-              aria-label="Share with"
-              data={shareOptions}
-              value={team}
-              onChange={(e) => setTeam(e.currentTarget.value)}
-              style={{ flex: 1 }}
-            />
+            <NativeSelect size="xs" aria-label="Share with" data={shareOptions} value={team} onChange={(e) => setTeam(e.currentTarget.value)} flex={1} />
             <Button
               size="xs"
               disabled={!name.trim()}

@@ -120,12 +120,7 @@ export function Layout() {
 
   return (
     <AppShell layout="alt" header={{ height: 60 }} navbar={{ width: mini ? 68 : 264, breakpoint: 'sm', collapsed: { mobile: !opened } }} padding={0}>
-      <a
-        href="#main-content"
-        style={{ position: 'absolute', left: -9999, top: 0, zIndex: 1000, background: 'var(--mantine-color-body)', padding: 8 }}
-        onFocus={(e) => (e.currentTarget.style.left = '8px')}
-        onBlur={(e) => (e.currentTarget.style.left = '-9999px')}
-      >
+      <a href="#main-content" className="skip-link">
         {t('app.skipToContent')}
       </a>
       <CommandPalette can={can} opened={paletteOpen} onOpenChange={setPaletteOpen} />
@@ -140,7 +135,6 @@ export function Layout() {
           <form
             className="header-search"
             data-tour="search"
-            style={{ flex: 1, maxWidth: 520 }}
             onSubmit={(e) => {
               e.preventDefault();
               if (search.trim()) void navigate(`/search?q=${encodeURIComponent(search.trim())}`);
@@ -157,7 +151,7 @@ export function Layout() {
               rightSectionWidth={64}
             />
           </form>
-          <Group gap={4} wrap="nowrap">
+          <Group gap="3xs" wrap="nowrap">
             <NotificationCenter />
             <Tooltip label="Refresh data">
               <ActionIcon variant="subtle" color="gray" size="lg" onClick={refreshAll} aria-label="Refresh data" aria-busy={refreshing}>
@@ -182,8 +176,8 @@ export function Layout() {
       <AppShell.Navbar className="app-navbar" p="sm" data-mini={mini || undefined}>
         <AppShell.Section visibleFrom="sm">
           {mini ? (
-            <Stack gap={6} align="center">
-              <UnstyledButton component={Link} to="/" py={6} aria-label="Home">
+            <Stack gap="2xs" align="center">
+              <UnstyledButton component={Link} to="/" py="2xs" aria-label="Home">
                 <BrandLogo size={28} />
               </UnstyledButton>
               <Tooltip label="Expand sidebar (Ctrl/⌘+B)" position="right">
@@ -193,8 +187,8 @@ export function Layout() {
               </Tooltip>
             </Stack>
           ) : (
-            <Group justify="space-between" wrap="nowrap" gap={4}>
-              <UnstyledButton component={Link} to="/" onClick={close} px={10} py={6} display="block" aria-label="Home" style={{ minWidth: 0 }}>
+            <Group justify="space-between" wrap="nowrap" gap="3xs">
+              <UnstyledButton component={Link} to="/" onClick={close} px="xs" py="2xs" display="block" aria-label="Home" miw={0}>
                 <BrandMark />
               </UnstyledButton>
               <Tooltip label="Collapse sidebar (Ctrl/⌘+B)">
@@ -231,7 +225,7 @@ export function Layout() {
                 <Menu.Item
                   key={o.id}
                   leftSection={
-                    <Avatar radius="sm" size={20} color="brand" variant={o.slug === org?.slug ? 'filled' : 'light'} fz={10}>
+                    <Avatar radius="sm" size={20} color="brand" variant={o.slug === org?.slug ? 'filled' : 'light'} fz="3xs">
                       {initials(o.name)}
                     </Avatar>
                   }
@@ -268,7 +262,7 @@ export function Layout() {
           </Menu>
         </AppShell.Section>
 
-        <AppShell.Section grow component={ScrollArea} mt={4} mx={-4} px={4}>
+        <AppShell.Section grow component={ScrollArea} mt="3xs" mx={-4} px="3xs">
           <NavItem {...item('/')} label="Home" icon={<IconHome size={ICON.lg} />} />
           <NavItem
             {...item('/todo')}
@@ -304,7 +298,7 @@ export function Layout() {
           )}
         </AppShell.Section>
 
-        <AppShell.Section pt="xs" style={{ borderTop: '1px solid var(--hairline)' }}>
+        <AppShell.Section pt="xs" className="hairline-top">
           <Menu position="top-start" width={248}>
             <Menu.Target>
               <NavItem
@@ -323,7 +317,7 @@ export function Layout() {
             </Menu.Target>
             <Menu.Dropdown>
               <Menu.Label>
-                <Group gap={4}>
+                <Group gap="3xs">
                   <Badge size="sm" color={isAdmin ? 'brand' : 'gray'}>
                     {user?.role}
                   </Badge>

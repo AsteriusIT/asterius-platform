@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { Group, Text } from '@mantine/core';
+import { Group, Text, type MantineFontSize } from '@mantine/core';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 
@@ -18,17 +18,17 @@ export function useBrand() {
 
 export function BrandLogo({ size = 28 }: { size?: number }) {
   const { logo } = useBrand();
-  return <img src={logo} width={size} height={size} alt="" style={{ objectFit: 'contain', flexShrink: 0, display: 'block' }} />;
+  return <img src={logo} width={size} height={size} alt="" className="icon-img" />;
 }
 
 /** Logo + wordmark: the first word of the name is emphasised ("Asterius" Platform). */
-export function BrandMark({ size = 28, fz = 16 }: { size?: number; fz?: number }) {
+export function BrandMark({ size = 28, fz = 'md' }: { size?: number; fz?: MantineFontSize }) {
   const { name } = useBrand();
   const [first, ...rest] = name.split(' ');
   return (
-    <Group gap={10} wrap="nowrap" style={{ minWidth: 0 }}>
+    <Group gap="xs" wrap="nowrap" miw={0}>
       <BrandLogo size={size} />
-      <Text fz={fz} truncate style={{ letterSpacing: '-0.02em', lineHeight: 1.1 }}>
+      <Text fz={fz} truncate lts="-0.02em" lh={1.1}>
         <Text span inherit fw={700}>
           {first}
         </Text>

@@ -20,7 +20,7 @@ export function NewTokenAlert({ token, onClose }: { token: string | null; onClos
   return (
     <Alert color="green" title="Copy your token now: it will not be shown again" withCloseButton onClose={onClose}>
       <Group gap="xs" wrap="nowrap">
-        <Code style={{ overflowWrap: 'anywhere' }}>{token}</Code>
+        <Code className="wrap-anywhere">{token}</Code>
         <CopyButton value={token}>
           {({ copied, copy }) => (
             <Button size="xs" variant="light" leftSection={<IconCopy size={14} />} onClick={copy}>
@@ -160,7 +160,7 @@ export function Profile() {
       </Text>
       <Card>
         <Group align="flex-end">
-          <TextInput label="Name" placeholder="my laptop" value={name} onChange={(e) => setName(e.currentTarget.value)} style={{ flex: 1 }} />
+          <TextInput label="Name" placeholder="my laptop" value={name} onChange={(e) => setName(e.currentTarget.value)} flex={1} />
           <NumberInput label="Expires in (days)" min={1} max={730} value={days} onChange={setDays} w={160} />
           <Button disabled={!name.trim()} loading={create.isPending} onClick={() => create.mutate()}>
             Create token

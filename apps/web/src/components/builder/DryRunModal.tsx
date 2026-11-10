@@ -94,7 +94,7 @@ export function DryRunModal({
               ))}
             </Alert>
             {r.steps.map((s) => (
-              <Stack key={s.id} gap={4}>
+              <Stack key={s.id} gap="3xs">
                 <Group gap="xs">
                   <Badge color={COLORS[s.status]}>{s.status}</Badge>
                   <Text fw={500} fz="sm">

@@ -308,17 +308,9 @@ export function EntityIcon({ name, size = 18 }: { name?: string | null; size?: n
         }}
       />
     ) : (
-      <img
-        src={vendor.url}
-        width={size}
-        height={size}
-        alt=""
-        className={vendor.invert ? 'vendor-invert-dark' : undefined}
-        style={{ objectFit: 'contain', flexShrink: 0, display: 'block' }}
-      />
+      <img src={vendor.url} width={size} height={size} alt="" className={vendor.invert ? 'icon-img vendor-invert-dark' : 'icon-img'} />
     );
-  if (isImageIcon(name))
-    return <img src={name} width={size} height={size} alt="" style={{ objectFit: 'contain', borderRadius: 4, flexShrink: 0, display: 'block' }} />;
+  if (isImageIcon(name)) return <img src={name} width={size} height={size} alt="" className="icon-img" data-upload />;
   const C = (name && ICONS[name]) || IconBox;
   return <C size={size} />;
 }

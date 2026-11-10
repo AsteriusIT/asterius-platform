@@ -76,10 +76,10 @@ export function DryRunPanel({ steps }: { steps: WorkflowStep[] }) {
         </Button>
       </Group>
       {result && (
-        <Stack gap={6} aria-label="Test run result">
+        <Stack gap="2xs" aria-label="Test run result">
           {result.steps.map((s) => (
             <Alert key={s.id} p="xs" variant="light" color={s.error ? 'red' : s.skipped ? 'gray' : 'green'}>
-              <Group gap="xs" mb={2}>
+              <Group gap="xs" mb="4xs">
                 <Text fz="sm" fw={500}>
                   {s.id}
                 </Text>

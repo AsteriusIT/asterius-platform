@@ -79,7 +79,7 @@ function EditorBody<T>(props: {
       {props.help}
       <CodeEditor language="yaml" aria-label="YAML document" value={text} onChange={setText} minRows={16} maxRows={32} readOnly={props.readOnly} />
       {error && (
-        <Alert color="red" variant="light" style={{ whiteSpace: 'pre-wrap' }}>
+        <Alert color="red" variant="light" className="pre-wrap">
           {error}
         </Alert>
       )}

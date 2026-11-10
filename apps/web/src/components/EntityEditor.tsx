@@ -223,7 +223,7 @@ function EditorBody({
         </Tabs.Panel>
       </Tabs>
       {error && (
-        <Alert color="red" variant="light" style={{ whiteSpace: 'pre-wrap' }}>
+        <Alert color="red" variant="light" className="pre-wrap">
           {error}
         </Alert>
       )}

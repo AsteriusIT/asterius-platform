@@ -68,7 +68,7 @@ export function DelegationCard() {
               data={(users.data ?? []).map((u) => ({ value: u.id, label: `${u.name} <${u.email}>` }))}
               value={form.delegate}
               onChange={(delegate) => setDraft({ ...form, delegate })}
-              style={{ flex: 1 }}
+              flex={1}
             />
             <TextInput
               type="datetime-local"

@@ -19,6 +19,7 @@ import {
 } from '@mantine/core';
 import { IconChevronDown, IconPhoto, IconSearch, IconUpload } from '@tabler/icons-react';
 import { EntityIcon, iconTitle, isImageIcon, PICKER_GROUPS } from './icons';
+import { Caption } from './ui';
 
 /** Uploaded icons are stored inline (data URI) in the definition: keep them small. */
 export const MAX_ICON_BYTES = 48 * 1024;
@@ -72,24 +73,10 @@ export function IconPicker({
     <Input.Wrapper label={fieldLabel} description={description}>
       <Popover opened={opened} onChange={setOpened} position="bottom-start" width={380} shadow="lg" trapFocus>
         <Popover.Target>
-          <Group gap={6} wrap="nowrap">
-            <UnstyledButton
-              onClick={() => setOpened((o) => !o)}
-              aria-label="Choose an icon"
-              style={{
-                flex: 1,
-                display: 'flex',
-                alignItems: 'center',
-                gap: 10,
-                height: 36,
-                padding: '0 12px',
-                border: '1px solid var(--mantine-color-default-border)',
-                borderRadius: 'var(--mantine-radius-md)',
-                background: 'var(--mantine-color-body)',
-              }}
-            >
+          <Group gap="2xs" wrap="nowrap">
+            <UnstyledButton onClick={() => setOpened((o) => !o)} aria-label="Choose an icon" className="icon-picker-button">
               <EntityIcon name={value} size={18} />
-              <Text fz="sm" truncate style={{ flex: 1 }} c={value ? undefined : 'dimmed'}>
+              <Text fz="sm" truncate flex={1} c={value ? undefined : 'dimmed'}>
                 {label(value)}
               </Text>
               <IconChevronDown size={14} color="var(--text-3)" />
@@ -119,10 +106,10 @@ export function IconPicker({
                 <Stack gap="xs">
                   {groups.map((g) => (
                     <div key={g.label}>
-                      <Text fz={11} fw={500} c="dimmed" mb={4}>
+                      <Caption fw={500} mb="3xs">
                         {g.label}
-                      </Text>
-                      <SimpleGrid cols={8} spacing={4} verticalSpacing={4}>
+                      </Caption>
+                      <SimpleGrid cols={8} spacing="3xs" verticalSpacing="3xs">
                         {g.icons.map(({ name: n, title }) => (
                           <Tooltip key={n} label={title} openDelay={400}>
                             <ActionIcon
@@ -156,7 +143,7 @@ export function IconPicker({
                     placeholder="https://example.com/logo.svg"
                     value={url}
                     onChange={(e) => setUrl(e.currentTarget.value)}
-                    style={{ flex: 1 }}
+                    flex={1}
                   />
                   <Button
                     size="xs"
@@ -187,7 +174,7 @@ export function IconPicker({
                 </Text>
                 {isImageIcon(value) && (
                   <Group gap="xs">
-                    <Box p={6} style={{ border: '1px solid var(--hairline)', borderRadius: 8 }}>
+                    <Box p="2xs" bd="1px solid var(--hairline)" bdrs="sm">
                       <EntityIcon name={value} size={32} />
                     </Box>
                     <Text fz="xs" c="dimmed">

@@ -64,14 +64,14 @@ export function EntityHistory({ blueprint, identifier, canEdit }: { blueprint: s
                     No field changes
                   </Text>
                 )}
-                <Stack gap={2}>
+                <Stack gap="4xs">
                   {v.diff.map((d) => (
                     <Group key={d.path} gap="xs" wrap="nowrap" align="flex-start">
                       <Code>{d.path}</Code>
-                      <Text fz="sm" c="red" td="line-through" style={{ overflowWrap: 'anywhere' }}>
+                      <Text fz="sm" c="red" td="line-through" className="wrap-anywhere">
                         {show(d.before)}
                       </Text>
-                      <Text fz="sm" c="green" style={{ overflowWrap: 'anywhere' }}>
+                      <Text fz="sm" c="green" className="wrap-anywhere">
                         {show(d.after)}
                       </Text>
                     </Group>
