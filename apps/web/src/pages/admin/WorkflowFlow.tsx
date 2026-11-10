@@ -5,8 +5,9 @@ import { notifications } from '@mantine/notifications';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Navigate, useParams } from 'react-router';
 import { IconCode, IconDeviceFloppy, IconFlask, IconHistory, IconPlus, IconSettings, IconTestPipe, IconTrash, IconX } from '@tabler/icons-react';
-import type { Action, BlackoutWindow, DryRunResult, DryRunStep, Fragment, WorkflowStep, WorkflowStepType, WorkflowTest } from '@asterius/shared';
-import { api, errorText } from '../../lib/api';
+import type { Action, BlackoutWindow, DryRunResult, DryRunStep, EditConflict, Fragment, WorkflowStep, WorkflowStepType, WorkflowTest } from '@asterius/shared';
+import { api, conflictOf, errorText } from '../../lib/api';
+import { EditConflictDialog } from '../../components/EditConflictDialog';
 import { connectSteps, controlBadges, disconnectSteps, insertStepAfter, needsOf, STEP_TYPES, stepWarnings, type FlowTone } from '../../lib/workflow';
 import { QueryView } from '../../components/ui';
 import { FlowShell } from '../../components/FlowShell';
@@ -72,6 +73,8 @@ function FlowEditor({ value, readOnly, version }: { value: Record<string, unknow
   const [test, setTest] = useState<DryRunResult | null>(null);
   const [problems, setProblems] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
+  // A save refused because someone else saved a newer version than `version` (the one this editor loaded).
+  const [conflict, setConflict] = useState<EditConflict | null>(null);
 
   // Closing the tab with unsaved changes asks first.
   useEffect(() => {
@@ -121,19 +124,25 @@ function FlowEditor({ value, readOnly, version }: { value: Record<string, unknow
     setEditing({ kind: 'code' });
   };
 
+  /** Save, pinned to the version the editor loaded (If-Match) unless `force` (overwrite after a conflict). */
+  const write = async (force = false) => {
+    await api.saveActionAt(doc.identifier, body(), force ? undefined : version);
+    setDirty(false);
+    notifications.show({ color: 'green', message: `Workflow ${doc.identifier} saved` });
+    void qc.invalidateQueries({ queryKey: ['admin-actions'] });
+    void qc.invalidateQueries({ queryKey: ['action', doc.identifier] });
+  };
   const save = async () => {
     const found = docProblems(doc, fields, invokers);
     setProblems(found);
     if (found.length) return;
     setSaving(true);
     try {
-      await api.saveAction(doc.identifier, body());
-      setDirty(false);
-      notifications.show({ color: 'green', message: `Workflow ${doc.identifier} saved` });
-      void qc.invalidateQueries({ queryKey: ['admin-actions'] });
-      void qc.invalidateQueries({ queryKey: ['action', doc.identifier] });
+      await write();
     } catch (e) {
-      setProblems([errorText(e)]);
+      const c = conflictOf(e);
+      if (c) setConflict(c);
+      else setProblems([errorText(e)]);
     } finally {
       setSaving(false);
     }
@@ -563,6 +572,23 @@ function FlowEditor({ value, readOnly, version }: { value: Record<string, unknow
           />
         </Modal>
       )}
+
+      <EditConflictDialog
+        conflict={conflict}
+        noun="workflow"
+        // Their version remounts the editor (the page is keyed by version), dropping my edits.
+        onReload={async () => {
+          setDirty(false);
+          await qc.invalidateQueries({ queryKey: ['action', doc.identifier] });
+          setConflict(null);
+        }}
+        onOverwrite={async () => {
+          await write(true);
+          setConflict(null);
+        }}
+        onCancel={() => setConflict(null)}
+        loadDiff={version === undefined ? undefined : (current) => api.actionDiff(doc.identifier, version, current)}
+      />
 
       {testing && <DryRunModal identifier={doc.identifier} body={body} onClose={() => setTesting(false)} onResult={setTest} />}
     </>

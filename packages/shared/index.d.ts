@@ -767,6 +767,15 @@ export interface RunConcurrency {
   mode: 'queue' | 'cancel-in-progress' | 'reject';
 }
 
+/** Body of a 412 answer to a write whose If-Match version is stale (`{ error, conflict }`). */
+export interface EditConflict {
+  /** The stored version (null: the resource no longer exists). */
+  currentVersion: number | null;
+  /** Who made the current version (null when unknown). */
+  changedBy: { email: string | null; name: string | null } | null;
+  changedAt: string | null;
+}
+
 export interface ActionVersion {
   version: number;
   actor: string | null;

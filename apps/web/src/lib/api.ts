@@ -49,6 +49,7 @@ import type {
   NotificationSettings,
   EntityGraph as SharedGraph,
   DryRunResult,
+  EditConflict,
   RunArtifact,
   WorkflowTestReport,
 } from '@asterius/shared';
@@ -147,6 +148,8 @@ export class ApiError extends Error {
     public status: number,
     message: string,
     public code?: string,
+    /** The parsed error body (e.g. the `conflict` of a 412). */
+    public body?: unknown,
   ) {
     super(message);
   }
@@ -157,7 +160,7 @@ export const setUnauthorizedHandler = (fn: () => void) => {
   onUnauthorized = fn;
 };
 
-export async function request<T>(method: string, path: string, body?: unknown, retried = false): Promise<T> {
+export async function request<T>(method: string, path: string, body?: unknown, opts: { retried?: boolean; headers?: Record<string, string> } = {}): Promise<T> {
   const token = tokenStore.get();
   const viaCookie = token === COOKIE_SESSION;
   const org = orgStore.get();
@@ -169,6 +172,7 @@ export async function request<T>(method: string, path: string, body?: unknown, r
       ...(viaCookie && csrf ? { 'x-csrf-token': csrf } : {}),
       ...(org ? { 'x-asterius-org': org } : {}),
       ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
+      ...opts.headers,
     },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
@@ -177,11 +181,11 @@ export async function request<T>(method: string, path: string, body?: unknown, r
   const data = text && (res.headers.get('content-type') ?? '').includes('json') ? JSON.parse(text) : text;
   const err = data as { error?: string; code?: string };
   // Removed from the remembered organization (or it was deleted): forget it and let the server pick another.
-  if (res.status === 403 && org && !retried && /member of this organization/.test(err?.error ?? '')) {
+  if (res.status === 403 && org && !opts.retried && /member of this organization/.test(err?.error ?? '')) {
     orgStore.set(null);
-    return request<T>(method, path, body, true);
+    return request<T>(method, path, body, { ...opts, retried: true });
   }
-  if (!res.ok) throw new ApiError(res.status, err?.error ?? `${res.status} ${res.statusText}`, err?.code);
+  if (!res.ok) throw new ApiError(res.status, err?.error ?? `${res.status} ${res.statusText}`, err?.code, data);
   return data as T;
 }
 
@@ -461,6 +465,23 @@ export const api = {
   enableSso: () => request<Organization>('POST', v1('/org/sso/enable')),
   addSsoProvider: (p: SsoProviderInput) => request<SsoProvider>('POST', v1('/org/sso/providers'), p),
   removeSsoProvider: (alias: string) => request<{ ok: true }>('DELETE', v1(`/org/sso/providers/${enc(alias)}`)),
+  // ---- edit conflicts ----
+  // Saves pinned to the version the editor loaded (If-Match): a 412 carries an EditConflict (see conflictOf).
+  // Without a version they behave like the plain saves (overwrite).
+  saveEntityAt: (bp: string, id: string, body: unknown, version?: number) =>
+    request<Entity>('PUT', v1(`/blueprints/${enc(bp)}/entities/${enc(id)}`), body, { headers: ifMatch(version) }),
+  saveActionAt: (id: string, body: unknown, version?: number) => request<Action>('PUT', v1(`/actions/${enc(id)}`), body, { headers: ifMatch(version) }),
+  fragment: (id: string) => request<Fragment>('GET', v1(`/fragments/${enc(id)}`)),
+  saveFragmentAt: (id: string, body: unknown, version?: number) => request<Fragment>('PUT', v1(`/fragments/${enc(id)}`), body, { headers: ifMatch(version) }),
 };
+
+const ifMatch = (version?: number): Record<string, string> => (version === undefined ? {} : { 'if-match': `"${version}"` });
+
+/** The conflict of a save refused because someone else saved a newer version (412 with `conflict`), else null. */
+export function conflictOf(e: unknown): EditConflict | null {
+  if (!(e instanceof ApiError) || e.status !== 412) return null;
+  const c = (e.body as { conflict?: EditConflict } | undefined)?.conflict;
+  return c && typeof c === 'object' ? c : null;
+}
 
 export const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));

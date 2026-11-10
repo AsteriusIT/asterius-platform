@@ -31,6 +31,7 @@ import { entityGraph, MAX_DEPTH, MAX_NODES } from '../catalog/graph.js';
 import { parseFilterParams } from '../catalog/query.js';
 import { nextPageHeaders } from '../lib/cursor.js';
 import { badRequest, forbidden, notFound } from '../lib/errors.js';
+import { ifMatchOf } from '../lib/conflict.js';
 import { computeInsights } from '../catalog/insights.js';
 import { dashboardData, deleteDashboard, getDashboard, listDashboards, resolveDashboard, upsertDashboard } from '../catalog/dashboards.js';
 import { getVersion, listVersions } from '../catalog/history.js';
@@ -66,13 +67,6 @@ async function assertCanWrite(p: Principal, bp: string, existing: Entity | undef
 }
 
 const etag = (e: Entity) => `"${e.version}"`;
-/** `If-Match: "3"` (or a bare 3) → 3; `*` and absent → no precondition. */
-function ifMatchOf(header: string | undefined): number | undefined {
-  if (!header || header.trim() === '*') return undefined;
-  const n = Number(header.trim().replace(/^W\//, '').replace(/"/g, ''));
-  if (!Number.isInteger(n) || n < 0) throw badRequest('If-Match must be an entity ETag (its version number)');
-  return n;
-}
 
 export async function catalogRoutes(app: FastifyInstance) {
   app.addHook('preHandler', requireUser);
