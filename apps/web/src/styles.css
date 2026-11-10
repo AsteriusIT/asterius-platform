@@ -557,6 +557,25 @@ h4,
 }
 /* ---- end elevation ---- */
 
+/* ---- dark controls: off states that stay visible on a raised surface (token: --border-strong) ---- */
+[data-mantine-color-scheme='dark'] .mantine-Checkbox-input:not(:checked):not([data-indeterminate]),
+[data-mantine-color-scheme='dark'] .mantine-Radio-radio:not(:checked) {
+  background-color: transparent;
+  border-color: var(--border-strong);
+}
+[data-mantine-color-scheme='dark'] .mantine-Checkbox-input[data-error],
+[data-mantine-color-scheme='dark'] .mantine-Radio-radio[data-error] {
+  border-color: var(--mantine-color-error);
+}
+[data-mantine-color-scheme='dark'] .mantine-Switch-root {
+  --switch-bg: var(--border-strong);
+}
+[data-mantine-color-scheme='dark'] .mantine-Input-input:disabled,
+[data-mantine-color-scheme='dark'] .mantine-Input-input[data-disabled] {
+  color: var(--mantine-color-text);
+}
+/* ---- end dark controls ---- */
+
 /* ---- keyboard focus (theme focusRing: 'auto' = :focus-visible only; token: --focus-ring) ----
    Text inputs keep their own border + halo (see inputs above). */
 .mantine-focus-auto:focus-visible {

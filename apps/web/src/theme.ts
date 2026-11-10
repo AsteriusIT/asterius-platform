@@ -61,7 +61,8 @@ export const theme = createTheme({
     Drawer: { defaultProps: { overlayProps: { backgroundOpacity: 0.25, blur: 2 } } },
     Menu: { defaultProps: { radius: 'lg', shadow: 'lg' } },
     Tooltip: { defaultProps: { withArrow: true, openDelay: 300, radius: 'md', color: 'dark' } },
-    Tabs: { defaultProps: { color: 'dark' } },
+    // The text colour of the scheme: `dark` is the page colour itself in dark mode, the active underline vanished.
+    Tabs: { defaultProps: { color: 'var(--mantine-color-text)' } },
     Notification: { defaultProps: { radius: 'lg' } },
     ThemeIcon: { defaultProps: { radius: 'md', variant: 'light' } },
     Avatar: { defaultProps: { color: 'brand' } },
@@ -79,6 +80,10 @@ export const cssVariablesResolver: CSSVariablesResolver = () => ({
     '--mantine-color-dimmed': '#5d5d5d',
     '--mantine-color-default-border': '#e3e3e3',
     '--mantine-color-default-hover': '#f3f3f3',
+    // AA on white: placeholders, field errors and links
+    '--mantine-color-placeholder': '#767676',
+    '--mantine-color-error': '#e03131',
+    '--mantine-color-anchor': '#0b7a5e',
     '--surface': '#f9f9f9',
     '--surface-2': '#f3f3f3',
     '--surface-3': '#ececec',
@@ -113,6 +118,12 @@ export const cssVariablesResolver: CSSVariablesResolver = () => ({
     '--mantine-color-dimmed': '#b4b4b4',
     '--mantine-color-default-border': '#454545',
     '--mantine-color-default-hover': '#363636',
+    '--mantine-color-placeholder': '#8f8f8f',
+    '--mantine-color-error': '#ff8787',
+    // Neutral `light` fills (gray badges, buttons): Mantine's are near black, a hole in a raised surface.
+    '--mantine-color-gray-light': 'rgba(255, 255, 255, 0.08)',
+    '--mantine-color-gray-light-hover': 'rgba(255, 255, 255, 0.13)',
+    '--mantine-color-gray-light-color': '#dcdcdc',
     '--surface': '#181818',
     '--surface-2': '#2c2c2c',
     '--surface-3': '#383838',
