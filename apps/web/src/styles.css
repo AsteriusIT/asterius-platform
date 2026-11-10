@@ -122,8 +122,8 @@ h4,
 }
 .mantine-Input-input:focus,
 .mantine-Input-input:focus-within {
-  border-color: var(--border-strong);
-  box-shadow: 0 0 0 3px var(--hairline);
+  border-color: var(--focus-border);
+  box-shadow: 0 0 0 3px var(--focus-halo);
 }
 .mantine-Input-input[data-error] {
   border-color: var(--mantine-color-error);
@@ -138,7 +138,7 @@ h4,
 .header-search .mantine-Input-input:focus,
 .search-input .mantine-Input-input:focus {
   background: var(--mantine-color-body);
-  border-color: var(--border-strong);
+  border-color: var(--focus-border);
 }
 
 /* ---- surfaces ---- */
@@ -178,16 +178,24 @@ h4,
   color: var(--mantine-color-brand-7);
 }
 
-/* Tables: quiet headers and hairline rows. */
-/* Row hover in the sidebar tone: lighter than gray badges, which stay readable on hovered rows. */
+/* ---- tables (tokens: --table-* in theme.ts) ----
+   Header band, hairline rows, hover and selection as translucent tints: the same rules hold on the page,
+   in a card and in a dialog. */
 .mantine-Table-table {
-  --table-highlight-on-hover-color: var(--surface);
+  --table-border-color: var(--hairline);
+  --table-highlight-on-hover-color: var(--table-row-hover);
 }
 .mantine-Table-th {
   font-size: 12.5px;
   font-weight: 500;
   color: var(--mantine-color-dimmed);
-  background: var(--mantine-color-body);
+}
+.mantine-Table-thead .mantine-Table-th {
+  background: var(--table-head-bg);
+  white-space: nowrap;
+}
+.mantine-Table-thead .mantine-Table-th[aria-sort] {
+  color: var(--mantine-color-text);
 }
 .mantine-Table-tr {
   border-color: var(--hairline);
@@ -195,6 +203,33 @@ h4,
 .mantine-Table-thead .mantine-Table-tr {
   border-bottom: 1px solid var(--hairline);
 }
+.mantine-Table-tbody .mantine-Table-tr[data-selected] {
+  background: var(--table-row-selected);
+}
+.mantine-Table-tbody .mantine-Table-tr[data-selected]:hover {
+  background: var(--table-row-selected-hover);
+}
+/* DataTable: sortable header (the arrows wake up on hover/focus), footer inside the frame. */
+.data-table-sort {
+  color: inherit;
+  border-radius: 6px;
+}
+.data-table-sort:hover {
+  color: var(--mantine-color-text);
+}
+.data-table-sort-icon {
+  color: var(--text-3);
+}
+.data-table-sort:hover .data-table-sort-icon,
+.data-table-sort:focus-visible .data-table-sort-icon,
+.data-table-sort-icon[data-active] {
+  color: var(--mantine-color-text);
+}
+.data-table-footer {
+  border-top: 1px solid var(--hairline);
+  background: var(--table-head-bg);
+}
+/* ---- end tables ---- */
 
 /* Tabs: underline in text color, not accent. */
 .mantine-Tabs-list::before {
@@ -220,8 +255,8 @@ h4,
     box-shadow 0.15s;
 }
 .code-editor:focus-within {
-  border-color: var(--border-strong);
-  box-shadow: 0 0 0 3px var(--hairline);
+  border-color: var(--focus-border);
+  box-shadow: 0 0 0 3px var(--focus-halo);
 }
 .code-editor[data-error] {
   border-color: var(--mantine-color-error);
@@ -395,3 +430,57 @@ h4,
 .flow-node-add[aria-expanded='true'] {
   opacity: 1;
 }
+
+/* ---- elevation (tokens: --surface-raised, --surface-overlay, --mantine-shadow-* in theme.ts) ----
+   Raised: cards, papers, tables. Overlay: everything that floats above the page. In dark the shadows carry a
+   1px ring (see theme.ts), so a surface never melts into the canvas. */
+.mantine-Paper-root,
+.mantine-Card-root {
+  background-color: var(--surface-raised);
+}
+.mantine-Menu-dropdown,
+.mantine-Popover-dropdown,
+.mantine-HoverCard-dropdown,
+.mantine-Combobox-dropdown,
+.mantine-Modal-content,
+.mantine-Modal-header,
+.mantine-Drawer-content,
+.mantine-Drawer-header,
+.mantine-Notification-root {
+  background-color: var(--surface-overlay);
+}
+[data-mantine-color-scheme='dark'] .mantine-Menu-dropdown,
+[data-mantine-color-scheme='dark'] .mantine-Popover-dropdown,
+[data-mantine-color-scheme='dark'] .mantine-HoverCard-dropdown,
+[data-mantine-color-scheme='dark'] .mantine-Combobox-dropdown {
+  border-color: rgba(255, 255, 255, 0.11);
+}
+/* A bordered surface does not need the ring as well. */
+[data-mantine-color-scheme='dark'] .mantine-Paper-root[data-with-border],
+[data-mantine-color-scheme='dark'] .mantine-Card-root[data-with-border] {
+  box-shadow: none;
+}
+/* Tooltips are `color: dark`: on a dark page they need their own step. */
+[data-mantine-color-scheme='dark'] .mantine-Tooltip-tooltip {
+  background-color: var(--surface-3);
+  color: var(--mantine-color-text);
+  box-shadow: var(--mantine-shadow-sm);
+}
+/* Workflow nodes are raised surfaces on the flow canvas. */
+.flow-node,
+.canvas-node,
+.canvas-placeholder {
+  background: var(--surface-raised);
+}
+/* ---- end elevation ---- */
+
+/* ---- keyboard focus (theme focusRing: 'auto' = :focus-visible only; token: --focus-ring) ----
+   Text inputs keep their own border + halo (see inputs above). */
+.mantine-focus-auto:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+.nav-link:focus-visible {
+  outline-offset: -2px;
+}
+/* ---- end keyboard focus ---- */

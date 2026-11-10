@@ -78,15 +78,16 @@ export function DataTable<T>(props: {
                         fz="inherit"
                         fw="inherit"
                         aria-label={`Sort by ${typeof c.label === 'string' ? c.label : c.key}`}
+                        className="data-table-sort"
                       >
                         <Group gap={4} wrap="nowrap">
                           {c.label}
                           {active === 'asc' ? (
-                            <IconArrowUp size={14} />
+                            <IconArrowUp size={14} className="data-table-sort-icon" data-active />
                           ) : active === 'desc' ? (
-                            <IconArrowDown size={14} />
+                            <IconArrowDown size={14} className="data-table-sort-icon" data-active />
                           ) : (
-                            <IconArrowsSort size={14} opacity={0.4} />
+                            <IconArrowsSort size={14} className="data-table-sort-icon" />
                           )}
                         </Group>
                       </UnstyledButton>
@@ -116,7 +117,7 @@ export function DataTable<T>(props: {
                   key={props.rowKey(r)}
                   onClick={props.onRowClick ? () => props.onRowClick!(r) : undefined}
                   style={props.onRowClick ? { cursor: 'pointer' } : undefined}
-                  bg={selection?.selected.has(props.rowKey(r)) ? 'var(--mantine-primary-color-light)' : undefined}
+                  data-selected={selection?.selected.has(props.rowKey(r)) || undefined}
                 >
                   {selection && (
                     <Table.Td onClick={(e) => e.stopPropagation()}>
@@ -135,7 +136,7 @@ export function DataTable<T>(props: {
         !rows?.length &&
         (typeof props.empty === 'string' || !props.empty ? <Empty title={(props.empty as string) ?? 'Nothing here yet'} /> : props.empty)}
       {page && page.total > page.pageSize && (
-        <Group justify="space-between" p="sm" style={{ borderTop: '1px solid var(--mantine-color-default-border)' }}>
+        <Group justify="space-between" py="xs" px="md" className="data-table-footer">
           <Text fz="sm" c="dimmed">
             {(page.page - 1) * page.pageSize + 1}–{Math.min(page.page * page.pageSize, page.total)} of {page.total}
           </Text>
