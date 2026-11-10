@@ -106,7 +106,7 @@ export function ImpactDialog(props: {
                 placeholder={r.type === 'rename' ? 'From' : 'Property'}
                 value={r.a}
                 onChange={(e) => update(i, { a: e.currentTarget.value })}
-                style={{ flex: 1 }}
+                flex={1}
                 aria-label="Property"
               />
               {r.type !== 'remove' && (
@@ -114,7 +114,7 @@ export function ImpactDialog(props: {
                   placeholder={r.type === 'rename' ? 'To' : 'Value'}
                   value={r.b}
                   onChange={(e) => update(i, { b: e.currentTarget.value })}
-                  style={{ flex: 1 }}
+                  flex={1}
                   aria-label="Target"
                 />
               )}

@@ -62,7 +62,7 @@ export function SelfService() {
                 </Title>
                 <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }}>
                   {items.map((a) => (
-                    <Card key={a.identifier} className="hover-card" style={{ display: 'flex', flexDirection: 'column' }}>
+                    <Card key={a.identifier} className="hover-card">
                       <Group justify="space-between" align="flex-start" wrap="nowrap">
                         <Group gap="sm" wrap="nowrap">
                           <ThemeIcon variant="light" size="lg">
@@ -81,13 +81,13 @@ export function SelfService() {
                         </ActionIcon>
                         {formOf(a)?.approval.required && (
                           <Tooltip label="Requires approval">
-                            <Badge color="yellow" leftSection={<IconShieldCheck size={14} />} style={{ flexShrink: 0 }}>
+                            <Badge color="yellow" leftSection={<IconShieldCheck size={14} />} flex="none">
                               approval
                             </Badge>
                           </Tooltip>
                         )}
                       </Group>
-                      <Text fz="sm" c="dimmed" mt="sm" lineClamp={3} style={{ flex: 1 }}>
+                      <Text fz="sm" c="dimmed" mt="sm" lineClamp={3} flex={1}>
                         {a.description}
                       </Text>
                       <Group justify="space-between" mt="md">

@@ -167,7 +167,7 @@ export function BlackoutEditor({
                 <TextInput
                   label="Name"
                   placeholder="Weekend freeze"
-                  style={{ flex: 1 }}
+                  flex={1}
                   value={w.name ?? ''}
                   onChange={(e) => edit(i, { name: e.currentTarget.value || undefined })}
                 />
@@ -519,7 +519,7 @@ function FormTriggerEditor({
                 onChange={(n) => set({ approval: { ...approval, minApprovals: Number(n) || 1 } })}
               />
               <Switch
-                mb={8}
+                mb="xs"
                 label="Requesters may approve their own requests"
                 checked={!!approval.allowSelfApproval}
                 onChange={(e) => set({ approval: { ...approval, allowSelfApproval: e.currentTarget.checked } })}

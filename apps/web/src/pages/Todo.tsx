@@ -41,7 +41,7 @@ export function WaitingOnBadges({ w }: { w?: WaitingOn | null }) {
       </Text>
     );
   return (
-    <Group gap={4}>
+    <Group gap="3xs">
       {w.teams.map((t) => (
         <Badge key={`t:${t}`} size="sm" variant="light" color="blue">
           team {t}
@@ -104,7 +104,8 @@ export function Decisions() {
             onChange={(e) => setComment(e.currentTarget.value)}
             autosize
             minRows={1}
-            style={{ flex: 1, maxWidth: 420 }}
+            flex={1}
+            maw={420}
           />
           <Button color="green" size="xs" leftSection={<IconCheck size={14} />} loading={decide.isPending} onClick={() => decide.mutate('approve')}>
             Approve selected

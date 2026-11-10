@@ -15,7 +15,7 @@ export function DiffView({ diff }: { diff: ActionVersionDiff }) {
   if (empty) return <Text fz="sm">No difference.</Text>;
   const show = (v: unknown) => (v === undefined ? '(none)' : typeof v === 'string' ? v : JSON.stringify(v));
   return (
-    <Stack gap={4}>
+    <Stack gap="3xs">
       {diff.fields.map((f) => (
         <Text key={f.path} fz="sm">
           <Code>{f.path}</Code>: {show(f.before).slice(0, 120)} → {show(f.after).slice(0, 120)}
@@ -85,7 +85,7 @@ export function VersionHistory(props: {
               {props.intro}
             </Alert>
             {list.map((v) => (
-              <Stack key={v.version} gap={4}>
+              <Stack key={v.version} gap="3xs">
                 <Group justify="space-between">
                   <Group gap="xs">
                     <Badge variant={v.version === current ? 'filled' : 'light'}>v{v.version}</Badge>

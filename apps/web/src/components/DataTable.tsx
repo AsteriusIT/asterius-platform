@@ -58,7 +58,7 @@ export function DataTable<T>(props: {
   };
   if (props.error) return <ErrorAlert error={props.error} />;
   return (
-    <Paper radius="md" style={{ overflow: 'hidden' }}>
+    <Paper radius="md" className="clip">
       <Table.ScrollContainer minWidth={640}>
         <Table>
           <Table.Thead>
@@ -80,7 +80,7 @@ export function DataTable<T>(props: {
                         aria-label={`Sort by ${typeof c.label === 'string' ? c.label : c.key}`}
                         className="data-table-sort"
                       >
-                        <Group gap={4} wrap="nowrap">
+                        <Group gap="3xs" wrap="nowrap">
                           {c.label}
                           {active === 'asc' ? (
                             <IconArrowUp size={14} className="data-table-sort-icon" data-active />

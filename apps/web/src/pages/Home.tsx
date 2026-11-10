@@ -9,7 +9,7 @@ import { useAuth } from '../lib/auth';
 import { EntityIcon } from '../components/icons';
 import { DashboardView } from '../components/DashboardView';
 import { DataTable } from '../components/DataTable';
-import { QueryView, StatusBadge, TimeAgo } from '../components/ui';
+import { QueryView, StatusBadge, StatValue, TimeAgo } from '../components/ui';
 
 /** "waiting on team payments, carol@example.com" */
 export const waitingOnText = (w?: WaitingOn | null) => {
@@ -25,7 +25,7 @@ function StripList<T>({ items, empty, render }: { items: T[]; empty: string; ren
         {empty}
       </Text>
     );
-  return <Stack gap={6}>{items.map(render)}</Stack>;
+  return <Stack gap="2xs">{items.map(render)}</Stack>;
 }
 
 function StripCard({ title, to, linkLabel, children }: { title: string; to: string; linkLabel: string; children: ReactNode }) {
@@ -35,7 +35,7 @@ function StripCard({ title, to, linkLabel, children }: { title: string; to: stri
         <Text fw={600} fz="sm" truncate>
           {title}
         </Text>
-        <Anchor component={Link} to={to} fz="xs" style={{ flexShrink: 0 }}>
+        <Anchor component={Link} to={to} fz="xs" flex="none">
           {linkLabel}
         </Anchor>
       </Group>
@@ -55,9 +55,7 @@ export function PersonalStrip({ home }: { home: HomeSummary }) {
             <IconChecklist size={18} />
           </ThemeIcon>
           <div>
-            <Text fz={26} fw={700} lh={1}>
-              {decisions > 99 ? '99+' : decisions}
-            </Text>
+            <StatValue lh={1}>{decisions > 99 ? '99+' : decisions}</StatValue>
             <Text fz="xs" c="dimmed">
               {decisions ? (decisions === 1 ? 'decision to make' : 'decisions to make') : 'You are all caught up'}
             </Text>
@@ -86,7 +84,7 @@ export function PersonalStrip({ home }: { home: HomeSummary }) {
           empty="No runs yet: start from Self-service."
           render={(r) => (
             <Group key={r.id} justify="space-between" wrap="nowrap" gap="xs">
-              <Anchor component={Link} to={`/runs/${r.id}`} fz="sm" truncate style={{ minWidth: 0 }}>
+              <Anchor component={Link} to={`/runs/${r.id}`} fz="sm" truncate miw={0}>
                 {r.actionTitle}
                 {r.entity ? ` · ${r.entity}` : ''}
               </Anchor>
@@ -101,10 +99,10 @@ export function PersonalStrip({ home }: { home: HomeSummary }) {
           empty="Nothing owned by your teams changed recently."
           render={(e) => (
             <Group key={`${e.blueprint}/${e.identifier}`} justify="space-between" wrap="nowrap" gap="xs">
-              <Anchor component={Link} to={`/catalog/${e.blueprint}/${encodeURIComponent(e.identifier)}`} fz="sm" truncate style={{ minWidth: 0 }}>
+              <Anchor component={Link} to={`/catalog/${e.blueprint}/${encodeURIComponent(e.identifier)}`} fz="sm" truncate miw={0}>
                 {e.title}
               </Anchor>
-              <Text fz="xs" c="dimmed" style={{ flexShrink: 0 }}>
+              <Text fz="xs" c="dimmed" flex="none">
                 <TimeAgo at={e.updatedAt} />
               </Text>
             </Group>
@@ -139,9 +137,7 @@ export function Home() {
                     <ThemeIcon variant="light" size="lg">
                       <EntityIcon name={b.icon} />
                     </ThemeIcon>
-                    <Text fz={26} fw={700}>
-                      {b.count}
-                    </Text>
+                    <StatValue>{b.count}</StatValue>
                   </Group>
                   <Text mt="xs" fw={500} truncate>
                     {b.title}

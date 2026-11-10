@@ -106,7 +106,7 @@ export function PolicyBuilder(props: EditorProps) {
               />
               <Switch label="Enabled" checked={ctx.doc.enabled} onChange={(e) => ctx.set({ enabled: e.currentTarget.checked })} />
               <div>
-                <Text fz="sm" fw={500} mb={4}>
+                <Text fz="sm" fw={500} mb="3xs">
                   Applies to
                 </Text>
                 <SegmentedControl
@@ -182,7 +182,7 @@ export function PolicyBuilder(props: EditorProps) {
               />
               <ExpressionStatus expression={ctx.doc.expression} context={{}} />
               <Alert variant="light" color="gray" title="Context variables" p="xs">
-                <Stack gap={2}>
+                <Stack gap="4xs">
                   {POLICY_CONTEXT.map(([k, d]) => (
                     <Text key={k} fz="xs">
                       <Code>{k}</Code> {d}
@@ -261,7 +261,7 @@ export const scorecardProblems = (d: ScorecardDoc): string[] => {
 
 function RowControls({ i, count, onMove, onRemove, label }: { i: number; count: number; onMove: (by: number) => void; onRemove: () => void; label: string }) {
   return (
-    <Group gap={2} wrap="nowrap">
+    <Group gap="4xs" wrap="nowrap">
       <ActionIcon variant="subtle" color="gray" aria-label={`Move ${label} up`} disabled={i === 0} onClick={() => onMove(-1)}>
         <IconArrowUp size={16} />
       </ActionIcon>
@@ -325,7 +325,7 @@ export function ScorecardBuilder(props: EditorProps) {
                 {doc.levels.map((l, i) => (
                   <Group key={i} wrap="nowrap" align="flex-end">
                     <TextInput
-                      style={{ flex: 1 }}
+                      flex={1}
                       label={i === 0 ? 'Name' : undefined}
                       aria-label={`Level ${i + 1} name`}
                       value={l.name}
@@ -377,7 +377,7 @@ export function ScorecardBuilder(props: EditorProps) {
                     <Stack gap="xs">
                       <Group wrap="nowrap" align="flex-end">
                         <TextInput
-                          style={{ flex: 1 }}
+                          flex={1}
                           label="Title"
                           aria-label={`Rule ${i + 1} title`}
                           value={r.title}

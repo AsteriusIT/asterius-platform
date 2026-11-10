@@ -63,15 +63,15 @@ export function KeyValueEditor({
     });
   const edit = (id: string, patch: Partial<Row>) => commit((rs) => rs.map((r) => (r.id === id ? { ...r, ...patch } : r)));
   return (
-    <Stack gap={6}>
+    <Stack gap="2xs">
       {rows.map((row) => (
-        <Group key={row.id} gap={6} wrap="nowrap" align="flex-start">
+        <Group key={row.id} gap="2xs" wrap="nowrap" align="flex-start">
           <TextInput placeholder={keyPlaceholder} value={row.k} onChange={(e) => edit(row.id, { k: e.currentTarget.value })} w="35%" aria-label="Key" />
           <TextInput
             placeholder={valuePlaceholder}
             value={row.v}
             onChange={(e) => edit(row.id, { v: e.currentTarget.value })}
-            style={{ flex: 1 }}
+            flex={1}
             styles={MONO_INPUT}
             aria-label="Value"
           />
@@ -291,12 +291,13 @@ export function JsonEditor({
 /** Click to copy `{{ variable }}` for templates. */
 export function VariableChips({ variables }: { variables: string[] }) {
   return (
-    <Group gap={6}>
+    <Group gap="2xs">
       {variables.map((v) => (
         <Tooltip key={v} label="Copy">
           <Badge
             color="gray"
-            style={{ cursor: 'pointer', textTransform: 'none', fontFamily: 'var(--mantine-font-family-monospace)' }}
+            className="clickable"
+            ff="monospace"
             onClick={() => {
               void navigator.clipboard?.writeText(`{{ ${v} }}`);
               notifications.show({ message: `{{ ${v} }} copied`, autoClose: 1500 });

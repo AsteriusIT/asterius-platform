@@ -6,16 +6,14 @@ import { IconTrash } from '@tabler/icons-react';
 import type { AiBudget } from '@asterius/shared';
 import { api, errorText } from '../../lib/api';
 import { DataTable } from '../../components/DataTable';
-import { Markdown, Mono, PageHeader, QueryView, TimeAgo } from '../../components/ui';
+import { Markdown, Mono, PageHeader, QueryView, StatValue, TimeAgo } from '../../components/ui';
 
 const usd = (n: number | null | undefined) => (n == null ? 'no limit' : `$${n.toFixed(n < 1 ? 4 : 2)}`);
 
 function Stat({ value, label }: { value: string; label: string }) {
   return (
     <Card padding="md">
-      <Text fz={24} fw={700}>
-        {value}
-      </Text>
+      <StatValue>{value}</StatValue>
       <Text fz="sm" c="dimmed">
         {label}
       </Text>

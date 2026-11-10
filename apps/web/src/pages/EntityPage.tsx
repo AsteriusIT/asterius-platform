@@ -174,11 +174,11 @@ function EntityView({ bp, e }: { bp: Blueprint; e: Entity }) {
                 <Text fw={600} mb="sm">
                   Properties
                 </Text>
-                <Table withRowBorders={false} verticalSpacing={6} highlightOnHover={false}>
+                <Table withRowBorders={false} verticalSpacing="2xs" highlightOnHover={false}>
                   <Table.Tbody>
                     {orderedFields(bp.schema).map((k) => (
                       <Table.Tr key={k}>
-                        <Table.Td w="35%" c="dimmed" fz="sm" style={{ verticalAlign: 'top' }}>
+                        <Table.Td w="35%" c="dimmed" fz="sm" className="align-top">
                           {bp.schema.properties[k].title ?? k}
                         </Table.Td>
                         <Table.Td>
@@ -188,7 +188,7 @@ function EntityView({ bp, e }: { bp: Blueprint; e: Entity }) {
                     ))}
                     {Object.entries(bp.computed ?? {}).map(([k, c]) => (
                       <Table.Tr key={`computed-${k}`}>
-                        <Table.Td w="35%" c="dimmed" fz="sm" style={{ verticalAlign: 'top' }}>
+                        <Table.Td w="35%" c="dimmed" fz="sm" className="align-top">
                           <Tooltip label={`Computed (${c.kind})`}>
                             <span>{c.title ?? k}</span>
                           </Tooltip>
@@ -224,7 +224,7 @@ function EntityView({ bp, e }: { bp: Blueprint; e: Entity }) {
                     <Text fw={600} mb="xs">
                       Links
                     </Text>
-                    <Stack gap={4}>
+                    <Stack gap="3xs">
                       {links.map((l) => (
                         <Anchor key={l.href} href={l.href} target="_blank" rel="noopener noreferrer" fz="sm">
                           {l.label}
@@ -324,11 +324,11 @@ function ScorecardCard({ result }: { result: ScorecardResult }) {
           <LevelBadge level={result.level} color={result.levelColor} />
         </Group>
       </Group>
-      <Stack gap={4}>
+      <Stack gap="3xs">
         {result.rules.map((r) => (
           <Group key={r.rule} gap="xs" wrap="nowrap" align="flex-start">
             {r.passed ? <IconCheck size={16} color="var(--mantine-color-green-6)" /> : <IconX size={16} color="var(--mantine-color-red-6)" />}
-            <Text fz="sm" style={{ flex: 1 }}>
+            <Text fz="sm" flex={1}>
               {r.title}
               {r.error && (
                 <Text span fz="xs" c="red">
@@ -395,23 +395,23 @@ function RelationCard({ title, groups }: { title: string; groups: [string, Entit
       <SimpleGrid cols={1} spacing="sm">
         {nonEmpty.map(([label, list]) => (
           <div key={label}>
-            <Group gap={4} mb={4}>
+            <Group gap="3xs" mb="3xs">
               <IconChevronDown size={14} />
               <Text fz="xs" c="dimmed" fw={500}>
                 {label}
               </Text>
             </Group>
-            <Group gap={6}>
+            <Group gap="2xs">
               {list.map((x) =>
                 x.source === 'missing' ? (
                   <Tooltip key={x.identifier} label="Not in the catalog (yet)">
-                    <Badge color="gray" variant="outline" style={{ textDecoration: 'line-through' }}>
+                    <Badge color="gray" variant="outline" td="line-through">
                       {x.identifier}
                     </Badge>
                   </Tooltip>
                 ) : (
                   <Anchor key={`${x.blueprint}/${x.identifier}`} component={Link} to={entityLink(x)}>
-                    <Badge variant="light" style={{ cursor: 'pointer' }}>
+                    <Badge variant="light" className="clickable">
                       {x.title}
                     </Badge>
                   </Anchor>

@@ -440,7 +440,7 @@ function RelationsEditor({
             <Text fz="xs" c="dimmed" fw={500}>
               Relation {i + 1}
             </Text>
-            <Group gap={2}>
+            <Group gap="4xs">
               <ActionIcon variant="subtle" color="gray" disabled={i === 0} onClick={() => move(i, -1)} aria-label="Move up">
                 <IconArrowUp size={16} />
               </ActionIcon>

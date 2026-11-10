@@ -117,11 +117,11 @@ export function ManagedNotice() {
 /** Problems + Cancel / Save, stuck to the bottom of the dialog while the content scrolls. */
 export function BuilderFooter(props: { problems: string[]; readOnly?: boolean; saving: boolean; saveLabel: string; onSave: () => void; onClose: () => void }) {
   return (
-    <Box pos="sticky" bottom={0} pt="sm" pb="lg" mt="md" style={{ background: 'var(--mantine-color-body)', borderTop: '1px solid var(--hairline)', zIndex: 2 }}>
+    <Box className="builder-footer hairline-top" pos="sticky" bottom={0} pt="sm" pb="lg" mt="md" bg="var(--mantine-color-body)">
       <Stack gap="sm">
         {props.problems.length > 0 && (
           <Alert color="red" variant="light" icon={<IconAlertTriangle size={18} />} title="Fix these before saving">
-            <Stack gap={2}>
+            <Stack gap="4xs">
               {props.problems.map((p) => (
                 <Text key={p} fz="sm">
                   {p}
@@ -172,7 +172,7 @@ export function useSave(onSave: () => Promise<unknown>, onClose: () => void, onE
 /** Disables every input of read-only (managed) resources. */
 export function ReadOnlyFieldset({ readOnly, children }: { readOnly?: boolean; children: ReactNode }) {
   return (
-    <fieldset disabled={readOnly} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
+    <fieldset disabled={readOnly} className="bare-fieldset">
       {children}
     </fieldset>
   );

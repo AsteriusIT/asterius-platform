@@ -62,7 +62,7 @@ export function FieldsEditor({ fields, onChange, mode = ACTION_FIELDS }: { field
                 <Text fz="xs" c="dimmed" fw={500}>
                   {mode.noun[0].toUpperCase() + mode.noun.slice(1)} {i + 1}
                 </Text>
-                <Group gap={2}>
+                <Group gap="4xs">
                   <ActionIcon variant="subtle" color="gray" disabled={i === 0} onClick={() => move(i, -1)} aria-label="Move up">
                     <IconArrowUp size={16} />
                   </ActionIcon>
@@ -179,7 +179,7 @@ function FieldCard({
       {mode.catalog && hasOptions && f.options.length > 0 && <OptionColors field={f} onChange={onChange} />}
       <Group justify="space-between" align="flex-end">
         <DefaultInput field={f} onChange={(defaultValue) => onChange({ defaultValue })} />
-        <Group gap="lg" mb={8}>
+        <Group gap="lg" mb="xs">
           {mode.catalog && (
             <Checkbox
               label="Hide in tables"
@@ -223,13 +223,13 @@ function OptionColors({ field: f, onChange }: { field: FieldDraft; onChange: (p:
     onChange({ extra: { ...f.extra, enumColors: Object.keys(next).length ? next : undefined } });
   };
   return (
-    <Stack gap={4}>
+    <Stack gap="3xs">
       <Text fz="sm" fw={500}>
         Colors
       </Text>
       <Group gap="xs">
         {f.options.map((o) => (
-          <Group key={o} gap={6} wrap="nowrap">
+          <Group key={o} gap="2xs" wrap="nowrap">
             <Badge color={colors[o] ?? 'gray'}>{o}</Badge>
             <Select
               size="xs"
@@ -256,7 +256,7 @@ function Preview({ fields, mode }: { fields: FieldDraft[]; mode: FieldsMode }) {
   const merged = { ...initialValues(schema), ...values };
   const names = Object.keys(schema.properties);
   return (
-    <Paper p="lg" radius="xl" style={{ position: 'sticky', top: 0, background: 'var(--surface)' }} shadow="none">
+    <Paper p="lg" radius="xl" pos="sticky" top={0} bg="var(--surface)" shadow="none">
       <Group justify="space-between" mb="sm">
         <Text fw={600}>{mode.previewTitle}</Text>
         <Button size="compact-xs" variant="subtle" color="gray" onClick={() => setErrors(validateValues(schema, merged))}>
@@ -272,11 +272,11 @@ function Preview({ fields, mode }: { fields: FieldDraft[]; mode: FieldsMode }) {
           )}
           <SchemaForm schema={schema} values={merged} onChange={setValues} errors={errors} />
           {mode.catalog && (
-            <Stack gap={4}>
+            <Stack gap="3xs">
               <Text fz="sm" fw={500}>
                 On the entity page
               </Text>
-              <Table withRowBorders={false} verticalSpacing={4} highlightOnHover={false}>
+              <Table withRowBorders={false} verticalSpacing="3xs" highlightOnHover={false}>
                 <Table.Tbody>
                   {names.map((n) => (
                     <Table.Tr key={n}>

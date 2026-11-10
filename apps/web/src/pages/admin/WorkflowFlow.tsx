@@ -421,7 +421,7 @@ function FlowEditor({ value, readOnly, version }: { value: Record<string, unknow
         }
       >
         {doc.trigger && (
-          <fieldset disabled={readOnly} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
+          <fieldset disabled={readOnly} className="bare-fieldset">
             <TriggerEditor
               trigger={doc.trigger}
               onChange={(t) => change({ trigger: t })}
@@ -460,7 +460,7 @@ function FlowEditor({ value, readOnly, version }: { value: Record<string, unknow
         {step && (
           <Stack>
             {testOf.get(step.id) && <TestResult step={testOf.get(step.id)!} />}
-            <fieldset disabled={readOnly} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
+            <fieldset disabled={readOnly} className="bare-fieldset">
               <StepSettings
                 steps={doc.steps}
                 index={stepIndex}
@@ -480,7 +480,7 @@ function FlowEditor({ value, readOnly, version }: { value: Record<string, unknow
       </Modal>
 
       <Modal opened={editing?.kind === 'general'} onClose={() => setEditing(null)} size="lg" title={<Text fw={600}>General</Text>}>
-        <fieldset disabled={readOnly} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
+        <fieldset disabled={readOnly} className="bare-fieldset">
           <Stack gap="md">
             <GeneralFields doc={doc} isNew={false} onChange={change} />
             <Input.Wrapper
@@ -604,7 +604,7 @@ function TestResult({ step }: { step: DryRunStep }) {
       icon={step.status === 'error' ? <IconX size={18} /> : <IconFlask size={18} />}
       title={step.status === 'planned' ? 'Dry run: would run' : step.status === 'skipped' ? 'Dry run: skipped (condition is false)' : 'Dry run: problems'}
     >
-      <Stack gap={6}>
+      <Stack gap="2xs">
         {step.errors.map((e) => (
           <Text key={e} fz="sm" c="red">
             {e}

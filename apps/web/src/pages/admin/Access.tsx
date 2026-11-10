@@ -261,7 +261,7 @@ export function SecretsAdmin() {
         }
       />
       <Card>
-        <Stack gap={4}>
+        <Stack gap="3xs">
           <Text fw={600} fz="sm">
             External secret managers
           </Text>

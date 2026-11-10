@@ -1,5 +1,23 @@
 import { useState, type ReactNode } from 'react';
-import { ActionIcon, Alert, Anchor, Badge, Box, Breadcrumbs, Center, Code, Group, Loader, Stack, Text, ThemeIcon, Title, Tooltip } from '@mantine/core';
+import {
+  ActionIcon,
+  Alert,
+  Anchor,
+  Badge,
+  Box,
+  Breadcrumbs,
+  Center,
+  Code,
+  Group,
+  Loader,
+  Stack,
+  Text,
+  ThemeIcon,
+  Title,
+  Tooltip,
+  type BoxProps,
+  type TextProps,
+} from '@mantine/core';
 import { Link } from 'react-router';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -10,6 +28,33 @@ import { EntityIcon } from './icons';
 import { ICON, ICON_DISPLAY } from './iconScale';
 
 /** Small building blocks shared by every page. */
+
+/**
+ * Uppercase label above a group of things (admin tabs, template groups, the type of a graph node).
+ * `size="xs"` in a page, `"3xs"` inside a graph node.
+ */
+export function Kicker({ size = 'xs', ...props }: TextProps & { size?: 'xs' | '3xs'; children: ReactNode }) {
+  return <Text fz={size} fw={600} tt="uppercase" c="dimmed" {...props} />;
+}
+
+/** Dense secondary text, one step under `xs` (third line of a graph node, group titles in a picker). */
+export function Caption(props: TextProps & { children: ReactNode }) {
+  return <Text fz="2xs" c="dimmed" {...props} />;
+}
+
+/** The big figure of a stat card or tile. `lg` for a figure alone in its card. */
+export function StatValue({ size = 'md', ...props }: TextProps & { size?: 'md' | 'lg'; children: ReactNode }) {
+  return <Text fz={size === 'lg' ? 'h1' : 'h2'} fw={700} {...props} />;
+}
+
+/** Flat tinted block for a hint or generated text inside a card, a panel or a modal (no shadow, no border). */
+export function SurfaceBox({ children, ...props }: BoxProps & { children: ReactNode }) {
+  return (
+    <Box p="sm" bg="var(--surface)" bdrs="md" {...props}>
+      {children}
+    </Box>
+  );
+}
 
 /** What a refresh button reloads: one or several queries (TanStack Query results). */
 export type Refreshable = { refetch: () => unknown };
@@ -44,9 +89,9 @@ export function PageHeader(props: {
   crumbs?: { label: string; to?: string }[];
 }) {
   return (
-    <Stack gap={6} mb="lg">
+    <Stack gap="2xs" mb="lg">
       {props.crumbs && (
-        <Breadcrumbs separatorMargin={6} fz="sm">
+        <Breadcrumbs separatorMargin="2xs" fz="sm">
           {props.crumbs.map((c) =>
             c.to ? (
               <Anchor component={Link} to={c.to} key={c.label} c="dimmed">
@@ -61,14 +106,14 @@ export function PageHeader(props: {
         </Breadcrumbs>
       )}
       <Group justify="space-between" align="flex-start" wrap="wrap" gap="sm">
-        <Group gap="sm" wrap="nowrap" style={{ minWidth: 0 }}>
+        <Group gap="sm" wrap="nowrap" miw={0}>
           {props.icon !== undefined && (
             <ThemeIcon size={38} variant="light" radius="md">
               <EntityIcon name={props.icon} size={22} />
             </ThemeIcon>
           )}
-          <Box style={{ minWidth: 0 }}>
-            <Title order={2} style={{ overflowWrap: 'anywhere' }}>
+          <Box miw={0}>
+            <Title order={2} className="wrap-anywhere">
               {props.title}
             </Title>
             {props.description && (
@@ -107,7 +152,7 @@ export function ErrorAlert({ error }: { error: unknown }) {
 
 export function Empty({ title, children }: { title: string; children?: ReactNode }) {
   return (
-    <Stack align="center" gap={6} py="xl" c="dimmed">
+    <Stack align="center" gap="2xs" py="xl" c="dimmed">
       <IconInbox size={ICON_DISPLAY.md} />
       <Text fw={500}>{title}</Text>
       {children && <Text fz="sm">{children}</Text>}
@@ -162,7 +207,7 @@ export function resolveAgainst(value: string, base: string) {
 
 export function Markdown({ children, baseUrl }: { children: string; baseUrl?: string }) {
   return (
-    <Box fz="sm" style={{ lineHeight: 1.55 }} className="markdown">
+    <Box fz="sm" lh="md" className="markdown">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         urlTransform={baseUrl ? (url) => defaultUrlTransform(resolveAgainst(url, baseUrl)) : undefined}

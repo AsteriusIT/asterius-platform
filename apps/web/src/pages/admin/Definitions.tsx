@@ -83,7 +83,7 @@ export function BlueprintsAdmin() {
           label: 'Relations',
           render: (b) =>
             Object.entries(b.relations).map(([k, r]) => (
-              <Badge key={k} mr={4} color="gray">
+              <Badge key={k} mr="3xs" color="gray">
                 {k} → {r.target}
               </Badge>
             )),
@@ -176,7 +176,7 @@ export function IntegrationsAdmin() {
           label: 'Last sync',
           render: (i) =>
             i.lastSync ? (
-              <Group gap={6} wrap="nowrap">
+              <Group gap="2xs" wrap="nowrap">
                 <Badge
                   color={
                     i.lastSync.status === 'success' ? 'green' : i.lastSync.status === 'running' ? 'blue' : i.lastSync.status === 'partial' ? 'yellow' : 'red'
@@ -257,8 +257,8 @@ function IntegrationDrawer({ integration, onClose }: { integration: Integration 
         <>
           {integration.webhookUrl && (
             <Section title="Webhook URL">
-              <Group gap="xs" wrap="nowrap" mb={4}>
-                <Code style={{ overflowWrap: 'anywhere' }}>{integration.webhookUrl}</Code>
+              <Group gap="xs" wrap="nowrap" mb="3xs">
+                <Code className="wrap-anywhere">{integration.webhookUrl}</Code>
                 <CopyButton value={integration.webhookUrl}>
                   {({ copy }) => (
                     <ActionIcon variant="subtle" onClick={copy} aria-label="Copy">
@@ -292,9 +292,7 @@ function IntegrationDrawer({ integration, onClose }: { integration: Integration 
           </Section>
           {syncs.data?.[0]?.logs.length ? (
             <Section title="Last run log">
-              <pre className="code-block" style={{ fontSize: 12 }}>
-                {syncs.data[0].logs.join('\n')}
-              </pre>
+              <pre className="code-block">{syncs.data[0].logs.join('\n')}</pre>
             </Section>
           ) : null}
         </>
@@ -514,7 +512,7 @@ export function WebhooksAdmin() {
           label: 'Events',
           render: (w) =>
             w.events.map((e) => (
-              <Badge key={e} mr={4} color="gray">
+              <Badge key={e} mr="3xs" color="gray">
                 {e}
               </Badge>
             )),

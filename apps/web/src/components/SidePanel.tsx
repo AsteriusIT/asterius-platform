@@ -40,7 +40,7 @@ export function SidePanel(props: {
       {overlay && <Drawer.Overlay backgroundOpacity={0.25} blur={2} />}
       <Drawer.Content>
         <Drawer.Header className="side-panel-header">
-          <Box style={{ flex: 1, minWidth: 0 }}>
+          <Box flex={1} miw={0}>
             <Drawer.Title className="side-panel-title">{props.title}</Drawer.Title>
             {props.subtitle && (
               <Text className="side-panel-subtitle" fz="xs" c="dimmed" truncate>

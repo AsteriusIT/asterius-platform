@@ -1,7 +1,7 @@
 import { Link, Navigate, Outlet, useLocation } from 'react-router';
-import { Tabs, Text } from '@mantine/core';
+import { Box, Tabs } from '@mantine/core';
 import { useAuth, useCan } from '../lib/auth';
-import { Loading } from './ui';
+import { Kicker, Loading } from './ui';
 import { categoryForPath, mayOpenAdminPath, tabIsActive, type AdminCategory } from './adminSections';
 
 /** Layout for /admin/*: route-driven tabs (one per page of the category the user may open) above the page itself. */
@@ -14,10 +14,8 @@ export function SectionTabs() {
   return (
     <>
       {category && tabs.length > 0 && (
-        <nav aria-label={category.title} style={{ marginBottom: 'var(--mantine-spacing-md)' }}>
-          <Text fz="xs" fw={600} tt="uppercase" c="dimmed" mb={6}>
-            {category.title}
-          </Text>
+        <Box component="nav" aria-label={category.title} mb="md">
+          <Kicker mb="2xs">{category.title}</Kicker>
           <Tabs value={current?.path ?? null} keepMounted={false}>
             <Tabs.List>
               {tabs.map((t) => (
@@ -33,7 +31,7 @@ export function SectionTabs() {
               ))}
             </Tabs.List>
           </Tabs>
-        </nav>
+        </Box>
       )}
       <Outlet />
     </>

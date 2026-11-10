@@ -56,7 +56,7 @@ export function Login() {
     <Center mih="100vh" p="md" bg="var(--mantine-color-body)">
       <Paper w="100%" maw={380} p="xl" shadow="none" bg="transparent">
         <Stack>
-          <Stack gap={4} align="center">
+          <Stack gap="3xs" align="center">
             <BrandLogo size={48} />
             <Title order={3} ta="center">
               {brand.name}

@@ -73,14 +73,15 @@ export function NotificationCenter() {
             d.items.length === 0 ? (
               <Empty title="No notification yet">Approvals to decide and run outcomes appear here.</Empty>
             ) : (
-              <Stack gap={2} role="list" aria-label="Notifications">
+              <Stack gap="4xs" role="list" aria-label="Notifications">
                 {d.items.map((n) => (
                   <UnstyledButton
                     key={n.id}
                     role="listitem"
                     onClick={() => openItem(n)}
                     p="xs"
-                    style={{ borderRadius: 'var(--mantine-radius-sm)', background: n.read ? undefined : 'var(--mantine-primary-color-light)' }}
+                    bdrs="sm"
+                    bg={n.read ? undefined : 'var(--mantine-primary-color-light)'}
                   >
                     <Text fz="sm" fw={n.read ? 400 : 600}>
                       {n.title}

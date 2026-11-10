@@ -23,7 +23,7 @@ import { EntityEditor } from '../components/EntityEditor';
 import { AskCatalog } from '../components/AiAssistant';
 import { ActionRunModal } from '../components/ActionRunModal';
 import { EntityActionsMenu } from '../components/EntityActionsMenu';
-import { Empty, LevelBadge, Markdown, PageHeader, QueryView, TimeAgo } from '../components/ui';
+import { Empty, LevelBadge, Markdown, PageHeader, QueryView, StatValue, TimeAgo } from '../components/ui';
 import { EntityIcon } from '../components/icons';
 
 const PAGE = 25;
@@ -271,7 +271,8 @@ function CatalogTable({ bp }: { bp: Blueprint }) {
           value={search}
           onChange={(e) => setSearch(e.currentTarget.value)}
           aria-label={`Search ${bp.title.toLowerCase()}`}
-          style={{ flex: 1, maxWidth: 360 }}
+          flex={1}
+          maw={360}
         />
         {myTeams.length > 0 && (
           <Button
@@ -445,11 +446,11 @@ export function CatalogHome() {
                 <UnstyledButton key={b.identifier} component={Link} to={`/catalog/${b.identifier}`} aria-label={b.title}>
                   <Card className="hover-card" h="100%">
                     <Group justify="space-between" align="flex-start" wrap="nowrap">
-                      <Group gap="sm" wrap="nowrap" style={{ minWidth: 0 }}>
+                      <Group gap="sm" wrap="nowrap" miw={0}>
                         <ThemeIcon variant="light" size={40}>
                           <EntityIcon name={b.icon} size={22} />
                         </ThemeIcon>
-                        <div style={{ minWidth: 0 }}>
+                        <div className="min-w-0">
                           <Text fw={600} truncate>
                             {b.title}
                           </Text>
@@ -458,9 +459,9 @@ export function CatalogHome() {
                           </Text>
                         </div>
                       </Group>
-                      <Text fz={24} fw={700} lh={1} style={{ flexShrink: 0 }}>
+                      <StatValue lh={1} flex="none">
                         {b.entityCount ?? 0}
-                      </Text>
+                      </StatValue>
                     </Group>
                     {b.description && (
                       <Text fz="sm" c="dimmed" mt="sm" lineClamp={2}>

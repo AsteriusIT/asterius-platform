@@ -150,7 +150,7 @@ export function Welcome() {
   return (
     <Stack align="center" justify="center" mih="100vh" p="md">
       <Stack maw={520} w="100%" gap="lg">
-        <Stack gap={6} align="center">
+        <Stack gap="2xs" align="center">
           <BrandLogo size={48} />
           <Title order={3}>{canCreate ? 'Create a new organization' : `Welcome, ${user?.name.split(' ')[0]}`}</Title>
           <Text c="dimmed" ta="center" fz="sm">
@@ -296,7 +296,7 @@ function GeneralTab({ org }: { org: Organization }) {
           Declared in the platform configuration: name and domains are changed there.
         </Alert>
       )}
-      <fieldset disabled={org.managed} style={{ border: 0, padding: 0, margin: 0 }}>
+      <fieldset disabled={org.managed} className="bare-fieldset">
         <Stack>
           <TextInput label="Name" value={name} onChange={(e) => setName(e.currentTarget.value)} />
           <TextInput label="Identifier" value={org.slug} disabled styles={MONO_INPUT} description="Fixed: it appears in webhook URLs and API calls" />
@@ -315,7 +315,7 @@ function GeneralTab({ org }: { org: Organization }) {
         </Stack>
       </fieldset>
       {org.domainStatus.length > 0 && <DomainVerification org={org} />}
-      <Card withBorder shadow="none" style={{ borderColor: 'var(--mantine-color-red-3)' }}>
+      <Card withBorder shadow="none" bd="1px solid var(--mantine-color-red-3)">
         <Group justify="space-between" wrap="nowrap">
           <div>
             <Text fw={600}>Delete this organization</Text>
@@ -355,7 +355,7 @@ function DomainVerification({ org }: { org: Organization }) {
         </Text>
         {org.domainStatus.map((d) => (
           <Group key={d.domain} justify="space-between" wrap="nowrap" align="flex-start">
-            <Stack gap={4} style={{ minWidth: 0 }}>
+            <Stack gap="3xs" miw={0}>
               <Group gap="xs">
                 <Text fz="sm" fw={500}>
                   {d.domain}
@@ -365,8 +365,8 @@ function DomainVerification({ org }: { org: Organization }) {
                 </Badge>
               </Group>
               {!d.verified && (
-                <Group gap={6} wrap="nowrap">
-                  <Code fz="xs" style={{ overflowWrap: 'anywhere' }}>
+                <Group gap="2xs" wrap="nowrap">
+                  <Code fz="xs" className="wrap-anywhere">
                     {d.record} TXT &quot;{d.value}&quot;
                   </Code>
                   <CopyButton value={d.value}>
@@ -824,7 +824,7 @@ function ConfigTab({ org }: { org: Organization }) {
       </Group>
       {st?.error && (
         <Alert color="red" variant="light" title="Last sync failed">
-          <Text fz="sm" style={{ whiteSpace: 'pre-wrap' }}>
+          <Text fz="sm" className="pre-wrap">
             {st.error}
           </Text>
         </Alert>
@@ -892,7 +892,7 @@ function McpTab({ org }: { org: Organization }) {
             2. Add the server
           </Text>
           <Group gap="xs" wrap="nowrap">
-            <Code block style={{ flex: 1, overflowX: 'auto' }}>
+            <Code block flex={1} className="scroll-x">
               {command}
             </Code>
             {copy(command)}
@@ -901,7 +901,7 @@ function McpTab({ org }: { org: Organization }) {
             Or in an MCP client configuration that supports HTTP servers (Cursor, VS Code):
           </Text>
           <Group gap="xs" wrap="nowrap" align="flex-start">
-            <div style={{ flex: 1, minWidth: 0 }}>
+            <div className="flex-fill">
               <CodeBlock code={json} />
             </div>
             {copy(json)}
@@ -911,7 +911,7 @@ function McpTab({ org }: { org: Organization }) {
             Node 18+), then restart Claude Desktop:
           </Text>
           <Group gap="xs" wrap="nowrap" align="flex-start">
-            <div style={{ flex: 1, minWidth: 0 }}>
+            <div className="flex-fill">
               <CodeBlock code={desktopJson} />
             </div>
             {copy(desktopJson)}

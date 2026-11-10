@@ -114,7 +114,7 @@ export function IntegrationForm({ doc, patch, isNew }: { doc: Doc; patch: (p: Do
       </Group>
 
       <Input.Wrapper label="Connection">
-        <Stack gap="sm" mt={4}>
+        <Stack gap="sm" mt="3xs">
           {source?.fields?.length ? (
             <SimpleGrid cols={{ base: 1, sm: 2 }}>
               {source.fields.map((f) => (
@@ -160,7 +160,7 @@ export function IntegrationForm({ doc, patch, isNew }: { doc: Doc; patch: (p: Do
       </Input.Wrapper>
 
       <Input.Wrapper label="Mappings" description="JSONata expressions evaluated against each item of the source">
-        <Stack gap="md" mt={4}>
+        <Stack gap="md" mt="3xs">
           {sample.length > 1 && (
             <Select
               size="xs"

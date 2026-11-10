@@ -58,6 +58,8 @@ import { ApprovalTimersEditor, RemindersEditor, TiersEditor } from './ApprovalSe
  * timeout. Also the helpers to create a step and to list a workflow's problems before saving.
  */
 
+/** Height (px) of an input label and its gap: pushes a bare switch down to the inputs of the same row. */
+const LABEL_OFFSET = 28;
 const SAMPLE_CONTEXT = { inputs: {}, entity: null, steps: {} };
 const STEP_ID = /^[A-Za-z_][A-Za-z0-9_]{0,40}$/;
 /** Offline fallback; the real list (with prices) comes from /api/meta. */
@@ -277,7 +279,7 @@ function Variables({
     ];
   }, [steps, index, inputFields, params, onEntity, bp.data]);
   return (
-    <Stack gap={6} p="sm" style={{ background: 'var(--surface)', borderRadius: 12 }}>
+    <Stack gap="2xs" p="sm" bg="var(--surface)" bdrs="md">
       <Text fz="xs" c="dimmed">
         Templates: <code>{'{{ expression }}'}</code> (JSONata) in any text below. Click a variable to copy it.
       </Text>
@@ -387,7 +389,7 @@ function ApprovalEditor({ step, onEntity, onChange }: { step: ApprovalStep; onEn
           />
         )}
         <Switch
-          mb={8}
+          mb="xs"
           label="The requester may approve"
           checked={!!step.allowSelfApproval}
           onChange={(e) => onChange({ allowSelfApproval: e.currentTarget.checked || undefined })}
@@ -548,7 +550,7 @@ function WorkflowCallEditor({ step, onChange }: { step: WorkflowCallStep; onChan
             onChange={(n) => onChange({ forEach: { ...step.forEach!, maxConcurrency: Number(n) || 3 } })}
           />
           <Switch
-            mt={28}
+            mt={LABEL_OFFSET}
             label="Stop at the first failure"
             checked={!!step.forEach.failFast}
             onChange={(e) => onChange({ forEach: { ...step.forEach!, failFast: e.currentTarget.checked } })}
@@ -616,7 +618,7 @@ function LoopEditor({ value, parallel, onChange }: { value?: InlineForEach; para
             <div />
           )}
           <Switch
-            mt={28}
+            mt={LABEL_OFFSET}
             label="Stop at the first failure"
             checked={!!value.failFast}
             onChange={(e) => onChange({ ...value, failFast: e.currentTarget.checked })}
@@ -871,9 +873,9 @@ function McpServersEditor({ value, onChange }: { value: AgentMcpServer[]; onChan
       label="MCP servers"
       description="Give the model the tools of remote Model Context Protocol servers (HTTPS). The token is a secret reference."
     >
-      <Stack gap="xs" mt={4}>
+      <Stack gap="xs" mt="3xs">
         {value.map((s, i) => (
-          <SimpleGrid key={i} cols={{ base: 1, sm: 4 }} style={{ alignItems: 'flex-end' }}>
+          <SimpleGrid key={i} cols={{ base: 1, sm: 4 }} className="items-end">
             <TextInput
               placeholder="name"
               aria-label="MCP server name"
@@ -900,7 +902,7 @@ function McpServersEditor({ value, onChange }: { value: AgentMcpServer[]; onChan
                 aria-label="Allowed MCP tools"
                 value={s.allowedTools ?? []}
                 onChange={(v) => set(i, { allowedTools: v.length ? v : undefined })}
-                style={{ flex: 1 }}
+                flex={1}
               />
               <ActionIcon variant="subtle" color="red" aria-label="Remove MCP server" onClick={() => onChange(value.filter((_, j) => j !== i))}>
                 <IconTrash size={16} />
@@ -927,7 +929,7 @@ function TransformEditor({ step, onChange }: { step: TransformStep; onChange: (p
         keyPlaceholder="key"
         valuePlaceholder="JSONata expression"
       />
-      <Stack gap={2} mt="xs">
+      <Stack gap="4xs" mt="xs">
         {Object.entries(step.output).map(([k, expr]) => (
           <Group key={k} gap="xs" align="flex-start" wrap="nowrap">
             <Code fz="xs">{k}</Code>

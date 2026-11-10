@@ -101,7 +101,7 @@ export function WorkflowTests({
 function TestResultCard({ r, onRerun }: { r: WorkflowTestResult; onRerun: () => void }) {
   return (
     <Alert color={r.passed ? 'green' : 'red'} variant="light">
-      <Group justify="space-between" mb={4}>
+      <Group justify="space-between" mb="3xs">
         <Group gap="xs">
           <Badge color={r.passed ? 'green' : 'red'}>{r.passed ? 'PASS' : 'FAIL'}</Badge>
           <Text fw={600} fz="sm">
@@ -121,7 +121,7 @@ function TestResultCard({ r, onRerun }: { r: WorkflowTestResult; onRerun: () => 
         </Text>
       ))}
       {r.diffs.length > 0 && (
-        <Table fz="xs" withRowBorders={false} verticalSpacing={2}>
+        <Table fz="xs" withRowBorders={false} verticalSpacing="4xs">
           <Table.Thead>
             <Table.Tr>
               <Table.Th>Path</Table.Th>
@@ -135,14 +135,14 @@ function TestResultCard({ r, onRerun }: { r: WorkflowTestResult; onRerun: () => 
                 <Table.Td>
                   <Code>{d.path}</Code>
                 </Table.Td>
-                <Table.Td style={{ overflowWrap: 'anywhere' }}>{JSON.stringify(d.expected)}</Table.Td>
-                <Table.Td style={{ overflowWrap: 'anywhere' }}>{JSON.stringify(d.actual)}</Table.Td>
+                <Table.Td className="wrap-anywhere">{JSON.stringify(d.expected)}</Table.Td>
+                <Table.Td className="wrap-anywhere">{JSON.stringify(d.actual)}</Table.Td>
               </Table.Tr>
             ))}
           </Table.Tbody>
         </Table>
       )}
-      <Text fz="xs" c="dimmed" mt={4}>
+      <Text fz="xs" c="dimmed" mt="3xs">
         {r.steps.map((s) => `${s.id}: ${s.status}${s.error ? ` (${s.error})` : ''}`).join(' · ')}
       </Text>
     </Alert>

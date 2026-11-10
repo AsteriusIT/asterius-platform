@@ -1,4 +1,4 @@
-import { createTheme, ScrollArea, type CSSVariablesResolver, type MantineColorsTuple } from '@mantine/core';
+import { createTheme, rem, ScrollArea, type CSSVariablesResolver, type MantineColorsTuple } from '@mantine/core';
 
 /**
  * One theme for the whole portal, LibreChat-like: Inter, white canvas on a soft gray sidebar, neutral grays for
@@ -12,6 +12,11 @@ import { createTheme, ScrollArea, type CSSVariablesResolver, type MantineColorsT
  *   overlay  --surface-overlay      menus, popovers, modals, drawers, notifications
  * In light the steps are told apart by shadows. Black shadows do not show on a dark canvas, so in dark each step
  * is a lighter gray and the `--mantine-shadow-*` values carry a 1px light ring.
+ *
+ * Scales (the table is in docs/EXTENDING.md, "UI conventions"): call sites name a step, never a pixel value.
+ *   type     fontSizes 3xs…xl + `dense`; the big figures are `fz="h1"` / `fz="h2"` (components/ui.tsx: StatValue)
+ *   spacing  4xs…xl, used by every `gap`, `p*`, `m*` prop
+ *   radius   xs…xl
  */
 
 // Accent #10a37f at index 6.
@@ -29,6 +34,18 @@ export const theme = createTheme({
   fontFamily: "'Inter Variable', Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif",
   fontFamilyMonospace: "ui-monospace, 'SF Mono', Menlo, Consolas, monospace",
   headings: { fontWeight: '600' },
+  // Mantine's xs…xl (12 / 14 / 16 / 18 / 20) plus the steps the dense parts of the UI need.
+  fontSizes: {
+    '3xs': rem(10), // kickers of graph nodes, initials in a 20px avatar
+    '2xs': rem(11), // captions: third line of a graph node, group titles in a picker
+    dense: rem(12.5), // between xs and sm: monospace blocks (code, logs) and table headers
+  },
+  // Mantine's xs…xl (10 / 12 / 16 / 20 / 32) plus three tight steps for what sits inside a component.
+  spacing: {
+    '4xs': rem(2), // a title and its subtitle
+    '3xs': rem(4), // an icon and its label, badges of a row
+    '2xs': rem(6), // controls of a toolbar, a kicker and its content
+  },
   defaultRadius: 'md',
   radius: { xs: '6px', sm: '8px', md: '12px', lg: '16px', xl: '20px' },
   cursorType: 'pointer',

@@ -113,7 +113,7 @@ export function TiersEditor({ tiers, onChange, onEntity }: { tiers: ApprovalTier
               <Text fw={600} fz="sm">
                 {i + 1}.
               </Text>
-              <TextInput label="Tier" value={t.name} onChange={(e) => set(i, { name: e.currentTarget.value })} style={{ flex: 1 }} />
+              <TextInput label="Tier" value={t.name} onChange={(e) => set(i, { name: e.currentTarget.value })} flex={1} />
               <NumberInput
                 label="Approvals needed"
                 min={1}
@@ -122,7 +122,7 @@ export function TiersEditor({ tiers, onChange, onEntity }: { tiers: ApprovalTier
                 value={t.minApprovals ?? 1}
                 onChange={(n) => set(i, { minApprovals: Number(n) || 1 })}
               />
-              <ActionIcon variant="subtle" color="red" mb={4} aria-label="Remove tier" onClick={() => onChange(tiers.filter((_, j) => j !== i))}>
+              <ActionIcon variant="subtle" color="red" mb="3xs" aria-label="Remove tier" onClick={() => onChange(tiers.filter((_, j) => j !== i))}>
                 <IconTrash size={16} />
               </ActionIcon>
             </Group>

@@ -124,7 +124,7 @@ export function CommandPalette({
           aria-controls="palette-list"
           aria-activedescendant={items[index] ? `palette-${items[index].id}` : undefined}
         />
-        <Stack gap={2} id="palette-list" role="listbox" aria-label="Results" mah={360} style={{ overflowY: 'auto' }}>
+        <Stack gap="4xs" id="palette-list" role="listbox" aria-label="Results" mah={360} className="scroll-y">
           {items.length === 0 && (
             <Text c="dimmed" fz="sm" p="sm">
               No match
@@ -139,7 +139,8 @@ export function CommandPalette({
               onClick={() => go(c)}
               onMouseEnter={() => setIndex(i)}
               p="xs"
-              style={{ borderRadius: 'var(--mantine-radius-sm)', background: i === index ? 'var(--mantine-primary-color-light)' : undefined }}
+              bdrs="sm"
+              bg={i === index ? 'var(--mantine-primary-color-light)' : undefined}
             >
               <Group justify="space-between" wrap="nowrap">
                 <Text fz="sm" truncate>

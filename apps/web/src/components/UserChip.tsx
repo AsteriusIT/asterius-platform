@@ -51,10 +51,10 @@ export function UserChip({ user, size = 'sm' }: { user: UserRef | string | null 
           aria-label={`User ${name}`}
           display="inline-flex"
           maw="100%"
-          py={2}
-          pl={2}
-          pr={8}
-          style={{ alignItems: 'center', gap: 6, border: '1px solid var(--mantine-color-default-border)', borderRadius: 999, verticalAlign: 'middle' }}
+          py="4xs"
+          pl="4xs"
+          pr="xs"
+          className="user-chip"
           onFocus={() => setOpened(true)}
         >
           <Avatar size={avatarSize} radius="xl" color="initials" name={name} fz={avatarSize * 0.45}>
@@ -70,13 +70,13 @@ export function UserChip({ user, size = 'sm' }: { user: UserRef | string | null 
           <Avatar size={44} radius="xl" color="initials" name={name}>
             {initials(name)}
           </Avatar>
-          <Stack gap={2} miw={0}>
+          <Stack gap="4xs" miw={0}>
             <Text fw={600} truncate>
               {name}
             </Text>
             {email ? (
-              <Group gap={4} wrap="nowrap">
-                <IconMail size={ICON.sm} style={{ flexShrink: 0, opacity: 0.6 }} />
+              <Group gap="3xs" wrap="nowrap">
+                <IconMail size={ICON.sm} opacity={0.6} />
                 <Anchor href={`mailto:${email}`} fz="sm" truncate>
                   {email}
                 </Anchor>

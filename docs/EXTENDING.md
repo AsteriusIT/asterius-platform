@@ -660,3 +660,28 @@ The components:
 - Modals: the `title` prop is the only title (the theme styles it; no heading repeated in the body), buttons go at the bottom right. The large builders use `BuilderModal` (`components/builder/shell.tsx`), which keeps its footer visible.
 
 The CSS these components need is one delimited block at the end of `apps/web/src/styles.css`.
+
+### Design tokens
+
+The UI names a step of a scale, never a pixel value. The scales are defined once in `apps/web/src/theme.ts` (Mantine theme) and
+read in `styles.css` as `var(--mantine-…)`.
+
+| Scale | Tokens | Use |
+| --- | --- | --- |
+| Type (`fz`) | `3xs` 10 · `2xs` 11 · `xs` 12 · `dense` 12.5 · `sm` 14 · `md` 16 · `lg` 18 · `xl` 20 | `sm` is the text of the UI, `xs` secondary text, `md` panel titles. `2xs` / `3xs` only inside dense blocks (graph nodes, pickers), `dense` for monospace blocks and table headers. Figures: `fz="h2"` (26) and `fz="h1"` (34) through `StatValue`. |
+| Line height (`lh`) | `xs` 1.4 · `sm` 1.45 · `md` 1.55 · `lg` 1.6 · `xl` 1.65 | `md` for prose, `lg` for code and logs. A figure next to an icon takes `lh={1}`. |
+| Spacing (`gap`, `p*`, `m*`) | `4xs` 2 · `3xs` 4 · `2xs` 6 · `xs` 10 · `sm` 12 · `md` 16 · `lg` 20 · `xl` 32 | `4xs`–`2xs` inside a component (title and subtitle, icon and label, toolbar controls); `xs`–`md` between the parts of a card or a form; `lg`–`xl` between the blocks of a page. |
+| Radius (`radius`, `bdrs`) | `xs` 6 · `sm` 8 · `md` 12 · `lg` 16 · `xl` 20 | `xs` inline code, `sm` list rows and small boxes, `md` controls and tinted blocks, `lg` papers and menus, `xl` cards, modals, badges and pills. |
+| Icons | `ICON.sm` 14 · `ICON.md` 16 · `ICON.lg` 18 · `ICON_DISPLAY.md` 32 · `ICON_DISPLAY.lg` 40 | `components/iconScale.ts`. Never pass `stroke`. |
+| Surfaces | `--surface` · `--mantine-color-body` · `--surface-raised` · `--surface-overlay` · `--hairline` | Shell and tinted blocks, the page, cards and tables, what floats, separators. Text: `--mantine-color-text`, `--mantine-color-dimmed`, `--text-3`. |
+
+- Text patterns are components of `components/ui.tsx`: `Kicker` (uppercase label above a group), `Caption` (dense secondary text),
+  `StatValue` (the figure of a stat card), `SurfaceBox` (flat tinted block for a hint or generated text).
+- Layout goes through Mantine style props (`flex={1}`, `miw={0}`, `maw`, `bdrs="md"`, `bg`, `bd`, `lh`, `td`…). What props cannot
+  express is a class of the `utilities` block at the end of `styles.css` (`min-w-0`, `flex-fill`, `wrap-anywhere`, `pre-wrap`,
+  `align-top`, `clip`, `scroll-x`, `scroll-y`, `clickable`, `hairline-top`, `items-end`, `span-all`, `bare-fieldset`).
+- Inline `style={{…}}` is only for values computed from data or state (a position, a colour picked from a status).
+- A value that is geometry and not rhythm (the width of a panel, the slot of an icon, the grid of the graph) is a named constant
+  with a comment, next to its use.
+- `npm run lint` enforces it in `apps/web/src`: no numeric `fz`, no numeric spacing prop, no `stroke` on an icon, no inline style
+  made of constants only.

@@ -24,4 +24,32 @@ export default tseslint.config(
     plugins: { 'react-hooks': reactHooks },
     rules: { 'react-hooks/rules-of-hooks': 'error', 'react-hooks/exhaustive-deps': 'warn' },
   },
+  // Design tokens (docs/EXTENDING.md, "UI conventions"): the UI names a step of a scale, never a pixel value.
+  {
+    files: ['apps/web/src/**/*.tsx'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: "JSXAttribute[name.name='fz'] > JSXExpressionContainer > Literal",
+          message: 'Font sizes come from the type scale: fz="xs" | "sm" | … (theme.ts), or a text component of components/ui.tsx.',
+        },
+        {
+          selector:
+            'JSXAttribute[name.name=/^(gap|p|px|py|pt|pb|pl|pr|m|mx|my|mt|mb|ml|mr|spacing|verticalSpacing)$/] > JSXExpressionContainer > Literal[value>0]',
+          message: 'Spacing comes from the scale: "4xs" … "xl" (theme.ts). A geometric value is a named constant with a comment.',
+        },
+        {
+          selector: "JSXOpeningElement[name.name=/^Icon[A-Z]/] > JSXAttribute[name.name='stroke']",
+          message: 'The stroke width of icons is set once in styles.css (.tabler-icon); pass a size from components/iconScale.ts only.',
+        },
+        {
+          selector:
+            "JSXAttribute[name.name='style'] > JSXExpressionContainer > ObjectExpression:not(:has(SpreadElement)):not(:has(Property[value.type!='Literal']))",
+          message:
+            'Inline styles are for values computed from data or state. Use a Mantine style prop (flex, miw, bdrs, bg…), a shared component or a utility class of styles.css.',
+        },
+      ],
+    },
+  },
 );
