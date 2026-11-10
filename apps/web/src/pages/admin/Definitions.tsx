@@ -410,9 +410,10 @@ export function FragmentsAdmin() {
         { key: 'u', label: 'Updated', render: (f) => <TimeAgo at={f.updatedAt} /> },
       ]}
       templates={[{ label: 'Fragment', value: blankFragment }]}
-      toEditable={(f) => strip(f, ['managed', 'version', 'updatedAt'])}
+      // Opened fresh with its version: saves are pinned to it (a colleague's newer save shows a conflict dialog).
+      toEditable={async (f) => strip(await api.fragment(f.identifier), ['managed', 'updatedAt'])}
       editor={(p) => <FragmentBuilder {...p} />}
-      save={api.saveFragment}
+      save={(id, body, o) => api.saveFragmentAt(id, body, o?.ifMatch)}
       remove={(f) => api.deleteFragment(f.identifier)}
       removeWarning={() => 'Workflows that include it must stop using it first. Past runs keep their copy of its steps.'}
     />

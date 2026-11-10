@@ -1,13 +1,14 @@
 import type { Blueprint, Entity, EntityPage, EntityQueryBody, RelatedEntities, RelationValue, Tombstone } from '@asterius/shared';
 import { config } from '../config.js';
 import { all, dialect, json, later, now, one, run, tx, type Driver, type SqlValue } from '../db.js';
-import { badRequest, conflict, notFound, preconditionFailed } from '../lib/errors.js';
+import { badRequest, conflict, notFound } from '../lib/errors.js';
+import { staleVersion } from '../lib/conflict.js';
 import { LRU } from '../lib/lru.js';
 import { onConfigChange, syncCaches } from '../lib/config-version.js';
 import { decodeCursor, encodeCursor } from '../lib/cursor.js';
 import { notifyListeners, prepareEvents, type DomainEvent } from '../events.js';
 import { entityInput, type EntityInput } from '../schemas.js';
-import { recordVersion, snapshotOf } from './history.js';
+import { lastChange, recordVersion, snapshotOf } from './history.js';
 import { refreshAfterWrite, withCalculated } from './computed.js';
 import { evaluateEntity, removeEntityResults } from './scorecards.js';
 import { getBlueprintCached } from './blueprints.js';
@@ -292,6 +293,15 @@ const toWritten = (p: Prepared, blueprint: string, source: string, t: string): E
   updatedAt: t,
 });
 
+/** The 412 of a stale `ifMatch`, saying who made the stored version and when. */
+async function staleEntity(blueprint: string, identifier: string, current: Entity | undefined, expected: number) {
+  return staleVersion(
+    `Entity ${blueprint}/${identifier} is at version ${current?.version ?? 'none'}, not ${expected}; reload and retry`,
+    current?.version ?? null,
+    await lastChange(blueprint, identifier),
+  );
+}
+
 /**
  * Create or replace an entity. Properties are validated against the blueprint (defaults applied), relations
  * against its relation definitions. Targets may not exist yet (ingestion order); they show as missing in the UI.
@@ -309,8 +319,7 @@ export async function upsertEntity(blueprint: string, raw: unknown, opts: Upsert
     await opts.authorize?.(input, existing);
     if (existing && opts.createOnly) throw conflict(`Entity ${blueprint}/${input.identifier} already exists`);
     if (existing && opts.skipExisting) return { entity: existing, created: false, changed: false };
-    if (opts.ifMatch !== undefined && existing?.version !== opts.ifMatch)
-      throw preconditionFailed(`Entity ${blueprint}/${input.identifier} is at version ${existing?.version ?? 'none'}, not ${opts.ifMatch}; reload and retry`);
+    if (opts.ifMatch !== undefined && existing?.version !== opts.ifMatch) throw await staleEntity(blueprint, input.identifier, existing, opts.ifMatch);
 
     const p = await prepare(bp, input, existing, opts);
     if (!p.changed) return { entity: existing!, created: false, changed: false };
@@ -355,7 +364,7 @@ export async function upsertEntity(blueprint: string, raw: unknown, opts: Upsert
     });
     if (!written) {
       // Lost a race. A pinned version can never succeed; a create that must be new is a conflict; otherwise re-read and retry.
-      if (opts.ifMatch !== undefined) throw preconditionFailed(`Entity ${blueprint}/${input.identifier} was modified concurrently; reload and retry`);
+      if (opts.ifMatch !== undefined) throw await staleEntity(blueprint, input.identifier, await findEntity(blueprint, input.identifier), opts.ifMatch);
       if (!existing && opts.createOnly) throw conflict(`Entity ${blueprint}/${input.identifier} already exists`);
       continue;
     }

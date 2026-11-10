@@ -205,7 +205,7 @@ describe('flow editor page', () => {
 
   it('builds trigger and steps, keeps the JSON in sync and saves the document', async () => {
     vi.spyOn(api, 'meta').mockResolvedValue(webhookMeta as never);
-    const save = vi.spyOn(api, 'saveAction').mockImplementation(async (_id, body) => body as never);
+    const save = vi.spyOn(api, 'saveActionAt').mockImplementation(async (_id, body) => body as never);
     render(renderPage({ identifier: 'bucket', title: 'Bucket', description: '', icon: null, enabled: true, trigger: null, steps: [] }));
     expect(await screen.findByText(/Draft: add a trigger and a step/)).toBeTruthy();
 
@@ -250,7 +250,7 @@ describe('flow editor page', () => {
 
   it('lists problems instead of saving a broken workflow', async () => {
     vi.spyOn(api, 'meta').mockResolvedValue(webhookMeta as never);
-    const save = vi.spyOn(api, 'saveAction');
+    const save = vi.spyOn(api, 'saveActionAt');
     render(renderPage({ identifier: 'x', title: '', invoker: { type: 'webhook' } }));
     fireEvent.click(await screen.findByLabelText('Integration: run'));
     expect(await screen.findByLabelText(/^URL/)).toBeTruthy(); // invoker form rendered from the plugin's fields

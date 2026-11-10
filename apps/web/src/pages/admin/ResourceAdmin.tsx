@@ -35,7 +35,8 @@ export function ResourceAdmin<T extends Resource>(props: {
   picker?: 'menu' | 'modal';
   /** Editable document of an existing resource (strip computed fields). */
   toEditable: (item: T) => Record<string, unknown> | Promise<Record<string, unknown>>;
-  save: (id: string, body: Record<string, unknown>) => Promise<unknown>;
+  /** `opts.ifMatch`: the version the editor loaded (versioned resources, see FormBuilder's `versioned`). */
+  save: (id: string, body: Record<string, unknown>, opts?: { ifMatch?: number }) => Promise<unknown>;
   remove: (item: T) => Promise<unknown>;
   removeWarning?: (item: T) => ReactNode;
   rowActions?: (item: T) => ReactNode;
@@ -52,8 +53,8 @@ export function ResourceAdmin<T extends Resource>(props: {
   const [picking, setPicking] = useState(false);
   const [editing, setEditing] = useState<{ value: Record<string, unknown>; isNew: boolean; readOnly: boolean } | null>(null);
 
-  const onSave = async (id: string, body: Record<string, unknown>) => {
-    const r = await props.save(id, body);
+  const onSave = async (id: string, body: Record<string, unknown>, opts?: { ifMatch?: number }) => {
+    const r = await props.save(id, body, opts);
     notifications.show({ color: 'green', message: `${id} saved` });
     void qc.invalidateQueries({ queryKey: [props.queryKey] });
     void qc.invalidateQueries({ queryKey: ['blueprints'] });

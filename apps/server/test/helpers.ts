@@ -31,7 +31,7 @@ export function client(app: FastifyInstance, token?: string, org?: string) {
   return {
     get: (url: string, h?: Record<string, string>) => call('GET', url, undefined, h),
     post: (url: string, body?: unknown, h?: Record<string, string>) => call('POST', url, body ?? {}, h),
-    put: (url: string, body: unknown) => call('PUT', url, body),
+    put: (url: string, body: unknown, h?: Record<string, string>) => call('PUT', url, body, h),
     patch: (url: string, body: unknown, h?: Record<string, string>) => call('PATCH', url, body, h),
     del: (url: string) => call('DELETE', url),
   };

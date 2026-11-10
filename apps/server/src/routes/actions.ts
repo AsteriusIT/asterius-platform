@@ -33,6 +33,7 @@ import { deliverEvent, submitInput } from '../actions/waiting.js';
 import { receiveWebhook } from '../actions/triggers.js';
 import { checkRunToken, checkStepToken } from '../secrets.js';
 import { conflict, forbidden, notFound } from '../lib/errors.js';
+import { ifMatchOf } from '../lib/conflict.js';
 import { entityParam, idParam, page } from './util.js';
 import { addArtifact, artifactBodyLimit, contentDisposition, getArtifact, listArtifacts } from '../actions/artifacts.js';
 import { canManageRun } from '../actions/steps.js';
@@ -196,7 +197,10 @@ export async function actionRoutes(app: FastifyInstance) {
     scoped.get('/actions/:id', async (req) => forViewer(await getAction(idParam.parse(req.params).id), req.principal));
     scoped.put('/actions/:id', { preHandler: requireAdmin }, async (req) => {
       const { id } = idParam.parse(req.params);
-      const { action, created } = await upsertAction({ ...(req.body as object), identifier: id }, { actor: actorOf(req.principal) });
+      const { action, created } = await upsertAction(
+        { ...(req.body as object), identifier: id },
+        { actor: actorOf(req.principal), ifMatch: ifMatchOf(req.headers['if-match']) },
+      );
       await audit(actorOf(req.principal), created ? 'action.created' : 'action.updated', id);
       return action;
     });

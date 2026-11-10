@@ -146,7 +146,8 @@ export function BuilderFooter(props: { problems: string[]; readOnly?: boolean; s
 }
 
 /** Save with client-side checks first; server errors land in the same list. */
-export function useSave(onSave: () => Promise<unknown>, onClose: () => void) {
+/** `onError` returning true handles the error itself (e.g. an edit conflict dialog) instead of listing it. */
+export function useSave(onSave: () => Promise<unknown>, onClose: () => void, onError?: (e: unknown) => boolean) {
   const [problems, setProblems] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   return {
@@ -160,7 +161,7 @@ export function useSave(onSave: () => Promise<unknown>, onClose: () => void) {
         await onSave();
         onClose();
       } catch (e) {
-        setProblems([errorText(e)]);
+        if (!onError?.(e)) setProblems([errorText(e)]);
       } finally {
         setSaving(false);
       }
