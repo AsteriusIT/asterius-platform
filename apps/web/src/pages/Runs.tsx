@@ -5,9 +5,7 @@ import {
   Badge,
   Box,
   Button,
-  Card,
   Code,
-  Drawer,
   Group,
   Modal,
   MultiSelect,
@@ -44,6 +42,8 @@ import { DataTable } from '../components/DataTable';
 import { useUrlParams } from '../lib/urlState';
 import { useRunStream } from '../lib/runStream';
 import { LogViewer } from '../components/LogViewer';
+import { Section } from '../components/Section';
+import { SidePanel } from '../components/SidePanel';
 import { duration, Markdown, PageHeader, QueryView, StatusBadge, STATUS_COLORS, STATUS_LABELS, TimeAgo } from '../components/ui';
 import { TRIGGER_ID, WorkflowFlow, type FlowStep, type FlowTrigger } from '../components/WorkflowFlow';
 import { FlowShell } from '../components/FlowShell';
@@ -441,6 +441,7 @@ function RunFlow({ r }: { r: Run }) {
   const live = ACTIVE.includes(r.status);
   const allLogs = r.logs ?? [];
   const jobs = [...new Set(allLogs.map((l) => splitJobLog(l.message).job).filter((j): j is string => !!j))];
+  const shownLogs = allLogs.filter((l) => !job || splitJobLog(l.message).job === job);
   const selected = panel?.kind === 'step' ? panel.id : panel?.kind === 'request' ? TRIGGER_ID : null;
 
   return (
@@ -508,18 +509,39 @@ function RunFlow({ r }: { r: Run }) {
         />
       </FlowShell>
 
-      <Drawer
+      <SidePanel
         opened={!!panel}
         onClose={() => setPanel(null)}
-        position="right"
-        size="lg"
         // No overlay: the graph stays visible (and live) next to the details.
-        withOverlay={false}
-        shadow="xl"
-        title={<Text fw={600}>{panel?.kind === 'request' ? 'Request' : panel?.kind === 'logs' ? 'All logs' : (step?.name ?? '')}</Text>}
+        overlay={false}
+        flush={panel?.kind === 'logs'}
+        title={panel?.kind === 'request' ? 'Request' : panel?.kind === 'logs' ? 'All logs' : (step?.name ?? '')}
+        subtitle={panel?.kind === 'request' ? r.actionTitle : panel?.kind === 'logs' ? `${shownLogs.length} line(s)` : step ? stepSummary(step) : undefined}
+        actions={
+          panel?.kind === 'logs' ? (
+            <>
+              {live && <LiveBadge />}
+              {jobs.length > 1 && (
+                <NativeSelect
+                  size="xs"
+                  aria-label="Filter by job"
+                  value={job ?? ''}
+                  onChange={(e) => setJob(e.currentTarget.value || null)}
+                  data={[{ value: '', label: 'All jobs' }, ...jobs.map((j) => ({ value: j, label: j }))]}
+                />
+              )}
+            </>
+          ) : (
+            step && (
+              <Badge color={STEP_STATUS_COLORS[step.status]} variant={step.status === 'RUNNING' ? 'dot' : 'light'}>
+                {STEP_STATUS_LABELS[step.status]}
+              </Badge>
+            )
+          )
+        }
       >
         {panel?.kind === 'request' && (
-          <Stack>
+          <>
             {r.canApprove && <RequestApproval r={r} onDone={refresh} />}
             {['SUCCESS', 'FAILURE', 'CANCELLED', 'REJECTED'].includes(r.status) && <ExplainRun runId={r.id} failed={r.status === 'FAILURE'} />}
             <Table withRowBorders={false} verticalSpacing={4} highlightOnHover={false} fz="sm">
@@ -545,84 +567,66 @@ function RunFlow({ r }: { r: Run }) {
                 {!!r.costUsd && <Row k="AI cost" v={`$${r.costUsd.toFixed(4)}`} />}
               </Table.Tbody>
             </Table>
-            <Text fw={600} fz="sm">
-              Inputs
-            </Text>
-            {Object.keys(r.inputs).length ? (
-              <Table withRowBorders={false} verticalSpacing={4} highlightOnHover={false} fz="sm">
-                <Table.Tbody>
-                  {Object.entries(r.inputs).map(([k, v]) => (
-                    <Row key={k} k={k} v={<PropertyValue value={v} />} />
-                  ))}
-                </Table.Tbody>
-              </Table>
-            ) : (
-              <Text c="dimmed" fz="sm">
-                No inputs
-              </Text>
-            )}
-            {r.approvals.length > 0 && (
-              <>
-                <Text fw={600} fz="sm">
-                  Request approvals
+            <Section title="Inputs">
+              {Object.keys(r.inputs).length ? (
+                <Table withRowBorders={false} verticalSpacing={4} highlightOnHover={false} fz="sm">
+                  <Table.Tbody>
+                    {Object.entries(r.inputs).map(([k, v]) => (
+                      <Row key={k} k={k} v={<PropertyValue value={v} />} />
+                    ))}
+                  </Table.Tbody>
+                </Table>
+              ) : (
+                <Text c="dimmed" fz="sm">
+                  No inputs
                 </Text>
-                <ApprovalTimeline approvals={r.approvals} />
-              </>
+              )}
+            </Section>
+            {(r.approvals.length > 0 || r.approval) && (
+              <Section title="Request approvals">
+                <Stack gap="sm">
+                  {r.approvals.length > 0 && <ApprovalTimeline approvals={r.approvals} />}
+                  <ApprovalProgressView p={r.approval} />
+                </Stack>
+              </Section>
             )}
-            <ApprovalProgressView p={r.approval} />
-          </Stack>
+          </>
         )}
-        {panel?.kind === 'logs' && (
-          <LogsCard
-            lines={allLogs.filter((l) => !job || splitJobLog(l.message).job === job)}
-            showStep
-            filename={`run-${r.id}.log`}
-            live={live}
-            extra={
-              jobs.length > 1 && (
-                <NativeSelect
-                  size="xs"
-                  aria-label="Filter by job"
-                  value={job ?? ''}
-                  onChange={(e) => setJob(e.currentTarget.value || null)}
-                  data={[{ value: '', label: 'All jobs' }, ...jobs.map((j) => ({ value: j, label: j }))]}
-                />
-              )
-            }
-          />
-        )}
+        {/* The panel is the container: the log fills it, its toolbar right under the panel header. */}
+        {panel?.kind === 'logs' && <LogViewer fill lines={shownLogs} showStep filename={`run-${r.id}.log`} follow={live} />}
         {step && (
-          <Stack>
+          <>
             <StepPanel key={step.id} run={r} step={step} onDone={refresh} />
-            <ArtifactsCard runId={r.id} artifacts={(r.artifacts ?? []).filter((a) => a.stepId === step.id)} />
-            <LogsCard lines={allLogs.filter((l) => l.stepId === step.id)} filename={`run-${r.id}-${step.id}.log`} live={live} />
-          </Stack>
+            <StepArtifacts runId={r.id} artifacts={(r.artifacts ?? []).filter((a) => a.stepId === step.id)} />
+            <Section title="Logs" actions={live && <LiveBadge />}>
+              <LogViewer lines={allLogs.filter((l) => l.stepId === step.id)} filename={`run-${r.id}-${step.id}.log`} follow={live} />
+            </Section>
+          </>
         )}
-      </Drawer>
+      </SidePanel>
     </>
   );
 }
 
-function LogsCard(props: { lines: NonNullable<Run['logs']>; filename: string; live: boolean; showStep?: boolean; extra?: React.ReactNode }) {
-  return (
-    <Card p={0}>
-      <Group justify="space-between" p="sm" style={{ borderBottom: '1px solid var(--hairline)' }}>
-        <Text fw={600}>Logs</Text>
-        <Group gap="xs">
-          {props.live && (
-            <Badge variant="dot" color="blue">
-              live
-            </Badge>
-          )}
-          {props.extra}
-        </Group>
-      </Group>
-      <LogViewer lines={props.lines} showStep={props.showStep} filename={props.filename} follow={props.live} />
-    </Card>
-  );
-}
+const LiveBadge = () => (
+  <Badge variant="dot" color="blue">
+    live
+  </Badge>
+);
 
-/** One step: status, output, approval decision. */
+/** "Waiting for approval · 2m · attempt 1/3": the line under the step name. */
+const stepSummary = (step: RunStep) =>
+  [
+    step.statusLabel,
+    step.startedAt ? duration(step.startedAt, step.endedAt) : 'not started',
+    step.maxAttempts > 1 && `attempt ${Math.max(step.attempt, 1)}/${step.maxAttempts}`,
+    !!step.costUsd && `AI cost $${step.costUsd.toFixed(4)}`,
+    step.continueOnError && 'may fail without failing the workflow',
+  ]
+    .filter(Boolean)
+    .join(' · ');
+
+/** One step, bare (the side panel gives its name and status): kind, actions, message, forms, approvals, output. */
 function StepPanel({ run, step, onDone }: { run: Run; step: RunStep; onDone: (r: Run) => void }) {
   const [comment, setComment] = useState('');
   const form = step.form ?? { properties: {} };
@@ -656,31 +660,18 @@ function StepPanel({ run, step, onDone }: { run: Run; step: RunStep; onDone: (r:
   const output = step.output as Record<string, unknown> | null;
   const textOnly = output && Object.keys(output).length === 1 && typeof output.text === 'string';
   return (
-    <Card>
-      <Group justify="space-between" align="flex-start" mb="xs">
-        <div>
-          <Group gap="xs">
-            <Text fw={600}>{step.name}</Text>
-            <Badge color={STEP_TYPES[step.type].color}>{STEP_TYPES[step.type].label}</Badge>
-            {step.fragment && (
-              // Inlined from a fragment: its steps are `<fragment step>__<inner id>`, the step `<fragment step>` gives its outputs.
-              <Badge color={STEP_TYPES.fragment.color} variant="outline">
-                {step.fragment === step.id ? 'fragment outputs' : `fragment ${step.fragment}`}
-              </Badge>
-            )}
-            <Badge color={STEP_STATUS_COLORS[step.status]} variant={step.status === 'RUNNING' ? 'dot' : 'light'}>
-              {STEP_STATUS_LABELS[step.status]}
+    <Section>
+      <Group justify="space-between" align="flex-start" gap="xs">
+        <Group gap="xs">
+          <Badge color={STEP_TYPES[step.type].color}>{STEP_TYPES[step.type].label}</Badge>
+          {step.fragment && (
+            // Inlined from a fragment: its steps are `<fragment step>__<inner id>`, the step `<fragment step>` gives its outputs.
+            <Badge color={STEP_TYPES.fragment.color} variant="outline">
+              {step.fragment === step.id ? 'fragment outputs' : `fragment ${step.fragment}`}
             </Badge>
-            {step.slaBreachedAt && <SlaBadge at={step.slaBreachedAt} />}
-          </Group>
-          <Text fz="xs" c="dimmed" mt={4}>
-            {step.statusLabel ? `${step.statusLabel} · ` : ''}
-            {step.startedAt ? duration(step.startedAt, step.endedAt) : 'not started'}
-            {step.maxAttempts > 1 ? ` · attempt ${Math.max(step.attempt, 1)}/${step.maxAttempts}` : ''}
-            {step.costUsd ? ` · AI cost $${step.costUsd.toFixed(4)}` : ''}
-            {step.continueOnError ? ' · may fail without failing the workflow' : ''}
-          </Text>
-        </div>
+          )}
+          {step.slaBreachedAt && <SlaBadge at={step.slaBreachedAt} />}
+        </Group>
         <Group gap="xs">
           {step.canRetry && (
             <Button size="xs" variant="light" leftSection={<IconRepeat size={14} />} loading={retry.isPending} onClick={() => retry.mutate()}>
@@ -797,7 +788,7 @@ function StepPanel({ run, step, onDone }: { run: Run; step: RunStep; onDone: (r:
           )}
         </Box>
       )}
-    </Card>
+    </Section>
   );
 }
 
@@ -813,13 +804,10 @@ function SlaBadge({ at }: { at: string }) {
 const fileSize = (n: number) => (n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`);
 
 /** Files attached to a step (reports, plans…), downloaded with the session. */
-function ArtifactsCard({ runId, artifacts }: { runId: string; artifacts: RunArtifact[] }) {
+function StepArtifacts({ runId, artifacts }: { runId: string; artifacts: RunArtifact[] }) {
   if (!artifacts.length) return null;
   return (
-    <Card>
-      <Text fw={600} mb="xs">
-        Artifacts
-      </Text>
+    <Section title="Artifacts">
       <Table withRowBorders={false} verticalSpacing={4} highlightOnHover={false} fz="sm">
         <Table.Tbody>
           {artifacts.map((a) => (
@@ -841,7 +829,7 @@ function ArtifactsCard({ runId, artifacts }: { runId: string; artifacts: RunArti
           ))}
         </Table.Tbody>
       </Table>
-    </Card>
+    </Section>
   );
 }
 

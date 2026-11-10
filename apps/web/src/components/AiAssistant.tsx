@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react';
-import { Alert, Button, Card, Group, Modal, Stack, Text, Textarea, TextInput } from '@mantine/core';
+import { Alert, Box, Button, Card, Group, Modal, Stack, Text, Textarea, TextInput } from '@mantine/core';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { IconSparkles } from '@tabler/icons-react';
 import { api, errorText } from '../lib/api';
@@ -88,12 +88,13 @@ export function ExplainRun({ runId, failed }: { runId: string; failed: boolean }
         </Alert>
       )}
       {explain.data && (
-        <Card>
+        // Shown in the run's side panel: a flat block, no card.
+        <Box p="sm" style={{ background: 'var(--surface)', borderRadius: 12 }}>
           <Markdown>{explain.data.answer}</Markdown>
           <Text fz="xs" c="dimmed" mt="xs">
             AI generated from the run steps and logs, verify before acting{cost(explain.data.costUsd)}
           </Text>
-        </Card>
+        </Box>
       )}
     </Stack>
   );

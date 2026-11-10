@@ -24,18 +24,22 @@ export const logsToText = (lines: RunLog[]) =>
 
 /**
  * Scrollable log with a follow toggle (sticks to the bottom as lines arrive), text search and download.
- * Following pauses automatically when the user scrolls up.
+ * Following pauses automatically when the user scrolls up. Bare: a toolbar and the log, no title and no card; the
+ * container (side panel, `Section`) gives the title.
  */
 export function LogViewer({
   lines,
   showStep,
   filename = 'run.log',
   follow: followInitially = false,
+  fill,
 }: {
   lines: RunLog[];
   showStep?: boolean;
   filename?: string;
   follow?: boolean;
+  /** Take the whole height of a flush container (side panel) instead of a fixed height. */
+  fill?: boolean;
 }) {
   const [query, setQuery] = useState('');
   const [follow, setFollow] = useState(followInitially);
@@ -48,8 +52,8 @@ export function LogViewer({
   }, [follow, visible.length]);
 
   return (
-    <>
-      <Group justify="space-between" px="sm" py={6} gap="xs" wrap="nowrap">
+    <div className="log-viewer" data-fill={fill || undefined}>
+      <Group className="log-viewer-toolbar" justify="space-between" gap="xs" wrap="nowrap">
         <TextInput
           size="xs"
           leftSection={<IconSearch size={14} />}
@@ -83,7 +87,7 @@ export function LogViewer({
         role="log"
         aria-label="Run log"
         tabIndex={0}
-        style={{ height: 420, overflow: 'auto' }}
+        className="log-viewer-box"
         onScroll={(e) => {
           const el = e.currentTarget;
           if (follow && el.scrollHeight - el.scrollTop - el.clientHeight > 40) setFollow(false);
@@ -106,6 +110,6 @@ export function LogViewer({
           ))}
         </pre>
       </div>
-    </>
+    </div>
   );
 }

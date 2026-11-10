@@ -478,3 +478,105 @@ h4,
 .flow-node-add[aria-expanded='true'] {
   opacity: 1;
 }
+
+/* ==== side panels, sections, modals (components/SidePanel.tsx, Section.tsx, LogViewer.tsx) — begin ==== */
+/* Panel: the header stays, the body scrolls, the footer sticks to the bottom. */
+.side-panel {
+  overflow: hidden;
+}
+.side-panel-frame {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.side-panel .side-panel-header {
+  flex: none;
+  min-height: 60px;
+  padding: 8px var(--mantine-spacing-md);
+  gap: var(--mantine-spacing-sm);
+  border-bottom: 1px solid var(--hairline);
+}
+.side-panel-title,
+.mantine-Modal-title,
+.mantine-Drawer-title {
+  font-weight: 600;
+}
+.side-panel-title {
+  font-size: var(--mantine-font-size-md);
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.side-panel .side-panel-body {
+  --side-panel-pad: var(--mantine-spacing-md);
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--mantine-spacing-md);
+  padding: var(--side-panel-pad);
+}
+.side-panel .side-panel-body[data-flush] {
+  --side-panel-pad: 0px;
+  gap: 0;
+}
+.side-panel-body > * {
+  flex-shrink: 0;
+}
+.side-panel-footer {
+  position: sticky;
+  bottom: calc(-1 * var(--side-panel-pad));
+  z-index: 1;
+  margin: auto calc(-1 * var(--side-panel-pad)) calc(-1 * var(--side-panel-pad));
+  padding: var(--mantine-spacing-sm) var(--mantine-spacing-md);
+  background: var(--mantine-color-body);
+  border-top: 1px solid var(--hairline);
+}
+/* Sections are flat; a hairline separates one from the block before it. */
+.ui-section {
+  min-width: 0;
+}
+.ui-section-header h3 {
+  letter-spacing: 0;
+}
+* + .ui-section {
+  padding-top: var(--mantine-spacing-md);
+  border-top: 1px solid var(--hairline);
+}
+/* No card inside a panel or a modal: containers nested there lose their shadow (bordered tiles keep their border),
+   and a table in a flush panel goes edge to edge. */
+.side-panel-body :where(.mantine-Card-root, .mantine-Paper-root),
+.mantine-Modal-body :where(.mantine-Card-root, .mantine-Paper-root) {
+  box-shadow: none;
+}
+.side-panel-body[data-flush] > .mantine-Paper-root {
+  border-radius: 0;
+}
+/* Log viewer: a bare toolbar and the log. `data-fill`: takes the height of a flush panel. */
+.log-viewer-toolbar {
+  padding-bottom: 8px;
+}
+.log-viewer-box {
+  height: 420px;
+  overflow: auto;
+  border-radius: var(--mantine-radius-md);
+  background: var(--code-bg);
+}
+.log-viewer[data-fill] {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.log-viewer[data-fill] .log-viewer-toolbar {
+  padding: 8px var(--mantine-spacing-md);
+}
+.log-viewer[data-fill] .log-viewer-box {
+  flex: 1;
+  height: auto;
+  min-height: 0;
+  border-radius: 0;
+}
+/* ==== side panels, sections, modals — end ==== */
