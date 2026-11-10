@@ -4,7 +4,7 @@ import { MantineProvider } from '@mantine/core';
 import { ModalsProvider } from '@mantine/modals';
 import { Notifications } from '@mantine/notifications';
 import { QueryClientProvider } from '@tanstack/react-query';
-import { createBrowserRouter, Navigate, Outlet, RouterProvider, useLocation } from 'react-router';
+import { createBrowserRouter, Navigate, Outlet, RouterProvider, useHref, useLocation, type RouteObject } from 'react-router';
 import '@fontsource-variable/inter';
 import '@mantine/core/styles.css';
 import '@mantine/notifications/styles.css';
@@ -19,6 +19,9 @@ import { ADMIN_CATEGORIES } from './components/adminSections';
 import { Layout } from './components/Layout';
 import { Loading } from './components/ui';
 import { AuthCallback, Login } from './pages/Login';
+import { OrgGate } from './components/OrgGate';
+import { orgStore } from './lib/api';
+import { bootRoute, legacyRedirect, loginPath } from './lib/orgUrl';
 
 // Every page is a separate chunk loaded on first visit.
 const page = <M,>(load: () => Promise<M>, name: keyof M) => {
@@ -49,8 +52,9 @@ const queryClient = createQueryClient();
 function RequireAuth() {
   const { user, loading } = useAuth();
   const location = useLocation();
+  const here = useHref(location.pathname + location.search + location.hash); // with the /o/<slug> prefix
   if (loading) return <Loading />;
-  if (!user) return <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />;
+  if (!user) return <Navigate to={loginPath(here)} replace state={{ from: here }} />;
   // Signed in without an organization: create one or wait for an invitation.
   if (!user.organization && location.pathname !== '/welcome') return <Navigate to="/welcome" replace />;
   return <Outlet />;
@@ -65,12 +69,19 @@ function Root() {
   useDocumentBrand();
   return (
     <AuthProvider>
-      <Outlet />
+      <OrgGate />
     </AuthProvider>
   );
 }
 
-const router = createBrowserRouter([
+// Organization pages live under /o/<slug> (the router basename); unprefixed legacy URLs move to the default one.
+const boot = bootRoute(window.location, orgStore.get());
+if (boot.replace) {
+  legacyRedirect.from = window.location.pathname + window.location.search + window.location.hash;
+  window.history.replaceState(window.history.state, '', boot.replace);
+}
+
+const routes: RouteObject[] = [
   {
     element: <Root />,
     errorElement: <RouteError />,
@@ -144,7 +155,8 @@ const router = createBrowserRouter([
       },
     ],
   },
-]);
+];
+const router = createBrowserRouter(routes, { basename: boot.basename });
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

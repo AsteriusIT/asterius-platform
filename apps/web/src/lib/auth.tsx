@@ -1,8 +1,9 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { OrgRef, PublicUser } from '@asterius/shared';
-import { api, orgStore, setUnauthorizedHandler, tokenStore } from './api';
+import { api, ApiError, orgStore, setUnauthorizedHandler, tabOrg, tokenStore } from './api';
 import { canAdminister, type AdminArea } from './access';
+import { hardNavigate, orgPath, urlOrg } from './orgUrl';
 
 interface AuthState {
   user: PublicUser | null;
@@ -19,8 +20,10 @@ interface AuthState {
   org: OrgRef | null;
   signIn: (token: string) => void;
   signOut: () => Promise<void>;
-  /** Work in another organization: every cached page is dropped and reloaded for it. */
-  switchOrg: (slug: string) => void;
+  /** Work in another organization: the app reloads at `/o/<slug><path>` (default: its home). */
+  switchOrg: (slug: string, path?: string) => void;
+  /** Slug of the tab's URL organization when the user may not enter it (not a member, or no such organization). */
+  notMember: string | null;
 }
 
 const Ctx = createContext<AuthState | null>(null);
@@ -28,10 +31,15 @@ const Ctx = createContext<AuthState | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const qc = useQueryClient();
   const [token, setToken] = useState(tokenStore.get());
-  const [orgKey, setOrgKey] = useState(orgStore.get());
+  // The tab's organization is fixed for its lifetime (from its URL): switching organizations reloads the app.
+  const [orgKey] = useState(tabOrg);
   const me = useQuery({ queryKey: ['me', token, orgKey], queryFn: api.me, enabled: !!token, retry: false, staleTime: 60_000 });
+  // The URL names an organization the user may not enter: load the account without it to list theirs.
+  const urlSlug = urlOrg();
+  const denied = !!urlSlug && me.error instanceof ApiError && me.error.status === 403;
+  const outside = useQuery({ queryKey: ['me', token, null], queryFn: api.meOutsideOrg, enabled: !!token && denied, retry: false, staleTime: 60_000 });
 
-  // Remember the organization the server settled on (first sign-in, removed from the remembered one…).
+  // Remember the organization the server settled on (first sign-in, the last tab used…) as the default for new visits.
   useEffect(() => {
     const slug = me.data?.organization?.slug ?? null;
     if (me.data && slug !== orgStore.get()) orgStore.set(slug);
@@ -50,10 +58,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (res?.redirect) window.location.assign(res.redirect);
   }, [qc]);
   const switchOrg = useCallback(
-    (slug: string) => {
+    (slug: string, path = '/') => {
       orgStore.set(slug);
       qc.clear();
-      setOrgKey(slug);
+      hardNavigate(orgPath(slug, path), false);
     },
     [qc],
   );
@@ -67,17 +75,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<AuthState>(
     () => ({
-      user: token ? (me.data ?? null) : null,
-      loading: !!token && me.isPending,
+      user: token ? (me.data ?? (denied ? (outside.data ?? null) : null)) : null,
+      loading: !!token && (me.isPending || (denied && outside.isPending)),
       isAdmin: me.data?.role === 'admin' && !!me.data.organization,
-      isSuperadmin: !!me.data?.superadmin,
+      isSuperadmin: !!(me.data ?? outside.data)?.superadmin,
       can: (area: AdminArea) => !!token && canAdminister(me.data, area),
       org: me.data?.organization ?? null,
       signIn,
       signOut,
       switchOrg,
+      notMember: denied && outside.data ? urlSlug : null,
     }),
-    [token, me.data, me.isPending, signIn, signOut, switchOrg],
+    [token, me.data, me.isPending, denied, outside.data, outside.isPending, urlSlug, signIn, signOut, switchOrg],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

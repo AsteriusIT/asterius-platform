@@ -264,8 +264,7 @@ export function Layout() {
                   onClick={() => {
                     if (o.slug === org?.slug) return;
                     close();
-                    switchOrg(o.slug);
-                    void navigate('/');
+                    switchOrg(o.slug); // reloads the app at /o/<slug>/
                   }}
                 >
                   {o.name}

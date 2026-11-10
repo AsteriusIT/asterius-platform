@@ -83,7 +83,7 @@ export async function buildContext(r: RunRow, rows: StepRow[], forStep?: string)
     // Each step gets its own callback (URL + token scoped to the step).
     run: {
       id: r.id,
-      url: runUrl(r.id),
+      url: await runUrl(r.id),
       idempotencyKey: forStep ? `${r.id}/${forStep}` : r.id,
       callback: { url: stepCallbackUrl(r.id, forStep ?? ''), token: forStep ? stepToken(r.id, forStep) : '' },
     },

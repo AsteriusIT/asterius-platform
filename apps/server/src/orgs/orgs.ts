@@ -4,7 +4,7 @@ import { all, json, newId, now, one, run } from '../db.js';
 import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
 import { SECRET_REF, slug } from '../schemas.js';
 import dns from 'node:dns/promises';
-import { DEFAULT_ORG, withOrg } from './context.js';
+import { DEFAULT_ORG, maybeOrgId, withOrg } from './context.js';
 import { domainToken } from '../secrets.js';
 import { config } from '../config.js';
 
@@ -123,6 +123,18 @@ export async function orgSlug(id: string): Promise<string> {
   if (!r) throw notFound(`Organization ${id}`);
   slugCache.set(id, r.slug);
   return r.slug;
+}
+
+/** Path of a web UI page inside an organization: every organization-scoped page lives under `/o/<slug>`. */
+export const orgPath = (slug: string, path = '/') => `/o/${encodeURIComponent(slug)}${path.startsWith('/') ? path : `/${path}`}`;
+
+/**
+ * Absolute URL of a web UI page (emails, Slack, `run.url`, step links) in the given organization, by default the
+ * current one, so a shared link opens in the right organization. Outside an organization: the unprefixed path,
+ * which the UI redirects to the reader's default organization.
+ */
+export async function appUrl(path: string, org: string | null = maybeOrgId()): Promise<string> {
+  return `${config.PUBLIC_URL}${org ? orgPath(await orgSlug(org), path) : path}`;
 }
 
 /** The platform's Kubernetes credentials serve the organizations listed in KUBERNETES_ORGS only. */

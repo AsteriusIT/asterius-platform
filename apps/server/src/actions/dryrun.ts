@@ -15,6 +15,7 @@ import { casesOf, needsOf, stepsOf, type Step } from './workflow.js';
 import { expandWorkflow, withParams } from './fragments.js';
 import type { RunContext } from './types.js';
 import { orgId } from '../orgs/context.js';
+import { appUrl } from '../orgs/orgs.js';
 
 /**
  * Dry run: render every template, evaluate every condition and transform, validate invoker configurations and
@@ -88,7 +89,7 @@ export async function dryRun(actionId: string, p: Principal, input: DryRunInput)
   const ctx: RunContext = {
     run: {
       id: 'dry-run',
-      url: `${config.PUBLIC_URL}/runs/dry-run`,
+      url: await appUrl('/runs/dry-run'),
       idempotencyKey: 'dry-run',
       callback: { url: `${config.PUBLIC_URL}/api/v1/runs/dry-run/steps/<step>`, token: MASK },
     },
