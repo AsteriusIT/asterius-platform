@@ -54,6 +54,8 @@ import type {
   WorkflowTestReport,
   UserPreferences,
   SavedCatalogView,
+  StepConnection,
+  RenderedConnectorRequest,
 } from '@asterius/shared';
 import { urlOrg } from './orgUrl';
 
@@ -504,6 +506,12 @@ export const api = {
   saveActionAt: (id: string, body: unknown, version?: number) => request<Action>('PUT', v1(`/actions/${enc(id)}`), body, { headers: ifMatch(version) }),
   fragment: (id: string) => request<Fragment>('GET', v1(`/fragments/${enc(id)}`)),
   saveFragmentAt: (id: string, body: unknown, version?: number) => request<Fragment>('PUT', v1(`/fragments/${enc(id)}`), body, { headers: ifMatch(version) }),
+  // ---- connector operations ----
+  /** Connections with their operations, for the workflow editor's connector steps (admins). */
+  connectionsForSteps: () => request<StepConnection[]>('GET', v1('/step-connections')),
+  /** The request an operation would send (no credentials, nothing is sent). */
+  renderConnectorOperation: (connector: string, operation: string, body: { fields: Record<string, unknown>; inputs: Record<string, unknown> }) =>
+    request<RenderedConnectorRequest>('POST', v1(`/connectors/${enc(connector)}/operations/${enc(operation)}/render`), body),
 };
 
 const ifMatch = (version?: number): Record<string, string> => (version === undefined ? {} : { 'if-match': `"${version}"` });

@@ -195,7 +195,13 @@ export async function simulate(s: Step, ctx: RunContext, resolver: RefResolver, 
   switch (s.type) {
     case 'invoke': {
       const rendered = (await render(s.invoker, ctx, resolver)).value as Record<string, unknown>;
-      getInvoker(s.invoker.type).validate(rendered);
+      const inv = getInvoker(s.invoker.type);
+      inv.validate(rendered);
+      // Connector operations: the request that would be sent (no credentials), nothing is sent.
+      if (inv.simulate) {
+        const sim = await inv.simulate(rendered, { workflow: ctx.action.identifier });
+        return { rendered: sim.rendered, output: sample(sim.output) };
+      }
       return { rendered, output: sample({ simulated: true }) };
     }
     case 'agent': {

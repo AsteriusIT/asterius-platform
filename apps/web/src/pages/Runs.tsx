@@ -45,7 +45,9 @@ import { useRunStream } from '../lib/runStream';
 import { LogViewer } from '../components/LogViewer';
 import { Section } from '../components/Section';
 import { SIDE_PANEL_WIDTHS, SidePanel } from '../components/SidePanel';
-import { duration, Markdown, PageHeader, QueryView, StatusBadge, STATUS_COLORS, STATUS_LABELS, SurfaceBox, TimeAgo } from '../components/ui';
+import { Caption, duration, Markdown, PageHeader, QueryView, StatusBadge, STATUS_COLORS, STATUS_LABELS, SurfaceBox, TimeAgo } from '../components/ui';
+import { EntityIcon } from '../components/icons';
+import { ICON } from '../components/iconScale';
 import { TRIGGER_ID, WorkflowFlow, type FlowStep, type FlowTrigger } from '../components/WorkflowFlow';
 import { FlowShell } from '../components/FlowShell';
 import { ExplainRun } from '../components/AiAssistant';
@@ -701,6 +703,15 @@ function StepPanel({ run, step, onDone }: { run: Run; step: RunStep; onDone: (r:
         </Group>
       </Group>
 
+      {step.connector && (
+        // Steps going through a connection: the operation (or raw call) and the connection it used.
+        <Group gap="3xs" mt="3xs" wrap="nowrap">
+          <EntityIcon name={step.connector.icon ?? 'plug'} size={ICON.sm} />
+          <Caption>
+            {step.connector.operationTitle ?? `${step.connector.method ?? 'GET'} API call`} · connection {step.connector.connectionTitle}
+          </Caption>
+        </Group>
+      )}
       {forcing && <ForceStepDialog run={run} step={step} kind={forcing} onClose={() => setForcing(null)} onDone={onDone} />}
       {step.message && (
         <SurfaceBox my="xs">

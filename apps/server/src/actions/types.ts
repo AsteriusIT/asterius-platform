@@ -47,6 +47,8 @@ export interface InvokeResult {
   result?: unknown;
   /** Files to attach to the step (base64 content): stored as run artifacts. */
   artifacts?: { name: string; contentType?: string; content: string }[];
+  /** IN_PROGRESS: seconds until the next poll (default RUN_POLL_SECONDS). */
+  pollAfterSeconds?: number;
 }
 
 export interface InvokeEnv {
@@ -64,6 +66,17 @@ export interface Invoker {
   /** Called every RUN_POLL_SECONDS while IN_PROGRESS. Omit when the external system reports through the callback API. */
   poll?(env: InvokeEnv, state: Record<string, unknown>): Promise<InvokeResult>;
   cancel?(env: InvokeEnv, state: Record<string, unknown>): Promise<void>;
+  /**
+   * The invoker resolves its `connection` itself instead of through bindings.ts (connector operations): `resolve` when
+   * the step runs (rendered config, access checks; returns the config to pass to start/poll and the secrets to redact),
+   * `check` when the workflow is saved (unrendered config).
+   */
+  connection?: {
+    resolve(config: Record<string, unknown>, use: { workflow: string; team: string | null }): Promise<{ config: Record<string, unknown>; secrets: string[] }>;
+    check(config: Record<string, unknown>, opts: { workflow: string }): Promise<void>;
+  };
+  /** Dry runs and workflow tests: what the step would do (e.g. the request it would send), without doing it. */
+  simulate?(config: Record<string, unknown>, opts: { workflow: string }): Promise<{ rendered: unknown; output: unknown }>;
 }
 
 export const str = (v: unknown) => (typeof v === 'string' ? v : v == null ? '' : String(v));
