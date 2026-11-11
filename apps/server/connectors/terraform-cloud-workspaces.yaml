@@ -1,0 +1,35 @@
+# Built-in connector definition (docs/ARCHITECTURE.md, "Connectors").
+identifier: terraform-cloud-workspaces
+title: Terraform Cloud workspaces
+description: Workspaces and projects of an HCP Terraform / Terraform Enterprise organization.
+icon: cloud
+category: cloud
+fields:
+  properties:
+    baseUrl: { type: string, title: API URL, format: url, default: https://app.terraform.io }
+    organization: { type: string, title: Organization }
+  required: [organization]
+auth:
+  - type: bearer
+    title: Team or user token
+headers:
+  accept: application/vnd.api+json
+test:
+  path: /api/v2/organizations/{{ connection.organization }}
+kinds:
+  workspace:
+    path: /api/v2/organizations/{{ connection.organization }}/workspaces
+    query: { 'page[size]': '100' }
+    itemsPath: data
+    pagination: { type: page, param: 'page[number]', pageSize: 100, startAt: 1 }
+  project:
+    path: /api/v2/organizations/{{ connection.organization }}/projects
+    query: { 'page[size]': '100' }
+    itemsPath: data
+    pagination: { type: page, param: 'page[number]', pageSize: 100, startAt: 1 }
+example:
+  fields: { organization: acme }
+  auth: { type: bearer, token: '${secret:TFC_TOKEN}' }
+  mappings:
+    - kind: workspace
+      entity: { blueprint: workspace, identifier: attributes.name, properties: { terraformVersion: 'attributes."terraform-version"' } }

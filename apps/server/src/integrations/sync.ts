@@ -6,6 +6,8 @@ import { badRequest, errorMessage } from '../lib/errors.js';
 import { render } from '../lib/expr.js';
 import { maskText } from '../lib/mask.js';
 import { resolveRef } from '../secrets.js';
+import { applyConnection } from './connectors/connections.js';
+import { nativeConnector } from './connectors/source.js';
 import { deleteEntities, upsertEntities, upsertEntity } from '../catalog/entities.js';
 import { emit } from '../events.js';
 import { metrics } from '../metrics.js';
@@ -78,9 +80,11 @@ class SyncLog {
   };
 }
 
-export async function renderConfigWithSecrets(r: IntegrationRow) {
+/** The integration config rendered (secret references resolved) with its `connection` resolved (connectors/). */
+export async function renderConfigWithSecrets(r: Pick<IntegrationRow, 'identifier' | 'type' | 'config'>) {
   const { value, secrets } = await render(json(r.config, {}), { integration: { identifier: r.identifier } }, resolveRef);
-  return { config: value as Record<string, unknown>, secrets };
+  const applied = await applyConnection('source', r.type, value as Record<string, unknown>, { write: false }, !!nativeConnector(r.type));
+  return { config: applied.config, secrets: [...secrets, ...applied.secrets] };
 }
 
 export async function renderConfig(r: IntegrationRow) {

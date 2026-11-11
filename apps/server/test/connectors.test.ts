@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { describe, expect, it } from 'vitest';
 import { getSource } from '../src/integrations/sources/index.js';
-import { PRESETS, buildRequest, fill } from '../src/integrations/sources/presets.js';
+import { builtinConnectors } from '../src/integrations/connectors/definitions.js';
 import type { SourceEnv } from '../src/integrations/types.js';
 
 async function api(handler: (req: IncomingMessage, base: string) => unknown) {
@@ -22,22 +22,42 @@ async function collect(type: string, kind: string, config: Record<string, unknow
   return out;
 }
 
-describe('connector presets', () => {
-  it('fills placeholders and every preset ships a valid example', () => {
-    expect(fill('/orgs/{org}/x?{q|fallback}', { org: 'a b' })).toBe('/orgs/a b/x?fallback');
-    expect(() => fill('/{org}', {})).toThrow(/missing configuration "org"/);
-    for (const p of PRESETS) {
-      const src = getSource(p.type);
-      const ex = src.info.example as { config: Record<string, unknown>; mappings: Array<{ kind: string }> };
-      expect(() => src.validate({ ...ex.config, baseUrl: ex.config.baseUrl ?? 'https://x.test' }), p.type).not.toThrow();
-      for (const m of ex.mappings) expect(Object.keys(p.kinds), p.type).toContain(m.kind);
-      for (const kind of Object.keys(p.kinds)) {
-        const r = buildRequest(p, kind, { ...ex.config, baseUrl: ex.config.baseUrl ?? 'https://x.test', jql: 'a = b', organization: 'o', orgId: 'i' });
-        expect(r.url, `${p.type}/${kind}`).toMatch(/^https:\/\//);
-      }
+describe('built-in connector definitions as integration types (the former presets)', () => {
+  it('every built-in definition ships a valid example; legacy inline configs still validate', () => {
+    const defs = [...builtinConnectors().values()];
+    expect(defs.map((d) => d.identifier)).toEqual(
+      expect.arrayContaining([
+        'argocd',
+        'pagerduty',
+        'opsgenie',
+        'jira',
+        'sonarqube',
+        'nexus',
+        'snyk',
+        'terraform-cloud-workspaces',
+        'okta',
+        'entra-directory',
+        'grafana',
+        'datadog',
+        'servicenow',
+        'azure-devops',
+        'github',
+        'gitlab',
+      ]),
+    );
+    for (const d of defs) {
+      for (const m of d.example?.mappings ?? []) expect(Object.keys(d.kinds), d.identifier).toContain(m.kind);
+      if (['azure-devops', 'github', 'gitlab'].includes(d.identifier)) continue; // code sources keep these types
+      const src = getSource(d.identifier);
+      expect(src.info.kinds).toEqual(Object.keys(d.kinds));
+      expect(() => src.validate({ connection: 'x' }), d.identifier).not.toThrow();
     }
     expect(() => getSource('pagerduty').validate({})).toThrow(/token/);
+    expect(() => getSource('pagerduty').validate({ token: 't' })).not.toThrow();
     expect(() => getSource('okta').validate({ token: 't' })).toThrow(/baseUrl/);
+    expect(() => getSource('jira').validate({ baseUrl: 'https://x.test', email: 'e@x', token: 't' })).not.toThrow();
+    expect(() => getSource('datadog').validate({ apiKey: 'a' })).toThrow(/appKey/);
+    expect(() => getSource('entra-directory').validate({ auth: { type: 'bearer', token: 't' } })).not.toThrow();
   });
 
   it('PagerDuty: offset paging with the vendor headers', async () => {
@@ -78,6 +98,16 @@ describe('connector presets', () => {
     expect(jira.seen[0]!.headers.authorization).toMatch(/^Basic /);
     await jira.close();
   });
+  it('Datadog: two credential headers; SonarQube: the token as Basic username', async () => {
+    const s = await api((req) => (req.url?.startsWith('/api/v1/monitor') ? [{ id: 1 }] : { components: [{ key: 'k' }], paging: { total: 1 } }));
+    expect(await collect('datadog', 'monitor', { baseUrl: s.url, apiKey: 'ak', appKey: 'pk' })).toEqual([{ id: 1 }]);
+    expect(s.seen[0]!.headers['dd-api-key']).toBe('ak');
+    expect(s.seen[0]!.headers['dd-application-key']).toBe('pk');
+    expect(await collect('sonarqube', 'project', { baseUrl: s.url, token: 'sq' })).toEqual([{ key: 'k' }]);
+    expect(s.seen[1]!.headers.authorization).toBe(`Basic ${Buffer.from('sq:').toString('base64')}`);
+    await s.close();
+  });
+
   it('Nexus: basic auth, continuationToken paging, repository filter only when set', async () => {
     const s = await api((req) => {
       const q = new URL(req.url ?? '', 'http://x').searchParams;

@@ -1,0 +1,143 @@
+# Built-in connector definition (docs/ARCHITECTURE.md, "Connectors").
+# An Azure DevOps organization (cloud: baseUrl https://dev.azure.com; Server: https://tfs.example.com/tfs and the
+# collection as organization). The code integrations (`azure-devops` source, `azure-pipeline` invoker, scaffolder)
+# accept `connection: <id>` of this connector too.
+identifier: azure-devops
+title: Azure DevOps
+description: Projects, Git repositories, pipelines and pull requests; create repositories, run pipelines, open pull requests.
+icon: brand-azure
+category: source-control
+fields:
+  properties:
+    baseUrl: { type: string, title: Service URL, format: url, default: https://dev.azure.com }
+    organization: { type: string, title: Organization, description: 'The organization name (the part after dev.azure.com/)' }
+    project: { type: string, title: Default project, description: 'Empty: the whole organization (pipelines and the operations need a project)' }
+  required: [organization]
+  order: [organization, project, baseUrl]
+auth:
+  - type: basic
+    title: Personal access token
+    description: 'A PAT, sent as Basic with an empty username. Scopes: Code (read & write), Build (read & execute), Project and Team (read).'
+    set: { username: '' }
+  - type: azure-workload-identity
+    title: Workload identity (Entra)
+    description: The platform's federated identity; add its service principal to the organization.
+    set: { scope: 499b84ac-1321-427f-aa17-267ca6975798/.default }
+  - type: oauth2-client-credentials
+    title: Service principal (client secret)
+    description: 'tokenUrl: https://login.microsoftonline.com/<tenant>/oauth2/v2.0/token'
+    set: { scope: 499b84ac-1321-427f-aa17-267ca6975798/.default }
+  - type: azure-managed-identity
+    title: Managed identity
+    set: { resource: 499b84ac-1321-427f-aa17-267ca6975798 }
+test:
+  path: /{{ connection.organization }}/_apis/projects
+  query: { $top: '1', api-version: '7.1' }
+  expect: { condition: $exists(body.value) }
+kinds:
+  project:
+    title: Projects
+    path: /{{ connection.organization }}/_apis/projects
+    query: { $top: '500', api-version: '7.1' }
+    itemsPath: value
+    pagination: { type: cursor, param: continuationToken, cursorHeader: x-ms-continuationtoken }
+  repository:
+    title: Git repositories
+    path: /{{ connection.organization }}/{{ connection.project }}/_apis/git/repositories
+    query: { api-version: '7.1' }
+    itemsPath: value
+    pagination: { type: cursor, param: continuationToken, cursorHeader: x-ms-continuationtoken }
+  pipeline:
+    title: Pipelines
+    path: /{{ connection.organization }}/{{ connection.project }}/_apis/pipelines
+    query: { $top: '500', api-version: '7.1' }
+    itemsPath: value
+    pagination: { type: cursor, param: continuationToken, cursorHeader: x-ms-continuationtoken }
+    requires: [project]
+  pull-request:
+    title: Active pull requests
+    path: /{{ connection.organization }}/{{ connection.project }}/_apis/git/pullrequests
+    query: { searchCriteria.status: active, $top: '100', api-version: '7.1' }
+    itemsPath: value
+    # The API silently caps $top: page with $skip.
+    pagination: { type: offset, param: $skip, pageSize: 100 }
+operations:
+  create-repository:
+    title: Create a Git repository
+    description: Creates an empty Git repository in the project.
+    kind: repository
+    inputs:
+      properties:
+        name: { type: string, title: Repository name }
+        project: { type: string, title: Project, description: "Default: the connection's project" }
+      required: [name]
+    method: POST
+    path: '/{{ connection.organization }}/{{ inputs.project ? inputs.project : connection.project }}/_apis/git/repositories'
+    query: { api-version: '7.1' }
+    body: { name: '{{ inputs.name }}' }
+    output: { id: body.id, name: body.name, url: body.webUrl, remoteUrl: body.remoteUrl, sshUrl: body.sshUrl }
+  queue-pipeline-run:
+    title: Run a pipeline
+    description: Queues a run of a pipeline and waits until it completes (fails when the run does not succeed).
+    kind: pipeline
+    inputs:
+      properties:
+        pipelineId: { type: integer, title: Pipeline id }
+        branch: { type: string, title: Branch, default: main }
+        templateParameters: { type: object, title: Template parameters }
+        variables: { type: object, title: Variables, description: 'name → value (sent as non-secret variables)' }
+        project: { type: string, title: Project, description: "Default: the connection's project" }
+      required: [pipelineId]
+    method: POST
+    path: '/{{ connection.organization }}/{{ inputs.project ? inputs.project : connection.project }}/_apis/pipelines/{{ inputs.pipelineId }}/runs'
+    query: { api-version: '7.1' }
+    body:
+      resources:
+        repositories:
+          self: { refName: "{{ $substring(inputs.branch, 0, 5) = 'refs/' ? inputs.branch : 'refs/heads/' & inputs.branch }}" }
+      templateParameters: '{{ inputs.templateParameters }}'
+      variables: "{{ inputs.variables ? $merge($each(inputs.variables, function($v, $k) { { $k: { 'value': $string($v), 'isSecret': false } } })) }}"
+    output: { runId: body.id, url: body._links.web.href, state: body.state }
+    poll:
+      path: '/{{ connection.organization }}/{{ inputs.project ? inputs.project : connection.project }}/_apis/pipelines/{{ inputs.pipelineId }}/runs/{{ output.runId }}'
+      query: { api-version: '7.1' }
+      intervalSeconds: 15
+      timeoutMinutes: 240
+      done: body.state = "completed"
+      failed: body.state = "completed" and body.result != "succeeded"
+      output: { state: body.state, result: body.result }
+  create-pull-request:
+    title: Open a pull request
+    kind: repository
+    inputs:
+      properties:
+        repository: { type: string, title: Repository, description: Name or id }
+        sourceBranch: { type: string, title: Source branch }
+        targetBranch: { type: string, title: Target branch, default: main }
+        title: { type: string, title: Title }
+        description: { type: string, title: Description, format: markdown }
+        draft: { type: boolean, title: Draft, default: false }
+        project: { type: string, title: Project, description: "Default: the connection's project" }
+      required: [repository, sourceBranch, title]
+    method: POST
+    path: '/{{ connection.organization }}/{{ inputs.project ? inputs.project : connection.project }}/_apis/git/repositories/{{ inputs.repository }}/pullrequests'
+    query: { api-version: '7.1' }
+    body:
+      sourceRefName: "{{ $substring(inputs.sourceBranch, 0, 5) = 'refs/' ? inputs.sourceBranch : 'refs/heads/' & inputs.sourceBranch }}"
+      targetRefName: "{{ $substring(inputs.targetBranch, 0, 5) = 'refs/' ? inputs.targetBranch : 'refs/heads/' & inputs.targetBranch }}"
+      title: '{{ inputs.title }}'
+      description: '{{ inputs.description }}'
+      isDraft: '{{ inputs.draft }}'
+    output:
+      id: body.pullRequestId
+      status: body.status
+      url: "body.repository.webUrl & '/pullrequest/' & $string(body.pullRequestId)"
+example:
+  fields: { organization: my-org, project: Platform }
+  auth: { type: basic, password: '${secret:ADO_PAT}' }
+  mappings:
+    - kind: repository
+      entity:
+        blueprint: repository
+        identifier: name
+        properties: { url: webUrl, defaultBranch: '$replace(defaultBranch, "refs/heads/", "")', project: project.name }

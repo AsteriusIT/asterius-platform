@@ -1,0 +1,34 @@
+# Built-in connector definition (docs/ARCHITECTURE.md, "Connectors").
+identifier: sonarqube
+title: SonarQube
+description: Projects and quality gates.
+icon: radar
+category: security
+fields:
+  properties:
+    baseUrl: { type: string, title: Server URL, format: url }
+  required: [baseUrl]
+auth:
+  - type: basic
+    title: User token
+    description: The token is sent as the Basic username with an empty password.
+    set: { password: '' }
+    secrets: [username]
+  - type: bearer
+    title: User token (SonarQube 10+ / SonarCloud)
+test:
+  path: /api/authentication/validate
+  expect: { condition: body.valid = true }
+kinds:
+  project:
+    path: /api/components/search
+    query: { qualifiers: TRK, ps: '500' }
+    itemsPath: components
+    pagination: { type: page, param: p, pageSize: 500, totalPath: paging.total }
+  quality-gate: { path: /api/qualitygates/list, itemsPath: qualitygates }
+example:
+  fields: { baseUrl: https://sonar.example.com }
+  auth: { type: basic, username: '${secret:SONAR_TOKEN}' }
+  mappings:
+    - kind: project
+      entity: { blueprint: code-quality, identifier: key, title: name }

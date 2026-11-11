@@ -17,6 +17,7 @@ import { authRoutes } from './routes/auth.js';
 import { catalogRoutes } from './routes/catalog.js';
 import { actionRoutes } from './routes/actions.js';
 import { integrationRoutes } from './routes/integrations.js';
+import { connectorRoutes } from './routes/connectors.js';
 import { adminRoutes } from './routes/admin.js';
 import { policyRoutes } from './routes/policies.js';
 import { fragmentRoutes } from './routes/fragments.js';
@@ -165,6 +166,7 @@ export async function buildApp(opts: AppOptions = {}): Promise<FastifyInstance> 
       await v1.register(fragmentRoutes);
       await v1.register(actionRoutes);
       await v1.register(integrationRoutes);
+      await v1.register(connectorRoutes);
       await v1.register(notificationRoutes);
       await v1.register(preferenceRoutes);
       await v1.register(aiRoutes);

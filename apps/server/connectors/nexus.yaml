@@ -1,0 +1,29 @@
+# Built-in connector definition (docs/ARCHITECTURE.md, "Connectors").
+identifier: nexus
+title: Sonatype Nexus Repository
+description: Repositories and components (every repository, or the one of `repository`).
+icon: package
+category: artifacts
+fields:
+  properties:
+    baseUrl: { type: string, title: Server URL, format: url }
+    repository: { type: string, title: Repository, description: 'Components: only this repository (empty: all)' }
+  required: [baseUrl]
+auth:
+  - type: basic
+    title: User and password
+test:
+  path: /service/rest/v1/repositories
+kinds:
+  repository: { path: /service/rest/v1/repositories }
+  component:
+    path: /service/rest/v1/search
+    query: { repository: '{{ connection.repository }}' }
+    itemsPath: items
+    pagination: { type: cursor, param: continuationToken, cursorPath: continuationToken }
+example:
+  fields: { baseUrl: https://nexus.example.com }
+  auth: { type: basic, username: asterius-platform, password: '${secret:NEXUS_PASSWORD}' }
+  mappings:
+    - kind: repository
+      entity: { blueprint: artifact-repository, identifier: name, properties: { format: format, url: url } }

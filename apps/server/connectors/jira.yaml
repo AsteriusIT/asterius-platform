@@ -1,0 +1,55 @@
+# Built-in connector definition (docs/ARCHITECTURE.md, "Connectors").
+identifier: jira
+title: Jira Cloud
+description: Projects and issues (JQL).
+icon: ticket
+category: project-management
+fields:
+  properties:
+    baseUrl: { type: string, title: Site URL, format: url, description: 'e.g. https://acme.atlassian.net' }
+    jql: { type: string, title: Issues JQL, default: 'updated >= -30d ORDER BY updated DESC' }
+  required: [baseUrl]
+auth:
+  - type: basic
+    title: Email and API token
+    description: The account email as username, an API token as password.
+test:
+  path: /rest/api/3/myself
+kinds:
+  project:
+    path: /rest/api/3/project/search
+    query: { maxResults: '50' }
+    itemsPath: values
+    pagination: { type: offset, param: startAt, pageSize: 50, totalPath: total }
+  issue:
+    path: /rest/api/3/search/jql
+    query: { jql: '{{ connection.jql }}', maxResults: '100', fields: '*all' }
+    itemsPath: issues
+    pagination: { type: cursor, param: nextPageToken, cursorPath: nextPageToken }
+operations:
+  create-issue:
+    title: Create an issue
+    description: Creates an issue in a project.
+    kind: issue
+    inputs:
+      properties:
+        project: { type: string, title: Project key }
+        summary: { type: string, title: Summary }
+        issueType: { type: string, title: Issue type, default: Task }
+        labels: { type: array, title: Labels, items: { type: string } }
+      required: [project, summary]
+    method: POST
+    path: /rest/api/3/issue
+    body:
+      fields:
+        project: { key: '{{ inputs.project }}' }
+        summary: '{{ inputs.summary }}'
+        issuetype: { name: '{{ inputs.issueType }}' }
+        labels: '{{ inputs.labels }}'
+    output: { key: body.key, id: body.id, url: "connection.baseUrl & '/browse/' & body.key" }
+example:
+  fields: { baseUrl: https://acme.atlassian.net, jql: 'project = PLAT AND statusCategory != Done' }
+  auth: { type: basic, username: bot@acme.com, password: '${secret:JIRA_TOKEN}' }
+  mappings:
+    - kind: issue
+      entity: { blueprint: ticket, identifier: key, title: fields.summary, properties: { status: fields.status.name } }

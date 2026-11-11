@@ -1,0 +1,39 @@
+# Built-in connector definition (docs/ARCHITECTURE.md, "Connectors").
+# A GitLab group (gitlab.com or self-managed). The code integrations (`gitlab` source, `gitlab-pipeline` invoker,
+# scaffolder) accept `connection: <id>` of this connector too.
+identifier: gitlab
+title: GitLab
+description: Projects and open merge requests of a group (subgroups included).
+icon: brand-gitlab
+category: source-control
+fields:
+  properties:
+    baseUrl: { type: string, title: GitLab URL, format: url, default: https://gitlab.com }
+    group: { type: string, title: Group, description: Group path or id }
+auth:
+  - type: header
+    title: Access token
+    description: Personal, group or project access token (read_api; api for pipelines and the scaffolder).
+    headers: { PRIVATE-TOKEN: '{token}' }
+  - type: bearer
+    title: OAuth token
+test:
+  path: /api/v4/user
+kinds:
+  project:
+    path: /api/v4/groups/{{ connection.group }}/projects
+    query: { include_subgroups: 'true', per_page: '100' }
+    pagination: { type: link }
+    requires: [group]
+  merge-request:
+    path: /api/v4/groups/{{ connection.group }}/merge_requests
+    query: { state: opened, per_page: '100' }
+    pagination: { type: link }
+    requires: [group]
+example:
+  fields: { group: my-group }
+  auth: { type: header, token: '${secret:GITLAB_TOKEN}' }
+  mappings:
+    - kind: project
+      filter: archived = false
+      entity: { blueprint: repository, identifier: path_with_namespace, title: name, properties: { url: web_url } }

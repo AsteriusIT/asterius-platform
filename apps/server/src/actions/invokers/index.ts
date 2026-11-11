@@ -2,6 +2,7 @@ import type { PluginInfo } from '@asterius/shared';
 import { badRequest } from '../../lib/errors.js';
 import { checkTemplate } from '../../lib/expr.js';
 import type { Invoker } from '../types.js';
+import { configForValidation } from '../../integrations/connectors/bindings.js';
 import { webhookInvoker } from './webhook.js';
 import { githubInvoker } from './github.js';
 import { azurePipelinesInvoker } from './azure-pipelines.js';
@@ -19,7 +20,9 @@ const registry = new Map<string, Invoker>();
 
 /** Extension point: register a custom invoker type (e.g. from a fork or a plugin module imported in index.ts). */
 export function registerInvoker(inv: Invoker) {
-  registry.set(inv.info.type, inv);
+  // A config naming a `connection` is validated with what the connection provides (integrations/connectors/bindings.ts).
+  const validate = inv.validate.bind(inv);
+  registry.set(inv.info.type, { ...inv, validate: (c) => validate(configForValidation('invoker', inv.info.type, c)) });
 }
 
 for (const inv of [

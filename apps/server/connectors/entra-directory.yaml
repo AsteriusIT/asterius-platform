@@ -1,0 +1,33 @@
+# Built-in connector definition (docs/ARCHITECTURE.md, "Connectors").
+identifier: entra-directory
+title: Microsoft Entra directory
+description: Users and groups through Microsoft Graph.
+icon: users-group
+category: identity
+fields:
+  properties:
+    baseUrl: { type: string, title: Graph URL, format: url, default: https://graph.microsoft.com }
+auth:
+  - type: oauth2-client-credentials
+    title: App registration (client secret)
+    set: { scope: https://graph.microsoft.com/.default }
+  - type: azure-workload-identity
+    title: Workload identity
+    set: { scope: https://graph.microsoft.com/.default }
+  - type: bearer
+    title: Access token
+test:
+  path: /v1.0/users
+  query: { $top: '1' }
+kinds:
+  user: { path: /v1.0/users, query: { $top: '999' }, itemsPath: value, pagination: { type: next, nextUrl: '`@odata.nextLink`' } }
+  group: { path: /v1.0/groups, query: { $top: '999' }, itemsPath: value, pagination: { type: next, nextUrl: '`@odata.nextLink`' } }
+example:
+  auth:
+    type: oauth2-client-credentials
+    tokenUrl: https://login.microsoftonline.com/<tenant>/oauth2/v2.0/token
+    clientId: <app id>
+    clientSecret: '${secret:ENTRA_SECRET}'
+  mappings:
+    - kind: user
+      entity: { blueprint: person, identifier: mail, title: displayName }

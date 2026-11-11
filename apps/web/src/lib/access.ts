@@ -10,7 +10,7 @@ export type AdminArea = 'admin' | 'blueprints' | 'integrations';
 export const DELEGATED_ROLES: Record<string, { label: string; description: string; areas: readonly AdminArea[] }> = {
   'integration-admin': {
     label: 'Integration admin',
-    description: 'Manages integrations: ingestion sources, their mappings and syncs.',
+    description: 'Manages integrations (ingestion sources, their mappings and syncs) and connections to external tools.',
     areas: ['integrations'],
   },
   'blueprint-owner': {

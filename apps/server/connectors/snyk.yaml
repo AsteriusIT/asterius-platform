@@ -1,0 +1,37 @@
+# Built-in connector definition (docs/ARCHITECTURE.md, "Connectors").
+identifier: snyk
+title: Snyk
+description: Projects and issues of an organization.
+icon: shield
+category: security
+fields:
+  properties:
+    baseUrl: { type: string, title: API URL, format: url, default: https://api.snyk.io, description: 'EU: https://api.eu.snyk.io' }
+    orgId: { type: string, title: Organization id }
+  required: [orgId]
+auth:
+  - type: header
+    title: API token
+    headers: { Authorization: 'token {token}' }
+headers:
+  accept: application/vnd.api+json
+test:
+  path: /rest/self
+  query: { version: '2024-06-21' }
+kinds:
+  project:
+    path: /rest/orgs/{{ connection.orgId }}/projects
+    query: { version: '2024-06-21', limit: '100' }
+    itemsPath: data
+    pagination: { type: next, nextUrl: links.next }
+  issue:
+    path: /rest/orgs/{{ connection.orgId }}/issues
+    query: { version: '2024-06-21', limit: '100' }
+    itemsPath: data
+    pagination: { type: next, nextUrl: links.next }
+example:
+  fields: { orgId: 00000000-0000-0000-0000-000000000000 }
+  auth: { type: header, token: '${secret:SNYK_TOKEN}' }
+  mappings:
+    - kind: project
+      entity: { blueprint: security-project, identifier: id, title: attributes.name }

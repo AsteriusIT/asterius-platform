@@ -1,0 +1,26 @@
+# Built-in connector definition (docs/ARCHITECTURE.md, "Connectors").
+identifier: opsgenie
+title: Opsgenie
+description: Teams and services.
+icon: bell
+category: incident
+fields:
+  properties:
+    baseUrl: { type: string, title: API URL, format: url, default: https://api.opsgenie.com, description: 'EU: https://api.eu.opsgenie.com' }
+auth:
+  - type: header
+    title: API key
+    headers: { Authorization: 'GenieKey {token}' }
+test:
+  path: /v2/account
+kinds:
+  team: { path: /v2/teams, itemsPath: data }
+  service:
+    path: /v1/services
+    itemsPath: data
+    pagination: { type: offset, param: offset, pageSize: 100 }
+example:
+  auth: { type: header, token: '${secret:OPSGENIE_KEY}' }
+  mappings:
+    - kind: team
+      entity: { blueprint: team, identifier: name }

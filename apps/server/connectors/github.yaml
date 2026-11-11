@@ -1,0 +1,42 @@
+# Built-in connector definition (docs/ARCHITECTURE.md, "Connectors").
+# A GitHub organization (github.com or Enterprise Server: baseUrl https://<host>/api/v3). The code integrations
+# (`github` source, `github-workflow` invoker, scaffolder) accept `connection: <id>` of this connector too.
+identifier: github
+title: GitHub
+description: Repositories and teams of an organization.
+icon: brand-github
+category: source-control
+fields:
+  properties:
+    baseUrl: { type: string, title: API URL, format: url, default: https://api.github.com }
+    organization: { type: string, title: Organization }
+auth:
+  - type: bearer
+    title: Token
+    description: A fine-grained or classic token.
+  - type: github-app
+    title: GitHub App installation
+    set: { apiUrl: '{{ connection.baseUrl }}' }
+headers:
+  accept: application/vnd.github+json
+  x-github-api-version: '2022-11-28'
+test:
+  path: /rate_limit
+kinds:
+  repository:
+    path: /orgs/{{ connection.organization }}/repos
+    query: { per_page: '100', type: all }
+    pagination: { type: link }
+    requires: [organization]
+  team:
+    path: /orgs/{{ connection.organization }}/teams
+    query: { per_page: '100' }
+    pagination: { type: link }
+    requires: [organization]
+example:
+  fields: { organization: my-org }
+  auth: { type: bearer, token: '${secret:GITHUB_TOKEN}' }
+  mappings:
+    - kind: repository
+      filter: archived = false
+      entity: { blueprint: repository, identifier: name, properties: { url: html_url, defaultBranch: default_branch } }

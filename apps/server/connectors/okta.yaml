@@ -1,0 +1,28 @@
+# Built-in connector definition (docs/ARCHITECTURE.md, "Connectors").
+identifier: okta
+title: Okta directory
+description: Users and groups.
+icon: users
+category: identity
+fields:
+  properties:
+    baseUrl: { type: string, title: Okta domain, format: url, description: 'e.g. https://acme.okta.com' }
+  required: [baseUrl]
+auth:
+  - type: header
+    title: API token
+    headers: { Authorization: 'SSWS {token}' }
+  - type: oauth2-client-credentials
+    title: OAuth 2.0 service app
+test:
+  path: /api/v1/users
+  query: { limit: '1' }
+kinds:
+  user: { path: /api/v1/users, query: { limit: '200' }, pagination: { type: link } }
+  group: { path: /api/v1/groups, query: { limit: '200' }, pagination: { type: link } }
+example:
+  fields: { baseUrl: https://acme.okta.com }
+  auth: { type: header, token: '${secret:OKTA_TOKEN}' }
+  mappings:
+    - kind: user
+      entity: { blueprint: person, identifier: profile.email, title: profile.displayName }

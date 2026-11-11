@@ -33,6 +33,8 @@ COPY --from=build --chown=root:root /src/packages/shared ./packages/shared
 COPY --from=build --chown=root:root /src/apps/server/package.json ./apps/server/
 COPY --from=build --chown=root:root /src/apps/server/node_modules ./apps/server/node_modules
 COPY --from=build --chown=root:root /src/apps/server/dist ./apps/server/dist
+# Built-in connector definitions (YAML, read at startup).
+COPY --from=build --chown=root:root /src/apps/server/connectors ./apps/server/connectors
 COPY --from=build --chown=root:root /src/apps/web/dist ./apps/web/dist
 COPY --chown=root:root config /etc/asterius/config
 RUN mkdir -p /data && chown 10001:10001 /data

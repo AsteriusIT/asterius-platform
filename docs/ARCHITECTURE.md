@@ -27,6 +27,7 @@ blueprints ─< entities ─< entity_relations (blueprint, identifier, relation 
 actions ─< runs ─< run_logs, run_approvals          (runs keep a snapshot of the invoker and approval policy)
 fragments ─< fragment_versions                      (reusable steps; inlined into the run snapshot when a run is created)
 integrations ─< sync_runs                           entities.source = integration:<id> | ui | api | action | config
+connectors ─< connector_versions · connections      (connections reference built-in or organization connectors)
 webhooks ─< deliveries (outbox)
 secrets (encrypted) · audit_log
 ```
@@ -146,6 +147,57 @@ Guarantees:
 - **`deleteMissing`:** after a fully successful listing, entities owned by the integration that were not seen are deleted. If the listing is empty, nothing is deleted (an expired token often returns nothing). Entities that fail validation count as seen and are never deleted.
 - **Push:** `POST /api/v1/ingest/:integration` is authenticated by a shared token or an HMAC signature over the raw body. Mappings may filter on `$headers` and delete via a `delete` expression.
 - **Ownership:** entities written by an integration are read-only for humans, since manual edits would be overwritten at the next sync.
+
+## Connectors
+
+Tools (including a team's own in-house application) are integrated by configuration, not code:
+
+```
+connector definition ──< connection ──< integration (type: connector | <built-in id> | code source with connection:)
+ (how to talk to a kind      (one instance: fields,   └─< workflow step (code invokers with connection:; operations: next)
+  of system: data only)       auth refs, access)
+```
+
+- **Connector definition** (`connectorDef` in `schemas.ts`, `integrations/connectors/`): identity (identifier, title,
+  icon, category), `fields` (the connection form, an ObjectSchema that must declare `baseUrl`), `auth` (supported
+  methods, the first is the default, each with values fixed by the definition in `set` and, for `header`, formats with
+  `{credential}` placeholders), `headers`, `test` (request + `expect`), `kinds` (ingestion: path, query, itemsPath,
+  pagination with the `http` source vocabulary plus `cursorHeader`, incremental `since`, `requires`) and `operations`
+  (inputs schema, method, path, query, headers, body, `output` JSONata, optional `poll` with `done` / `failed`, `kind`
+  hint, `readOnly`). Built-in definitions are YAML files in `apps/server/connectors/` (loaded once, read-only, the same
+  in every organization; their identifiers cannot be reused: copy a definition to change it). Organizations add their
+  own through the API (admins) or `CONFIG_DIR` (`connectors:`), versioned in `connector_versions` like fragments; a
+  change that would invalidate one of its connections is refused.
+- **Templates**: one syntax, `{{ }}` JSONata over `{ connection: <fields with defaults>, inputs, output }`. In a path each
+  value is one URL-encoded segment (`.`/`..` refused, empty segments collapse); empty query values are left out;
+  headers cannot contain line breaks; the URL cannot leave the connection's `baseUrl`. Definitions never contain
+  `${secret:…}`. `request.ts` holds the pure engine (`renderRequest`, `kindRequest`, `operationRequest`,
+  `operationOutput`, `pollRequest`, `pollOutcome`, `testRequest` / `testVerdict`, `authBlock`).
+- **Connection** (`connectionDef`, `connections` table, per organization, API or `CONFIG_DIR`): field values, `auth`
+  (`{ type, …values }` merged with the method's `set` into a `lib/auth.ts` block), `access` (`read` | `read-write`),
+  `allowed` (workflows / run teams that may use it in automation; empty: any), `api` (raw-call allow-list of methods
+  and path prefixes). Credential fields (passwords, tokens, client secrets, keys, header placeholders, a method's extra
+  `secrets`) only accept `${secret:…}` / `${vault:…}` / `${env:…}`… references; literal values are refused. Routes:
+  `GET/PUT/DELETE /connections[/:id]` (If-Match on `version`), `POST /connections/:id/test` (`{ ok, status, latencyMs,
+  error? }`, credentials redacted), `GET /connections/:id/usage` (integrations, workflows, fragments; a used connection
+  cannot be deleted). Every change and test is audited (`connection.*`, `connector.*`).
+- **Resolution**: `resolveConnection` renders the auth block (secrets resolved in the current organization) when the
+  connection is used; nothing is cached. Integrations: `type: connector` (any definition) or the built-in id
+  (`pagerduty`, `jira`… the former presets, which still accept their legacy inline keys) take `config.connection`; the
+  sync resolves it (`renderConfigWithSecrets`) and lists with the `http` source. Code sources and invokers that map
+  cleanly (`azure-devops`, `github`, `gitlab` sources; `azure-pipeline`, `github-workflow`, `gitlab-pipeline`,
+  `scaffolder` invokers) accept `connection: <id>` through `bindings.ts`: the connection fills the URL, organization /
+  project / group and a token (PAT, bearer, `{token}` header, or an access token obtained by OAuth2, GitHub App, Entra
+  workload or managed identity); inline keys win, `token` + `connection` is refused. Inline configs work unchanged.
+- **What stays code**: Kubernetes, SQL, cloud inventories, descriptors, the scaffolder, CI log copying, webhook
+  ingestion, and anything needing several dependent calls, binary payloads or custom signing.
+- **Security**: definitions are admin-only (they decide which requests the platform sends); connections are managed by
+  admins and `integration-admin`s. Ingestion uses a connection read-only; code invokers need `read-write` and pass the
+  `allowed` list (checked at save time for the workflow, at run time for the run's team); operations will use
+  `isReadOnlyOperation` / `assertConnectionUse`, raw calls `assertRawCall`. Requests go through `lib/http.ts` (SSRF
+  guard, retries, circuit breaker); redirects are refused for the connection test; resolved secrets and fetched tokens
+  are redacted from sync logs and run logs. `azure-workload-identity` (federated token of AZURE_FEDERATED_TOKEN_FILE)
+  and `azure-managed-identity` are the platform's own identity, so they follow `PLATFORM_IDENTITY_ORGS`.
 
 ## Scaling and availability
 

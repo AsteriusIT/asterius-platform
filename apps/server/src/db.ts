@@ -246,6 +246,56 @@ CREATE TABLE fragment_versions (
       `);
     },
   },
+  {
+    id: 9,
+    name: 'connector definitions and connections',
+    async up(d) {
+      // connectors: definitions created by an organization (built-in ones are files shipped with the platform, never
+      // stored); `definition` is the whole validated document, versioned like fragments in connector_versions.
+      // connections: one configured instance of a connector; `auth` holds references only (validated on write).
+      await d.exec(`
+        CREATE TABLE connectors (
+          org_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+          identifier TEXT NOT NULL,
+          title TEXT NOT NULL,
+          definition TEXT NOT NULL,
+          version INTEGER NOT NULL DEFAULT 1,
+          managed INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (org_id, identifier)
+        );
+        CREATE TABLE connector_versions (
+          org_id TEXT NOT NULL,
+          connector TEXT NOT NULL,
+          version INTEGER NOT NULL,
+          definition TEXT NOT NULL,
+          actor_id TEXT,
+          actor_email TEXT,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (org_id, connector, version)
+        );
+        CREATE TABLE connections (
+          org_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+          identifier TEXT NOT NULL,
+          title TEXT NOT NULL,
+          description TEXT NOT NULL DEFAULT '',
+          connector TEXT NOT NULL,
+          fields TEXT NOT NULL DEFAULT '{}',
+          auth TEXT,
+          access TEXT NOT NULL DEFAULT 'read',
+          allowed TEXT NOT NULL DEFAULT '{}',
+          api TEXT,
+          version INTEGER NOT NULL DEFAULT 1,
+          managed INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (org_id, identifier)
+        );
+        CREATE INDEX connections_connector ON connections(org_id, connector);
+      `);
+    },
+  },
 ];
 
 /**

@@ -1,0 +1,50 @@
+# Built-in connector definition (docs/ARCHITECTURE.md, "Connectors").
+identifier: pagerduty
+title: PagerDuty
+description: Services, teams, resolved incidents and current on-calls.
+icon: alarm
+category: incident
+fields:
+  properties:
+    baseUrl: { type: string, title: API URL, format: url, default: https://api.pagerduty.com }
+auth:
+  - type: header
+    title: REST API key
+    headers: { Authorization: 'Token token={token}' }
+headers:
+  accept: application/vnd.pagerduty+json;version=2
+test:
+  path: /abilities
+kinds:
+  service:
+    path: /services
+    query: { limit: '100' }
+    itemsPath: services
+    pagination: { type: offset, param: offset, pageSize: 100 }
+  team:
+    path: /teams
+    query: { limit: '100' }
+    itemsPath: teams
+    pagination: { type: offset, param: offset, pageSize: 100 }
+  incident:
+    path: /incidents
+    query: { limit: '100', 'statuses[]': resolved }
+    itemsPath: incidents
+    pagination: { type: offset, param: offset, pageSize: 100 }
+  oncall:
+    path: /oncalls
+    query: { limit: '100' }
+    itemsPath: oncalls
+    pagination: { type: offset, param: offset, pageSize: 100 }
+example:
+  auth: { type: header, token: '${secret:PAGERDUTY_TOKEN}' }
+  mappings:
+    - kind: service
+      entity: { blueprint: service, identifier: $lowercase(name), properties: { pagerdutyUrl: html_url, status: status } }
+    # DORA insights (MTTR): incident created / resolved times.
+    - kind: incident
+      entity:
+        blueprint: incident
+        identifier: "incident_number & ''"
+        title: title
+        properties: { createdAt: created_at, resolvedAt: resolved_at, status: status, url: html_url }

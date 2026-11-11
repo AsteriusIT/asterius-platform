@@ -1,3 +1,4 @@
+import { checkConnectionRef } from '../integrations/connectors/connections.js';
 import type { Action, ActionTrigger, InvokerConfig, WorkflowStep, WorkflowTest, WorkflowTrigger } from '@asterius/shared';
 import { invalidateTriggerCache } from './triggers.js';
 import { assertSecretsAllowed } from './limits.js';
@@ -153,6 +154,9 @@ export async function upsertAction(
   // Fragments are inlined to check them (unknown fragment, parameters, ids) and the secrets they reference.
   const expanded = await expandWorkflow(stepsOf(def));
   assertSecretsAllowed(def.secrets, [expanded, def.invoker, t0]);
+  // Invokers naming a `connection`: it exists, suits the invoker, is read-write and allows this workflow.
+  for (const inv of [...expanded.flatMap((s) => (s.type === 'invoke' ? [s.invoker] : [])), ...(def.invoker ? [def.invoker] : [])])
+    await checkConnectionRef('invoker', inv.type, inv as Record<string, unknown>, { workflow: def.identifier });
   const existing = await one<Row>('SELECT * FROM actions WHERE org_id = ? AND identifier = ?', org, def.identifier);
   if (existing && bool(existing.managed) && !opts.managed) throw managedError('Action', def.identifier);
   if (opts.ifMatch !== undefined && (existing ? Number(existing.version) : undefined) !== opts.ifMatch) throw await staleAction(def.identifier, opts.ifMatch);

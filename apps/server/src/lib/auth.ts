@@ -149,10 +149,35 @@ async function awsWebIdentity(fetchToken: TokenFetch): Promise<AwsCreds> {
   return creds;
 }
 
+// ---------- Entra workload identity ----------
+/**
+ * Exchange the pod's federated token (AZURE_FEDERATED_TOKEN_FILE, projected by the AKS workload identity webhook) for
+ * an Entra access token: client credentials with a JWT client assertion.
+ */
+async function azureFederatedToken(fetchToken: TokenFetch, scope: string, clientId: string, tenant: string) {
+  const file = process.env.AZURE_FEDERATED_TOKEN_FILE;
+  if (!file) throw new Error('azure workload identity: AZURE_FEDERATED_TOKEN_FILE is not set (is the pod labelled azure.workload.identity/use?)');
+  const assertion = (await readFile(file, 'utf8')).trim();
+  const host = process.env.AZURE_AUTHORITY_HOST ?? 'https://login.microsoftonline.com/';
+  const res = await fetchToken(`${host.replace(/\/?$/, '/')}${encodeURIComponent(tenant)}/oauth2/v2.0/token`, {
+    method: 'POST',
+    headers: FORM,
+    body: form({
+      grant_type: 'client_credentials',
+      client_id: clientId,
+      scope,
+      client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+      client_assertion: assertion,
+    }),
+  });
+  return tokenOf(res.data, 'azure workload identity');
+}
+
 // ---------- resolution ----------
 /** Auth blocks that fall back to the platform's own identity (no credential in the block). */
 const ambient = (a: AuthDef) =>
   a.type === 'azure-managed-identity' ||
+  a.type === 'azure-workload-identity' ||
   (a.type === 'gcp-service-account' && !a.serviceAccountJson) ||
   (a.type === 'aws-sigv4' && !(a.accessKeyId && a.secretAccessKey));
 
@@ -196,32 +221,27 @@ export async function resolveAuth(raw: unknown, req: AuthRequest, fetchToken: To
       });
       return { headers: { authorization: `Bearer ${token}` } };
     }
+    case 'header':
+      return { headers: { ...a.headers } };
     case 'azure-managed-identity': {
       const token = await cached(a, async () => {
-        const tokenFile = process.env.AZURE_FEDERATED_TOKEN_FILE;
         const clientId = a.clientId ?? process.env.AZURE_CLIENT_ID;
-        const tenant = process.env.AZURE_TENANT_ID;
-        if (tokenFile && clientId && tenant) {
-          // AKS workload identity: federated token → Entra client assertion.
-          const assertion = (await readFile(tokenFile, 'utf8')).trim();
-          const host = process.env.AZURE_AUTHORITY_HOST ?? 'https://login.microsoftonline.com/';
-          const res = await fetchToken(`${host.replace(/\/?$/, '/')}${tenant}/oauth2/v2.0/token`, {
-            method: 'POST',
-            headers: FORM,
-            body: form({
-              grant_type: 'client_credentials',
-              client_id: clientId,
-              scope: `${a.resource.replace(/\/$/, '')}/.default`,
-              client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
-              client_assertion: assertion,
-            }),
-          });
-          return tokenOf(res.data, 'azure workload identity');
-        }
+        // AKS workload identity when the pod has a federated token; the instance metadata endpoint otherwise.
+        if (process.env.AZURE_FEDERATED_TOKEN_FILE && clientId && process.env.AZURE_TENANT_ID)
+          return azureFederatedToken(fetchToken, `${a.resource.replace(/\/$/, '')}/.default`, clientId, process.env.AZURE_TENANT_ID);
         const q = form({ resource: a.resource, client_id: a.clientId, 'api-version': process.env.IDENTITY_ENDPOINT ? '2019-08-01' : '2018-02-01' });
         const base = process.env.IDENTITY_ENDPOINT ?? 'http://169.254.169.254/metadata/identity/oauth2/token';
         const headers: Record<string, string> = process.env.IDENTITY_HEADER ? { 'x-identity-header': process.env.IDENTITY_HEADER } : { metadata: 'true' };
         return tokenOf((await fetchToken(`${base}?${q}`, { headers })).data, 'azure managed identity');
+      });
+      return { headers: { authorization: `Bearer ${token}` } };
+    }
+    case 'azure-workload-identity': {
+      const token = await cached(a, async () => {
+        const clientId = a.clientId ?? process.env.AZURE_CLIENT_ID;
+        const tenant = a.tenantId ?? process.env.AZURE_TENANT_ID;
+        if (!clientId || !tenant) throw new Error('azure-workload-identity: no clientId / tenantId (set them, or AZURE_CLIENT_ID / AZURE_TENANT_ID)');
+        return azureFederatedToken(fetchToken, a.scope, clientId, tenant);
       });
       return { headers: { authorization: `Bearer ${token}` } };
     }

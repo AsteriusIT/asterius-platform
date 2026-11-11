@@ -7,6 +7,8 @@ import { checkTemplate } from '../lib/expr.js';
 import { integrationDef, type IntegrationDef } from '../schemas.js';
 import { getSource } from './sources/index.js';
 import { checkMapping } from './mapping.js';
+import { checkConnectionRef } from './connectors/connections.js';
+import { nativeConnector } from './connectors/source.js';
 import { orgId } from '../orgs/context.js';
 import { orgSlug } from '../orgs/orgs.js';
 
@@ -141,6 +143,15 @@ export async function upsertIntegration(input: unknown, opts: { managed?: boolea
     throw badRequest((err as Error).message);
   }
   checkTemplate(def.config);
+  // `connection: <id>`: it must exist and suit the type; connector integrations map the kinds of its definition.
+  const native = nativeConnector(def.type);
+  const connector = await checkConnectionRef('source', def.type, def.config, { native });
+  if (def.type === 'connector') {
+    const kinds = Object.keys(connector?.kinds ?? {});
+    for (const m of def.mappings)
+      if (!kinds.includes(m.kind))
+        throw badRequest(`connector: unknown kind "${m.kind}" for ${connector?.identifier} (available: ${kinds.join(', ') || 'none'})`);
+  }
   if (def.schedule) {
     try {
       parseCron(def.schedule);

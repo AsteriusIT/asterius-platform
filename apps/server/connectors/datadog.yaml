@@ -1,0 +1,28 @@
+# Built-in connector definition (docs/ARCHITECTURE.md, "Connectors").
+identifier: datadog
+title: Datadog
+description: Monitors and service definitions.
+icon: activity
+category: observability
+fields:
+  properties:
+    baseUrl: { type: string, title: API URL, format: url, default: https://api.datadoghq.com, description: 'Your site, e.g. https://api.datadoghq.eu' }
+auth:
+  - type: header
+    title: API and application keys
+    headers: { DD-API-KEY: '{apiKey}', DD-APPLICATION-KEY: '{appKey}' }
+test:
+  path: /api/v1/validate
+  expect: { condition: body.valid = true }
+kinds:
+  monitor:
+    path: /api/v1/monitor
+    query: { page_size: '100', page: '0' }
+    pagination: { type: page, param: page, pageSize: 100, startAt: 0 }
+  service: { path: /api/v2/services/definitions, query: { 'page[size]': '100' }, itemsPath: data }
+example:
+  fields: { baseUrl: https://api.datadoghq.eu }
+  auth: { type: header, apiKey: '${secret:DD_API_KEY}', appKey: '${secret:DD_APP_KEY}' }
+  mappings:
+    - kind: monitor
+      entity: { blueprint: monitor, identifier: $string(id), title: name, properties: { status: overall_state } }

@@ -1,0 +1,25 @@
+# Built-in connector definition (docs/ARCHITECTURE.md, "Connectors").
+identifier: grafana
+title: Grafana
+description: Dashboards and folders.
+icon: chart-line
+category: observability
+fields:
+  properties:
+    baseUrl: { type: string, title: Grafana URL, format: url }
+  required: [baseUrl]
+auth:
+  - type: bearer
+    title: Service account token
+test:
+  path: /api/search
+  query: { limit: '1' }
+kinds:
+  dashboard: { path: /api/search, query: { type: dash-db, limit: '5000' } }
+  folder: { path: /api/folders, query: { limit: '1000' } }
+example:
+  fields: { baseUrl: https://grafana.example.com }
+  auth: { type: bearer, token: '${secret:GRAFANA_TOKEN}' }
+  mappings:
+    - kind: dashboard
+      entity: { blueprint: dashboard, identifier: uid, title: title, properties: { url: url } }

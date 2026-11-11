@@ -16,6 +16,7 @@ import { emit } from '../events.js';
 import { metrics } from '../metrics.js';
 import { withSpan } from '../tracing.js';
 import { getInvoker } from './invokers/index.js';
+import { applyConnection } from '../integrations/connectors/connections.js';
 import type { InvokeEnv, InvokeResult, RunContext } from './types.js';
 import { addLog, emitRun, getRunRow, inRunOrg, runUrl, updateRun, type RunRow } from './runs.js';
 import {
@@ -489,7 +490,10 @@ async function invokeEnv(r: RunRow, def: Extract<Step, { type: 'invoke' }>, rows
   const ctx = withIteration(await buildContext(r, rows, def.id), it);
   const { value, secrets } = await render(def.invoker, ctx, resolverFor(r));
   secrets.push(ctx.run.callback.token);
-  const env: InvokeEnv = { ctx, config: value as Record<string, unknown>, log: stepLog(r.id, def.id, secrets) };
+  // `connection: <id>`: the connection fills the URL and credentials (it must be read-write and allow this workflow).
+  const conn = await applyConnection('invoker', def.invoker.type, value as Record<string, unknown>, { write: true, workflow: r.action, team: r.team });
+  secrets.push(...conn.secrets);
+  const env: InvokeEnv = { ctx, config: conn.config, log: stepLog(r.id, def.id, secrets) };
   return { env, secrets };
 }
 

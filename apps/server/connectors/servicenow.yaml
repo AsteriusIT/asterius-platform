@@ -1,0 +1,35 @@
+# Built-in connector definition (docs/ARCHITECTURE.md, "Connectors").
+identifier: servicenow
+title: ServiceNow
+description: Business services and configuration items from the table API.
+icon: building
+category: itsm
+fields:
+  properties:
+    baseUrl: { type: string, title: Instance URL, format: url, description: 'e.g. https://acme.service-now.com' }
+  required: [baseUrl]
+auth:
+  - type: basic
+    title: User and password
+  - type: oauth2-client-credentials
+    title: OAuth client credentials
+test:
+  path: /api/now/table/sys_user
+  query: { sysparm_limit: '1' }
+kinds:
+  service:
+    path: /api/now/table/cmdb_ci_service
+    query: { sysparm_limit: '1000' }
+    itemsPath: result
+    pagination: { type: offset, param: sysparm_offset, pageSize: 1000 }
+  ci-server:
+    path: /api/now/table/cmdb_ci_server
+    query: { sysparm_limit: '1000' }
+    itemsPath: result
+    pagination: { type: offset, param: sysparm_offset, pageSize: 1000 }
+example:
+  fields: { baseUrl: https://acme.service-now.com }
+  auth: { type: basic, username: asterius, password: '${secret:SNOW_PASSWORD}' }
+  mappings:
+    - kind: service
+      entity: { blueprint: service, identifier: name, properties: { criticality: busines_criticality } }

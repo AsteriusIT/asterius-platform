@@ -1,7 +1,20 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { DESCRIPTOR_SCHEMA } from './integrations/sources/descriptors.js';
-import { actionDef, blueprintDef, configFile, delegationInput, entityInput, fragmentDef, integrationDef, policyDef, teamDef, webhookDef } from './schemas.js';
+import {
+  actionDef,
+  blueprintDef,
+  configFile,
+  connectionDef,
+  connectorDef,
+  delegationInput,
+  entityInput,
+  fragmentDef,
+  integrationDef,
+  policyDef,
+  teamDef,
+  webhookDef,
+} from './schemas.js';
 
 /**
  * OpenAPI 3.1 description of the REST API. Paths come from the registered Fastify routes (so they cannot drift),
@@ -18,6 +31,8 @@ const COMPONENTS: Record<string, z.ZodType> = {
   Team: teamDef,
   Policy: policyDef,
   Fragment: fragmentDef,
+  Connector: connectorDef,
+  Connection: connectionDef,
   EntityInput: entityInput,
   DelegationInput: delegationInput,
   ConfigFile: configFile,
@@ -94,6 +109,16 @@ const OUTPUTS: Record<string, z.ZodType> = {
   PolicyView: policyDef.safeExtend({ managed: z.boolean() }),
   FragmentView: fragmentDef.safeExtend({ version: z.number(), managed: z.boolean(), updatedAt: iso }),
   WebhookView: webhookDef.safeExtend({ managed: z.boolean(), hasSecret: z.boolean() }),
+  ConnectorView: connectorDef.safeExtend({ builtin: z.boolean(), managed: z.boolean(), version: z.number(), updatedAt: iso.nullable() }),
+  ConnectionView: connectionDef.safeExtend({ version: z.number(), managed: z.boolean(), createdAt: iso, updatedAt: iso }),
+  ConnectionTestResult: z.object({
+    ok: z.boolean(),
+    status: z.number().nullable().describe('HTTP status of the test request; null without a response'),
+    latencyMs: z.number().nullable(),
+    error: str.optional(),
+    checkedAt: iso,
+  }),
+  ConnectionUsage: z.object({ integrations: z.array(str), actions: z.array(str), fragments: z.array(str) }),
   Delivery: z.object({
     id: str,
     webhook: str,
@@ -144,6 +169,15 @@ const RESPONSES: Record<string, string> = {
   'GET /api/v1/fragments/:id': 'FragmentView',
   'PUT /api/v1/fragments/:id': 'FragmentView',
   'POST /api/v1/fragments/:id/rollback': 'FragmentView',
+  'GET /api/v1/connectors': 'ConnectorView[]',
+  'GET /api/v1/connectors/:id': 'ConnectorView',
+  'PUT /api/v1/connectors/:id': 'ConnectorView',
+  'POST /api/v1/connectors/:id/rollback': 'ConnectorView',
+  'GET /api/v1/connections': 'ConnectionView[]',
+  'GET /api/v1/connections/:id': 'ConnectionView',
+  'PUT /api/v1/connections/:id': 'ConnectionView',
+  'GET /api/v1/connections/:id/usage': 'ConnectionUsage',
+  'POST /api/v1/connections/:id/test': 'ConnectionTestResult',
   'GET /api/v1/runs': 'RunPage',
   'GET /api/v1/runs/:id': 'Run',
   'GET /api/v1/config/status': 'ConfigStatus',
@@ -163,6 +197,8 @@ const BODIES: Record<string, string> = {
   'PUT /api/v1/teams/:id': 'Team',
   'PUT /api/v1/policies/:id': 'Policy',
   'PUT /api/v1/fragments/:id': 'Fragment',
+  'PUT /api/v1/connectors/:id': 'Connector',
+  'PUT /api/v1/connections/:id': 'Connection',
   'POST /api/v1/blueprints/:bp/entities': 'EntityInput',
   'PUT /api/v1/blueprints/:bp/entities/:id': 'EntityInput',
   'PUT /api/v1/me/delegation': 'DelegationInput',

@@ -14,12 +14,10 @@ import {
   upsertIntegration,
 } from '../integrations/integrations.js';
 import { decodeBody, enqueueInbound, MAX_ITEMS_PER_EVENT } from '../integrations/inbound.js';
-import { deliveryIdOf, ingest, recordDelivery, renderConfig, testIntegration, verifyWebhook } from '../integrations/sync.js';
+import { deliveryIdOf, ingest, recordDelivery, renderConfig, renderConfigWithSecrets, testIntegration, verifyWebhook } from '../integrations/sync.js';
 import { getSource } from '../integrations/sources/index.js';
 import { mapItem } from '../integrations/mapping.js';
 import { mappingDef } from '../schemas.js';
-import { render } from '../lib/expr.js';
-import { resolveRef } from '../secrets.js';
 import { idParam } from './util.js';
 import { DEFAULT_ORG, withOrg } from '../orgs/context.js';
 import { findOrg } from '../orgs/orgs.js';
@@ -145,8 +143,8 @@ export async function integrationRoutes(app: FastifyInstance) {
       const body = z.object({ type: z.string(), config: z.record(z.string(), z.unknown()).default({}), kind: z.string().default('item') }).parse(req.body);
       try {
         const source = getSource(body.type);
-        const config = (await render(body.config, { integration: { identifier: 'test' } }, resolveRef)).value as Record<string, unknown>;
-        source.validate(config);
+        source.validate(body.config);
+        const { config } = await renderConfigWithSecrets({ identifier: 'test', type: body.type, config: JSON.stringify(body.config) });
         if (!source.list) return { ok: true, sample: [], note: 'This source receives pushed events: nothing to fetch.' };
         const log: string[] = [];
         const timeout = new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Timed out after 20 s')), 20_000).unref());

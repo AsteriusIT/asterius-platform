@@ -825,8 +825,16 @@ export type MappingDef = z.infer<typeof mappingDef>;
 
 /** Authentication block of HTTP-based sources and invokers (`config.auth`). Secrets are `${secret:NAME}` references. */
 export const authDef = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('basic'), username: z.string().min(1), password: z.string() }),
+  /** `username` may be empty: Azure DevOps personal access tokens are sent as `Basic base64(:PAT)`. */
+  z.object({ type: z.literal('basic'), username: z.string(), password: z.string() }),
   z.object({ type: z.literal('bearer'), token: z.string().min(1) }),
+  /** Custom headers carrying the credential, e.g. `Authorization: Token token=…` (PagerDuty) or `DD-API-KEY` (Datadog). */
+  z.object({
+    type: z.literal('header'),
+    headers: z
+      .record(z.string().regex(/^[A-Za-z0-9-]{1,100}$/, 'header names: letters, digits and -'), z.string().max(4000))
+      .refine((h) => Object.keys(h).length > 0, 'at least one header'),
+  }),
   z.object({
     type: z.literal('oauth2-client-credentials'),
     tokenUrl: z.string().url(),
@@ -844,6 +852,17 @@ export const authDef = z.discriminatedUnion('type', [
     apiUrl: z.string().url().optional(),
   }),
   z.object({ type: z.literal('azure-managed-identity'), resource: z.string().min(1), clientId: z.string().optional() }),
+  /**
+   * AKS / Kubernetes workload identity: the federated token of AZURE_FEDERATED_TOKEN_FILE exchanged for an Entra access
+   * token for `scope` (e.g. `499b84ac-1321-427f-aa17-267ca6975798/.default` for Azure DevOps). `clientId` / `tenantId`
+   * default to AZURE_CLIENT_ID / AZURE_TENANT_ID (set by the workload identity webhook).
+   */
+  z.object({
+    type: z.literal('azure-workload-identity'),
+    scope: z.string().min(1),
+    clientId: z.string().optional(),
+    tenantId: z.string().optional(),
+  }),
   z.object({
     type: z.literal('gcp-service-account'),
     scope: z.string().default('https://www.googleapis.com/auth/cloud-platform'),
@@ -886,6 +905,239 @@ export const integrationDef = z.object({
   deleteDryRun: z.boolean().default(false),
 });
 export type IntegrationDef = z.infer<typeof integrationDef>;
+
+// ---------- connectors and connections (integrations/connectors/) ----------
+
+/**
+ * A credential reference: `${secret:NAME}`, `${env:NAME}` or an external secret manager reference
+ * (`${vault:…}`, `${awssm:…}`, `${azkv:…}`, `${gcpsm:…}`, `${k8s:…}`). Connections accept nothing else for credentials.
+ */
+export const CREDENTIAL_REF = /^\$\{(secret|env|vault|awssm|azkv|gcpsm|k8s):[^}\s]+\}$/;
+export const AUTH_TYPES = authDef.options.map((o) => o.shape.type.value);
+export type AuthType = AuthDef['type'];
+export const HTTP_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] as const;
+const httpMethod = z.enum(HTTP_METHODS);
+/** Kind and operation names (map keys): lowercase, digits, - and _. */
+const connectorKey = z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/, 'names: lowercase letters, digits, - and _ (starting with a letter)');
+const headerName = z.string().regex(/^[A-Za-z0-9-]{1,100}$/, 'header names: letters, digits and -');
+/** A path template, appended to the connection's `baseUrl`. `{{ }}` values are URL-encoded as one path segment. */
+const pathTemplate = z
+  .string()
+  .min(1)
+  .max(2000)
+  .refine(
+    (p) => /^\/[^?#\s]*$/.test(p.replace(/\{\{(?:(?!\}\})[\s\S])*\}\}/g, 'x')),
+    'paths start with / and have no query string (use `query`) and no spaces',
+  );
+const template = z.string().max(4000);
+const expression = z.string().min(1).max(4000);
+
+/** Pagination of a listing: the vocabulary of the `http` source (`cursorHeader`: the cursor comes in a response header). */
+export const paginationDef = z
+  .object({
+    type: z.enum(['none', 'link', 'next', 'offset', 'page', 'cursor']).default('none'),
+    /** next: JSONata giving the next URL (same origin only). */
+    nextUrl: expression.optional(),
+    /** offset | page | cursor: the query (or body) parameter. */
+    param: z.string().min(1).max(100).optional(),
+    pageSize: z.number().int().min(1).max(10_000).optional(),
+    /** page: first page number (default 1). */
+    startAt: z.number().int().min(0).optional(),
+    /** offset | page: JSONata of the total number of items (stop condition). */
+    totalPath: expression.optional(),
+    /** cursor: JSONata of the next cursor in the response body… */
+    cursorPath: expression.optional(),
+    /** …or the response header holding it (Azure DevOps `x-ms-continuationtoken`). */
+    cursorHeader: headerName.optional(),
+    in: z.enum(['query', 'body']).optional(),
+  })
+  .superRefine((p, ctx) => {
+    if (['offset', 'page', 'cursor'].includes(p.type) && !p.param)
+      ctx.addIssue({ code: 'custom', message: `pagination ${p.type} needs "param"`, path: ['param'] });
+    if (p.type === 'next' && !p.nextUrl) ctx.addIssue({ code: 'custom', message: 'pagination next needs "nextUrl"', path: ['nextUrl'] });
+    if (p.type === 'cursor' && !p.cursorPath && !p.cursorHeader)
+      ctx.addIssue({ code: 'custom', message: 'pagination cursor needs "cursorPath" or "cursorHeader"', path: ['cursorPath'] });
+  });
+export type PaginationDef = z.infer<typeof paginationDef>;
+
+/** One HTTP request of a definition. Templates see `connection` (the connection's fields) and, in operations, `inputs`. */
+const requestFields = {
+  method: httpMethod.default('GET'),
+  path: pathTemplate,
+  /** Query parameters (templates); a value that renders empty is left out. */
+  query: z.record(z.string().min(1).max(200), template).default({}),
+  /** Extra request headers (templates; never credentials: those come from the connection's auth). */
+  headers: z.record(headerName, template).default({}),
+  /** JSON body (any JSON; strings are templates, `"{{ expr }}"` alone keeps the value's type). */
+  body: z.unknown().optional(),
+};
+
+/** How a connection authenticates: one of the methods its definition supports. */
+export const connectorAuthMethod = z.object({
+  type: z.enum(AUTH_TYPES as [AuthType, ...AuthType[]]),
+  title: z.string().max(100).optional(),
+  description: z.string().max(1000).optional(),
+  /**
+   * Values of the auth block fixed by the definition (e.g. `scope` of an Entra token, `username: ""` for a PAT sent
+   * as Basic). Strings may use `{{ connection.<field> }}`. The connection supplies the other values.
+   */
+  set: z.record(z.string(), z.unknown()).default({}),
+  /** `header`: header name → value format; `{name}` placeholders are credentials the connection supplies (`Token token={token}`). */
+  headers: z.record(headerName, z.string().min(1).max(500)).optional(),
+  /** Extra auth fields that hold credentials (must be references), e.g. a token sent as the Basic username. */
+  secrets: z
+    .array(z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,63}$/))
+    .max(10)
+    .optional(),
+});
+export type ConnectorAuthMethod = z.infer<typeof connectorAuthMethod>;
+
+/** Ingestion: how to list one kind of item. */
+export const connectorKind = z.object({
+  title: z.string().max(100).optional(),
+  description: z.string().max(1000).optional(),
+  ...requestFields,
+  /** JSONata selecting the items of a response (default: the response itself). */
+  itemsPath: expression.optional(),
+  pagination: paginationDef.optional(),
+  /** Incremental syncs: the query parameter receiving the start time of the previous successful sync (ISO 8601). */
+  since: z.object({ param: z.string().min(1).max(100) }).optional(),
+  /** Connection fields this kind cannot work without (e.g. `project`), for a clear error instead of a 404. */
+  requires: z.array(z.string()).max(20).optional(),
+});
+export type ConnectorKindDef = z.infer<typeof connectorKind>;
+
+/** Long-running operations: poll until `done` (success) or `failed`. */
+export const connectorPoll = z.object({
+  ...requestFields,
+  intervalSeconds: z.number().int().min(2).max(3600).default(15),
+  timeoutMinutes: z
+    .number()
+    .int()
+    .min(1)
+    .max(60 * 24 * 7)
+    .default(60),
+  /** JSONata over { connection, inputs, output, status, body } (body: the poll response): finished successfully when truthy. */
+  done: expression,
+  /** Same context: finished in failure when truthy (checked first). */
+  failed: expression.optional(),
+  /** Output fields (JSONata over the same context) merged over the operation's output when it finishes. */
+  output: z.record(fieldName, expression).optional(),
+});
+
+/** Actions: a call to the system's API, used by workflow steps. */
+export const connectorOperation = z.object({
+  title: z.string().min(1).max(100),
+  description: z.string().max(2000).default(''),
+  /** Kind of item it applies to (one of `kinds`): offered on the entities that kind is mapped to. */
+  kind: connectorKey.optional(),
+  /** The form of the operation (same schema as workflow forms); `inputs.<name>` in templates. */
+  inputs: objectSchema,
+  ...requestFields,
+  /** Output fields: JSONata over { connection, inputs, status, body }. Default: the response body. */
+  output: z.record(fieldName, expression).optional(),
+  poll: connectorPoll.optional(),
+  /** Changes nothing (usable with a read-only connection). Default: GET operations only. */
+  readOnly: z.boolean().optional(),
+});
+export type ConnectorOperationDef = z.infer<typeof connectorOperation>;
+
+export const CONNECTOR_CATEGORIES = [
+  'source-control',
+  'ci-cd',
+  'cloud',
+  'incident',
+  'observability',
+  'itsm',
+  'project-management',
+  'security',
+  'artifacts',
+  'identity',
+  'internal',
+  'other',
+] as const;
+
+/**
+ * Connector definition: how to talk to a kind of system (data, no code). Connections fill its `fields` and pick one
+ * of its `auth` methods; integrations list its `kinds`; workflow steps call its `operations`.
+ * Templates: `{{ connection.<field> }}` and `{{ inputs.<name> }}` (JSONata); no `${secret:…}` in a definition.
+ */
+export const connectorDef = z.object({
+  identifier: slug,
+  title: z.string().min(1).max(100),
+  description: z.string().max(4000).default(''),
+  icon: iconRef.nullish(),
+  category: z.enum(CONNECTOR_CATEGORIES).default('other'),
+  /** The connection form. It must declare `baseUrl` (with a default for SaaS endpoints). */
+  fields: objectSchema,
+  /** Supported authentication methods (first: the default). Empty: the API needs none. */
+  auth: z.array(connectorAuthMethod).max(10).default([]),
+  /** Connections may omit auth even though methods are listed (APIs readable anonymously). */
+  authOptional: z.boolean().default(false),
+  /** Headers sent with every request (e.g. a vendor `accept`). */
+  headers: z.record(headerName, template).default({}),
+  /** The request of "Test connection": succeeds on `expect.status` (default any 2xx) and a truthy `expect.condition`. */
+  test: z
+    .object({
+      ...requestFields,
+      expect: z
+        .object({
+          status: z.array(z.number().int().min(100).max(599)).max(20).optional(),
+          /** JSONata over { status, body }. */
+          condition: expression.optional(),
+        })
+        .default({}),
+    })
+    .optional(),
+  kinds: z.record(connectorKey, connectorKind).default({}),
+  operations: z.record(connectorKey, connectorOperation).default({}),
+  /** Documentation: an example connection and mappings (shown in the admin UI). */
+  example: z
+    .object({
+      fields: z.record(z.string(), z.unknown()).optional(),
+      auth: z.record(z.string(), z.unknown()).optional(),
+      mappings: z.array(mappingDef).optional(),
+    })
+    .optional(),
+});
+export type ConnectorDef = z.infer<typeof connectorDef>;
+
+/**
+ * Connection: one configured instance of a connector (an Azure DevOps organization, a PagerDuty account…), per
+ * organization. Credentials are references only (`${secret:…}`…), never values.
+ */
+export const connectionDef = z.object({
+  identifier: slug,
+  title: z.string().min(1).max(100),
+  description: z.string().max(2000).default(''),
+  /** The connector definition. */
+  connector: slug,
+  /** Values of the definition's `fields` (defaults applied when used). */
+  fields: z.record(fieldName, z.unknown()).default({}),
+  /** `{ type: <one of the definition's auth methods>, …values }`. Credentials must be references. */
+  auth: z.looseObject({ type: z.enum(AUTH_TYPES as [AuthType, ...AuthType[]]) }).nullish(),
+  /** read: ingestion and read-only operations; read-write: also operations that change things. */
+  access: z.enum(['read', 'read-write']).default('read'),
+  /** Who may use it in automation (workflow steps): workflows by identifier, or runs whose team is listed. Empty: any. */
+  allowed: z.object({ workflows: z.array(slug).max(200).optional(), teams: z.array(slug).max(200).optional() }).default({}),
+  /** Raw API calls through this connection (workflow steps): allowed methods and path prefixes. Omitted: none. */
+  api: z
+    .object({
+      methods: z.array(httpMethod).min(1).default(['GET']),
+      paths: z
+        .array(
+          z
+            .string()
+            .max(500)
+            .regex(/^\/[^?#\s]*$/, 'path prefixes start with /')
+            .refine((p) => !p.split('/').some((s) => s === '.' || s === '..'), 'no . or .. segments'),
+        )
+        .min(1)
+        .max(50),
+    })
+    .optional(),
+});
+export type ConnectionDef = z.infer<typeof connectionDef>;
 
 export const WEBHOOK_EVENTS = [
   'entity.created',
@@ -996,6 +1248,9 @@ export const configFile = z.object({
   policies: z.array(policyDef).default([]),
   dashboards: z.array(dashboardDef).default([]),
   fragments: z.array(fragmentDef).default([]),
+  /** Connector definitions of the organization (the built-in ones ship with the platform). */
+  connectors: z.array(connectorDef).default([]),
+  connections: z.array(connectionDef).default([]),
   entities: z.array(seedEntity).default([]),
 });
 export type ConfigFile = z.infer<typeof configFile>;

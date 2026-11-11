@@ -1261,6 +1261,195 @@ export interface FragmentVersion {
   definition: Record<string, unknown>;
 }
 
+// ---------- connectors and connections ----------
+// Server: apps/server/src/integrations/connectors/, schemas `connectorDef` / `connectionDef` in schemas.ts.
+// Templates: `{{ connection.<field> }}`, `{{ inputs.<name> }}` (operations), `{{ output.<name> }}` (poll requests).
+
+export type AuthType =
+  | 'basic'
+  | 'bearer'
+  | 'header'
+  | 'oauth2-client-credentials'
+  | 'github-app'
+  | 'azure-managed-identity'
+  | 'azure-workload-identity'
+  | 'gcp-service-account'
+  | 'aws-sigv4'
+  | 'mtls';
+
+export type ConnectorCategory =
+  | 'source-control'
+  | 'ci-cd'
+  | 'cloud'
+  | 'incident'
+  | 'observability'
+  | 'itsm'
+  | 'project-management'
+  | 'security'
+  | 'artifacts'
+  | 'identity'
+  | 'internal'
+  | 'other';
+
+export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+
+/** An authentication method a definition supports. */
+export interface ConnectorAuthMethod {
+  type: AuthType;
+  title?: string;
+  description?: string;
+  /** Auth block values fixed by the definition (the connection cannot change them); strings may use `{{ connection.x }}`. */
+  set: Record<string, unknown>;
+  /** `header`: header name → format with `{credential}` placeholders the connection supplies (`Token token={token}`). */
+  headers?: Record<string, string>;
+  /** Extra auth fields holding credentials (must be references in connections). */
+  secrets?: string[];
+}
+
+/** Pagination of a listing (vocabulary of the `http` source). */
+export interface ConnectorPagination {
+  type: 'none' | 'link' | 'next' | 'offset' | 'page' | 'cursor';
+  nextUrl?: string;
+  param?: string;
+  pageSize?: number;
+  startAt?: number;
+  totalPath?: string;
+  cursorPath?: string;
+  cursorHeader?: string;
+  in?: 'query' | 'body';
+}
+
+/** One request of a definition (path relative to the connection's baseUrl). */
+export interface ConnectorRequest {
+  method: HttpMethod;
+  /** Starts with `/`; each `{{ }}` value is one URL-encoded segment; empty segments collapse. */
+  path: string;
+  /** Values that render empty are left out. */
+  query: Record<string, string>;
+  headers: Record<string, string>;
+  body?: unknown;
+}
+
+/** Ingestion: how to list one kind of item. */
+export interface ConnectorKind extends ConnectorRequest {
+  title?: string;
+  description?: string;
+  /** JSONata selecting the items (default: the response). */
+  itemsPath?: string;
+  pagination?: ConnectorPagination;
+  /** Incremental syncs: query parameter receiving the start time of the previous successful sync. */
+  since?: { param: string };
+  /** Connection fields this kind needs. */
+  requires?: string[];
+}
+
+export interface ConnectorPoll extends ConnectorRequest {
+  intervalSeconds: number;
+  timeoutMinutes: number;
+  /** JSONata over { connection, inputs, output, status, body }: success when truthy. */
+  done: string;
+  /** Same context, checked first: failure when truthy. */
+  failed?: string;
+  /** Output fields merged over the operation's output when finished. */
+  output?: Record<string, string>;
+}
+
+/** Actions: an API call usable by workflow steps. */
+export interface ConnectorOperation extends ConnectorRequest {
+  title: string;
+  description: string;
+  /** Kind of item it applies to (offered on the entities that kind is mapped to). */
+  kind?: string;
+  /** The operation's form (same schema as workflow forms). */
+  inputs: ObjectSchema;
+  /** Output fields: JSONata over { connection, inputs, status, body }. Default: the response body. */
+  output?: Record<string, string>;
+  poll?: ConnectorPoll;
+  /** Changes nothing (allowed on read-only connections). Default: GET only. */
+  readOnly?: boolean;
+}
+
+/** A connector definition: built-in (YAML shipped with the platform) or the organization's own. */
+export interface ConnectorDefinition {
+  identifier: string;
+  title: string;
+  description: string;
+  icon?: string | null;
+  category: ConnectorCategory;
+  /** The connection form; always declares `baseUrl`. */
+  fields: ObjectSchema;
+  /** Supported auth methods (first: the default). */
+  auth: ConnectorAuthMethod[];
+  authOptional: boolean;
+  /** Headers sent with every request. */
+  headers: Record<string, string>;
+  test?: ConnectorRequest & { expect: { status?: number[]; condition?: string } };
+  kinds: Record<string, ConnectorKind>;
+  operations: Record<string, ConnectorOperation>;
+  example?: { fields?: Record<string, unknown>; auth?: Record<string, unknown>; mappings?: Mapping[] };
+  /** Shipped with the platform: read-only, not versioned (version 0). */
+  builtin: boolean;
+  managed: boolean;
+  version: number;
+  updatedAt: string | null;
+}
+
+export interface ConnectorVersion {
+  version: number;
+  actor: string | null;
+  at: string;
+  definition: Record<string, unknown>;
+}
+
+/** A configured instance of a connector, per organization. Credentials are references (`${secret:NAME}`…), never values. */
+export interface Connection {
+  identifier: string;
+  title: string;
+  description: string;
+  connector: string;
+  fields: Record<string, unknown>;
+  /** `{ type, …values }`; null when the definition needs none. */
+  auth: ({ type: AuthType } & Record<string, unknown>) | null;
+  /** read: ingestion and read-only operations; read-write: also operations that change things. */
+  access: 'read' | 'read-write';
+  /** Automation allow-list (workflow identifiers or run teams); empty: any. */
+  allowed: { workflows?: string[]; teams?: string[] };
+  /** Raw API calls: allowed methods and path prefixes. Absent: none. */
+  api?: { methods: HttpMethod[]; paths: string[] };
+  /** Optimistic concurrency: send it back as If-Match. */
+  version: number;
+  managed: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** POST /connections/:id/test */
+export interface ConnectionTestResult {
+  ok: boolean;
+  /** HTTP status of the test request; null when no response (network, resolution or configuration error). */
+  status: number | null;
+  latencyMs: number | null;
+  error?: string;
+  checkedAt: string;
+}
+
+/** GET /connections/:id/usage: what references the connection (it cannot be deleted while used). */
+export interface ConnectionUsage {
+  integrations: string[];
+  actions: string[];
+  fragments: string[];
+}
+
+/** POST /connectors/:id/operations/:operation/render: the request an operation would send (no credentials). */
+export interface RenderedConnectorRequest {
+  method: string;
+  url: string;
+  headers: Record<string, string>;
+  body?: unknown;
+  /** The inputs with defaults applied. */
+  inputs: Record<string, unknown>;
+}
+
 // ---------- policies ----------
 export interface Policy {
   identifier: string;

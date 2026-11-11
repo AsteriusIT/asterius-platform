@@ -102,6 +102,8 @@ interface Pagination {
   totalPath?: string;
   /** cursor: JSONata of the next cursor in the response (empty: last page). */
   cursorPath?: string;
+  /** cursor: response header holding the next cursor instead (e.g. Azure DevOps `x-ms-continuationtoken`). */
+  cursorHeader?: string;
   /** offset | page | cursor: send the parameter in the JSON body instead of the query string. */
   in?: 'query' | 'body';
 }
@@ -144,7 +146,7 @@ export async function nextPage(
       return set(p.type === 'offset' ? n * (size || c.items) : (p.startAt ?? 1) + n);
     }
     case 'cursor': {
-      const cursor = p.cursorPath ? await evaluate(p.cursorPath, c.data) : undefined;
+      const cursor = p.cursorHeader ? (c.headers.get(p.cursorHeader) ?? undefined) : p.cursorPath ? await evaluate(p.cursorPath, c.data) : undefined;
       return cursor === undefined || cursor === null || cursor === '' || cursor === false ? undefined : set(String(cursor));
     }
     default:

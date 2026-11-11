@@ -1,0 +1,56 @@
+# Built-in connector definition (docs/ARCHITECTURE.md, "Connectors"). Read-only: copy it under another identifier to change it.
+identifier: argocd
+title: Argo CD
+description: Applications and projects of an Argo CD server.
+icon: rocket
+category: ci-cd
+fields:
+  properties:
+    baseUrl: { type: string, title: Server URL, format: url, description: 'e.g. https://argocd.example.com' }
+  required: [baseUrl]
+auth:
+  - type: bearer
+    title: API token
+test:
+  path: /api/v1/session/userinfo
+  expect: { condition: body.loggedIn = true }
+kinds:
+  application: { title: Applications, path: /api/v1/applications, itemsPath: items }
+  project: { title: Projects, path: /api/v1/projects, itemsPath: items }
+operations:
+  sync-application:
+    title: Sync an application
+    kind: application
+    inputs:
+      properties:
+        application: { type: string, title: Application }
+        revision: { type: string, title: Revision, description: 'Empty: the target revision of the application' }
+        prune: { type: boolean, title: Prune, default: false }
+      required: [application]
+    method: POST
+    path: /api/v1/applications/{{ inputs.application }}/sync
+    body: { revision: '{{ inputs.revision }}', prune: '{{ inputs.prune }}' }
+    output: { phase: body.status.operationState.phase }
+    poll:
+      path: /api/v1/applications/{{ inputs.application }}
+      intervalSeconds: 10
+      timeoutMinutes: 30
+      done: body.status.operationState.phase = "Succeeded"
+      failed: body.status.operationState.phase in ["Failed", "Error"]
+      output: { phase: body.status.operationState.phase, health: body.status.health.status, revision: body.status.sync.revision }
+example:
+  fields: { baseUrl: https://argocd.example.com }
+  auth: { type: bearer, token: '${secret:ARGOCD_TOKEN}' }
+  mappings:
+    - kind: application
+      entity:
+        blueprint: deployment
+        identifier: metadata.name
+        properties:
+          health: status.health.status
+          sync: status.sync.status
+          repo: spec.source.repoURL
+          namespace: spec.destination.namespace
+          # DORA insights: finish time of the last sync operation and its phase (Succeeded / Failed).
+          deployedAt: status.operationState.finishedAt
+          status: status.operationState.phase
