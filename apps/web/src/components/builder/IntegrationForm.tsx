@@ -1,10 +1,12 @@
 import { useState } from 'react';
-import { Alert, Button, Group, Input, MultiSelect, NumberInput, Select, SimpleGrid, Stack, Switch, Text, TextInput } from '@mantine/core';
+import { Alert, Anchor, Button, Group, Input, MultiSelect, NumberInput, Select, SimpleGrid, Stack, Switch, Text, TextInput } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { useQuery } from '@tanstack/react-query';
 import { IconPlugConnected, IconPlus, IconTrash } from '@tabler/icons-react';
-import type { PluginInfo } from '@asterius/shared';
+import { Link } from 'react-router';
+import type { Connection, ConnectorDefinition, PluginInfo } from '@asterius/shared';
 import { api, errorText } from '../../lib/api';
+import { CONNECTION_PROVIDES, connectionTypeOf } from '../../lib/connectors';
 import { useAppMutation } from '../../lib/queryClient';
 import { JsonEditor, KeyValueEditor, MONO_INPUT, PluginFieldInput } from './blocks';
 import type { Doc } from './FormEditor';
@@ -62,7 +64,26 @@ export function IntegrationForm({ doc, patch, isNew }: { doc: Doc; patch: (p: Do
   const source: PluginInfo | undefined = sources.find((s) => s.type === type);
   const config = (doc.config ?? {}) as Record<string, unknown>;
   const mappings = (doc.mappings ?? []) as Mapping[];
-  const kinds = source?.kinds?.length ? source.kinds : ['item'];
+  const connectors = useQuery({ queryKey: ['connectors'], queryFn: api.connectors, staleTime: 60_000 });
+  const connections = useQuery({ queryKey: ['connections'], queryFn: api.connections, staleTime: 30_000 });
+  // Types that take a connection: `connector` (any definition) and the built-in definitions natively; the code sources
+  // bound to a definition (github, gitlab, azure-devops) optionally, instead of their URL and token.
+  const native = connectionTypeOf(type, connectors.data ?? []);
+  const optional = native === undefined && CONNECTION_PROVIDES[type] ? type : undefined;
+  const connectionId = typeof config.connection === 'string' ? config.connection : '';
+  const usesConnection = native !== undefined || !!(optional && config.connection !== undefined);
+  const connection = connections.data?.find((c) => c.identifier === connectionId);
+  const connectionDef = connection ? connectors.data?.find((d) => d.identifier === connection.connector) : undefined;
+  const sourceKinds = source?.kinds?.length ? source.kinds : ['item'];
+  // `connector` integrations list the kinds of their connection's definition.
+  const kindOptions =
+    type === 'connector' && connectionDef
+      ? Object.entries(connectionDef.kinds).map(([k, v]) => ({ value: k, label: v.title ? `${v.title} (${k})` : k }))
+      : sourceKinds.map((k) => ({ value: k, label: k }));
+  const kinds = kindOptions.length ? kindOptions.map((k) => k.value) : ['item'];
+  const hidden = new Set(usesConnection ? ['connection', ...(CONNECTION_PROVIDES[type] ?? [])] : []);
+  const shownFields = (source?.fields ?? []).filter((f) => !hidden.has(f.key));
+  const setConfig = (next: Record<string, unknown>) => patch({ config: next });
   const [sample, setSample] = useState<unknown[]>([]);
   const [sampleIndex, setSampleIndex] = useState(0);
 
@@ -94,8 +115,10 @@ export function IntegrationForm({ doc, patch, isNew }: { doc: Doc; patch: (p: Do
           description={source?.description}
           onChange={(t) => {
             const next = sources.find((s) => s.type === t);
-            // A new type starts from its example configuration.
-            patch({ type: t, config: (next?.example as { config?: Record<string, unknown> } | undefined)?.config ?? {} });
+            // A new type starts from its example configuration (an example connection only if it exists here).
+            const example = { ...((next?.example as { config?: Record<string, unknown> } | undefined)?.config ?? {}) };
+            if (typeof example.connection === 'string' && !connections.data?.some((c) => c.identifier === example.connection)) example.connection = '';
+            patch({ type: t, config: example });
           }}
         />
         <NumberInput
@@ -115,9 +138,33 @@ export function IntegrationForm({ doc, patch, isNew }: { doc: Doc; patch: (p: Do
 
       <Input.Wrapper label="Connection">
         <Stack gap="sm" mt="3xs">
-          {source?.fields?.length ? (
+          {optional && (
+            <Switch
+              label="Use a connection"
+              description="The URL, organization and token come from a connection (Admin → Connections)"
+              checked={usesConnection}
+              onChange={(e) => {
+                const next = { ...config };
+                if (e.currentTarget.checked) {
+                  for (const k of CONNECTION_PROVIDES[type] ?? []) delete next[k];
+                  next.connection = (connections.data ?? []).find((c) => c.connector === optional)?.identifier ?? '';
+                } else delete next.connection;
+                setConfig(next);
+              }}
+            />
+          )}
+          {usesConnection && (
+            <ConnectionPicker
+              connector={native === true ? undefined : (native ?? optional)}
+              connections={connections.data ?? []}
+              connectors={connectors.data ?? []}
+              value={connectionId}
+              onChange={(id) => setConfig({ ...config, connection: id })}
+            />
+          )}
+          {usesConnection && !shownFields.length ? null : shownFields.length ? (
             <SimpleGrid cols={{ base: 1, sm: 2 }}>
-              {source.fields.map((f) => (
+              {shownFields.map((f) => (
                 <PluginFieldInput
                   key={f.key}
                   field={f}
@@ -192,7 +239,7 @@ export function IntegrationForm({ doc, patch, isNew }: { doc: Doc; patch: (p: Do
                 <SimpleGrid cols={{ base: 1, sm: 3 }}>
                   <Select
                     label="Kind"
-                    data={kinds}
+                    data={kindOptions}
                     value={m.kind ?? kinds[0]}
                     allowDeselect={false}
                     onChange={(v) => setMapping(i, { kind: v ?? undefined })}
@@ -269,5 +316,49 @@ export function IntegrationForm({ doc, patch, isNew }: { doc: Doc; patch: (p: Do
         </Stack>
       </Input.Wrapper>
     </Stack>
+  );
+}
+
+/** A connection of the connector an integration type takes (any connector for `connector`), with a link to it. */
+export function ConnectionPicker(props: {
+  connector?: string;
+  connections: Connection[];
+  connectors: ConnectorDefinition[];
+  value: string;
+  onChange: (id: string) => void;
+}) {
+  const options = props.connections
+    .filter((c) => !props.connector || c.connector === props.connector)
+    .map((c) => {
+      const def = props.connectors.find((d) => d.identifier === c.connector);
+      const kinds = def ? Object.keys(def.kinds).length : 0;
+      return { value: c.identifier, label: props.connector ? c.title : `${c.title} (${def?.title ?? c.connector})`, disabled: !props.connector && !kinds };
+    });
+  const current = props.connections.find((c) => c.identifier === props.value);
+  return (
+    <Select
+      label="Connection"
+      withAsterisk
+      searchable
+      placeholder={options.length ? 'Pick a connection' : 'No connection yet'}
+      data={props.value && !current ? [...options, { value: props.value, label: props.value, disabled: false }] : options}
+      value={props.value || null}
+      onChange={(v) => props.onChange(v ?? '')}
+      error={props.value && props.connections.length && !current ? `Unknown connection "${props.value}"` : undefined}
+      description={
+        current ? (
+          <Anchor component={Link} to={`/admin/connections?open=${encodeURIComponent(current.identifier)}`} fz="xs">
+            Open {current.title}
+          </Anchor>
+        ) : (
+          <>
+            Settings and credentials live in the connection.{' '}
+            <Anchor component={Link} to={props.connector ? `/admin/connections?new=${encodeURIComponent(props.connector)}` : '/admin/connections'} fz="xs">
+              Create one
+            </Anchor>
+          </>
+        )
+      }
+    />
   );
 }

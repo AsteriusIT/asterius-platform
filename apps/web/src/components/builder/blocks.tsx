@@ -153,7 +153,18 @@ export function SubjectsEditor({
 }
 
 /** `${secret:NAME}` picker, free text allowed (env references, literal values for tests). */
-function SecretInput({ field, value, onChange }: { field: PluginField; value: string; onChange: (v: string) => void }) {
+/** A credential input: a `${secret:NAME}` picker for admins, a typed reference for delegated roles. */
+export function SecretInput({
+  field,
+  value,
+  onChange,
+  error,
+}: {
+  field: Pick<PluginField, 'label' | 'help' | 'required'>;
+  value: string;
+  onChange: (v: string) => void;
+  error?: string;
+}) {
   // Listing secrets is admin-only: delegated roles (integration admins) type the reference.
   const listSecrets = useCan()('admin');
   const secrets = useQuery({ queryKey: ['secrets'], queryFn: api.secrets, staleTime: 30_000, enabled: listSecrets });
@@ -168,6 +179,7 @@ function SecretInput({ field, value, onChange }: { field: PluginField; value: st
       data={(secrets.data ?? []).map((s) => `\${secret:${s.name}}`)}
       value={value}
       onChange={onChange}
+      error={error}
       styles={MONO_INPUT}
     />
   );

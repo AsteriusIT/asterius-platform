@@ -56,7 +56,7 @@ export function freezeTimes(value: unknown, realNow = Date.now(), now = FIXED_NO
 }
 
 /** POST requests that only read (searches, checks, previews): the others are answered locally. */
-const READ_ONLY_POST = [/\/entities\/query$/, /\/expressions\/check$/, /\/dry-run$/, /\/impact$/, /\/auth\/login$/];
+const READ_ONLY_POST = [/\/entities\/query$/, /\/expressions\/check$/, /\/dry-run$/, /\/impact$/, /\/auth\/login$/, /\/operations\/[^/]+\/render$/];
 
 async function freezeApi(context: BrowserContext) {
   await context.route(/\/api\//, async (route: Route) => {

@@ -17,6 +17,8 @@ export function ResourceEditor<T>(props: {
   isNew: boolean;
   readOnly?: boolean;
   help?: React.ReactNode;
+  /** Why the document is read-only (default: managed by the configuration repository). */
+  readOnlyNotice?: React.ReactNode;
   onSave: (identifier: string, body: Record<string, unknown>) => Promise<T>;
   onClose: () => void;
 }) {
@@ -36,6 +38,7 @@ function EditorBody<T>(props: {
   isNew: boolean;
   readOnly?: boolean;
   help?: React.ReactNode;
+  readOnlyNotice?: React.ReactNode;
   onSave: (identifier: string, body: Record<string, unknown>) => Promise<T>;
   onClose: () => void;
 }) {
@@ -78,7 +81,7 @@ function EditorBody<T>(props: {
     <Stack>
       {props.readOnly && (
         <Alert color="grape" variant="light">
-          Managed by the configuration repository: change it there. You can copy this YAML.
+          {props.readOnlyNotice ?? 'Managed by the configuration repository: change it there. You can copy this YAML.'}
         </Alert>
       )}
       {props.help}

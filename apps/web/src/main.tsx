@@ -40,6 +40,8 @@ const runs = () => import('./pages/Runs');
 const todo = () => import('./pages/Todo');
 const profile = () => import('./pages/Profile');
 const definitions = () => import('./pages/admin/Definitions');
+const connections = () => import('./pages/admin/Connections');
+const connectors = () => import('./pages/admin/Connectors');
 const workflowFlow = () => import('./pages/admin/WorkflowFlow');
 const access = () => import('./pages/admin/Access');
 const system = () => import('./pages/admin/System');
@@ -130,6 +132,8 @@ const routes: RouteObject[] = [
                   { path: 'blueprints', element: page(definitions, 'BlueprintsAdmin') },
                   { path: 'actions', element: page(definitions, 'ActionsAdmin') },
                   { path: 'integrations', element: page(definitions, 'IntegrationsAdmin') },
+                  { path: 'connections', element: page(connections, 'ConnectionsAdmin') },
+                  { path: 'connectors', element: page(connectors, 'ConnectorsAdmin') },
                   { path: 'dashboards', element: page(definitions, 'DashboardsAdmin') },
                   { path: 'scorecards', element: page(definitions, 'ScorecardsAdmin') },
                   { path: 'policies', element: page(definitions, 'PoliciesAdmin') },

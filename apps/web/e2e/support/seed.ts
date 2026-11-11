@@ -438,6 +438,111 @@ const actions = [
 
 // ---------------------------------------------------------------------------------------------------------------------
 
+// ---- connectors and connections (Admin → Connections / Connectors) ----
+
+/** The organization's own connector: an in-house CMDB. */
+const connectorDefs = [
+  {
+    identifier: 'acme-cmdb',
+    title: 'Acme CMDB',
+    description: 'The in-house configuration database: applications, servers and change tickets.',
+    icon: 'database',
+    category: 'internal',
+    fields: {
+      properties: {
+        tenant: { type: 'string', title: 'Tenant', description: 'Tenant code in the CMDB' },
+        baseUrl: { type: 'string', title: 'API URL', format: 'url', default: 'https://cmdb.acme.example/api' },
+      },
+      required: ['tenant'],
+      order: ['tenant', 'baseUrl'],
+    },
+    auth: [
+      { type: 'bearer', title: 'API token', description: 'A token of a CMDB service account.' },
+      {
+        type: 'oauth2-client-credentials',
+        title: 'Entra application',
+        set: { tokenUrl: 'https://login.microsoftonline.com/acme/oauth2/v2.0/token', scope: 'api://cmdb/.default' },
+      },
+    ],
+    test: { path: '/{{ connection.tenant }}/health' },
+    kinds: {
+      application: {
+        title: 'Applications',
+        path: '/{{ connection.tenant }}/applications',
+        itemsPath: 'items',
+        pagination: { type: 'page', param: 'page', pageSize: 100 },
+      },
+      server: { title: 'Servers', path: '/{{ connection.tenant }}/servers', itemsPath: 'items', since: { param: 'changedSince' } },
+    },
+    operations: {
+      'open-change': {
+        title: 'Open a change ticket',
+        description: 'Opens a standard change for a deployment.',
+        method: 'POST',
+        path: '/{{ connection.tenant }}/changes',
+        inputs: {
+          properties: {
+            application: { type: 'string', title: 'Application' },
+            summary: { type: 'string', title: 'Summary' },
+            risk: { type: 'string', title: 'Risk', enum: ['low', 'medium', 'high'], default: 'low' },
+          },
+          required: ['application', 'summary'],
+        },
+        body: { application: '{{ inputs.application }}', summary: '{{ inputs.summary }}', risk: '{{ inputs.risk }}' },
+        output: { ticket: 'body.id' },
+      },
+      'get-application': {
+        title: 'Get an application',
+        kind: 'application',
+        path: '/{{ connection.tenant }}/applications/{{ inputs.id }}',
+        inputs: { properties: { id: { type: 'string', title: 'Application ID' } }, required: ['id'] },
+      },
+    },
+  },
+];
+
+const connections = [
+  {
+    identifier: 'cmdb-prod',
+    title: 'CMDB production',
+    description: 'The production tenant of the CMDB, used to ingest applications and to open change tickets on deployments.',
+    connector: 'acme-cmdb',
+    fields: { tenant: 'acme' },
+    auth: { type: 'bearer', token: '${secret:CMDB_TOKEN}' },
+    access: 'read-write',
+    allowed: { teams: ['platform', 'payments'] },
+    api: { methods: ['GET', 'POST'], paths: ['/acme/changes'] },
+  },
+  {
+    identifier: 'github-acme',
+    title: 'GitHub Acme',
+    connector: 'github',
+    fields: { organization: 'acme' },
+    auth: { type: 'bearer', token: '${secret:GITHUB_TOKEN}' },
+    access: 'read',
+  },
+  {
+    identifier: 'pagerduty',
+    title: 'PagerDuty',
+    connector: 'pagerduty',
+    auth: { type: 'header', token: '${secret:PAGERDUTY_TOKEN}' },
+    access: 'read',
+  },
+];
+
+/** Disabled: never synced (no network in the tests), but it uses `cmdb-prod` and feeds the service blueprint. */
+const connectionIntegrations = [
+  {
+    identifier: 'cmdb-applications',
+    title: 'CMDB applications',
+    type: 'connector',
+    enabled: false,
+    intervalMinutes: 0,
+    config: { connection: 'cmdb-prod' },
+    mappings: [{ kind: 'application', entity: { blueprint: 'service', identifier: '$lowercase(code)', title: 'name', properties: { version: 'version' } } }],
+  },
+];
+
 async function register(email: string, name: string): Promise<{ token: string; user: { id: string } }> {
   return call('POST', '/api/auth/register', undefined, { email, name, password: PASSWORD });
 }
@@ -471,6 +576,10 @@ async function build(): Promise<SeedState> {
 
   for (const f of fragments) await call('PUT', `/api/v1/fragments/${f.identifier}`, a, f);
   for (const act of actions) await call('PUT', `/api/v1/actions/${act.identifier}`, a, act);
+
+  for (const d of connectorDefs) await call('PUT', `/api/v1/connectors/${d.identifier}`, a, d);
+  for (const c of connections) await call('PUT', `/api/v1/connections/${c.identifier}`, a, c);
+  for (const i of connectionIntegrations) await call('PUT', `/api/v1/integrations/${i.identifier}`, a, i);
 
   // A saved catalog view (the views menu of the catalog list) and a favourite action.
   await call('POST', '/api/v1/views', a, { name: 'Production services', blueprint: 'service', query: 'f=lifecycle:production&sort=title' });

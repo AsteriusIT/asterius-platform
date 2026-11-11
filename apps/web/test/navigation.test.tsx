@@ -137,7 +137,7 @@ describe('navigation', () => {
     const tab = await screen.findByRole('tab', { name: 'Actions' });
     expect(tab.getAttribute('aria-selected')).toBe('true');
     expect(screen.getByRole('tab', { name: 'Integrations' }).getAttribute('aria-selected')).toBe('false');
-    expect(screen.getAllByRole('tab')).toHaveLength(6); // Actions, Fragments, Integrations, Webhooks, Deliveries, Notifications
+    expect(screen.getAllByRole('tab')).toHaveLength(8); // Actions, Fragments, Integrations, Connections, Connectors, Webhooks, Deliveries, Notifications
   });
 
   it('redirects a category URL to its first tab', async () => {
@@ -184,7 +184,7 @@ describe('navigation', () => {
     asMember(['integration-admin']);
     app('/admin/automation');
     expect(await screen.findByText('page Integrations')).toBeTruthy();
-    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Integrations']);
+    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Integrations', 'Connections', 'Connectors']);
     expect(screen.getByRole('link', { name: 'Automation' }).getAttribute('href')).toBe('/admin/integrations');
     expect(screen.queryByRole('link', { name: 'Catalog model' })).toBeNull();
   });
@@ -254,8 +254,8 @@ describe('admin access by role', () => {
     expect(tabs(user('member'))).toEqual([]);
     expect(tabs(user('member', ['approver', 'custom-role']))).toEqual([]);
     expect(tabs(user('member', ['blueprint-owner']))).toEqual(['Blueprints']);
-    expect(tabs(user('member', ['integration-admin']))).toEqual(['Integrations']);
-    expect(tabs(user('member', ['integration-admin', 'blueprint-owner']))).toEqual(['Blueprints', 'Integrations']);
+    expect(tabs(user('member', ['integration-admin']))).toEqual(['Integrations', 'Connections', 'Connectors']);
+    expect(tabs(user('member', ['integration-admin', 'blueprint-owner']))).toEqual(['Blueprints', 'Integrations', 'Connections', 'Connectors']);
     expect(canAdminister({ ...user('admin'), organization: null }, 'blueprints')).toBe(false); // no organization yet
   });
 
