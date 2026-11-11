@@ -587,6 +587,8 @@ export interface RunStep {
   children?: { runId: string; status: string; item?: unknown }[];
   /** AI spend of the step in dollars (null: none recorded). */
   costUsd?: number | null;
+  /** Steps going through a connection: the connection and the operation. */
+  connector?: RunStepConnector;
   approvals: RunApproval[];
   /** Approval and input steps: tiers, escalation and reminders. */
   approval?: ApprovalProgress | null;
@@ -1448,6 +1450,52 @@ export interface RenderedConnectorRequest {
   body?: unknown;
   /** The inputs with defaults applied. */
   inputs: Record<string, unknown>;
+}
+
+/** GET /step-connections: an operation of a connection, as the workflow editor offers it. */
+export interface StepConnectionOperation {
+  name: string;
+  title: string;
+  description: string;
+  kind?: string;
+  inputs: ObjectSchema;
+  /** Output field names (`steps.<id>.output.<name>`). */
+  outputs: string[];
+  readOnly: boolean;
+  /** Long-running: the step waits until the operation finishes. */
+  polls: boolean;
+  /** Day-2: blueprints an integration of this connection maps the operation's `kind` to. */
+  blueprints: string[];
+  /** False when the connection cannot run it (read-only connection, write operation); `reason` says why. */
+  usable: boolean;
+  reason?: string;
+}
+
+/** GET /step-connections: a connection usable by workflow steps (no credentials). */
+export interface StepConnection {
+  identifier: string;
+  title: string;
+  description: string;
+  connector: { identifier: string; title: string; icon?: string | null };
+  access: 'read' | 'read-write';
+  allowed: { workflows?: string[]; teams?: string[] };
+  /** Field values (for the request preview). */
+  fields: Record<string, unknown>;
+  /** Raw API calls allowed (methods and path prefixes); absent: none. */
+  api?: { methods: HttpMethod[]; paths: string[] };
+  operations: StepConnectionOperation[];
+}
+
+/** Run page: a step that goes through a connection (`connector` / `connector-api` invokers). */
+export interface RunStepConnector {
+  connection: string;
+  connectionTitle: string;
+  connector: string;
+  icon?: string | null;
+  operation?: string;
+  operationTitle?: string;
+  /** Raw calls. */
+  method?: string;
 }
 
 // ---------- policies ----------

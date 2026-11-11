@@ -15,14 +15,16 @@ import { argoWorkflowsInvoker, jenkinsInvoker, terraformCloudInvoker } from './o
 import { scaffolderInvoker } from './scaffolder.js';
 import { tektonInvoker } from './tekton.js';
 import { jiraInvoker, lambdaInvoker, stepFunctionsInvoker } from './services.js';
+import { connectorApiInvoker, connectorInvoker } from './connector.js';
 
 const registry = new Map<string, Invoker>();
 
 /** Extension point: register a custom invoker type (e.g. from a fork or a plugin module imported in index.ts). */
 export function registerInvoker(inv: Invoker) {
-  // A config naming a `connection` is validated with what the connection provides (integrations/connectors/bindings.ts).
+  // A config naming a `connection` is validated with what the connection provides (integrations/connectors/bindings.ts),
+  // unless the invoker resolves the connection itself (connector operations).
   const validate = inv.validate.bind(inv);
-  registry.set(inv.info.type, { ...inv, validate: (c) => validate(configForValidation('invoker', inv.info.type, c)) });
+  registry.set(inv.info.type, { ...inv, validate: (c) => validate(configForValidation('invoker', inv.info.type, c, !!inv.connection)) });
 }
 
 for (const inv of [
@@ -44,6 +46,8 @@ for (const inv of [
   stepFunctionsInvoker,
   tektonInvoker,
   scaffolderInvoker,
+  connectorInvoker,
+  connectorApiInvoker,
 ])
   registerInvoker(inv);
 

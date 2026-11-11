@@ -4,6 +4,7 @@ import type { Action } from '@asterius/shared';
 import { audit } from '../audit.js';
 import { actorOf, authenticate, bearer, isAdmin, requireAdmin, requireUser } from '../auth/users.js';
 import { getEntity } from '../catalog/entities.js';
+import { listStepConnections } from '../actions/connector-steps.js';
 import { blueprintOf, canTrigger, isRunnable, deleteAction, forViewer, getAction, listActions, upsertAction } from '../actions/actions.js';
 import { nextPageHeaders } from '../lib/cursor.js';
 import {
@@ -206,6 +207,8 @@ export async function actionRoutes(app: FastifyInstance) {
     });
     /** Test a workflow without side effects: renders templates, evaluates expressions, validates invokers and secrets. */
     /** Editor helpers (admin): check/preview a JSONata expression, simulate a draft workflow on sample inputs. Nothing is executed. */
+    /** Connections and their operations for the workflow editor's connector steps (no credentials). */
+    scoped.get('/step-connections', { preHandler: requireAdmin }, async () => listStepConnections());
     scoped.post('/expressions/check', { preHandler: requireAdmin }, async (req) => {
       const b = z.object({ expression: z.string().max(4000), context: z.unknown().optional() }).parse(req.body);
       return previewExpression(b.expression, b.context ?? {});

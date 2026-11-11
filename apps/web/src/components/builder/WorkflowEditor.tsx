@@ -51,6 +51,8 @@ import { FieldsEditor, type FieldsMode } from './FieldsEditor';
 import { ExpressionStatus } from './ExpressionTools';
 import { JsonEditor, KeyValueEditor, MONO_INPUT, PluginFieldInput, SubjectsEditor, VariableChips } from './blocks';
 import { ApprovalTimersEditor, RemindersEditor, TiersEditor } from './ApprovalSettings';
+import { ConnectorStepEditor } from './ConnectorStepEditor';
+import { CONNECTOR_INVOKERS } from '../../lib/connectorSteps';
 
 /**
  * Settings of the workflow steps, shown in the editor page's dialogs (pages/admin/WorkflowFlow.tsx): per type
@@ -195,7 +197,7 @@ export function StepSettings({
         />
       </SimpleGrid>
       <Variables steps={steps} index={index} inputFields={inputFields} params={params} blueprint={triggerBlueprint} onEntity={onEntity} />
-      {step.type === 'invoke' && <InvokeEditor step={step} invokers={invokers} onChange={update} />}
+      {step.type === 'invoke' && <InvokeEditor step={step} invokers={invokers} onChange={update} blueprint={triggerBlueprint} onEntity={onEntity} />}
       {step.type === 'approval' && <ApprovalEditor step={step} onEntity={onEntity} onChange={update} />}
       {step.type === 'agent' && <AgentEditor step={step} onChange={update} />}
       {step.type === 'transform' && <TransformEditor step={step} onChange={update} />}
@@ -288,12 +290,29 @@ function Variables({
   );
 }
 
-function InvokeEditor({ step, invokers, onChange }: { step: InvokeStep; invokers: PluginInfo[]; onChange: (p: Partial<InvokeStep>) => void }) {
+function InvokeEditor({
+  step,
+  invokers,
+  onChange,
+  blueprint,
+  onEntity,
+}: {
+  step: InvokeStep;
+  invokers: PluginInfo[];
+  onChange: (p: Partial<InvokeStep>) => void;
+  blueprint: string | null;
+  onEntity: boolean;
+}) {
   const info = invokers.find((i) => i.type === step.invoker.type);
+  // Connection operations and raw API calls share one entry of the picker (raw calls are a mode of its editor).
+  const viaConnection = CONNECTOR_INVOKERS.includes(step.invoker.type);
   const [generation, setGeneration] = useState(0);
   const changeType = (type: string) => {
     const apply = () => {
-      onChange({ invoker: { ...(invokers.find((i) => i.type === type)?.example ?? {}), type } as InvokerConfig });
+      // Connection steps start empty: the example names a connection this organization may not have.
+      onChange({
+        invoker: (CONNECTOR_INVOKERS.includes(type) ? { type } : { ...(invokers.find((i) => i.type === type)?.example ?? {}), type }) as InvokerConfig,
+      });
       setGeneration((g) => g + 1);
     };
     if (!Object.keys(step.invoker).some((k) => k !== 'type')) return apply();
@@ -317,12 +336,14 @@ function InvokeEditor({ step, invokers, onChange }: { step: InvokeStep; invokers
       <Select
         label="Runs with"
         allowDeselect={false}
-        data={invokers.map((i) => ({ value: i.type, label: i.title }))}
-        value={step.invoker.type}
-        onChange={(t) => t && changeType(t)}
+        data={invokers.filter((i) => i.type !== 'connector-api').map((i) => ({ value: i.type, label: i.title }))}
+        value={step.invoker.type === 'connector-api' ? 'connector' : step.invoker.type}
+        onChange={(t) => t && t !== (viaConnection ? 'connector' : step.invoker.type) && changeType(t)}
         description={info?.description}
       />
-      {info?.fields?.length ? (
+      {viaConnection ? (
+        <ConnectorStepEditor invoker={step.invoker} onChange={(invoker) => onChange({ invoker })} blueprint={blueprint} onEntity={onEntity} />
+      ) : info?.fields?.length ? (
         <>
           {basic.map((f) => (
             <PluginFieldInput key={f.key} field={f} value={step.invoker[f.key]} onChange={(v) => setKey(f.key, v)} />

@@ -154,7 +154,7 @@ Tools (including a team's own in-house application) are integrated by configurat
 
 ```
 connector definition ──< connection ──< integration (type: connector | <built-in id> | code source with connection:)
- (how to talk to a kind      (one instance: fields,   └─< workflow step (code invokers with connection:; operations: next)
+ (how to talk to a kind      (one instance: fields,   └─< workflow step (code invokers with connection:; connector / connector-api)
   of system: data only)       auth refs, access)
 ```
 
@@ -189,11 +189,25 @@ connector definition ──< connection ──< integration (type: connector | <
   `scaffolder` invokers) accept `connection: <id>` through `bindings.ts`: the connection fills the URL, organization /
   project / group and a token (PAT, bearer, `{token}` header, or an access token obtained by OAuth2, GitHub App, Entra
   workload or managed identity); inline keys win, `token` + `connection` is refused. Inline configs work unchanged.
+- **Workflow steps** (`actions/invokers/connector.ts`): `type: connector` `{ connection, operation, inputs }` runs an
+  operation (inputs are templates rendered like any invoker config; literal inputs are checked against the operation's
+  schema when the workflow is saved); `type: connector-api` `{ connection, method, path, query?, headers?, body? }` is a
+  raw call within the connection's `api` allow-list, output `{ status, body, headers }` (workflows are admin-authored).
+  The invoker resolves the connection itself (`Invoker.connection.resolve` / `.check` instead of bindings.ts): a write
+  (operation not read-only, raw call other than GET) needs read-write, `allowed` must match the run's workflow / team.
+  Output: the operation output plus `httpStatus`; `url` / `link` becomes the step link. Operations with `poll` stay
+  IN_PROGRESS with `{ output, deadline, polls }` in the step state (inputs are rendered again at each poll, never
+  stored), polled every `poll.intervalSeconds` (`InvokeResult.pollAfterSeconds`) until `done` / `failed` or
+  `poll.timeoutMinutes` (the step's own timeout still applies). Logs carry the method, URL path and status only. Dry
+  runs and workflow tests render the request without sending it (`Invoker.simulate`). `GET /step-connections` (admins)
+  lists connections with their operations, the blueprints an integration of the same connection maps each operation's
+  `kind` to (day-2: the editor offers to prefill matching inputs with `{{ entity.properties.<name> }}`), and whether
+  the access allows it; the run page shows the operation and connection of the step (`RunStep.connector`).
 - **What stays code**: Kubernetes, SQL, cloud inventories, descriptors, the scaffolder, CI log copying, webhook
   ingestion, and anything needing several dependent calls, binary payloads or custom signing.
 - **Security**: definitions are admin-only (they decide which requests the platform sends); connections are managed by
   admins and `integration-admin`s. Ingestion uses a connection read-only; code invokers need `read-write` and pass the
-  `allowed` list (checked at save time for the workflow, at run time for the run's team); operations will use
+  `allowed` list (checked at save time for the workflow, at run time for the run's team); operations use
   `isReadOnlyOperation` / `assertConnectionUse`, raw calls `assertRawCall`. Requests go through `lib/http.ts` (SSRF
   guard, retries, circuit breaker); redirects are refused for the connection test; resolved secrets and fetched tokens
   are redacted from sync logs and run logs. `azure-workload-identity` (federated token of AZURE_FEDERATED_TOKEN_FILE)

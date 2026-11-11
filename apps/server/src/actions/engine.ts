@@ -491,11 +491,17 @@ async function invokeEnv(r: RunRow, def: Extract<Step, { type: 'invoke' }>, rows
   const { value, secrets } = await render(def.invoker, ctx, resolverFor(r));
   secrets.push(ctx.run.callback.token);
   // `connection: <id>`: the connection fills the URL and credentials (it must be read-write and allow this workflow).
-  const conn = await applyConnection('invoker', def.invoker.type, value as Record<string, unknown>, { write: true, workflow: r.action, team: r.team });
+  const inv = getInvoker(def.invoker.type);
+  const conn = inv.connection
+    ? await inv.connection.resolve(value as Record<string, unknown>, { workflow: r.action, team: r.team })
+    : await applyConnection('invoker', def.invoker.type, value as Record<string, unknown>, { write: true, workflow: r.action, team: r.team });
   secrets.push(...conn.secrets);
   const env: InvokeEnv = { ctx, config: conn.config, log: stepLog(r.id, def.id, secrets) };
   return { env, secrets };
 }
+
+/** Delay before the next poll: the invoker's own interval (connector operations) or RUN_POLL_SECONDS. */
+const pollDelayMs = (res: InvokeResult) => (res.pollAfterSeconds ?? config.RUN_POLL_SECONDS) * 1000;
 
 async function applyInvokeResult(runId: string, stepId: string, res: InvokeResult, polls: boolean, secrets: string[] = [], owner?: Owner, loopRow?: StepRow) {
   // Whatever the external system echoed back (webhook answers, job output) is stored: mask the secrets it may contain.
@@ -513,7 +519,7 @@ async function applyInvokeResult(runId: string, stepId: string, res: InvokeResul
       status_label: res.statusLabel ?? null,
       ...(res.link !== undefined ? { link: res.link } : {}),
       locked_until: null,
-      next_at: polls ? later(config.RUN_POLL_SECONDS * 1000) : null,
+      next_at: polls ? later(pollDelayMs(res)) : null,
     },
     owner,
   );
@@ -1090,7 +1096,7 @@ async function executeLoop(r: RunRow, rows: StepRow[], row: StepRow, def: LoopSt
           status_label: `Item ${i + 1}/${l.items.length}${res.statusLabel ? `: ${res.statusLabel}` : ''}`,
           ...(res.link !== undefined ? { link: res.link } : {}),
           locked_until: null,
-          next_at: inv.poll ? later(config.RUN_POLL_SECONDS * 1000) : null,
+          next_at: inv.poll ? later(pollDelayMs(res)) : null,
         },
         owner,
       );
@@ -1111,7 +1117,7 @@ async function applyLoopResult(runId: string, stepId: string, row: StepRow, res:
     'UPDATE run_steps SET state = ?, status_label = ?, next_at = ? WHERE run_id = ? AND step_id = ? AND status = ? AND state = ?',
     loopState({ ...loop, inner: res.state ?? loop.inner ?? {} }),
     `Item ${(loop.current ?? 0) + 1}/${loop.items.length}${res.statusLabel ? `: ${res.statusLabel}` : ''}`,
-    polls ? later(config.RUN_POLL_SECONDS * 1000) : null,
+    polls ? later(pollDelayMs(res)) : null,
     runId,
     stepId,
     'RUNNING',

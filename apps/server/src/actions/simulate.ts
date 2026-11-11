@@ -1,6 +1,7 @@
 import { evaluate, render } from '../lib/expr.js';
 import { casesOf, type Step } from './workflow.js';
 import { expandWorkflow, withParams } from './fragments.js';
+import { getInvoker } from './invokers/index.js';
 
 /** Result of simulating one step against sample data. Nothing is executed or stored. */
 export interface SimulatedStep {
@@ -75,6 +76,9 @@ export async function simulateWorkflow(steps: Step[], base: { inputs?: unknown; 
               ? { message: s.message ?? '' }
               : { prompt: o.prompt ?? o.message ?? o.action ?? '', system: o.system ?? '' };
         r.preview = (await render(template, ctx, mask)).value;
+        // Connector operations: show the request they would send (nothing is sent).
+        const inv = s.type === 'invoke' ? getInvoker(s.invoker.type) : undefined;
+        if (inv?.simulate) r.preview = (await inv.simulate(r.preview as Record<string, unknown>, { workflow: '' })).rendered;
         done[s.id] = { status: 'SUCCESS', output: null, link: null };
       }
     } catch (e) {
