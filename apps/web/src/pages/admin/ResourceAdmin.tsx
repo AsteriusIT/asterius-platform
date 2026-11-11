@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { ActionIcon, Button, Group, Menu, Stack, Text, Tooltip } from '@mantine/core';
 import { modals } from '@mantine/modals';
 import { notifications } from '@mantine/notifications';
@@ -47,6 +47,9 @@ export function ResourceAdmin<T extends Resource>(props: {
   children?: ReactNode;
   /** Form dialog editing one resource (builders in components/builder). Without it: the YAML editor. */
   editor?: (p: EditorProps) => ReactNode;
+  /** Open the editor from elsewhere (a link, a side panel): on a new document or an existing item; `onOpened` clears it. */
+  openEditor?: { value: Record<string, unknown> } | { item: T } | null;
+  onOpened?: () => void;
 }) {
   const qc = useQueryClient();
   const q = useQuery({ queryKey: [props.queryKey], queryFn: props.list });
@@ -70,6 +73,14 @@ export function ResourceAdmin<T extends Resource>(props: {
       notifyError(e, `Cannot open ${item.title}`);
     }
   };
+  const { openEditor, onOpened } = props;
+  useEffect(() => {
+    if (!openEditor) return;
+    if ('item' in openEditor) void open(openEditor.item);
+    else setEditing({ value: openEditor.value, isNew: true, readOnly: false });
+    onOpened?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `open` is recreated every render; the request is what matters
+  }, [openEditor, onOpened]);
   const remove = (item: T) =>
     modals.openConfirmModal({
       title: `Delete ${item.title}?`,

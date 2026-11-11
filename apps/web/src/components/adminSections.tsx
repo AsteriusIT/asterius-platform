@@ -8,6 +8,8 @@ import {
   IconLayoutDashboard,
   IconLock,
   IconMedal,
+  IconApi,
+  IconPlug,
   IconPlugConnected,
   IconPuzzle,
   IconRobot,
@@ -67,6 +69,9 @@ export const ADMIN_CATEGORIES: AdminCategory[] = [
       { label: 'Actions', path: '/admin/actions', icon: i(IconBolt) },
       { label: 'Fragments', path: '/admin/fragments', icon: i(IconPuzzle) },
       { label: 'Integrations', path: '/admin/integrations', icon: i(IconPlugConnected), area: 'integrations' },
+      // Integration admins manage connections and read connector definitions (writing them is admin-only, in the page).
+      { label: 'Connections', path: '/admin/connections', icon: i(IconPlug), area: 'integrations' },
+      { label: 'Connectors', path: '/admin/connectors', icon: i(IconApi), area: 'integrations' },
       { label: 'Webhooks', path: '/admin/webhooks', icon: i(IconWebhook) },
       { label: 'Deliveries', path: '/admin/deliveries', icon: i(IconSend) },
       { label: 'Notifications', path: '/admin/notifications', icon: i(IconBell) },

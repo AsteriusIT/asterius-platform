@@ -55,6 +55,11 @@ import type {
   UserPreferences,
   SavedCatalogView,
   StepConnection,
+  Connection,
+  ConnectionTestResult,
+  ConnectionUsage,
+  ConnectorDefinition,
+  ConnectorVersion,
   RenderedConnectorRequest,
 } from '@asterius/shared';
 import { urlOrg } from './orgUrl';
@@ -509,9 +514,28 @@ export const api = {
   // ---- connector operations ----
   /** Connections with their operations, for the workflow editor's connector steps (admins). */
   connectionsForSteps: () => request<StepConnection[]>('GET', v1('/step-connections')),
-  /** The request an operation would send (no credentials, nothing is sent). */
-  renderConnectorOperation: (connector: string, operation: string, body: { fields: Record<string, unknown>; inputs: Record<string, unknown> }) =>
-    request<RenderedConnectorRequest>('POST', v1(`/connectors/${enc(connector)}/operations/${enc(operation)}/render`), body),
+  // ---- connections & connectors admin ----
+  // Reading definitions and managing connections: admins and integration admins; writing definitions: admins.
+  connectors: () => request<ConnectorDefinition[]>('GET', v1('/connectors')),
+  connector: (id: string) => request<ConnectorDefinition>('GET', v1(`/connectors/${enc(id)}`)),
+  saveConnectorAt: (id: string, body: unknown, version?: number) =>
+    request<ConnectorDefinition>('PUT', v1(`/connectors/${enc(id)}`), body, { headers: ifMatch(version) }),
+  deleteConnector: (id: string) => request('DELETE', v1(`/connectors/${enc(id)}`)),
+  connectorVersions: (id: string) => request<ConnectorVersion[]>('GET', v1(`/connectors/${enc(id)}/versions`)),
+  connectorDiff: (id: string, from: number, to: number) =>
+    request<ActionVersionDiff>('GET', v1(`/connectors/${enc(id)}/diff${qs({ from: String(from), to: String(to) })}`)),
+  rollbackConnector: (id: string, version: number) => request<ConnectorDefinition>('POST', v1(`/connectors/${enc(id)}/rollback`), { version }),
+  /** The request an operation would send (nothing is sent, no credentials). */
+  renderConnectorOperation: (id: string, operation: string, body: { fields: Record<string, unknown>; inputs: Record<string, unknown> }) =>
+    request<RenderedConnectorRequest>('POST', v1(`/connectors/${enc(id)}/operations/${enc(operation)}/render`), body),
+  connections: () => request<Connection[]>('GET', v1('/connections')),
+  connection: (id: string) => request<Connection>('GET', v1(`/connections/${enc(id)}`)),
+  saveConnectionAt: (id: string, body: unknown, version?: number) =>
+    request<Connection>('PUT', v1(`/connections/${enc(id)}`), body, { headers: ifMatch(version) }),
+  deleteConnection: (id: string) => request('DELETE', v1(`/connections/${enc(id)}`)),
+  testConnection: (id: string) => request<ConnectionTestResult>('POST', v1(`/connections/${enc(id)}/test`), {}),
+  connectionUsage: (id: string) => request<ConnectionUsage>('GET', v1(`/connections/${enc(id)}/usage`)),
+  // ---- end connections & connectors admin ----
 };
 
 const ifMatch = (version?: number): Record<string, string> => (version === undefined ? {} : { 'if-match': `"${version}"` });

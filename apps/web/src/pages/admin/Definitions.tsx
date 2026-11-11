@@ -1,11 +1,12 @@
 import { useState } from 'react';
+import { useUrlParams } from '../../lib/urlState';
 import { ActionIcon, Anchor, Badge, Code, CopyButton, Group, Select, Text, Tooltip } from '@mantine/core';
 import { AiDraft, JsonPreview } from '../../components/AiAssistant';
 import { notifications } from '@mantine/notifications';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import { IconCopy, IconRefresh, IconSend } from '@tabler/icons-react';
-import type { Action, Blueprint, Dashboard, Fragment, Integration, Policy, Scorecard, Webhook } from '@asterius/shared';
+import type { Action, Blueprint, Connection, ConnectorDefinition, Dashboard, Fragment, Integration, Policy, Scorecard, Webhook } from '@asterius/shared';
 import { blankFragment, FragmentBuilder } from '../../components/builder/FragmentBuilder';
 import { useAppMutation } from '../../lib/queryClient';
 import { FormEditor } from '../../components/builder/FormEditor';
@@ -17,6 +18,7 @@ import { DataTable } from '../../components/DataTable';
 import { Section } from '../../components/Section';
 import { SidePanel } from '../../components/SidePanel';
 import { EntityIcon } from '../../components/icons';
+import { ICON } from '../../components/iconScale';
 import { Mono, TimeAgo } from '../../components/ui';
 import { ResourceAdmin, strip } from './ResourceAdmin';
 import { ActionBuilder } from '../../components/builder/ActionBuilder';
@@ -148,10 +150,40 @@ export function ActionsAdmin() {
   );
 }
 
+/** A new integration from a connection: the `connector` type lists the kinds of the connection's definition. */
+const fromConnection = (c: Connection, def: ConnectorDefinition) => ({
+  label: c.title,
+  description: `${def.title} · ${Object.keys(def.kinds).join(', ')}`,
+  icon: def.icon ?? 'plug',
+  group: 'From a connection',
+  badge: 'connection',
+  keywords: [c.identifier, def.identifier],
+  value: {
+    identifier: '',
+    title: '',
+    type: 'connector',
+    enabled: true,
+    intervalMinutes: 60,
+    deleteMissing: false,
+    config: { connection: c.identifier },
+    mappings: def.example?.mappings ?? [],
+  },
+});
+
 export function IntegrationsAdmin() {
   const m = useQuery(meta());
   const qc = useQueryClient();
-  const [detail, setDetail] = useState<Integration | null>(null);
+  const connectors = useQuery({ queryKey: ['connectors'], queryFn: api.connectors, staleTime: 60_000 });
+  const connections = useQuery({ queryKey: ['connections'], queryFn: api.connections });
+  const integrations = useQuery({ queryKey: ['integrations'], queryFn: api.integrations });
+  // The open integration is in the URL (?open=<id>): links from a connection's usage land on it.
+  const [params, setParam] = useUrlParams();
+  const detail = integrations.data?.find((i) => i.identifier === params.get('open')) ?? null;
+  const setDetail = (i: Integration | null) => setParam('open', i?.identifier ?? null);
+  const connectionTemplates = (connections.data ?? []).flatMap((c) => {
+    const def = connectors.data?.find((d) => d.identifier === c.connector);
+    return def && Object.keys(def.kinds).length ? [fromConnection(c, def)] : [];
+  });
   const sync = async (i: Integration) => {
     try {
       await api.syncNow(i.identifier);
@@ -168,7 +200,20 @@ export function IntegrationsAdmin() {
       queryKey="integrations"
       list={api.integrations}
       columns={[
-        { key: 't', label: 'Type', render: (i) => <Mono>{i.type}</Mono> },
+        {
+          key: 't',
+          label: 'Type',
+          render: (i) => (
+            <Group gap="2xs" wrap="nowrap">
+              <Mono>{i.type}</Mono>
+              {typeof i.config.connection === 'string' && i.config.connection && (
+                <Text fz="xs" c="dimmed">
+                  via {i.config.connection}
+                </Text>
+              )}
+            </Group>
+          ),
+        },
         { key: 'e', label: 'Enabled', render: (i) => (i.enabled ? 'yes' : <Badge color="gray">disabled</Badge>) },
         { key: 's', label: 'Schedule', render: (i) => (i.type === 'webhook' ? 'push' : i.intervalMinutes ? `every ${i.intervalMinutes} min` : 'manual') },
         {
@@ -203,21 +248,24 @@ export function IntegrationsAdmin() {
         ) : null
       }
       onRowClick={setDetail}
-      templates={(m.data?.sources ?? []).map((s) => ({
-        label: s.title,
-        description: s.description,
-        ...sourceLook(s.type),
-        badge: s.type === 'webhook' ? 'webhook' : 'pull',
-        keywords: [s.type],
-        value: {
-          identifier: '',
-          title: '',
-          enabled: true,
-          intervalMinutes: s.type === 'webhook' ? 0 : 60,
-          deleteMissing: false,
-          ...s.example,
-        },
-      }))}
+      templates={[
+        ...connectionTemplates,
+        ...(m.data?.sources ?? []).map((s) => ({
+          label: s.title,
+          description: s.description,
+          ...sourceLook(s.type),
+          badge: s.type === 'webhook' ? 'webhook' : 'pull',
+          keywords: [s.type],
+          value: {
+            identifier: '',
+            title: '',
+            enabled: true,
+            intervalMinutes: s.type === 'webhook' ? 0 : 60,
+            deleteMissing: false,
+            ...s.example,
+          },
+        })),
+      ]}
       toEditable={(i) => strip(i, ['managed', 'lastSync', 'lastSuccessAt', 'webhookUrl'])}
       save={api.saveIntegration}
       remove={(i) => api.deleteIntegration(i.identifier)}
@@ -255,6 +303,7 @@ function IntegrationDrawer({ integration, onClose }: { integration: Integration 
     >
       {integration && (
         <>
+          {typeof integration.config.connection === 'string' && integration.config.connection && <IntegrationConnection id={integration.config.connection} />}
           {integration.webhookUrl && (
             <Section title="Webhook URL">
               <Group gap="xs" wrap="nowrap" mb="3xs">
@@ -298,6 +347,34 @@ function IntegrationDrawer({ integration, onClose }: { integration: Integration 
         </>
       )}
     </SidePanel>
+  );
+}
+
+/** The connection an integration reads through, with a link to it. */
+function IntegrationConnection({ id }: { id: string }) {
+  const connections = useQuery({ queryKey: ['connections'], queryFn: api.connections });
+  const connectors = useQuery({ queryKey: ['connectors'], queryFn: api.connectors, staleTime: 60_000 });
+  const c = connections.data?.find((x) => x.identifier === id);
+  const def = c && connectors.data?.find((d) => d.identifier === c.connector);
+  return (
+    <Section title="Connection">
+      <Group gap="xs" wrap="nowrap">
+        <EntityIcon name={def?.icon ?? 'plug'} size={ICON.md} />
+        <Anchor component={Link} to={`/admin/connections?open=${encodeURIComponent(id)}`} fz="sm">
+          {c?.title ?? id}
+        </Anchor>
+        {def && (
+          <Text fz="xs" c="dimmed">
+            {def.title}
+          </Text>
+        )}
+        {connections.data && !c && (
+          <Badge color="red" variant="light">
+            missing
+          </Badge>
+        )}
+      </Group>
+    </Section>
   );
 }
 
