@@ -9,8 +9,14 @@
         "baseUrl": "http://kps-grafana.observability.svc",
         "publicUrl": "https://platform-grafana.k8s.orb.local"
       },
-      "auth": { "type": "bearer", "token": "${vault:secret/apps/grafana#token}" },
-      "access": "read-write"
+      "auth": {
+        "type": "bearer",
+        "token": "${vault:secret/apps/grafana#token}"
+      },
+      "access": "read-write",
+      "allowed": {
+        "workflows": ["create-grafana-folder"]
+      }
     }
   ]
 }

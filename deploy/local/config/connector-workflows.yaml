@@ -2,8 +2,8 @@
 # examples/grafana/platform and examples/sonarqube/platform. Each workflow runs one operation of a built-in connector
 # definition (apps/server/connectors/*.yaml), then records the result in the catalog right away; the next pull of the
 # integration takes the entity over and keeps it up to date (its owning team stays).
-# The connections are read-write. They do not restrict their workflows with `allowed.workflows` because the
-# integrations use the same connections and the current release applies `allowed` to ingestion too.
+# The connections are read-write and reserved to these workflows (`allowed.workflows`); their integrations still
+# read through them (`allowed` restricts automation, not ingestion).
 
 actions:
   - identifier: create-grafana-folder

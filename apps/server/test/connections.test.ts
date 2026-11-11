@@ -359,6 +359,19 @@ describe('connections API', () => {
     expect(sync!.stats.upserted).toBe(2);
     expect((await admin.get('/api/v1/blueprints/app/entities/b')).data.properties.env).toBe('prod'); // field default in the query
     expect(JSON.stringify(sync!.logs)).not.toContain(INV_KEY);
+    // `allowed` restricts automation only: a connection reserved to a workflow still feeds its integrations.
+    const conn = (await integ.get('/api/v1/connections/inv')).data;
+    const restricted = await integ.put('/api/v1/connections/inv', {
+      title: conn.title,
+      connector: conn.connector,
+      fields: conn.fields,
+      auth: conn.auth,
+      access: conn.access,
+      allowed: { workflows: ['deploy'] },
+    });
+    expect(restricted.status, JSON.stringify(restricted.data)).toBe(200);
+    const again = await inDefaultOrg(() => runSync('inventory-apps', 'manual'));
+    expect(again?.status, JSON.stringify(again?.logs)).toBe('success');
 
     expect((await integ.get('/api/v1/connections/inv/usage')).data).toEqual({ integrations: ['inventory-apps'], actions: [], fragments: [] });
     const del = await integ.del('/api/v1/connections/inv');

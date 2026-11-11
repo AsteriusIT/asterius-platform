@@ -10,10 +10,10 @@ connections:
     auth:
       type: bearer
       token: ${vault:secret/apps/inhouse-app#apiKey} # without OpenBao: ${secret:DBAAS_API_KEY} (Admin → Secrets)
-    # read-write: the workflows of dbaas-workflows.yaml create and resize databases. To restrict which workflows may
-    # use it, `allowed: { workflows: [...] }`; not set here because the integration below uses the same connection and
-    # the current release also applies `allowed` to ingestion (an integration's sync then fails as "not allowed").
+    # read-write: the workflows of dbaas-workflows.yaml create and resize databases; no other workflow may use it.
+    # `allowed` restricts automation only: the integration below still reads through this connection.
     access: read-write
+    allowed: { workflows: [create-inhouse-database, resize-inhouse-database] }
 
 blueprints:
   - identifier: inhouse-database

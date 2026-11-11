@@ -413,7 +413,9 @@ export async function applyConnection(
   const id = connectionRef(config);
   if (!id) return { config, secrets: [] };
   const conn = await resolveConnection(id);
-  assertConnectionUse(conn, use);
+  // `allowed` restricts automation only: an integration sync reads through the connection whatever its allow-list.
+  if (kind === 'invoker') assertConnectionUse(conn, use);
+  else if (use.write && !isWritable(conn)) throw forbidden(`Connection "${conn.identifier}" is read-only: it cannot be used to change things`);
   if (native) return { config: { ...config, [RESOLVED]: conn }, secrets: conn.secrets };
   const binding = bindingFor(kind, type);
   if (!binding) throw new Error(`${type} does not accept a connection`);

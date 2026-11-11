@@ -115,9 +115,9 @@ used connection cannot be deleted). Internal hosts: private and cluster addresse
 (Helm `outbound.allow`, e.g. `*.svc` for in-cluster services), and an egress NetworkPolicy, if you set one, must let
 the worker pods reach the app.
 
-`allowed` in the current release also applies to ingestion: an integration using a connection whose `allowed` lists
-workflows or teams fails its sync. Until that changes, leave `allowed` empty on a connection shared with an
-integration, or declare a second connection (same app, its own credential) for the workflows.
+`allowed` restricts automation only: workflows (or runs of a team) not listed cannot use the connection, while the
+integrations using it keep syncing. To give ingestion a narrower credential than automation, declare two connections
+to the same app (a `read` one for the integrations, a `read-write` one for the workflows).
 
 ## 4. Map kinds to blueprints
 

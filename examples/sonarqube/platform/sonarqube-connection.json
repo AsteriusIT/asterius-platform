@@ -9,8 +9,14 @@
         "baseUrl": "http://sonarqube-sonarqube.sonarqube.svc:9000",
         "publicUrl": "https://sonarqube.k8s.orb.local"
       },
-      "auth": { "type": "basic", "username": "${vault:secret/apps/sonarqube#token}" },
-      "access": "read-write"
+      "auth": {
+        "type": "basic",
+        "username": "${vault:secret/apps/sonarqube#token}"
+      },
+      "access": "read-write",
+      "allowed": {
+        "workflows": ["create-sonarqube-project"]
+      }
     }
   ]
 }
