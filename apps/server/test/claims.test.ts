@@ -152,7 +152,11 @@ describe('cancellation (ap-na0.7)', () => {
       const id = await trigger('noop');
       const cancelling = cancelRun(aliceP, id, cancelSteps); // reads QUEUED …
       const claimed = await claimRuns('w-race', 5, noSpawn); // … the worker claims it before the cancel update
-      expect(claimed).toBe(1);
+      // SQLite serializes the queries, so the claim always lands between the cancel's read and its update. On Postgres
+      // they run on separate connections and the cancel may finish first (nothing left to claim): either way the
+      // cancel must win.
+      if (driver.dialect === 'sqlite') expect(claimed).toBe(1);
+      else expect([0, 1]).toContain(claimed);
       const run = await cancelling; // used to fail with 409 "changed meanwhile"
       expect(run.status).toBe('CANCELLED');
       expect((await getRunRow(id)).status).toBe('CANCELLED');

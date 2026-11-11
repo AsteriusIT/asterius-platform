@@ -55,9 +55,12 @@ describe('SLA', () => {
     });
     expect(saved.status, JSON.stringify(saved.data)).toBe(200);
     const id = (await alice.post('/api/v1/actions/slow-approval/runs', { inputs: {} })).data.id as string;
-    await waitFor(async () => (await view(id)).steps.find((s) => s.id === 'gate')?.status === 'WAITING_APPROVAL');
+    const gateClock = async () =>
+      (await one<{ sla_due_at: string | null }>("SELECT sla_due_at FROM run_steps WHERE run_id = ? AND step_id = 'gate'", id))?.sla_due_at;
+    // The step starts, then its clock is armed (a second write: wait for both, not just the status).
+    await waitFor(async () => (await view(id)).steps.find((s) => s.id === 'gate')?.status === 'WAITING_APPROVAL' && !!(await gateClock()));
     // The clocks are armed; nothing is due yet, so housekeeping changes nothing.
-    expect((await one<{ sla_due_at: string | null }>("SELECT sla_due_at FROM run_steps WHERE run_id = ? AND step_id = 'gate'", id))?.sla_due_at).toBeTruthy();
+    expect(await gateClock()).toBeTruthy();
     await stepHousekeeping(silentLog);
     expect((await view(id)).slaBreachedAt).toBeNull();
 
