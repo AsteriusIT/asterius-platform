@@ -2,7 +2,7 @@
 identifier: snyk
 title: Snyk
 description: Projects and issues of an organization.
-icon: shield
+icon: snyk
 category: security
 fields:
   properties:

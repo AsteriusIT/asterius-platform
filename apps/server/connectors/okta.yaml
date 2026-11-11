@@ -2,7 +2,7 @@
 identifier: okta
 title: Okta directory
 description: Users and groups.
-icon: users
+icon: okta
 category: identity
 fields:
   properties:

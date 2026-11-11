@@ -3,7 +3,7 @@
     {
       "identifier": "nexus-repository",
       "title": "Nexus repository",
-      "icon": "package",
+      "icon": "nexus",
       "description": "Repositories of the Nexus Repository instance (nexus integration).",
       "schema": {
         "properties": {

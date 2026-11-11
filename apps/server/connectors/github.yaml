@@ -4,7 +4,7 @@
 identifier: github
 title: GitHub
 description: Repositories and teams of an organization.
-icon: brand-github
+icon: github
 category: source-control
 fields:
   properties:

@@ -2,7 +2,7 @@
 identifier: terraform-cloud-workspaces
 title: Terraform Cloud workspaces
 description: Workspaces and projects of an HCP Terraform / Terraform Enterprise organization.
-icon: cloud
+icon: terraform
 category: cloud
 fields:
   properties:

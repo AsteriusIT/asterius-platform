@@ -2,7 +2,7 @@
 identifier: pagerduty
 title: PagerDuty
 description: Services, teams, resolved incidents and current on-calls.
-icon: alarm
+icon: pagerduty
 category: incident
 fields:
   properties:

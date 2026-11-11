@@ -258,7 +258,7 @@ actions:
   # --- external systems: set the referenced secrets (Admin → Secrets) to use them --------------------
   - identifier: scaffold-service
     title: Create a new service
-    icon: brand-github
+    icon: github
     description: |
       Creates a repository from the golden-path template, CI included, and registers the service.
       The GitHub workflow reports back through the run callback.
@@ -299,7 +299,7 @@ actions:
   # repository and pushes the files; a catalog step then registers the service from the scaffolder output.
   - identifier: scaffold-service-template
     title: Create a new service (template repository)
-    icon: brand-github
+    icon: github
     description: |
       Creates a GitHub repository from the golden-path template repository (placeholders filled from the form)
       and registers the service in the catalog with the new repository URL.

@@ -2,7 +2,7 @@
 identifier: datadog
 title: Datadog
 description: Monitors and service definitions.
-icon: activity
+icon: datadog
 category: observability
 fields:
   properties:

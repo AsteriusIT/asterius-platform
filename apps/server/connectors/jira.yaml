@@ -2,7 +2,7 @@
 identifier: jira
 title: Jira Cloud
 description: Projects and issues (JQL).
-icon: ticket
+icon: jira
 category: project-management
 fields:
   properties:

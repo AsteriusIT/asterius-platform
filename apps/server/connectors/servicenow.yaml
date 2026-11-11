@@ -2,7 +2,7 @@
 identifier: servicenow
 title: ServiceNow
 description: Business services and configuration items from the table API.
-icon: building
+icon: servicenow
 category: itsm
 fields:
   properties:

@@ -2,7 +2,7 @@
 identifier: grafana
 title: Grafana
 description: Dashboards, folders, data sources and alert rules; create folders and annotations.
-icon: chart-line
+icon: grafana
 category: observability
 fields:
   properties:

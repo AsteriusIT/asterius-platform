@@ -2,7 +2,7 @@
 identifier: nexus
 title: Sonatype Nexus Repository
 description: Repositories and components (every repository, or the one of `repository`); create hosted repositories.
-icon: package
+icon: nexus
 category: artifacts
 fields:
   properties:

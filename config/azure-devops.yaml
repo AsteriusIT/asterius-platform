@@ -30,7 +30,7 @@ connections:
 blueprints:
   - identifier: ado-project
     title: Azure DevOps project
-    icon: brand-azure
+    icon: azure-devops
     description: Projects created through self-service.
     schema:
       properties:
@@ -73,7 +73,7 @@ actions:
   # ── create ──────────────────────────────────────────────────────────────────────────────────────
   - identifier: create-ado-project
     title: Create an Azure DevOps project
-    icon: brand-azure
+    icon: azure-devops
     description: A new Azure DevOps project with a Git repository of the same name. Your team owns it and manages its members and repositories.
     trigger:
       type: form

@@ -4,7 +4,7 @@
 identifier: gitlab
 title: GitLab
 description: Projects and open merge requests of a group (subgroups included).
-icon: brand-gitlab
+icon: gitlab
 category: source-control
 fields:
   properties:

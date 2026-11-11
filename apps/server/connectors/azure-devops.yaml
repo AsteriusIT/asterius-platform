@@ -5,7 +5,7 @@
 identifier: azure-devops
 title: Azure DevOps
 description: Projects, Git repositories, pipelines and pull requests; create repositories, run pipelines, open pull requests.
-icon: brand-azure
+icon: azure-devops
 category: source-control
 fields:
   properties:

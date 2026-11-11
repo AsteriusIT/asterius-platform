@@ -2,7 +2,7 @@
 identifier: opsgenie
 title: Opsgenie
 description: Teams and services.
-icon: bell
+icon: opsgenie
 category: incident
 fields:
   properties:

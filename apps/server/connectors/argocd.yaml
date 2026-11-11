@@ -2,7 +2,7 @@
 identifier: argocd
 title: Argo CD
 description: Applications and projects of an Argo CD server.
-icon: rocket
+icon: argo-cd
 category: ci-cd
 fields:
   properties:

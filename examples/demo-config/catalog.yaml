@@ -107,7 +107,7 @@ blueprints:
 
   - identifier: workload
     title: Kubernetes workload
-    icon: brand-kubernetes
+    icon: kubernetes
     description: Deployments running in the clusters (Kubernetes integration).
     schema:
       properties:

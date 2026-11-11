@@ -2,7 +2,7 @@
 identifier: entra-directory
 title: Microsoft Entra directory
 description: Users and groups through Microsoft Graph.
-icon: users-group
+icon: entra
 category: identity
 fields:
   properties:

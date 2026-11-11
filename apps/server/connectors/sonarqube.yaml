@@ -2,7 +2,7 @@
 identifier: sonarqube
 title: SonarQube
 description: Projects and quality gates; create projects.
-icon: radar
+icon: sonarqube
 category: security
 fields:
   properties:
