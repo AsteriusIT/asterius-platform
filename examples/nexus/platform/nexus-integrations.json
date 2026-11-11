@@ -7,10 +7,8 @@
       "intervalMinutes": 15,
       "deleteMissing": true,
       "config": {
-        "baseUrl": "http://nexus.nexus.svc:8081",
-        "publicUrl": "https://nexus.k8s.orb.local",
-        "user": "asterius-platform",
-        "password": "${vault:secret/apps/nexus#password}"
+        "connection": "nexus",
+        "publicUrl": "https://nexus.k8s.orb.local"
       },
       "mappings": [
         {
@@ -37,10 +35,8 @@
       "intervalMinutes": 30,
       "deleteMissing": true,
       "config": {
-        "baseUrl": "http://nexus.nexus.svc:8081",
-        "publicUrl": "https://nexus.k8s.orb.local",
-        "user": "asterius-platform",
-        "password": "${vault:secret/apps/nexus#password}"
+        "connection": "nexus",
+        "publicUrl": "https://nexus.k8s.orb.local"
       },
       "mappings": [
         {

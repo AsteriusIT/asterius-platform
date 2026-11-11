@@ -1,17 +1,23 @@
 # Built-in connector definition (docs/ARCHITECTURE.md, "Connectors").
 identifier: sonarqube
 title: SonarQube
-description: Projects and quality gates.
+description: Projects and quality gates; create projects.
 icon: radar
 category: security
 fields:
   properties:
     baseUrl: { type: string, title: Server URL, format: url }
+    publicUrl:
+      type: string
+      title: Public URL
+      format: url
+      description: 'Base of the links in operation outputs when the server URL is internal (e.g. a cluster service). Empty: the server URL'
   required: [baseUrl]
+  order: [baseUrl, publicUrl]
 auth:
   - type: basic
     title: User token
-    description: The token is sent as the Basic username with an empty password.
+    description: 'The token is sent as the Basic username with an empty password. Ingestion needs Browse; creating projects needs the global "Create Projects" permission.'
     set: { password: '' }
     secrets: [username]
   - type: bearer
@@ -26,6 +32,36 @@ kinds:
     itemsPath: components
     pagination: { type: page, param: p, pageSize: 500, totalPath: paging.total }
   quality-gate: { path: /api/qualitygates/list, itemsPath: qualitygates }
+operations:
+  create-project:
+    title: Create a project
+    description: Creates an empty project (POST /api/projects/create); its first analysis fills it.
+    kind: project
+    inputs:
+      properties:
+        key:
+          type: string
+          title: Project key
+          pattern: '^[A-Za-z0-9_.:-]*[A-Za-z_.:-][A-Za-z0-9_.:-]*$'
+          maxLength: 400
+          description: 'Letters, digits, - _ . : with at least one non-digit'
+        name: { type: string, title: Name, maxLength: 500 }
+        visibility: { type: string, title: Visibility, enum: [private, public], description: "Empty: the server's default" }
+        mainBranch: { type: string, title: Main branch, description: 'Empty: main' }
+      required: [key, name]
+    method: POST
+    path: /api/projects/create
+    # The Web API takes its parameters in the query string (or a form body), not JSON.
+    query:
+      project: '{{ inputs.key }}'
+      name: '{{ inputs.name }}'
+      visibility: '{{ inputs.visibility }}'
+      mainBranch: '{{ inputs.mainBranch }}'
+    output:
+      key: body.project.key
+      name: body.project.name
+      visibility: body.project.visibility
+      url: '(connection.publicUrl ? connection.publicUrl : connection.baseUrl) & "/dashboard?id=" & $encodeUrlComponent(body.project.key)'
 example:
   fields: { baseUrl: https://sonar.example.com }
   auth: { type: basic, username: '${secret:SONAR_TOKEN}' }

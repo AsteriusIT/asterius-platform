@@ -7,9 +7,8 @@
       "intervalMinutes": 15,
       "deleteMissing": true,
       "config": {
-        "baseUrl": "http://sonarqube-sonarqube.sonarqube.svc:9000",
-        "publicUrl": "https://sonarqube.k8s.orb.local",
-        "token": "${vault:secret/apps/sonarqube#token}"
+        "connection": "sonarqube",
+        "publicUrl": "https://sonarqube.k8s.orb.local"
       },
       "mappings": [
         {

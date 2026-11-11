@@ -1,0 +1,79 @@
+# Self-service on the in-house DBaaS: each workflow runs one operation of the connector (it polls the app's job until
+# it finishes), then records the result in the catalog; the next sync of the integration keeps it up to date.
+actions:
+  - identifier: create-inhouse-database
+    title: Create a database
+    icon: database
+    description: A database of the in-house DBaaS, owned by your team. Takes a few seconds.
+    trigger:
+      type: form
+      on: create
+      blueprint: inhouse-database
+      inputs:
+        properties:
+          name: { type: string, title: Name, pattern: '^[a-z][a-z0-9-]{1,30}$', description: 'lowercase letters, digits and -' }
+          engine: { type: string, title: Engine, enum: [postgres, mysql, redis], default: postgres }
+          size: { type: string, title: Size, enum: [S, M, L], default: S }
+          team: { type: string, title: Owning team, format: team }
+        required: [name, engine, size, team]
+        order: [name, engine, size, team]
+    steps:
+      - id: create
+        name: Create the database (DBaaS job)
+        type: invoke
+        timeoutMinutes: 20
+        invoker:
+          type: connector
+          connection: inhouse-dbaas
+          operation: create-database
+          inputs:
+            name: '{{ inputs.name }}'
+            engine: '{{ inputs.engine }}'
+            size: '{{ inputs.size }}'
+            team: '{{ inputs.team }}'
+            requestId: '{{ run.id }}' # a retried step replays the same request instead of creating twice
+      - id: register
+        name: Register in the catalog
+        type: invoke
+        invoker:
+          type: catalog
+          operation: upsert
+          blueprint: inhouse-database
+          identifier: '{{ steps.create.output.databaseId }}'
+          title: '{{ inputs.name }}'
+          team: '{{ inputs.team }}'
+          properties: { engine: '{{ inputs.engine }}', size: '{{ inputs.size }}', status: available }
+
+  - identifier: resize-inhouse-database
+    title: Resize
+    icon: gauge
+    description: Change the size of the database.
+    trigger:
+      type: form
+      on: day-2
+      blueprint: inhouse-database
+      allowed: { ownerTeam: true, roles: [admin] }
+      inputs:
+        properties:
+          size: { type: string, title: New size, enum: [S, M, L] }
+        required: [size]
+    steps:
+      - id: resize
+        name: Resize (DBaaS job)
+        type: invoke
+        timeoutMinutes: 20
+        invoker:
+          type: connector
+          connection: inhouse-dbaas
+          operation: resize-database
+          inputs: { id: '{{ entity.identifier }}', size: '{{ inputs.size }}', requestId: '{{ run.id }}' }
+      - id: register
+        name: Update the catalog
+        type: invoke
+        invoker:
+          type: catalog
+          operation: upsert
+          blueprint: inhouse-database
+          identifier: '{{ entity.identifier }}'
+          merge: true
+          properties: { size: '{{ inputs.size }}' }

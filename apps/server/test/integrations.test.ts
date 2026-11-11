@@ -421,15 +421,23 @@ entities:
     expect(exported.data).toContain('identifier: app');
   });
 
-  it('reads the shipped configuration, with YAML merge keys', () => {
+  it('reads the shipped configuration (pipelines through the azure-devops connection)', () => {
     const { data } = readConfigDir(path.resolve(__dirname, '../../../config'));
     expect(data.blueprints.map((b) => b.identifier)).toEqual(['ado-project', 'ado-repository', 'ado-member']);
+    expect(data.connections).toMatchObject([
+      {
+        identifier: 'azure-devops',
+        connector: 'azure-devops',
+        fields: { organization: 'AsteriusIT', project: 'Platform' },
+        auth: { type: 'basic', password: '${secret:ADO_PAT}' },
+        access: 'read-write',
+      },
+    ]);
     const create = data.actions.find((a) => a.identifier === 'create-ado-project')!;
     expect(create.trigger).toMatchObject({ type: 'form', on: 'create', blueprint: 'ado-project' });
-    // `<<: *ado-pipeline` merged the shared pipeline settings with the step's own parameters.
     expect(create.steps[0]).toMatchObject({
       type: 'invoke',
-      invoker: { type: 'azure-pipeline', project: 'Platform', token: '${secret:ADO_PAT}', templateParameters: { operation: 'create-project' } },
+      invoker: { type: 'azure-pipeline', connection: 'azure-devops', pipelineId: 22, templateParameters: { operation: 'create-project' } },
     });
     expect(data.actions.map((a) => `${a.identifier}:${a.trigger && 'on' in a.trigger ? a.trigger.on : a.trigger?.type}`).sort()).toEqual([
       'add-ado-member:day-2',

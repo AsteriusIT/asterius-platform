@@ -3,15 +3,17 @@
 Brings a Grafana instance into the catalog and its alert notifications into the platform, as JSON files.
 
 ```
-Grafana API  ──pull every 15 min──▶  folders, dashboards, data sources, alert rules
+Grafana API  ──connection `grafana`, pull every 15 min──▶  folders, dashboards, data sources, alert rules
+             ◀──workflow `create-grafana-folder` (local cluster)──  create a folder for a team
 Grafana alerting ──webhook contact point──▶  /api/v1/ingest/default/grafana-alerts  ──▶  alerts
 ```
 
 | File | Side | What |
 | --- | --- | --- |
 | `platform/grafana-blueprints.json` | platform (configuration as code) | Blueprints `grafana-folder`, `grafana-dashboard`, `grafana-datasource`, `grafana-alert-rule`, `grafana-alert` |
-| `platform/grafana-integrations.json` | platform | Integrations `grafana` (built-in source: folders and dashboards), `grafana-datasources` and `grafana-alert-rules` (HTTP source), `grafana-alerts` (inbound webhook) |
-| `grafana/service-account.json` | Grafana | Viewer service account whose token the pull integrations use |
+| `platform/grafana-connection.json` | platform | Connection `grafana` (built-in `grafana` connector): the API URL, the public URL and the token reference, read-write for the `create-grafana-folder` workflow |
+| `platform/grafana-integrations.json` | platform | Integrations `grafana` (folders and dashboards), `grafana-datasources` and `grafana-alert-rules`, all three of type `grafana` through the connection, and `grafana-alerts` (inbound webhook) |
+| `grafana/service-account.json` | Grafana | Editor service account whose token the connection uses (Viewer is enough without the folder workflow) |
 | `grafana/folder.json`, `grafana/alert-rules.json` | Grafana | Folder "Asterius Platform" and three alert rules on the platform's metrics (API down, runs waiting, an always-firing heartbeat) |
 | `grafana/contact-point.json` | Grafana | Webhook contact point calling the platform with a Bearer token |
 | `grafana/notification-policy.json` | Grafana | Notification policy sending every alert to that contact point |
@@ -29,14 +31,14 @@ Nothing secret is in the files. The integrations read OpenBao through the platfo
 
 | Reference | Value |
 | --- | --- |
-| `${vault:secret/apps/grafana#token}` | Grafana service account token (Viewer) |
+| `${vault:secret/apps/grafana#token}` | Grafana service account token (Editor), in the connection's `auth` |
 | `${vault:secret/apps/grafana#webhookToken}` | Token Grafana sends as `Authorization: Bearer …` to the webhook |
 
 Without OpenBao, use `${secret:GRAFANA_TOKEN}` (Admin → Secrets) or `${env:GRAFANA_TOKEN}` instead.
 
 ## On the local OrbStack cluster
 
-`deploy/local/install.sh` does everything: creates the service account and its token, the folder, the alert rules,
+`deploy/local/install.sh` does everything: creates the service account (role Editor) and its token, the folder, the alert rules,
 the contact point and the notification policy (Grafana provisioning API), stores both tokens in OpenBao, allows
 Grafana to reach the API pods (NetworkPolicy), and mounts `config/` plus `platform/*.json` as the platform's
 configuration. The files use the local addresses:
@@ -49,8 +51,11 @@ configuration. The files use the local addresses:
 
 ## Elsewhere
 
-1. Replace the three addresses above in `platform/grafana-integrations.json` and `grafana/contact-point.json`.
-   `publicUrl` is read by the mappings as written, so it must be a plain URL (no `${…}` reference).
+1. Replace the three addresses above in `platform/grafana-connection.json` (`baseUrl`, `publicUrl`),
+   `platform/grafana-integrations.json` (`publicUrl`) and `grafana/contact-point.json`. The integrations' `publicUrl`
+   is read by the mappings as written (`$integration.config.publicUrl`), so it must be a plain URL (no `${…}`
+   reference); the connection's `publicUrl` builds the links of the operations' outputs. Without the folder workflow,
+   set the connection's `access` to `read`.
 2. In Grafana, create the service account from `grafana/service-account.json` and a token; store it and a random
    webhook token where the references above point.
 3. Provision the Grafana side (`X-Disable-Provenance: true` keeps the objects editable in the Grafana UI):

@@ -35,15 +35,17 @@ The first run may ask to "permit" access to the agent pool. Open it once in Azur
 
 ## 3. The platform
 
-1. In [config/azure-devops.yaml](../../config/azure-devops.yaml), edit the `x-ado-pipeline` block at the top:
-   - `organization`: `https://dev.azure.com/<your-org>`
-   - `project`: the project holding the pipeline
-   - `pipelineId`
-   - `branch`
+1. In [config/azure-devops.yaml](../../config/azure-devops.yaml), edit the `azure-devops` connection at the top
+   (the workflows take the organization URL, the project and the token from it):
+   - `fields.organization`: `<your-org>` (the part after `https://dev.azure.com/`)
+   - `fields.project`: the project holding the pipeline
+   - and, in each workflow's pipeline step, `pipelineId` and `branch`
 2. Start the platform (`npm run dev`). For a clean test (the default `./data` still holds the old demo catalog), use a new data directory: `DATA_DIR=$PWD/data-ado npm run dev`.
 3. Sign up; the first account is an admin.
 4. Admin → Users: add yourself to the **Platform** team. The create form asks for an owning team, and approvals go to Platform.
-5. Admin → Secrets: add `ADO_PAT`.
+5. Admin → Secrets: add `ADO_PAT`. Admin → Connections → *Azure DevOps (AsteriusIT)* → **Test connection** lists the
+   organization's projects, so it also needs the PAT scope "Project and Team (Read)"; the workflows only need
+   "Build (Read & execute)".
 
 ## 4. A-to-Z test
 

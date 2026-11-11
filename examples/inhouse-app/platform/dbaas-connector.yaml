@@ -1,0 +1,90 @@
+# Connector definition of the in-house DBaaS (app/server.mjs): how the platform talks to it. Data only, no code; the
+# same document can be pasted in Admin → Connectors. Templates: {{ connection.<field> }}, {{ inputs.<name> }} and, in
+# poll requests, {{ output.<field> }} (JSONata). Credentials never appear here: the connection holds them.
+connectors:
+  - identifier: inhouse-dbaas
+    title: DBaaS (in-house)
+    description: Databases of the in-house database service; create and resize them (asynchronous jobs).
+    icon: database
+    category: internal
+    # The connection form: every connection gives its own API URL.
+    fields:
+      properties:
+        baseUrl: { type: string, title: API URL, format: url, description: 'e.g. http://inhouse-app.inhouse-app.svc:8080' }
+      required: [baseUrl]
+    # Supported credentials; the first one is the default in the connection form.
+    auth:
+      - type: bearer
+        title: API key (Authorization Bearer)
+      - type: header
+        title: API key (X-Api-Key header)
+        headers: { X-Api-Key: '{apiKey}' }
+    # "Test connection": an authenticated endpoint, so a wrong key fails the test (not only a wrong URL).
+    test:
+      path: /api/v1/health
+      expect: { condition: body.status = "ok" }
+    # Ingestion: integrations map these kinds to blueprints.
+    kinds:
+      database:
+        title: Databases
+        path: /api/v1/databases
+        query: { limit: '100' }
+        itemsPath: items
+        pagination: { type: cursor, param: cursor, cursorPath: nextCursor }
+        # Incremental syncs send the start of the previous successful sync; a periodic full listing still runs
+        # (the only one allowed to delete entities that disappeared).
+        since: { param: updatedSince }
+    # Actions: workflow steps call these (Admin → Actions → a step of type "Connection operation").
+    operations:
+      create-database:
+        title: Create a database
+        description: Starts the creation job and waits until the database is available.
+        kind: database
+        inputs:
+          properties:
+            name: { type: string, title: Name, pattern: '^[a-z][a-z0-9-]{1,30}$' }
+            engine: { type: string, title: Engine, enum: [postgres, mysql, redis], default: postgres }
+            size: { type: string, title: Size, enum: [S, M, L], default: S }
+            team: { type: string, title: Owning team }
+            requestId: { type: string, title: Request id, description: 'Idempotency key: the same id never creates twice (pass {{ run.id }})' }
+          required: [name, engine, team]
+        method: POST
+        path: /api/v1/databases
+        headers: { Idempotency-Key: '{{ inputs.requestId }}' }
+        body: { name: '{{ inputs.name }}', engine: '{{ inputs.engine }}', size: '{{ inputs.size }}', team: '{{ inputs.team }}' }
+        output: { jobId: body.jobId, databaseId: body.resourceId, status: body.status }
+        poll:
+          path: /api/v1/jobs/{{ output.jobId }}
+          intervalSeconds: 5
+          timeoutMinutes: 15
+          done: body.status = "succeeded"
+          failed: body.status = "failed"
+          output: { status: body.status, error: body.error.message }
+      resize-database:
+        title: Resize a database
+        description: Starts the resize job and waits until it finishes.
+        kind: database
+        inputs:
+          properties:
+            id: { type: string, title: Database id }
+            size: { type: string, title: New size, enum: [S, M, L] }
+            requestId: { type: string, title: Request id, description: 'Idempotency key (pass {{ run.id }})' }
+          required: [id, size]
+        method: PATCH
+        path: /api/v1/databases/{{ inputs.id }}
+        headers: { Idempotency-Key: '{{ inputs.requestId }}' }
+        body: { size: '{{ inputs.size }}' }
+        output: { jobId: body.jobId, status: body.status }
+        poll:
+          path: /api/v1/jobs/{{ output.jobId }}
+          intervalSeconds: 5
+          timeoutMinutes: 15
+          done: body.status = "succeeded"
+          failed: body.status = "failed"
+          output: { status: body.status, error: body.error.message }
+    example:
+      fields: { baseUrl: http://inhouse-app.inhouse-app.svc:8080 }
+      auth: { type: bearer, token: '${secret:DBAAS_API_KEY}' }
+      mappings:
+        - kind: database
+          entity: { blueprint: inhouse-database, identifier: id, title: name, team: team, properties: { engine: engine, size: size, status: status } }

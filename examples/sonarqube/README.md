@@ -4,7 +4,8 @@ Brings a SonarQube instance's projects and quality gates into the catalog, and e
 platform, as JSON files.
 
 ```
-SonarQube API  ──pull every 15 min──▶  projects, quality gates
+SonarQube API  ──connection `sonarqube`, pull every 15 min──▶  projects, quality gates
+               ◀──workflow `create-sonarqube-project` (local cluster)──  create a project for a team
 SonarQube global webhook ──HMAC-signed POST──▶  /api/v1/ingest/default/sonarqube-analyses  ──▶  analyses,
                                                                                    project quality gate status
 ```
@@ -12,7 +13,8 @@ SonarQube global webhook ──HMAC-signed POST──▶  /api/v1/ingest/default
 | File | What |
 | --- | --- |
 | `platform/sonarqube-blueprints.json` | Blueprints `sonarqube-project`, `sonarqube-quality-gate`, `sonarqube-analysis` |
-| `platform/sonarqube-integrations.json` | Integrations `sonarqube` (built-in `sonarqube` source: projects and quality gates) and `sonarqube-analyses` (inbound webhook) |
+| `platform/sonarqube-connection.json` | Connection `sonarqube` (built-in `sonarqube` connector): API URL, public URL, token reference; read-write for the `create-sonarqube-project` workflow |
+| `platform/sonarqube-integrations.json` | Integrations `sonarqube` (type `sonarqube` through the connection: projects and quality gates) and `sonarqube-analyses` (inbound webhook) |
 
 ## What the catalog shows
 
@@ -29,7 +31,7 @@ Nothing secret is in the files. The integrations read OpenBao through the platfo
 
 | Reference | Value |
 | --- | --- |
-| `${vault:secret/apps/sonarqube#token}` | User token of the `asterius-platform` SonarQube user (Browse on projects) |
+| `${vault:secret/apps/sonarqube#token}` | User token of the `asterius-platform` SonarQube user (Browse on projects; global Create Projects for the workflow), in the connection's `auth` |
 | `${vault:secret/apps/sonarqube#webhookSecret}` | Secret of the global webhook; SonarQube signs every delivery with it (`X-Sonar-Webhook-HMAC-SHA256`) |
 
 Without OpenBao, use `${secret:SONAR_TOKEN}` (Admin → Secrets) or `${env:SONAR_TOKEN}` instead.
@@ -38,7 +40,7 @@ Without OpenBao, use `${secret:SONAR_TOKEN}` (Admin → Secrets) or `${env:SONAR
 
 `deploy/local/install.sh` does everything. It installs the latest SonarQube Community Build (namespace `sonarqube`,
 database on CloudNativePG, secrets from OpenBao). It then sets the admin password, creates the `asterius-platform`
-user and its token, and creates the global webhook. It stores the token and the webhook secret in OpenBao, allows
+user and its token (with the global "Create Projects" permission), and creates the global webhook. It stores the token and the webhook secret in OpenBao, allows
 SonarQube to reach the API pods (NetworkPolicy), and mounts `platform/*.json` in the platform's configuration. The
 files use the local addresses:
 
@@ -58,9 +60,11 @@ docker run --rm -v "$PWD:/usr/src" -e SONAR_HOST_URL=https://sonarqube.k8s.orb.l
 
 ## Elsewhere
 
-1. Replace the addresses above in `platform/sonarqube-integrations.json`. `publicUrl` is read by the mappings as
-   written, so it must be a plain URL (no `${…}` reference).
-2. In SonarQube, create a user for the platform (Browse permission on the projects to list) and a user token. Store
+1. Replace the addresses above in `platform/sonarqube-connection.json` (`baseUrl`, `publicUrl`) and
+   `platform/sonarqube-integrations.json` (`publicUrl`, read by the mappings as written, so a plain URL with no `${…}`
+   reference). Without the project workflow, set the connection's `access` to `read`.
+2. In SonarQube, create a user for the platform (Browse permission on the projects to list, plus the global "Create
+   Projects" permission for the `create-project` operation) and a user token. Store
    the token and a random webhook secret where the references above point.
 3. Create the webhook (Administration → Configuration → Webhooks, or per project). Use the platform's
    `/api/v1/ingest/<organization>/sonarqube-analyses` URL and the same secret:

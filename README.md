@@ -10,6 +10,7 @@ An internal developer portal in the spirit of Port, Backstage or Cycloid. It cov
 | **Approvals** | Before a request starts and/or as workflow steps: approvers by role, team, user or *owning team*, a minimum number of approvals, no self-approval by default, a message templated from earlier steps (e.g. an AI summary). Sequential **tiers** (lead, then director), **reminders** (`remindEvery`), **escalation** to more approvers after a delay, an **expiry outcome** (`onExpiry: fail \| reject \| approve \| skip`) and **out-of-office delegation** (Profile: a delegate decides on your behalf, recorded as such). |
 | **Pipelines & webhooks** | Invokers: GitHub Actions, Azure Pipelines, GitLab CI, Kubernetes Job, generic webhook (sync or async with callback), and the catalog itself. Runs are followed live with logs. |
 | **Ingestion** | Pull from GitHub, Azure DevOps, GitLab, Kubernetes (any resource or CRD) or any JSON API on a schedule. Push via inbound webhooks (HMAC verified) or the bulk API. Mappings are JSONata. |
+| **Connectors** | Tools added by configuration: a connector definition (fields, auth methods, test request, listable kinds, operations polled to completion) and connections (URL, credential references, read or read-write access, allowed workflows / teams). Built-in definitions for Argo CD, Azure DevOps, GitHub, GitLab, Grafana, SonarQube, Nexus, Jira, PagerDuty, ServiceNow, Snyk, Okta… Integrations ingest through a connection; workflow steps run its operations. Your own application too: [Make your app platform-ready](docs/PLATFORM-READY.md). |
 | **Outbound events** | Signed webhooks on catalog changes and runs, with an outbox, retries and a redelivery UI. |
 | **Governance** | Teams (bound to Entra ID groups), admin/member roles, service accounts and API tokens, encrypted secrets, audit log. |
 
@@ -82,10 +83,11 @@ integrations:
         entity: { blueprint: repository, identifier: name, properties: { url: html_url, language: language } }
 ```
 
-To plug in a **custom service**, use one of three paths:
-1. **Webhook invoker.** The platform POSTs the run (inputs, entity, requester) to your service. Your service answers synchronously, or later through the run callback API.
-2. **HTTP source / inbound webhook / bulk API.** Use these to bring your service's data into the catalog without writing code.
-3. **Code plugin.** Implement the `Invoker` or `Source` interface (~50 lines) and register it.
+To plug in a **custom service**, use one of these paths:
+1. **Connector definition (preferred).** Describe your app's API in YAML (paged listings, actions, job polling) and create a connection: its data feeds the catalog and its actions become workflow steps. Guide: [docs/PLATFORM-READY.md](docs/PLATFORM-READY.md); runnable example: [examples/inhouse-app/](examples/inhouse-app/).
+2. **Webhook invoker.** The platform POSTs the run (inputs, entity, requester) to your service. Your service answers synchronously, or later through the run callback API.
+3. **HTTP source / inbound webhook / bulk API.** Use these to bring your service's data into the catalog without writing code.
+4. **Code plugin.** Implement the `Invoker` or `Source` interface (~50 lines) and register it, for what a connector cannot describe (several dependent calls, custom signing, non-HTTP protocols).
 
 Workflows can declare SLAs (`slaMinutes`: notification and `*.sla_breached` events when exceeded), attach files to runs (artifacts, uploaded through the step callback) and carry tests run with mocks (`POST /actions/:id/tests/run`, `node dist/cli.js actions test`).
 
@@ -153,4 +155,4 @@ npm run build && docker build -t asterius-platform .
 | `packages/shared` | API types shared by server and web |
 | `config/` | Example configuration as code |
 | `deploy/helm/asterius-platform` | Helm chart |
-| `docs/` | [Architecture](docs/ARCHITECTURE.md), [extending & API](docs/EXTENDING.md) |
+| `docs/` | [Architecture](docs/ARCHITECTURE.md), [extending & API](docs/EXTENDING.md), [make your app platform-ready](docs/PLATFORM-READY.md) |

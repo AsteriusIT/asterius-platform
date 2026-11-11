@@ -3,8 +3,11 @@
 There are three levels of extension, from no code to code:
 
 1. **Configuration.** Declare blueprints, actions, integrations and webhooks in YAML (`config/`) or in the admin UI.
-2. **Custom services over HTTP.** Your service receives runs (webhook invoker) and reports back (callback API), and pushes data to the catalog (bulk API, inbound webhook) or exposes it for pulling (HTTP source).
-3. **Code plugins.** Add an invoker or a source type in `apps/server/src`.
+   A new tool (a SaaS product or your own application) is added as a **connector definition** plus a **connection**:
+   its listings feed integrations and its operations become workflow steps, with no code (see [Connectors](#connectors)
+   and [Make your app platform-ready](PLATFORM-READY.md)). This is the preferred way to add a tool.
+2. **Custom services over HTTP.** Your service receives runs (webhook invoker) and reports back (callback API), and pushes data to the catalog (bulk API, inbound webhook) or exposes it for pulling (HTTP source, or a connector definition).
+3. **Code plugins.** Add an invoker or a source type in `apps/server/src`, a plugin module, or an out-of-process plugin, only when the integration cannot be declared (several dependent calls, custom signing, binary payloads, non-HTTP protocols).
 
 ## Expressions and templates
 
@@ -386,6 +389,43 @@ actions:
 - `POST /actions/:id/dry-run { definition?, inputs, entity?, mock? }` renders and validates without calling anything (the builder's Test button).
 - Notifications: invokers `slack`, `teams` and `email`; defaults in Admin → Notifications (`/notification-settings`), personal preferences in the profile (`/me/notifications`); `SMTP_URL` / `SMTP_FROM` configure email.
 
+## Connectors
+
+A **connector definition** describes how to talk to a kind of system, as data: the connection form (`fields`, with
+`baseUrl`), the supported `auth` methods, a `test` request, the `kinds` it can list (ingestion) and its `operations`
+(actions, optionally polled until a job finishes). A **connection** is one configured instance: field values, a
+credential reference, `access: read | read-write`, `allowed` workflows / teams and an optional raw-call `api`
+allow-list. Built-in definitions live in `apps/server/connectors/*.yaml` (Argo CD, Azure DevOps, Datadog, Entra
+directory, GitHub, GitLab, Grafana, Jira, Nexus, Okta, Opsgenie, PagerDuty, ServiceNow, Snyk, SonarQube, Terraform
+Cloud); organizations add their own in Admin → Connectors or with `connectors:` in `CONFIG_DIR` files, and declare
+connections in Admin → Connections or with `connections:`.
+
+```yaml
+integrations: # ingestion through a connection
+  - identifier: grafana
+    type: grafana # a built-in definition's identifier, or `connector` for any definition
+    config: { connection: grafana }
+    mappings: [{ kind: dashboard, entity: { blueprint: grafana-dashboard, identifier: uid, title: title } }]
+actions: # an operation as a workflow step
+  - identifier: create-grafana-folder
+    steps:
+      - id: folder
+        type: invoke
+        invoker: { type: connector, connection: grafana, operation: create-folder, inputs: { title: '{{ inputs.title }}' } }
+```
+
+- The code sources `azure-devops`, `github`, `gitlab` and the invokers `azure-pipeline`, `github-workflow`,
+  `gitlab-pipeline`, `scaffolder` take `connection: <id>` instead of an inline URL and token (`config/azure-devops.yaml`).
+- `type: connector-api` `{ connection, method, path, query?, headers?, body? }` is a raw call within the connection's
+  `api` allow-list.
+- Writes (operations that are not read-only, raw calls other than GET, code invokers) need a read-write connection.
+- Reference: [ARCHITECTURE.md](ARCHITECTURE.md#connectors). A team's own application:
+  [PLATFORM-READY.md](PLATFORM-READY.md) and the runnable [examples/inhouse-app/](../examples/inhouse-app/). Local
+  cluster examples: Grafana, SonarQube and Nexus (`examples/*/platform/*-connection.json`).
+
+Write an invoker or a source in code only when the tool cannot be described this way: several dependent calls in one
+action, custom request signing, binary or multipart payloads, streaming, or a protocol other than HTTP + JSON.
+
 ## Invokers
 
 | `type` | Fields | Status |
@@ -395,6 +435,8 @@ actions:
 | `azure-pipeline` | `organization`, `project`, `pipelineId`, `branch`, `templateParameters`, `variables`, `token` (PAT or `Bearer …`) | polls the pipeline run; output `{ runId, result, url, organization, project }`. Variables need "settable at queue time" in Azure DevOps; prefer `templateParameters`. |
 | `gitlab-pipeline` | `baseUrl`, `project`, `ref`, `variables`, `token` | polls the pipeline |
 | `kubernetes-job` | `namespace`, `image`, `command`, `args`, `env`, `serviceAccountName`, `resources`, `securityContext` (pod; non-root by default), `activeDeadlineSeconds`, `context` | polls the Job (fails fast on image or config errors) and collects the pod logs |
+| `connector` | `connection`, `operation`, `inputs` | an operation of the connection's connector definition; polls it when the operation has `poll`; output: the operation's output plus `httpStatus` ([Connectors](#connectors)) |
+| `connector-api` | `connection`, `method`, `path`, `query`, `headers`, `body` | a raw call within the connection's `api` allow-list; output `{ status, body, headers }` |
 | `catalog` | `operation: upsert\|delete`, `blueprint`, `identifier`, `title`, `team`, `properties`, `relations`, `merge`, `cascade` (delete: also the entities that point to it) | immediate |
 | `tekton` | `pipeline`, `namespace`, `params`, `serviceAccountName`, `context` | creates a `PipelineRun` of an existing Pipeline and follows its `Succeeded` condition (the platform's service account needs create/get/patch on `pipelineruns.tekton.dev`) |
 | `scaffolder` | `provider: github\|gitlab\|azure-devops`, `mode: pull-request\|new-repository`, `templateRepo`, `templatePath`, `templateRef`, `repo`, `baseBranch`, `targetPath`, `variables`, `title`, `branch`, `token`, `apiUrl`/`baseUrl`, `organization`/`project` (azure-devops); new-repository: `description`, `visibility`, `defaultBranch`, `topics`, `team`, `teamPermission`, `ownerType`, `reuseExisting`, `namespace` (gitlab); `reviewers` (azure-devops) | renders a template repository (`{{ variable }}` placeholders in paths and text files; unknown variables fail) and publishes it. Immediate; output below |
@@ -598,7 +640,8 @@ The `webhook` invoker (action steps) keeps its simpler `X-Asterius-Signature: sh
 
 ## Writing a code plugin
 
-An invoker (`apps/server/src/actions/types.ts`):
+Prefer a [connector definition](#connectors) when the tool speaks HTTP + JSON with independent requests; write code
+for what it cannot express. An invoker (`apps/server/src/actions/types.ts`):
 
 ```ts
 import { registerInvoker } from './actions/invokers/index.js';

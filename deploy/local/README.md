@@ -29,6 +29,7 @@ TLS certificates come from the cluster's `local-ca` ClusterIssuer (cert-manager)
 | external-secrets | external-secrets | External Secrets Operator: OpenBao → Kubernetes Secrets |
 | sonarqube | sonarqube | SonarQube Community Build (latest), its CNPG database, PodMonitor; global webhook to the platform |
 | nexus | (manifests/nexus.yaml) | Nexus Repository Community Edition 3.98 (embedded database), read-only user for the platform |
+| inhouse-app | (manifests/inhouse-app.yaml) | The in-house DBaaS demo of `examples/inhouse-app` (one Node script from a ConfigMap, API key from OpenBao), service `http://inhouse-app.inhouse-app.svc:8080` |
 | asterius-platform | asterius-platform | API and worker Deployments (one replica each), CNPG PostgreSQL (1 instance), Keycloak and its CNPG database, migration Job, Ingress, NetworkPolicy, RBAC, ServiceMonitor, PrometheusRule, Grafana dashboard |
 | asterius-jobs | (empty) | Target namespace of the Kubernetes Job invoker |
 
@@ -36,11 +37,37 @@ The platform's configuration is the ConfigMap `asterius-platform-config-files`: 
 Grafana integration of `examples/grafana/platform/` (blueprints and integrations for Grafana folders, dashboards,
 data sources, alert rules and alert notifications) and the SonarQube integration of `examples/sonarqube/platform/`
 (projects, quality gates, analyses) and the Nexus integration of `examples/nexus/platform/` (repositories,
-components), plus [config/platform-components.yaml](config/platform-components.yaml): the components of this
-cluster as catalog entities whose Docs tab shows each one's README. The script also provisions the Grafana, SonarQube and Nexus sides; see
+components), the in-house app of `examples/inhouse-app/platform/`, plus
+[config/platform-components.yaml](config/platform-components.yaml) (the components of this cluster as catalog
+entities whose Docs tab shows each one's README) and [config/connector-workflows.yaml](config/connector-workflows.yaml).
+The script also provisions the Grafana, SonarQube and Nexus sides; see
 [examples/grafana/README.md](../../examples/grafana/README.md),
 [examples/sonarqube/README.md](../../examples/sonarqube/README.md) and
 [examples/nexus/README.md](../../examples/nexus/README.md). It accepts the Nexus Community Edition EULA on your behalf.
+
+### Connections
+
+Every tool is reached through a connection (Admin → Connections, with **Test connection** and the list of what uses
+it); no integration or workflow carries a URL or a credential of its own.
+
+| Connection | Connector | Access | Credential | Used by |
+| --- | --- | --- | --- | --- |
+| `grafana` | built-in `grafana` | read-write | `${vault:secret/apps/grafana#token}` (service account, Editor) | integrations `grafana`, `grafana-datasources`, `grafana-alert-rules`; workflow *Create a Grafana folder* |
+| `sonarqube` | built-in `sonarqube` | read-write | `${vault:secret/apps/sonarqube#token}` (user with Browse + Create Projects) | integration `sonarqube`; workflow *Create a SonarQube project* |
+| `nexus` | built-in `nexus` | read | `${vault:secret/apps/nexus#password}` (read-only user) | integrations `nexus`, `nexus-components` |
+| `inhouse-dbaas` | `inhouse-dbaas` (defined in `examples/inhouse-app`) | read-write | `${vault:secret/apps/inhouse-app#apiKey}` | integration `inhouse-dbaas`; workflows *Create a database*, *Resize* |
+| `azure-devops` | built-in `azure-devops` | read-write | `${secret:ADO_PAT}` (Admin → Secrets; not created by the script) | the six Azure DevOps workflows of `config/azure-devops.yaml` |
+
+The webhook integrations (`grafana-alerts`, `sonarqube-analyses`) receive pushes and need no connection.
+
+Self-service through operations of the connectors ([config/connector-workflows.yaml](config/connector-workflows.yaml)
+and `examples/inhouse-app/platform/dbaas-workflows.yaml`):
+
+- **Create a Grafana folder** (`grafana` operation `create-folder`), then registers the folder with its owning team.
+- **Create a SonarQube project** (`sonarqube` operation `create-project`), then registers the project; its first
+  analysis (webhook) fills the quality gate.
+- **Create a database** / **Resize** on the in-house DBaaS demo: asynchronous jobs polled until they finish
+  ([examples/inhouse-app/README.md](../../examples/inhouse-app/README.md)).
 
 ## Secrets and the `.env` file
 
@@ -56,9 +83,10 @@ cluster as catalog entities whose Docs tab shows each one's README. The script a
 | `secret/sonarqube/server` | sonarqube/sonarqube-secrets, sonarqube-db-credentials | SonarQube database owner, monitoring passcode, admin password |
 | `secret/nexus/server` | nexus/nexus-secrets | Nexus initial admin password |
 | `secret/apps/demo` | (none) | sample for `${vault:secret/apps/demo#token}` in actions |
-| `secret/apps/grafana` | (none) | Grafana service account token and webhook token, read by the Grafana integrations as `${vault:…}` |
-| `secret/apps/sonarqube` | (none) | SonarQube token of the `asterius-platform` user and webhook secret, read by the SonarQube integrations |
-| `secret/apps/nexus` | (none) | Password of the `asterius-platform` Nexus user, read by the Nexus integrations |
+| `secret/apps/grafana` | (none) | Grafana service account token (read by the `grafana` connection as `${vault:…}`) and webhook token (`grafana-alerts`) |
+| `secret/apps/sonarqube` | (none) | SonarQube token of the `asterius-platform` user (the `sonarqube` connection) and webhook secret (`sonarqube-analyses`) |
+| `secret/apps/nexus` | (none) | Password of the `asterius-platform` Nexus user, read by the `nexus` connection |
+| `secret/apps/inhouse-app` | inhouse-app/inhouse-app-secrets | API key of the in-house DBaaS demo, read by the app and by the `inhouse-dbaas` connection |
 
 - **Not every `.env` key is copied.** Keys the chart already sets in its ConfigMap (`PUBLIC_URL`, `AUTH_PROVIDERS`,
   `KEYCLOAK_URL`…) and local-only ones (`KUBECONFIG_PATH`, `DATABASE_URL`, `KEYCLOAK_CLIENT_SECRET`) are skipped,
@@ -93,6 +121,7 @@ helm -n asterius-platform uninstall asterius-platform
 kubectl delete namespace asterius-platform asterius-jobs   # databases included
 helm -n sonarqube uninstall sonarqube && kubectl delete namespace sonarqube   # database included
 kubectl delete -f deploy/local/manifests/nexus.yaml && kubectl delete namespace nexus   # data volume included
+kubectl delete namespace inhouse-app
 helm -n external-secrets uninstall external-secrets
 helm -n openbao uninstall openbao && kubectl delete namespace openbao   # deletes all secrets and the unseal key
 helm -n observability uninstall kps && kubectl delete namespace observability

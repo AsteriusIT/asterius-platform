@@ -7,9 +7,8 @@
       "intervalMinutes": 15,
       "deleteMissing": true,
       "config": {
-        "baseUrl": "http://kps-grafana.observability.svc",
-        "publicUrl": "https://platform-grafana.k8s.orb.local",
-        "token": "${vault:secret/apps/grafana#token}"
+        "connection": "grafana",
+        "publicUrl": "https://platform-grafana.k8s.orb.local"
       },
       "mappings": [
         {
@@ -37,16 +36,13 @@
     {
       "identifier": "grafana-datasources",
       "title": "Grafana data sources",
-      "type": "http",
+      "type": "grafana",
       "intervalMinutes": 60,
       "deleteMissing": true,
-      "config": {
-        "url": "http://kps-grafana.observability.svc/api/datasources",
-        "headers": { "Authorization": "Bearer ${vault:secret/apps/grafana#token}" }
-      },
+      "config": { "connection": "grafana" },
       "mappings": [
         {
-          "kind": "item",
+          "kind": "datasource",
           "entity": {
             "blueprint": "grafana-datasource",
             "identifier": "uid",
@@ -59,17 +55,16 @@
     {
       "identifier": "grafana-alert-rules",
       "title": "Grafana alert rules",
-      "type": "http",
+      "type": "grafana",
       "intervalMinutes": 15,
       "deleteMissing": true,
       "config": {
-        "url": "http://kps-grafana.observability.svc/api/v1/provisioning/alert-rules",
-        "publicUrl": "https://platform-grafana.k8s.orb.local",
-        "headers": { "Authorization": "Bearer ${vault:secret/apps/grafana#token}" }
+        "connection": "grafana",
+        "publicUrl": "https://platform-grafana.k8s.orb.local"
       },
       "mappings": [
         {
-          "kind": "item",
+          "kind": "alert-rule",
           "entity": {
             "blueprint": "grafana-alert-rule",
             "identifier": "uid",

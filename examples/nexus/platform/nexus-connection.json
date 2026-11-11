@@ -1,0 +1,16 @@
+{
+  "connections": [
+    {
+      "identifier": "nexus",
+      "title": "Nexus Repository (local cluster)",
+      "description": "The read-only asterius-platform user (browse, read and search every repository): ingestion only.",
+      "connector": "nexus",
+      "fields": {
+        "baseUrl": "http://nexus.nexus.svc:8081",
+        "publicUrl": "https://nexus.k8s.orb.local"
+      },
+      "auth": { "type": "basic", "username": "asterius-platform", "password": "${vault:secret/apps/nexus#password}" },
+      "access": "read"
+    }
+  ]
+}

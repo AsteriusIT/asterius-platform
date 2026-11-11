@@ -1,17 +1,24 @@
 # Built-in connector definition (docs/ARCHITECTURE.md, "Connectors").
 identifier: nexus
 title: Sonatype Nexus Repository
-description: Repositories and components (every repository, or the one of `repository`).
+description: Repositories and components (every repository, or the one of `repository`); create hosted repositories.
 icon: package
 category: artifacts
 fields:
   properties:
     baseUrl: { type: string, title: Server URL, format: url }
     repository: { type: string, title: Repository, description: 'Components: only this repository (empty: all)' }
+    publicUrl:
+      type: string
+      title: Public URL
+      format: url
+      description: 'Base of the links in operation outputs when the server URL is internal (e.g. a cluster service). Empty: the server URL'
   required: [baseUrl]
+  order: [baseUrl, repository, publicUrl]
 auth:
   - type: basic
     title: User and password
+    description: 'Ingestion needs browse/read on the repositories and nx-search-read; creating repositories needs nx-repository-admin-*-*-add.'
 test:
   path: /service/rest/v1/repositories
 kinds:
@@ -21,6 +28,34 @@ kinds:
     query: { repository: '{{ connection.repository }}' }
     itemsPath: items
     pagination: { type: cursor, param: continuationToken, cursorPath: continuationToken }
+operations:
+  create-hosted-repository:
+    title: Create a hosted repository
+    description: A hosted raw, npm or Maven repository on a blob store (answers 201 without a body).
+    kind: repository
+    inputs:
+      properties:
+        name: { type: string, title: Name, pattern: '^[A-Za-z0-9_][A-Za-z0-9._-]*$' }
+        format: { type: string, title: Format, enum: [raw, npm, maven], default: raw }
+        blobStore: { type: string, title: Blob store, default: default }
+        writePolicy: { type: string, title: Write policy, enum: [ALLOW, ALLOW_ONCE, DENY], default: ALLOW_ONCE }
+        versionPolicy: { type: string, title: Version policy (Maven), enum: [RELEASE, SNAPSHOT, MIXED], default: RELEASE }
+      required: [name, format]
+    method: POST
+    path: /service/rest/v1/repositories/{{ inputs.format }}/hosted
+    body:
+      name: '{{ inputs.name }}'
+      online: true
+      storage:
+        blobStoreName: '{{ inputs.blobStore }}'
+        strictContentTypeValidation: true
+        writePolicy: '{{ inputs.writePolicy }}'
+      maven: "{{ inputs.format = 'maven' ? { 'versionPolicy': inputs.versionPolicy, 'layoutPolicy': 'STRICT', 'contentDisposition': 'INLINE' } }}"
+      raw: "{{ inputs.format = 'raw' ? { 'contentDisposition': 'ATTACHMENT' } }}"
+    output:
+      name: inputs.name
+      format: inputs.format
+      url: '(connection.publicUrl ? connection.publicUrl : connection.baseUrl) & "/repository/" & inputs.name & "/"'
 example:
   fields: { baseUrl: https://nexus.example.com }
   auth: { type: basic, username: asterius-platform, password: '${secret:NEXUS_PASSWORD}' }

@@ -1,0 +1,16 @@
+{
+  "connections": [
+    {
+      "identifier": "sonarqube",
+      "title": "SonarQube (local cluster)",
+      "description": "The asterius-platform user's token (Browse, and Create Projects for the create-sonarqube-project workflow).",
+      "connector": "sonarqube",
+      "fields": {
+        "baseUrl": "http://sonarqube-sonarqube.sonarqube.svc:9000",
+        "publicUrl": "https://sonarqube.k8s.orb.local"
+      },
+      "auth": { "type": "basic", "username": "${vault:secret/apps/sonarqube#token}" },
+      "access": "read-write"
+    }
+  ]
+}

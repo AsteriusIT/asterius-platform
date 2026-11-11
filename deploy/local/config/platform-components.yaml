@@ -50,3 +50,10 @@ entities:
       url: https://openbao.k8s.orb.local
       namespace: openbao
       docs: https://github.com/openbao/openbao/blob/main/README.md
+  - blueprint: platform-component
+    identifier: inhouse-app
+    title: In-house DBaaS (demo)
+    properties:
+      url: http://inhouse-app.inhouse-app.svc:8080
+      namespace: inhouse-app
+      docs: https://github.com/AsteriusIT/asterius-platform/blob/main/examples/inhouse-app/README.md

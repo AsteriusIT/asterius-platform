@@ -1,0 +1,16 @@
+{
+  "connections": [
+    {
+      "identifier": "grafana",
+      "title": "Grafana (local cluster)",
+      "description": "The kube-prometheus-stack Grafana, as the asterius-platform service account (Editor: the create-grafana-folder workflow creates folders).",
+      "connector": "grafana",
+      "fields": {
+        "baseUrl": "http://kps-grafana.observability.svc",
+        "publicUrl": "https://platform-grafana.k8s.orb.local"
+      },
+      "auth": { "type": "bearer", "token": "${vault:secret/apps/grafana#token}" },
+      "access": "read-write"
+    }
+  ]
+}

@@ -1,0 +1,53 @@
+# The in-house DBaaS in the catalog: one connection (URL, key reference, access), a blueprint and the integration
+# mapping the connector's `database` kind to it.
+connections:
+  - identifier: inhouse-dbaas
+    title: DBaaS (local cluster)
+    description: The in-house database service deployed by deploy/local/install.sh (namespace inhouse-app).
+    connector: inhouse-dbaas
+    fields:
+      baseUrl: http://inhouse-app.inhouse-app.svc:8080 # running it on your machine: http://127.0.0.1:8090
+    auth:
+      type: bearer
+      token: ${vault:secret/apps/inhouse-app#apiKey} # without OpenBao: ${secret:DBAAS_API_KEY} (Admin → Secrets)
+    # read-write: the workflows of dbaas-workflows.yaml create and resize databases. To restrict which workflows may
+    # use it, `allowed: { workflows: [...] }`; not set here because the integration below uses the same connection and
+    # the current release also applies `allowed` to ingestion (an integration's sync then fails as "not allowed").
+    access: read-write
+
+blueprints:
+  - identifier: inhouse-database
+    title: Database
+    icon: database
+    description: Databases of the in-house DBaaS (ingested by the inhouse-dbaas integration, created by self-service).
+    schema:
+      properties:
+        engine: { type: string, title: Engine, enum: [postgres, mysql, redis] }
+        version: { type: string, title: Version }
+        size: { type: string, title: Size, enum: [S, M, L], enumColors: { S: gray, M: blue, L: violet } }
+        status: { type: string, title: Status, enum: [creating, available, resizing], enumColors: { creating: yellow, available: green, resizing: yellow } }
+        host: { type: string, title: Host }
+        createdAt: { type: string, title: Created, format: date-time }
+      order: [engine, version, size, status, host, createdAt]
+
+integrations:
+  - identifier: inhouse-dbaas
+    title: In-house DBaaS databases
+    type: connector
+    config: { connection: inhouse-dbaas }
+    intervalMinutes: 5
+    deleteMissing: true
+    mappings:
+      - kind: database
+        entity:
+          blueprint: inhouse-database
+          identifier: id # stable ids from the app: renaming never creates a second entity
+          title: name
+          team: team
+          properties:
+            engine: engine
+            version: version
+            size: size
+            status: status
+            host: host
+            createdAt: createdAt

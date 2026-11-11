@@ -8,15 +8,23 @@
 #         ├ on a member: Remove member
 #         └ on a repository: Delete repository
 
-# ── EDIT: where the platform-ado pipeline runs ──────────────────────────────────────────────────────
-# Reused below with `<<: *ado-pipeline` (YAML merge key). Unknown top-level keys are ignored.
-x-ado-pipeline: &ado-pipeline
-  type: azure-pipeline
-  organization: https://dev.azure.com/AsteriusIT # the organization where projects are created
-  project: Platform # the project that holds the pipeline
-  pipelineId: 22 # Pipelines → the pipeline → the id in its URL (definitionId)
-  branch: main
-  token: ${secret:ADO_PAT} # Admin → Secrets: PAT with "Build: Read & execute"
+# ── EDIT: the Azure DevOps organization ─────────────────────────────────────────────────────────────
+# The workflows below queue the platform-ado pipeline through this connection (the azure-pipeline invoker takes the
+# organization URL, the project and the token from it). Also shown in Admin → Connections, with "Test connection".
+connections:
+  - identifier: azure-devops
+    title: Azure DevOps (AsteriusIT)
+    description: The organization where projects are created; the platform-ado pipeline runs in its Platform project.
+    connector: azure-devops
+    fields:
+      organization: AsteriusIT # https://dev.azure.com/AsteriusIT
+      project: Platform # the project that holds the pipeline
+    auth:
+      type: basic
+      password: ${secret:ADO_PAT} # Admin → Secrets: PAT with "Build: Read & execute"
+    access: read-write
+# The pipeline: `pipelineId: 22` and `branch: main` in each workflow below (Pipelines → the pipeline → the id in its
+# URL, definitionId).
 # ────────────────────────────────────────────────────────────────────────────────────────────────────
 
 blueprints:
@@ -86,7 +94,10 @@ actions:
         type: invoke
         timeoutMinutes: 30
         invoker:
-          <<: *ado-pipeline
+          type: azure-pipeline
+          connection: azure-devops
+          pipelineId: 22
+          branch: main
           templateParameters:
             operation: create-project
             project: "{{ inputs.name }}"
@@ -138,7 +149,10 @@ actions:
         type: invoke
         timeoutMinutes: 20
         invoker:
-          <<: *ado-pipeline
+          type: azure-pipeline
+          connection: azure-devops
+          pipelineId: 22
+          branch: main
           templateParameters:
             operation: add-member
             project: "{{ entity.identifier }}"
@@ -176,7 +190,10 @@ actions:
         type: invoke
         timeoutMinutes: 20
         invoker:
-          <<: *ado-pipeline
+          type: azure-pipeline
+          connection: azure-devops
+          pipelineId: 22
+          branch: main
           templateParameters:
             operation: create-repository
             project: "{{ entity.identifier }}"
@@ -211,7 +228,10 @@ actions:
         type: invoke
         timeoutMinutes: 20
         invoker:
-          <<: *ado-pipeline
+          type: azure-pipeline
+          connection: azure-devops
+          pipelineId: 22
+          branch: main
           templateParameters:
             operation: remove-member
             project: "{{ entity.properties.projectName }}"
@@ -238,7 +258,10 @@ actions:
         type: invoke
         timeoutMinutes: 20
         invoker:
-          <<: *ado-pipeline
+          type: azure-pipeline
+          connection: azure-devops
+          pipelineId: 22
+          branch: main
           templateParameters:
             operation: delete-repository
             project: "{{ entity.properties.projectName }}"
@@ -271,7 +294,10 @@ actions:
         type: invoke
         timeoutMinutes: 30
         invoker:
-          <<: *ado-pipeline
+          type: azure-pipeline
+          connection: azure-devops
+          pipelineId: 22
+          branch: main
           templateParameters:
             operation: delete-project
             project: "{{ entity.identifier }}"

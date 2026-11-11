@@ -1,0 +1,88 @@
+# Namespace inhouse-app: the in-house DBaaS demo (examples/inhouse-app/app/server.mjs, no dependencies) on node:22.
+# The script comes from the ConfigMap inhouse-app-code (created by install.sh from the file); its API key from OpenBao
+# (secret/apps/inhouse-app#apiKey) through External Secrets. The platform reads the same key as
+# ${vault:secret/apps/inhouse-app#apiKey} and calls http://inhouse-app.inhouse-app.svc:8080 (OUTBOUND_ALLOW *.svc).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: openbao-reader # Kubernetes auth role eso-inhouse-app
+  namespace: inhouse-app
+---
+apiVersion: external-secrets.io/v1
+kind: SecretStore
+metadata:
+  name: openbao
+  namespace: inhouse-app
+spec:
+  provider:
+    vault:
+      server: http://openbao.openbao.svc:8200
+      path: secret
+      version: v2
+      auth:
+        kubernetes:
+          mountPath: kubernetes
+          role: eso-inhouse-app
+          serviceAccountRef: { name: openbao-reader }
+---
+# apiKey: the key the app accepts (Authorization: Bearer … or X-Api-Key).
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: inhouse-app-secrets
+  namespace: inhouse-app
+spec:
+  refreshInterval: 1m
+  secretStoreRef: { kind: SecretStore, name: openbao }
+  target: { name: inhouse-app-secrets, creationPolicy: Owner }
+  dataFrom:
+    - extract: { key: apps/inhouse-app }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inhouse-app
+  namespace: inhouse-app
+  labels: { app.kubernetes.io/name: inhouse-app }
+spec:
+  replicas: 1 # state lives in memory: one replica (a restart resets the demo data)
+  selector: { matchLabels: { app.kubernetes.io/name: inhouse-app } }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: inhouse-app }
+    spec:
+      automountServiceAccountToken: false
+      securityContext: { runAsNonRoot: true, runAsUser: 1000, runAsGroup: 1000, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: app
+          image: node:22-alpine
+          command: [node, /app/server.mjs]
+          ports: [{ name: http, containerPort: 8080 }]
+          env:
+            - { name: PORT, value: '8080' }
+            - name: API_KEY
+              valueFrom: { secretKeyRef: { name: inhouse-app-secrets, key: apiKey } }
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { memory: 128Mi }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
+          volumeMounts: [{ name: code, mountPath: /app, readOnly: true }]
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 30
+      volumes:
+        - name: code
+          configMap: { name: inhouse-app-code }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: inhouse-app
+  namespace: inhouse-app
+  labels: { app.kubernetes.io/name: inhouse-app }
+spec:
+  selector: { app.kubernetes.io/name: inhouse-app }
+  ports: [{ name: http, port: 8080, targetPort: http }]

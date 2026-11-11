@@ -47,7 +47,8 @@ keycloak:
     exposeAdmin: true # admin console at https://platform-id.k8s.orb.local/admin/
 
 config:
-  # The repository's config/ plus examples/grafana/platform/*.json, built by install.sh (re-read every minute).
+  # The repository's config/ plus deploy/local/config/ and examples/{grafana,sonarqube,nexus,inhouse-app}/platform/,
+  # built by install.sh (re-read every minute).
   existingConfigMap: asterius-platform-config-files
 
 migrations:
@@ -71,7 +72,8 @@ networkPolicy:
   monitoringNamespaceSelector:
     kubernetes.io/metadata.name: observability
 
-# Invokers and integrations may call in-cluster services (OpenBao, Grafana, Keycloak…).
+# Invokers, integrations and connections may call in-cluster services (OpenBao, Grafana, SonarQube, Nexus, the
+# in-house DBaaS demo, Keycloak…).
 outbound:
   allow: ["*.svc", "*.svc.cluster.local", "192.168.194.0/24"]
 

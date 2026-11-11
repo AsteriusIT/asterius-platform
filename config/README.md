@@ -9,6 +9,8 @@ Top-level keys, any file may declare any of them:
 |---|---|
 | `teams` | Teams (optionally bound to an Entra ID group) |
 | `blueprints` | Entity types: JSON Schema properties + relations |
+| `connectors` | Connector definitions of your own (how to talk to a tool: fields, auth, kinds, operations); built-ins need none |
+| `connections` | Configured instances of a connector: URL and fields, credential references, access, allowed workflows |
 | `actions` | Self-service actions: inputs, invoker, approval policy, permissions |
 | `integrations` | Data ingestion: source type, config, JSONata mappings, schedule |
 | `webhooks` | Outbound notifications of catalog changes and runs |
@@ -20,7 +22,8 @@ Admins can export what was created in the UI (`Admin → Configuration → Expor
 Within one file, YAML anchors and merge keys share settings (`x-shared: &name {…}` then `<<: *name`);
 top-level keys other than the ones above are ignored, so they can hold such shared blocks.
 
-The files shipped here set up Azure DevOps self-service (see `examples/azure-devops/README.md`);
+The files shipped here set up Azure DevOps self-service through the `azure-devops` connection (see
+`examples/azure-devops/README.md`);
 the earlier demo configuration is in `examples/demo-config/`.
 
 Secrets are never written in these files: use `${secret:NAME}` (stored encrypted, Admin → Secrets)

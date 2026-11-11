@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Asterius Platform on the local OrbStack Kubernetes cluster, with its ecosystem:
 #   metrics-server, kube-prometheus-stack (Prometheus + Grafana), OpenBao, External Secrets Operator, SonarQube, Nexus,
+#   the in-house DBaaS demo app (examples/inhouse-app),
 #   and the platform chart with every component enabled (CNPG, Keycloak, ingress/TLS, NetworkPolicy, one replica each,
 #   RBAC, migration Job, ServiceMonitor, PrometheusRule, Grafana dashboard).
 # Secrets flow: .env + generated values → OpenBao KV → External Secrets → Kubernetes Secrets → pods.
@@ -26,7 +27,7 @@ if [[ "${1:-}" == "--build" ]] || ! docker image inspect asterius-platform:local
 fi
 
 log "Namespaces"
-for ns in observability openbao external-secrets sonarqube nexus "$NS" asterius-jobs; do
+for ns in observability openbao external-secrets sonarqube nexus inhouse-app "$NS" asterius-jobs; do
   k create namespace "$ns" --dry-run=client -o yaml | k apply -f - >/dev/null
 done
 
@@ -82,6 +83,7 @@ printf 'path "secret/data/asterius-platform/*" { capabilities = ["read"] }\n' | 
 printf 'path "secret/data/observability/*" { capabilities = ["read"] }\n' | bao policy write eso-observability - >/dev/null
 printf 'path "secret/data/sonarqube/*" { capabilities = ["read"] }\n' | bao policy write eso-sonarqube - >/dev/null
 printf 'path "secret/data/nexus/*" { capabilities = ["read"] }\n' | bao policy write eso-nexus - >/dev/null
+printf 'path "secret/data/apps/inhouse-app" { capabilities = ["read"] }\n' | bao policy write eso-inhouse-app - >/dev/null
 # The platform itself resolves ${vault:secret/apps/...#key} references of actions and integrations.
 printf 'path "secret/data/apps/*" { capabilities = ["read"] }\n' | bao policy write asterius-platform - >/dev/null
 
@@ -93,6 +95,8 @@ baoq write auth/kubernetes/role/eso-sonarqube bound_service_account_names=openba
   bound_service_account_namespaces=sonarqube token_policies=eso-sonarqube token_ttl=15m >/dev/null
 baoq write auth/kubernetes/role/eso-nexus bound_service_account_names=openbao-reader \
   bound_service_account_namespaces=nexus token_policies=eso-nexus token_ttl=15m >/dev/null
+baoq write auth/kubernetes/role/eso-inhouse-app bound_service_account_names=openbao-reader \
+  bound_service_account_namespaces=inhouse-app token_policies=eso-inhouse-app token_ttl=15m >/dev/null
 baoq write auth/kubernetes/role/asterius-platform bound_service_account_names=asterius-platform-api,asterius-platform-worker \
   bound_service_account_namespaces="$NS" token_policies=asterius-platform token_ttl=1h >/dev/null
 
@@ -151,6 +155,9 @@ jq -nc --argjson cur "$current" --arg adm "$(rand)" '{ADMIN_PASSWORD:$adm} + $cu
 current="$(kv_get apps/nexus)"
 jq -nc --argjson cur "$current" --arg p "$(rand)" '{password:$p} + $cur' | kv_put apps/nexus
 
+# In-house DBaaS demo: the API key the app accepts and the platform's inhouse-dbaas connection sends.
+[[ "$(kv_get apps/inhouse-app)" != '{}' ]] || jq -nc --arg k "$(rand)" '{apiKey:$k}' | kv_put apps/inhouse-app
+
 # Sample secret for ${vault:secret/apps/demo#token} in actions.
 [[ "$(kv_get apps/demo)" != '{}' ]] || jq -nc --arg t "$(rand)" '{token:$t}' | kv_put apps/demo
 
@@ -180,11 +187,13 @@ g() { local m="$1" p="$2"; shift 2; curl -fsS -u "$GAUTH" -H 'content-type: appl
 gstatus() { curl -s -o /dev/null -w '%{http_code}' -u "$GAUTH" "$GRAFANA$1"; }
 
 grafana_secrets="$(kv_get apps/grafana)"
+sa="$(g GET '/api/serviceaccounts/search?query=asterius-platform' | jq -r '.serviceAccounts[] | select(.name=="asterius-platform") | .id' | head -1)"
+[[ -n "$sa" ]] || sa="$(g POST /api/serviceaccounts --data @"$GDIR/grafana/service-account.json" | jq -r .id)"
+# Editor: the create-grafana-folder workflow creates folders through the connection (accounts created as Viewer upgraded).
+g PATCH "/api/serviceaccounts/$sa" --data "$(jq -c '{role}' "$GDIR/grafana/service-account.json")" >/dev/null
 token="$(jq -r '.token // empty' <<<"$grafana_secrets")"
 # A stored token is reused while Grafana still accepts it.
 if [[ -z "$token" || "$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $token" "$GRAFANA/api/search?limit=1")" != 200 ]]; then
-  sa="$(g GET '/api/serviceaccounts/search?query=asterius-platform' | jq -r '.serviceAccounts[] | select(.name=="asterius-platform") | .id' | head -1)"
-  [[ -n "$sa" ]] || sa="$(g POST /api/serviceaccounts --data @"$GDIR/grafana/service-account.json" | jq -r .id)"
   token="$(g POST "/api/serviceaccounts/$sa/tokens" --data "$(jq -nc --arg n "asterius-platform-$(date +%Y%m%d%H%M%S)" '{name:$n}')" | jq -r .key)"
 fi
 webhook_token="$(jq -r '.webhookToken // empty' <<<"$grafana_secrets")"; [[ -n "$webhook_token" ]] || webhook_token="$(rand)"
@@ -231,6 +240,8 @@ if [[ -z "$token" || "$(curl -s -u "$token:" "$SONAR/api/authentication/validate
   token="$(s POST /api/user_tokens/generate --data-urlencode login=asterius-platform \
     --data-urlencode "name=asterius-platform-$(date +%Y%m%d%H%M%S)" | jq -r .token)"
 fi
+# Global "Create Projects": the create-sonarqube-project workflow creates projects through the connection (idempotent).
+s POST /api/permissions/add_user --data-urlencode login=asterius-platform --data-urlencode permission=provisioning >/dev/null
 webhook_secret="$(jq -r '.webhookSecret // empty' <<<"$sonar_secrets")"; [[ -n "$webhook_secret" ]] || webhook_secret="$(rand)"
 jq -nc --arg t "$token" --arg w "$webhook_secret" '{token:$t, webhookSecret:$w}' | kv_put apps/sonarqube
 
@@ -272,9 +283,19 @@ else
     --data "$nexus_password" >/dev/null
 fi
 
-log "Platform configuration (config/ + examples/{grafana,sonarqube,nexus}/platform + deploy/local/config)"
+log "In-house DBaaS demo app (examples/inhouse-app: connector definition, connection, workflows)"
+# The script runs on the stock node image from a ConfigMap; a changed script rolls the pod (checksum annotation).
+IDIR="$ROOT/examples/inhouse-app"
+k -n inhouse-app create configmap inhouse-app-code --from-file=server.mjs="$IDIR/app/server.mjs" --dry-run=client -o yaml | k apply -f - >/dev/null
+k apply -f "$HERE/manifests/inhouse-app.yaml" >/dev/null
+k -n inhouse-app patch deploy/inhouse-app --type merge \
+  -p "$(jq -nc --arg s "$(openssl dgst -sha256 -r "$IDIR/app/server.mjs" | cut -c1-16)" '{spec:{template:{metadata:{annotations:{"asterius.io/code-sha":$s}}}}}')" >/dev/null
+k -n inhouse-app wait externalsecret/inhouse-app-secrets --for=condition=Ready --timeout=120s
+k -n inhouse-app rollout status deploy/inhouse-app --timeout=300s
+
+log "Platform configuration (config/ + examples/{grafana,sonarqube,nexus,inhouse-app}/platform + deploy/local/config)"
 k -n "$NS" create configmap asterius-platform-config-files \
-  $(for f in "$ROOT"/config/*.yaml "$HERE"/config/*.yaml "$GDIR"/platform/*.json "$SDIR"/platform/*.json "$NDIR"/platform/*.json; do printf -- '--from-file=%s ' "$f"; done) \
+  $(for f in "$ROOT"/config/*.yaml "$HERE"/config/*.yaml "$GDIR"/platform/*.json "$SDIR"/platform/*.json "$NDIR"/platform/*.json "$IDIR"/platform/*.yaml; do printf -- '--from-file=%s ' "$f"; done) \
   --dry-run=client -o yaml | k apply -f - >/dev/null
 
 log "Asterius Platform"
@@ -299,6 +320,7 @@ Grafana    https://platform-grafana.k8s.orb.local   (dashboard "Asterius Platfor
 OpenBao    https://openbao.k8s.orb.local   (UI, token: root token below)
 SonarQube  https://sonarqube.k8s.orb.local   (user admin, password below)
 Nexus      https://nexus.k8s.orb.local   (user admin, password below)
+DBaaS demo http://inhouse-app.inhouse-app.svc:8080   (in-cluster only; Self-service → Create a database)
 
 BOOTSTRAP_TOKEN  kubectl -n $NS get secret asterius-platform-secrets -o jsonpath='{.data.BOOTSTRAP_TOKEN}' | base64 -d
 Grafana admin    kubectl -n observability get secret grafana-admin -o jsonpath='{.data.admin-password}' | base64 -d

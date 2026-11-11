@@ -1,0 +1,79 @@
+# Local cluster only (added to the configuration ConfigMap by install.sh): self-service through the connections of
+# examples/grafana/platform and examples/sonarqube/platform. Each workflow runs one operation of a built-in connector
+# definition (apps/server/connectors/*.yaml), then records the result in the catalog right away; the next pull of the
+# integration takes the entity over and keeps it up to date (its owning team stays).
+# The connections are read-write. They do not restrict their workflows with `allowed.workflows` because the
+# integrations use the same connections and the current release applies `allowed` to ingestion too.
+
+actions:
+  - identifier: create-grafana-folder
+    title: Create a Grafana folder
+    icon: grafana
+    description: A Grafana folder for your team's dashboards and alert rules.
+    trigger:
+      type: form
+      on: create
+      blueprint: grafana-folder
+      inputs:
+        properties:
+          title: { type: string, title: Folder name, minLength: 2, maxLength: 100 }
+          team: { type: string, title: Owning team, format: team }
+        required: [title, team]
+        order: [title, team]
+    steps:
+      - id: folder
+        name: Create the folder (Grafana API)
+        type: invoke
+        invoker:
+          type: connector
+          connection: grafana
+          operation: create-folder
+          inputs: { title: "{{ inputs.title }}" }
+      - id: register
+        name: Register in the catalog
+        type: invoke
+        invoker:
+          type: catalog
+          operation: upsert
+          blueprint: grafana-folder
+          identifier: "{{ steps.folder.output.uid }}"
+          title: "{{ steps.folder.output.title }}"
+          team: "{{ inputs.team }}"
+          properties: { url: "{{ steps.folder.output.url }}" }
+
+  - identifier: create-sonarqube-project
+    title: Create a SonarQube project
+    icon: sonarqube
+    description: An empty SonarQube project; its first analysis fills it. Use the key as `sonar.projectKey` in your pipeline.
+    trigger:
+      type: form
+      on: create
+      blueprint: sonarqube-project
+      inputs:
+        properties:
+          key: { type: string, title: Project key, pattern: "^[a-z][a-z0-9_.:-]{1,99}$", description: "lowercase letters, digits, - _ . :" }
+          name: { type: string, title: Name, minLength: 2, maxLength: 200 }
+          team: { type: string, title: Owning team, format: team }
+          visibility: { type: string, title: Visibility, enum: [private, public], default: private }
+        required: [key, name, team, visibility]
+        order: [key, name, team, visibility]
+    steps:
+      - id: project
+        name: Create the project (SonarQube API)
+        type: invoke
+        invoker:
+          type: connector
+          connection: sonarqube
+          operation: create-project
+          inputs: { key: "{{ inputs.key }}", name: "{{ inputs.name }}", visibility: "{{ inputs.visibility }}" }
+      - id: register
+        name: Register in the catalog
+        type: invoke
+        invoker:
+          type: catalog
+          operation: upsert
+          blueprint: sonarqube-project
+          identifier: "{{ steps.project.output.key }}"
+          title: "{{ steps.project.output.name }}"
+          team: "{{ inputs.team }}"
+          properties: { url: "{{ steps.project.output.url }}" }
