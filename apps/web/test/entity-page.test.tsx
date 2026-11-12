@@ -4,7 +4,7 @@ import { MantineProvider } from '@mantine/core';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import type { Blueprint, Entity } from '@asterius/shared';
-import { theme } from '../src/theme';
+import { theme } from '@asterius/brand';
 import { EntityPage } from '../src/pages/EntityPage';
 import { api } from '../src/lib/api';
 

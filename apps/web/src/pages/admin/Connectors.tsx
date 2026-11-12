@@ -12,7 +12,7 @@ import { useUrlParams } from '../../lib/urlState';
 import { authInputs, categoryLabel, methodLabel, pickerOrder } from '../../lib/connectors';
 import { DataTable } from '../../components/DataTable';
 import { EntityIcon } from '../../components/icons';
-import { ICON } from '../../components/iconScale';
+import { ICON } from '@asterius/brand';
 import { ResourceEditor } from '../../components/ResourceEditor';
 import { SchemaForm, initialValues, type FormValues } from '../../components/SchemaForm';
 import { Section } from '../../components/Section';

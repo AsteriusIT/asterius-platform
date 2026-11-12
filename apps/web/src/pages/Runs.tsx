@@ -47,7 +47,7 @@ import { Section } from '../components/Section';
 import { SIDE_PANEL_WIDTHS, SidePanel } from '../components/SidePanel';
 import { Caption, duration, Markdown, PageHeader, QueryView, StatusBadge, STATUS_COLORS, STATUS_LABELS, SurfaceBox, TimeAgo } from '../components/ui';
 import { EntityIcon } from '../components/icons';
-import { ICON } from '../components/iconScale';
+import { ICON } from '@asterius/brand';
 import { TRIGGER_ID, WorkflowFlow, type FlowStep, type FlowTrigger } from '../components/WorkflowFlow';
 import { FlowShell } from '../components/FlowShell';
 import { ExplainRun } from '../components/AiAssistant';

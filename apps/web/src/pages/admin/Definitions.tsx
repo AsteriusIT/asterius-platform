@@ -18,7 +18,7 @@ import { DataTable } from '../../components/DataTable';
 import { Section } from '../../components/Section';
 import { SidePanel } from '../../components/SidePanel';
 import { EntityIcon } from '../../components/icons';
-import { ICON } from '../../components/iconScale';
+import { ICON } from '@asterius/brand';
 import { Mono, TimeAgo } from '../../components/ui';
 import { ResourceAdmin, strip } from './ResourceAdmin';
 import { ActionBuilder } from '../../components/builder/ActionBuilder';

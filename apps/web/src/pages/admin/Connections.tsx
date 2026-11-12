@@ -11,7 +11,7 @@ import { useUrlParams } from '../../lib/urlState';
 import { blueprintsFed, categoryLabel, connectorOf, pickerOrder, methodLabel, rememberTest, useLastTest } from '../../lib/connectors';
 import { blankConnection, ConnectionBuilder } from '../../components/builder/ConnectionBuilder';
 import { EntityIcon } from '../../components/icons';
-import { ICON } from '../../components/iconScale';
+import { ICON } from '@asterius/brand';
 import { Section } from '../../components/Section';
 import { SidePanel } from '../../components/SidePanel';
 import { Caption, Mono, QueryView, TimeAgo } from '../../components/ui';

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { ActionIcon, Badge, Button, Checkbox, CloseButton, Group, Menu, NativeSelect, Popover, Select, Stack, TextInput } from '@mantine/core';
 import { IconColumns, IconDeviceFloppy, IconFilter, IconLink, IconPencil, IconTrash } from '@tabler/icons-react';
 import type { Blueprint, SavedCatalogView, TeamRef } from '@asterius/shared';
-import { ICON } from './iconScale';
+import { ICON } from '@asterius/brand';
 
 /** Active property filters as removable chips plus a small "add filter" popover. */
 export function FilterBar({

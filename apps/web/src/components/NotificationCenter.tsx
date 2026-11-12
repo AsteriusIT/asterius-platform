@@ -8,7 +8,7 @@ import { useAppMutation } from '../lib/queryClient';
 import { Empty, QueryView, TimeAgo } from './ui';
 import { Section } from './Section';
 import { SidePanel } from './SidePanel';
-import { ICON } from './iconScale';
+import { ICON } from '@asterius/brand';
 
 const OPEN_EVENT = 'asterius:open-notifications';
 /** Opens the notification drawer of the header from anywhere (e.g. the To do page). */

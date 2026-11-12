@@ -4,7 +4,7 @@ import { MantineProvider } from '@mantine/core';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router';
 import type { Blueprint } from '@asterius/shared';
-import { theme } from '../src/theme';
+import { theme } from '@asterius/brand';
 import { CatalogList } from '../src/pages/Catalog';
 import { api } from '../src/lib/api';
 

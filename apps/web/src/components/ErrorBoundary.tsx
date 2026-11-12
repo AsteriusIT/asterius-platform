@@ -4,7 +4,7 @@ import { isRouteErrorResponse, useRouteError } from 'react-router';
 import { IconAlertTriangle } from '@tabler/icons-react';
 import { errorText } from '../lib/api';
 import { useT } from '../lib/i18n';
-import { ICON_DISPLAY } from './iconScale';
+import { ICON_DISPLAY } from '@asterius/brand';
 
 /** Full-page fallback with a reload action. */
 export function ErrorFallback({ error, onReset }: { error: unknown; onReset?: () => void }) {

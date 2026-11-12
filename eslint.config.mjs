@@ -12,7 +12,10 @@ export default tseslint.config(
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
     },
   },
-  { files: ['apps/server/**/*.ts', 'loadtest/*.mts', '*.mjs', 'apps/web/scripts/**/*.mjs'], languageOptions: { globals: globals.node } },
+  {
+    files: ['apps/server/**/*.ts', 'loadtest/*.mts', '*.mjs', 'apps/web/scripts/**/*.mjs', 'packages/brand/scripts/**/*.mjs'],
+    languageOptions: { globals: globals.node },
+  },
   // k6 scripts run in the k6 runtime (not Node): its globals and ES modules.
   {
     files: ['loadtest/k6/**/*.js'],
@@ -32,16 +35,16 @@ export default tseslint.config(
         'error',
         {
           selector: "JSXAttribute[name.name='fz'] > JSXExpressionContainer > Literal",
-          message: 'Font sizes come from the type scale: fz="xs" | "sm" | … (theme.ts), or a text component of components/ui.tsx.',
+          message: 'Font sizes come from the type scale: fz="xs" | "sm" | … (packages/brand/src/theme.ts), or a text component of components/ui.tsx.',
         },
         {
           selector:
             'JSXAttribute[name.name=/^(gap|p|px|py|pt|pb|pl|pr|m|mx|my|mt|mb|ml|mr|spacing|verticalSpacing)$/] > JSXExpressionContainer > Literal[value>0]',
-          message: 'Spacing comes from the scale: "4xs" … "xl" (theme.ts). A geometric value is a named constant with a comment.',
+          message: 'Spacing comes from the scale: "4xs" … "xl" (packages/brand/src/theme.ts). A geometric value is a named constant with a comment.',
         },
         {
           selector: "JSXOpeningElement[name.name=/^Icon[A-Z]/] > JSXAttribute[name.name='stroke']",
-          message: 'The stroke width of icons is set once in styles.css (.tabler-icon); pass a size from components/iconScale.ts only.',
+          message: 'The stroke width of icons is set once in @asterius/brand/base.css (.tabler-icon); pass a size from ICON (@asterius/brand) only.',
         },
         {
           selector:

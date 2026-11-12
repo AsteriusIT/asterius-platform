@@ -8,7 +8,7 @@ import type { EditConflict } from '@asterius/shared';
 import { WorkflowFlowPage } from '../src/pages/admin/WorkflowFlow';
 import { conflictSummary } from '../src/components/EditConflictDialog';
 import { api, ApiError, conflictOf } from '../src/lib/api';
-import { theme } from '../src/theme';
+import { theme } from '@asterius/brand';
 
 afterEach(() => {
   cleanup();

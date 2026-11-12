@@ -1,0 +1,225 @@
+/* @asterius/brand base stylesheet: the finish shared by the Asterius consoles, on top of Mantine (tokens in
+   src/tokens.ts, theme in src/theme.ts). Import it after @mantine/core/styles.css and before the app's own
+   stylesheet. Only rules that hold for any page built with the theme live here; app layouts stay in the apps. */
+
+body {
+  background: var(--mantine-color-body);
+  /* Text that names no size (rare: components pass `fz`): one step between sm and md. */
+  font-size: 15px;
+  font-feature-settings: 'cv11', 'ss01';
+  -webkit-font-smoothing: antialiased;
+}
+h1,
+h2,
+h3,
+h4,
+.mantine-Title-root {
+  letter-spacing: -0.015em;
+}
+
+/* Thin, quiet native scrollbars (tables, code, page) — overlay ScrollArea is used inside dialogs. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+/* Every Tabler icon: a block-level box that never shrinks in a flex row (no baseline gap under an inline svg, no
+   squeezed icon next to a long label) and one stroke width. Sizes come from src/iconScale.ts. */
+.tabler-icon {
+  display: block;
+  flex-shrink: 0;
+  stroke-width: 1.75;
+}
+/* An icon written inside a sentence (rare) stays on the line of its text. */
+.mantine-Text-root > .tabler-icon,
+.mantine-Anchor-root > .tabler-icon {
+  display: inline-block;
+  vertical-align: -0.15em;
+}
+
+/* ---- inputs: soft border, neutral focus ---- */
+.mantine-Input-input {
+  border-color: var(--mantine-color-default-border);
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+.mantine-Input-input:focus,
+.mantine-Input-input:focus-within {
+  border-color: var(--focus-border);
+  box-shadow: 0 0 0 3px var(--focus-halo);
+}
+.mantine-Input-input[data-error] {
+  border-color: var(--mantine-color-error);
+}
+
+/* ---- tables (tokens: --table-* in tokens.ts) ----
+   Header band, hairline rows, hover and selection as translucent tints: the same rules hold on the page,
+   in a card and in a dialog. */
+.mantine-Table-table {
+  --table-border-color: var(--hairline);
+  --table-highlight-on-hover-color: var(--table-row-hover);
+}
+.mantine-Table-th {
+  font-size: var(--mantine-font-size-dense);
+  font-weight: 500;
+  color: var(--mantine-color-dimmed);
+}
+.mantine-Table-thead .mantine-Table-th {
+  background: var(--table-head-bg);
+  white-space: nowrap;
+}
+.mantine-Table-thead .mantine-Table-th[aria-sort] {
+  color: var(--mantine-color-text);
+}
+.mantine-Table-tr {
+  border-color: var(--hairline);
+}
+.mantine-Table-thead .mantine-Table-tr {
+  border-bottom: 1px solid var(--hairline);
+}
+.mantine-Table-tbody .mantine-Table-tr[data-selected] {
+  background: var(--table-row-selected);
+}
+.mantine-Table-tbody .mantine-Table-tr[data-selected]:hover {
+  background: var(--table-row-selected-hover);
+}
+/* A badge in a cell keeps its whole label (its label column could shrink to nothing otherwise). */
+.mantine-Table-td .mantine-Badge-root {
+  flex: none;
+  min-width: max-content;
+}
+/* A stack of avatars sits on a raised surface (a table): the ring between two of them takes its colour. */
+.mantine-Avatar-root[data-within-group] {
+  border-color: var(--surface-raised);
+  background: var(--surface-raised);
+}
+
+/* Tabs: underline in text color, not accent. */
+.mantine-Tabs-list::before {
+  border-color: var(--hairline);
+}
+
+/* Code */
+.mantine-Code-root {
+  background: var(--code-bg);
+}
+
+/* Syntax highlighting (JSON / YAML views): tokens --tok-*. */
+.tok-key {
+  color: var(--tok-key);
+}
+.tok-string {
+  color: var(--tok-string);
+}
+.tok-number {
+  color: var(--tok-number);
+}
+.tok-literal {
+  color: var(--tok-literal);
+}
+.tok-comment {
+  color: var(--tok-comment);
+  font-style: italic;
+}
+.tok-punct {
+  color: var(--tok-punct);
+}
+.tok-template {
+  color: var(--tok-template);
+  font-weight: 500;
+}
+
+/* Refresh buttons: the icon turns while data loads. */
+.spin {
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation: none;
+  }
+}
+
+/* ---- elevation (tokens: --surface-raised, --surface-overlay, --mantine-shadow-* in tokens.ts) ----
+   Raised: cards, papers, tables. Overlay: everything that floats above the page. In dark the shadows carry a
+   1px ring (see tokens.ts), so a surface never melts into the canvas. */
+.mantine-Paper-root,
+.mantine-Card-root {
+  background-color: var(--surface-raised);
+}
+.mantine-Menu-dropdown,
+.mantine-Popover-dropdown,
+.mantine-HoverCard-dropdown,
+.mantine-Combobox-dropdown,
+.mantine-Modal-content,
+.mantine-Modal-header,
+.mantine-Drawer-content,
+.mantine-Drawer-header,
+.mantine-Notification-root {
+  background-color: var(--surface-overlay);
+}
+[data-mantine-color-scheme='dark'] .mantine-Menu-dropdown,
+[data-mantine-color-scheme='dark'] .mantine-Popover-dropdown,
+[data-mantine-color-scheme='dark'] .mantine-HoverCard-dropdown,
+[data-mantine-color-scheme='dark'] .mantine-Combobox-dropdown {
+  border-color: rgba(255, 255, 255, 0.11);
+}
+/* A bordered surface does not need the ring as well. */
+[data-mantine-color-scheme='dark'] .mantine-Paper-root[data-with-border],
+[data-mantine-color-scheme='dark'] .mantine-Card-root[data-with-border] {
+  box-shadow: none;
+}
+/* Tooltips are `color: dark`: on a dark page they need their own step. */
+[data-mantine-color-scheme='dark'] .mantine-Tooltip-tooltip {
+  background-color: var(--surface-3);
+  color: var(--mantine-color-text);
+  box-shadow: var(--mantine-shadow-sm);
+}
+/* ---- end elevation ---- */
+
+/* ---- dark controls: off states that stay visible on a raised surface (token: --border-strong) ---- */
+[data-mantine-color-scheme='dark'] .mantine-Checkbox-input:not(:checked):not([data-indeterminate]),
+[data-mantine-color-scheme='dark'] .mantine-Radio-radio:not(:checked) {
+  background-color: transparent;
+  border-color: var(--border-strong);
+}
+[data-mantine-color-scheme='dark'] .mantine-Checkbox-input[data-error],
+[data-mantine-color-scheme='dark'] .mantine-Radio-radio[data-error] {
+  border-color: var(--mantine-color-error);
+}
+/* Mantine sets the track colour on the track itself: an override on the root never reached it. */
+[data-mantine-color-scheme='dark'] .mantine-Switch-input:not(:checked):not(:disabled) + .mantine-Switch-track {
+  --switch-bg: var(--border-strong);
+}
+/* `dot` badges ("In progress", "live") are outlined: the default border is the colour of a raised surface in dark. */
+[data-mantine-color-scheme='dark'] .mantine-Badge-root[data-variant='dot'] {
+  border-color: var(--border-strong);
+}
+[data-mantine-color-scheme='dark'] .mantine-Input-input:disabled,
+[data-mantine-color-scheme='dark'] .mantine-Input-input[data-disabled] {
+  color: var(--mantine-color-text);
+}
+/* ---- end dark controls ---- */
+
+/* ---- keyboard focus (theme focusRing: 'auto' = :focus-visible only; token: --focus-ring) ----
+   Text inputs keep their own border + halo (see inputs above). */
+.mantine-focus-auto:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+/* ---- end keyboard focus ---- */
+
+/* Logos and uploaded icons (BrandLogo, app icons): a box that never shrinks, like `.tabler-icon`. */
+.icon-img {
+  display: block;
+  flex-shrink: 0;
+  object-fit: contain;
+}
+.icon-img[data-upload] {
+  border-radius: 4px; /* geometric: a quarter of the smallest icon (16px), under the radius scale on purpose */
+}

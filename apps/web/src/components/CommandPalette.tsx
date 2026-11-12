@@ -7,7 +7,7 @@ import { IconSearch } from '@tabler/icons-react';
 import { api } from '../lib/api';
 import type { AdminArea } from '../lib/access';
 import { visibleCategories } from './adminSections';
-import { ICON } from './iconScale';
+import { ICON } from '@asterius/brand';
 
 export interface Command {
   id: string;

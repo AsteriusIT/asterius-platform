@@ -6,6 +6,7 @@
   "workspaces": [
     "packages/shared",
     "packages/plugin-sdk",
+    "packages/brand",
     "apps/server",
     "apps/web"
   ],
@@ -20,7 +21,7 @@
     "config:validate": "npm run config:validate -w apps/server --",
     "loadtest:seed": "tsx loadtest/seed.mts",
     "loadtest:sink": "tsx loadtest/sink.mts",
-    "lint": "eslint . && prettier --check .",
+    "lint": "eslint . && prettier --check . && npm run check:css -w packages/brand",
     "format": "prettier --write ."
   },
   "devDependencies": {

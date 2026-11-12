@@ -54,7 +54,7 @@ import { NotificationCenter } from './NotificationCenter';
 import { BrandLogo, BrandMark } from './Brand';
 import { initials } from './UserChip';
 import { NavItem } from './NavItem';
-import { ICON } from './iconScale';
+import { ICON } from '@asterius/brand';
 
 /**
  * LibreChat-like shell: soft sidebar (brand, navigation, account at the bottom), white canvas, slim header. On desktop the

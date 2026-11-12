@@ -23,7 +23,7 @@ import {
   IconWebhook,
 } from '@tabler/icons-react';
 import type { AdminArea } from '../lib/access';
-import { ICON } from './iconScale';
+import { ICON } from '@asterius/brand';
 
 export interface AdminTab {
   label: string;
