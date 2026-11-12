@@ -25,7 +25,7 @@ import { IconAlertTriangle, IconInbox, IconRefresh } from '@tabler/icons-react';
 import type { RunStatus } from '@asterius/shared';
 import { errorText } from '../lib/api';
 import { EntityIcon } from './icons';
-import { ICON, ICON_DISPLAY } from './iconScale';
+import { ICON, ICON_DISPLAY } from '@asterius/brand';
 
 /** Small building blocks shared by every page. */
 

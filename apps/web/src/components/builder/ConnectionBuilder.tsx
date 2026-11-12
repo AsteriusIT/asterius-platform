@@ -21,7 +21,7 @@ import { api } from '../../lib/api';
 import { authInputs, authProblems, CREDENTIAL_HELP, methodLabel, type AuthField } from '../../lib/connectors';
 import { SchemaForm, validateValues } from '../SchemaForm';
 import { EntityIcon } from '../icons';
-import { ICON } from '../iconScale';
+import { ICON } from '@asterius/brand';
 import { Caption, Mono } from '../ui';
 import { MONO_INPUT, SecretInput } from './blocks';
 import { FormBuilder, identityProblems, IdentityFields, type Doc, type EditorProps, type FormContext } from './FormBuilder';

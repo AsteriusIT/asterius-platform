@@ -1,0 +1,25 @@
+{
+  "name": "@asterius/brand",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "The look shared by Asterius Platform and Asterius Identity: Mantine theme, design tokens, base stylesheet, brand mark. TypeScript source, consumed by Vite.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./tokens": "./src/tokens.ts",
+    "./base.css": "./src/base.css",
+    "./brand.css": "./brand.css",
+    "./mark.svg": "./assets/mark.svg"
+  },
+  "files": [
+    "src",
+    "assets",
+    "scripts",
+    "brand.css"
+  ],
+  "scripts": {
+    "build:css": "node scripts/build-css.mjs",
+    "check:css": "node scripts/build-css.mjs --check"
+  },
+  "//": "Uses @mantine/core ^9.7 and react ^19 from the app. Not declared as peerDependencies on purpose: a workspace's peers become prod dependencies, kept in the Docker image by `npm prune --omit=dev`."
+}

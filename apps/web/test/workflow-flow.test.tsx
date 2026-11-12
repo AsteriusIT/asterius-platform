@@ -10,7 +10,7 @@ import { WorkflowFlow } from '../src/components/WorkflowFlow';
 import { WorkflowFlowPage } from '../src/pages/admin/WorkflowFlow';
 import { RunPage } from '../src/pages/Runs';
 import { api } from '../src/lib/api';
-import { theme } from '../src/theme';
+import { theme } from '@asterius/brand';
 import { renderUi } from './render';
 
 afterEach(() => {

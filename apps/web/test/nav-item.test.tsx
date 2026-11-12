@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, screen } from '@testing-library/react';
 import { IconChecklist } from '@tabler/icons-react';
 import { NavItem } from '../src/components/NavItem';
-import { ICON, ICON_DISPLAY } from '../src/components/iconScale';
+import { ICON, ICON_DISPLAY } from '@asterius/brand';
 import { renderUi } from './render';
 
 afterEach(cleanup);

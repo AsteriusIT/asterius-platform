@@ -709,8 +709,11 @@ The CSS these components need is one delimited block at the end of `apps/web/src
 
 ### Design tokens
 
-The UI names a step of a scale, never a pixel value. The scales are defined once in `apps/web/src/theme.ts` (Mantine theme) and
-read in `styles.css` as `var(--mantine-…)`.
+The UI names a step of a scale, never a pixel value. The scales are defined once in `packages/brand` (`@asterius/brand`, shared
+with Asterius Identity): `src/tokens.ts` holds the values, `src/theme.ts` the Mantine theme, `src/base.css` the finish every page
+built with the theme gets (icons, inputs, tables, surfaces, focus), `brand.css` the same values as plain `--brand-*` custom
+properties for pages without Mantine (generated: `npm run build:css -w packages/brand`; `npm run lint` fails when it is stale).
+`apps/web/src/styles.css` keeps the portal's own layout and reads the tokens as `var(--mantine-…)`.
 
 | Scale | Tokens | Use |
 | --- | --- | --- |
@@ -718,7 +721,7 @@ read in `styles.css` as `var(--mantine-…)`.
 | Line height (`lh`) | `xs` 1.4 · `sm` 1.45 · `md` 1.55 · `lg` 1.6 · `xl` 1.65 | `md` for prose, `lg` for code and logs. A figure next to an icon takes `lh={1}`. |
 | Spacing (`gap`, `p*`, `m*`) | `4xs` 2 · `3xs` 4 · `2xs` 6 · `xs` 10 · `sm` 12 · `md` 16 · `lg` 20 · `xl` 32 | `4xs`–`2xs` inside a component (title and subtitle, icon and label, toolbar controls); `xs`–`md` between the parts of a card or a form; `lg`–`xl` between the blocks of a page. |
 | Radius (`radius`, `bdrs`) | `xs` 6 · `sm` 8 · `md` 12 · `lg` 16 · `xl` 20 | `xs` inline code, `sm` list rows and small boxes, `md` controls and tinted blocks, `lg` papers and menus, `xl` cards, modals, badges and pills. |
-| Icons | `ICON.sm` 14 · `ICON.md` 16 · `ICON.lg` 18 · `ICON_DISPLAY.md` 32 · `ICON_DISPLAY.lg` 40 | `components/iconScale.ts`. Never pass `stroke`. |
+| Icons | `ICON.sm` 14 · `ICON.md` 16 · `ICON.lg` 18 · `ICON_DISPLAY.md` 32 · `ICON_DISPLAY.lg` 40 | `ICON` / `ICON_DISPLAY` from `@asterius/brand`. Never pass `stroke`. |
 | Surfaces | `--surface` · `--mantine-color-body` · `--surface-raised` · `--surface-overlay` · `--hairline` | Shell and tinted blocks, the page, cards and tables, what floats, separators. Text: `--mantine-color-text`, `--mantine-color-dimmed`, `--text-3`. |
 
 - Text patterns are components of `components/ui.tsx`: `Kicker` (uppercase label above a group), `Caption` (dense secondary text),

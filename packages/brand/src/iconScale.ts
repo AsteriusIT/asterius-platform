@@ -1,6 +1,6 @@
 /**
  * Icon size scale (px). Stroke width, `display: block` and `flex-shrink: 0` are set once for every Tabler icon in
- * styles.css (`.tabler-icon`): call sites pass a size only, never `stroke`.
+ * base.css (`.tabler-icon`): call sites pass a size only, never `stroke`.
  *
  * - `sm`: inline with small text — badges, xs / compact buttons, table sort arrows, trailing chevrons.
  * - `md`: the default — buttons, menu items, inputs, tabs, action icons.

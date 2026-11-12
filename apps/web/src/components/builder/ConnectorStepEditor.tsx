@@ -8,7 +8,7 @@ import { useCan } from '../../lib/auth';
 import { entityPrefill, operationFields, previewInputs } from '../../lib/connectorSteps';
 import { CodeBlock } from '../CodeEditor';
 import { EntityIcon } from '../icons';
-import { ICON } from '../iconScale';
+import { ICON } from '@asterius/brand';
 import { Caption, SurfaceBox } from '../ui';
 import { JsonEditor, KeyValueEditor, MONO_INPUT, PluginFieldInput } from './blocks';
 

@@ -6,6 +6,7 @@ COPY package.json package-lock.json ./
 COPY apps/server/package.json apps/server/
 COPY apps/web/package.json apps/web/
 COPY packages/shared/package.json packages/shared/
+COPY packages/brand/package.json packages/brand/
 RUN --mount=type=cache,target=/root/.npm npm ci --no-audit --no-fund
 COPY packages packages
 COPY apps apps

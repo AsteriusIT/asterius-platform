@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { MantineProvider } from '@mantine/core';
 import { Notifications } from '@mantine/notifications';
 import { QueryClientProvider } from '@tanstack/react-query';
-import { theme } from '../src/theme';
+import { theme } from '@asterius/brand';
 import { ErrorBoundary } from '../src/components/ErrorBoundary';
 import { createQueryClient, useAppMutation } from '../src/lib/queryClient';
 import { renderUi } from './render';

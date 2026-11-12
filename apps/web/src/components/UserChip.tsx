@@ -3,7 +3,7 @@ import { IconCheck, IconCopy, IconMail } from '@tabler/icons-react';
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { api } from '../lib/api';
-import { ICON } from './iconScale';
+import { ICON } from '@asterius/brand';
 
 export interface UserRef {
   id?: string | null;

@@ -8,8 +8,9 @@ import { createBrowserRouter, Navigate, Outlet, RouterProvider, useHref, useLoca
 import '@fontsource-variable/inter';
 import '@mantine/core/styles.css';
 import '@mantine/notifications/styles.css';
+import '@asterius/brand/base.css';
 import './styles.css';
-import { cssVariablesResolver, theme } from './theme';
+import { cssVariablesResolver, theme } from '@asterius/brand';
 import { createQueryClient } from './lib/queryClient';
 import { ErrorBoundary, RouteError } from './components/ErrorBoundary';
 import { AuthProvider, useAuth } from './lib/auth';

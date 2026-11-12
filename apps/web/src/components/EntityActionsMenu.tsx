@@ -4,7 +4,7 @@ import type { Action, Entity, PublicUser } from '@asterius/shared';
 import { canRunOn, formOf, runAccess } from '../lib/permissions';
 import { useTeamTitle } from './RunAccess';
 import { EntityIcon } from './icons';
-import { ICON } from './iconScale';
+import { ICON } from '@asterius/brand';
 
 /**
  * "⋯" menu of the actions that run on one entity (day-2 first, delete actions last in red).
