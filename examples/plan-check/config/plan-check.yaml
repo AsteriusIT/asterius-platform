@@ -1,0 +1,181 @@
+# Plan checks before deploy (docs/EXTENDING.md, "Plan checks"): cost, carbon and policies on the OpenTofu plan, shown
+# to the requester and the approvers before anything exists.
+#
+#   form → tofu plan (ADO pipeline portal-services-plan, publishes plan.json) → plan-check → approval (prod, or a
+#   warning to override) → tofu apply (portal-services-apply) → catalog: estimated cost written onto the entity
+#
+# Environment (portal pod): ADO_PAT (Build: read & execute on project Platform), OPA_URL (optional, an OPA server).
+# The plan pipeline is ../azure-pipelines/portal-services-plan.yml.
+
+# ── Prices: negotiated prices on top of the built-in sample table (USD list prices) ──────────────────────────────
+priceCatalogs:
+  - identifier: default # used by plan-check steps that name no catalog
+    title: Acme cloud prices
+    description: Enterprise agreement prices for the sizes the golden paths use; the rest comes from the built-in sample.
+    currency: USD
+    extends: builtin
+    prices:
+      - { provider: azurerm, type: azurerm_linux_virtual_machine, match: { size: Standard_D2s_v5, region: westeurope }, hourly: 0.081, vcpu: 2, memoryGb: 8, note: EA price }
+      - { provider: azurerm, type: azurerm_linux_virtual_machine, match: { size: Standard_D4s_v5, region: westeurope }, hourly: 0.162, vcpu: 4, memoryGb: 16, note: EA price }
+      - provider: azurerm
+        type: azurerm_kubernetes_cluster
+        match: { default_node_pool.0.vm_size: Standard_D4s_v5 }
+        hourly: 0.162
+        vcpu: 4
+        memoryGb: 16
+        quantity: { attribute: default_node_pool.0.node_count, default: 3 }
+        note: EA price per node, Free tier control plane
+      # Not in the sample: priced explicitly rather than reported as "without a price".
+      - { provider: azurerm, type: azurerm_dashboard_grafana, match: { sku: Standard }, monthly: 48 }
+
+# ── Plan policies: guard rails of every plan-check step (workflow authors cannot remove them) ──────────────────────
+policies:
+  - identifier: plan-no-database-destroy
+    title: Databases are not destroyed from self-service
+    target: plan
+    severity: critical # the plan-check step fails: nothing is applied
+    expression: '[changes[action in ["delete", "replace"] and type in ["azurerm_mssql_database", "azurerm_postgresql_flexible_server", "aws_db_instance"]].address]'
+    message: Open a change request to destroy or replace a database
+  - identifier: plan-regions
+    title: EU regions only
+    target: plan
+    severity: critical
+    expression: '[changes[action != "delete" and region != null and $not(region in ["westeurope", "northeurope", "francecentral", "swedencentral"])].address]'
+    message: Resources must be created in an approved EU region
+  - identifier: plan-big-increase
+    title: Cost increase above 1 000 USD/month
+    target: plan
+    severity: warning # requiresOverride: the approval step below asks the platform team
+    expression: cost.delta <= 1000
+    message: 'The request adds {{ $round(cost.delta) }} {{ cost.currency }}/month: FinOps override required'
+  - identifier: plan-cost-center-tag
+    title: costCenter tag
+    target: plan
+    severity: advisory # logged and notified to the requester
+    expression: '[changes[action = "create" and $exists(after.tags) and $not($exists(after.tags.costCenter))].address]'
+    message: Tag new resources with costCenter
+
+actions:
+  - identifier: create-app-environment
+    title: Create an application environment
+    icon: cloud
+    description: |
+      An environment (resource group, AKS node pool, database) from the golden path. Before you confirm, the portal
+      shows the OpenTofu plan's estimated monthly cost, carbon and policy findings; prod and cost overrides are
+      approved by the platform team.
+    secrets: [env:ADO_PAT]
+    trigger:
+      type: form
+      on: create
+      blueprint: app-environment
+      inputs:
+        properties:
+          name: { type: string, title: Name, pattern: '^[a-z][a-z0-9-]{1,30}$' }
+          team: { type: string, title: Team, format: team }
+          environment: { type: string, title: Environment, enum: [dev, staging, prod], default: dev }
+          size: { type: string, title: Size, enum: [small, medium, large], default: small }
+        required: [name, team, environment]
+    steps:
+      # 1. tofu plan in the pipeline: publishes plan.json (tofu show -json) as the build artifact `plan`.
+      - id: tfplan
+        name: Plan (portal-services-plan)
+        type: invoke
+        timeoutMinutes: 30
+        invoker:
+          type: azure-pipeline
+          organization: https://dev.azure.com/AsteriusIT
+          project: Platform
+          pipelineId: 41 # EDIT: id of portal-services-plan (V2 branch: `pipeline: portal-services-plan` resolves the name)
+          branch: main
+          token: ${env:ADO_PAT}
+          templateParameters: { service: '{{ inputs.team }}/{{ inputs.name }}', environment: '{{ inputs.environment }}', size: '{{ inputs.size }}', runId: '{{ run.id }}' }
+      # 2. Cost, carbon and policies on the plan. Critical findings stop the run here.
+      - id: plan
+        name: Plan check (cost, carbon, policies)
+        type: invoke
+        invoker:
+          type: plan-check
+          ado:
+            organization: https://dev.azure.com/AsteriusIT
+            project: Platform
+            token: ${env:ADO_PAT}
+            buildId: '{{ steps.tfplan.output.runId }}'
+            artifact: plan
+            file: plan.json
+          budget: { maxMonthly: 5000, severity: warning }
+          onWarning: override
+          # opa: { url: '${env:OPA_URL}', path: terraform/analysis }   # optional: conftest-style deny / warn rules
+      # 3. Approval: always for prod, and whenever a warning needs an override. The approvers see the estimate.
+      - id: approval
+        name: Approval (prod or override)
+        type: approval
+        if: inputs.environment = "prod" or steps.plan.output.requiresOverride
+        approvers: { teams: [platform], roles: [admin] }
+        message: |
+          **{{ trigger.user.name }}** requests **{{ inputs.team }}/{{ inputs.name }}** ({{ inputs.environment }}, {{ inputs.size }}).
+
+          {{ steps.plan.output.summary }}
+      # 4. tofu apply of the same spec.
+      - id: apply
+        name: Apply (portal-services-apply)
+        type: invoke
+        timeoutMinutes: 60
+        invoker:
+          type: azure-pipeline
+          organization: https://dev.azure.com/AsteriusIT
+          project: Platform
+          pipelineId: 42 # EDIT: id of portal-services-apply
+          branch: main
+          token: ${env:ADO_PAT}
+          templateParameters: { service: '{{ inputs.team }}/{{ inputs.name }}', environment: '{{ inputs.environment }}', size: '{{ inputs.size }}', runId: '{{ run.id }}', operation: apply }
+      # 5. The estimate on the resulting entity (FinOps views, scorecards, dashboards).
+      - id: register
+        name: Catalog
+        type: invoke
+        invoker:
+          type: catalog
+          operation: upsert
+          blueprint: app-environment
+          identifier: '{{ inputs.team }}-{{ inputs.name }}'
+          title: '{{ inputs.name }}'
+          team: '{{ inputs.team }}'
+          merge: true
+          properties:
+            environment: '{{ inputs.environment }}'
+            estimatedMonthlyCost: '{{ steps.plan.output.cost.monthly }}'
+            costCurrency: '{{ steps.plan.output.cost.currency }}'
+            estimatedCo2eKgMonth: '{{ steps.plan.output.carbon.monthlyKg }}'
+            costEstimateComplete: '{{ steps.plan.output.cost.complete }}'
+            lastApplyUrl: '{{ steps.apply.link }}'
+    tests:
+      - name: a dev environment within budget skips the approval
+        inputs: { name: shop, team: payments, environment: dev, size: small }
+        mocks:
+          tfplan: { status: SUCCESS, output: { runId: 101, result: succeeded } }
+          plan: { status: SUCCESS, output: { kind: plan-check, gate: pass, requiresOverride: false, cost: { monthly: 412.5, currency: USD, complete: true }, carbon: { monthlyKg: 18.2 }, summary: '' } }
+          apply: { status: SUCCESS, output: { runId: 102, result: succeeded } }
+          register: { status: SUCCESS, output: {} }
+        expect:
+          status: SUCCESS
+          steps: { approval: { status: SKIPPED } }
+      - name: a critical finding stops the run before the apply
+        inputs: { name: shop, team: payments, environment: dev }
+        mocks:
+          tfplan: { status: SUCCESS, output: { runId: 101 } }
+          plan: { status: FAILURE, output: { kind: plan-check, gate: blocked } }
+        expect:
+          status: FAILURE
+          steps: { apply: { status: SKIPPED } }
+
+blueprints:
+  - identifier: app-environment
+    title: Application environment
+    icon: cloud
+    schema:
+      properties:
+        environment: { type: string, enum: [dev, staging, prod] }
+        estimatedMonthlyCost: { type: number, title: Estimated monthly cost }
+        costCurrency: { type: string, title: Currency }
+        estimatedCo2eKgMonth: { type: number, title: Estimated kgCO2e / month }
+        costEstimateComplete: { type: boolean, title: Every resource priced }
+        lastApplyUrl: { type: string, format: url }

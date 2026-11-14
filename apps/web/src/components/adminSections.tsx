@@ -12,6 +12,7 @@ import {
   IconPlug,
   IconPlugConnected,
   IconPuzzle,
+  IconReceipt,
   IconRobot,
   IconSchema,
   IconSend,
@@ -96,6 +97,7 @@ export const ADMIN_CATEGORIES: AdminCategory[] = [
     icon: i(IconShieldCheck),
     tabs: [
       { label: 'Policies', path: '/admin/policies', icon: i(IconShieldCheck) },
+      { label: 'Price catalogs', path: '/admin/price-catalogs', icon: i(IconReceipt) },
       { label: 'Audit log', path: '/admin/audit', icon: i(IconHistory) },
       { label: 'Deleted entities', path: '/admin/deleted', icon: i(IconTrashX) },
     ],

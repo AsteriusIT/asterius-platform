@@ -1,0 +1,78 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.8.3",
+  "planned_values": { "root_module": {} },
+  "resource_changes": [
+    {
+      "address": "data.azurerm_client_config.current",
+      "mode": "data",
+      "type": "azurerm_client_config",
+      "name": "current",
+      "provider_name": "registry.opentofu.org/hashicorp/azurerm",
+      "change": { "actions": ["read"], "before": null, "after": {} }
+    },
+    {
+      "address": "azurerm_resource_group.svc",
+      "mode": "managed",
+      "type": "azurerm_resource_group",
+      "name": "svc",
+      "provider_name": "registry.opentofu.org/hashicorp/azurerm",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": { "name": "rg-payments-api", "location": "westeurope", "tags": { "costCenter": "CC-4711" } },
+        "after_unknown": { "id": true }
+      }
+    },
+    {
+      "address": "azurerm_linux_virtual_machine.api",
+      "mode": "managed",
+      "type": "azurerm_linux_virtual_machine",
+      "name": "api",
+      "provider_name": "registry.opentofu.org/hashicorp/azurerm",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": { "name": "vm-payments-api", "location": "West Europe", "size": "Standard_B2s", "admin_username": "azureuser", "tags": {} },
+        "after_unknown": { "id": true, "private_ip_address": true }
+      }
+    },
+    {
+      "address": "azurerm_managed_disk.data",
+      "mode": "managed",
+      "type": "azurerm_managed_disk",
+      "name": "data",
+      "provider_name": "registry.opentofu.org/hashicorp/azurerm",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": { "name": "disk-data", "location": "westeurope", "storage_account_type": "Premium_LRS", "disk_size_gb": 128 }
+      }
+    },
+    {
+      "address": "azurerm_storage_account.logs",
+      "mode": "managed",
+      "type": "azurerm_storage_account",
+      "name": "logs",
+      "provider_name": "registry.opentofu.org/hashicorp/azurerm",
+      "change": { "actions": ["create"], "before": null, "after": { "name": "stpaymentslogs", "location": "westeurope", "account_tier": "Standard" } }
+    },
+    {
+      "address": "module.monitoring.azurerm_dashboard_grafana.main",
+      "module_address": "module.monitoring",
+      "mode": "managed",
+      "type": "azurerm_dashboard_grafana",
+      "name": "main",
+      "provider_name": "registry.opentofu.org/hashicorp/azurerm",
+      "change": { "actions": ["create"], "before": null, "after": { "name": "grafana-payments", "location": "westeurope", "sku": "Standard" } }
+    },
+    {
+      "address": "random_string.suffix",
+      "mode": "managed",
+      "type": "random_string",
+      "name": "suffix",
+      "provider_name": "registry.opentofu.org/hashicorp/random",
+      "change": { "actions": ["create"], "before": null, "after": { "length": 6 }, "after_unknown": { "result": true } }
+    }
+  ]
+}

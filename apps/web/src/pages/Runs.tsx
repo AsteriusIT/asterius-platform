@@ -56,6 +56,7 @@ import { PropertyValue } from '../components/PropertyValue';
 import { initialValues, SchemaForm, validateValues, type FormValues } from '../components/SchemaForm';
 import { UserChip } from '../components/UserChip';
 import { appHref } from '../lib/orgUrl';
+import { isPlanCheck, PlanCheckSummary } from '../components/PlanCheckSummary';
 
 const PAGE = 30;
 const onError = (e: unknown) => notifications.show({ color: 'red', message: errorText(e) });
@@ -787,7 +788,9 @@ function StepPanel({ run, step, onDone }: { run: Run; step: RunStep; onDone: (r:
           <Text fz="sm" fw={500} mb="3xs">
             Output
           </Text>
-          {textOnly ? (
+          {isPlanCheck(output) ? (
+            <PlanCheckSummary output={output} />
+          ) : textOnly ? (
             <SurfaceBox>
               <Markdown>{String(output.text)}</Markdown>
             </SurfaceBox>

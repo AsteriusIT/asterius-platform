@@ -281,6 +281,151 @@ files are stored (rejected ones are logged) and removed from the step output. Li
 an attachment (`Content-Disposition: attachment`, `X-Content-Type-Options: nosniff`, sandbox CSP). Later steps read
 `steps.<id>.artifacts` (`[{ id, name, contentType, size, sha256, url }]`). Artifacts are deleted with their run.
 
+### Plan checks (cost, carbon, policies)
+
+A `plan-check` step (an invoke step) reads a Terraform / OpenTofu plan in the format of `terraform show -json` /
+`tofu show -json`, estimates its **monthly cost** and **carbon**, and evaluates **plan policies**, before anything is
+applied. Put it between the plan stage of the pipeline and the approval:
+
+```yaml
+steps:
+  - id: tfplan                     # tofu plan; publishes plan.json (examples/plan-check/azure-pipelines)
+    type: invoke
+    invoker: { type: azure-pipeline, …, templateParameters: { service: "{{ inputs.name }}", operation: plan } }
+  - id: plan
+    type: invoke
+    invoker:
+      type: plan-check
+      ado: { organization: https://dev.azure.com/acme, project: Platform, token: "${env:ADO_PAT}", buildId: "{{ steps.tfplan.output.runId }}", artifact: plan, file: plan.json }
+      priceCatalog: default        # optional: default = the catalog "default", else the built-in sample
+      budget: { maxDelta: 500, severity: warning }
+      policies:                    # step rules, in addition to the organization's plan policies
+        - { id: no-public-ip, severity: critical, expression: '[changes[type = "azurerm_public_ip"].address]', message: No public IPs }
+      opa: { url: "${env:OPA_URL}", path: terraform/analysis }   # optional
+      onWarning: override          # override (default) | fail | ignore
+  - id: approval
+    type: approval
+    if: steps.plan.output.requiresOverride or inputs.environment = "prod"
+    approvers: { teams: [platform] }
+    message: "{{ steps.plan.output.summary }}"          # or {{ steps.plan.output.cost.monthly }} {{ steps.plan.output.cost.currency }}
+  - id: apply
+    type: invoke
+    invoker: { type: azure-pipeline, … }
+  - id: register                   # the estimate on the resulting entity
+    type: invoke
+    invoker:
+      type: catalog
+      operation: upsert
+      blueprint: environment
+      identifier: "{{ inputs.name }}"
+      merge: true
+      properties: { estimatedMonthlyCost: "{{ steps.plan.output.cost.monthly }}", estimatedCo2eKgMonth: "{{ steps.plan.output.carbon.monthlyKg }}" }
+```
+
+**Where the plan comes from** (exactly one): `plan` (an object or JSON text, e.g. `{{ steps.tfplan.output.plan }}`;
+limited by STEP_OUTPUT_MAX_BYTES of the step that produced it), `planArtifact: { step, name }` (a run artifact: uploaded
+by the pipeline through the callback API, or answered by a sync webhook; `name` defaults to `plan.json`), `planUrl`
+(+ `headers`, through the SSRF guard), or `ado: { organization, project, token, buildId, artifact, file }` (a build
+artifact of an Azure Pipelines run, read like the V2 `outputs.json`; PAT scope Build: Read). Plans are capped at 25 MB.
+Data sources (`mode: data`) are ignored; `after_unknown` values are simply unknown.
+
+**Cost.** Each resource is priced twice: with its current attributes (`change.before`) and its planned ones
+(`change.after`); the delta is after − before, so creates add, deletes subtract and updates and replacements
+(`["delete","create"]`, `["create","delete"]`) count the difference; `no-op` resources count in the total, not in the
+delta. The price of a resource comes from the most specific matching entry (most `match` keys) of the first catalog
+of the chain that has one: `(monthly + hourly × hoursPerMonth + Σ perUnit) × quantity`. A resource without a price
+is **never silently ignored**: it is listed in `cost.unmatched`, marked "no price" in the tables, `cost.complete` is
+false and the step reports a finding (`unpriced: advisory` by default; `warning`, `critical` or `ignore`). Entries with
+`usageBased: true` (storage accounts, buckets, functions…) count 0 and are listed in `cost.usageBased`; `free: true`
+entries and `freeProviders` (random, null, tls…) are known to cost nothing.
+
+**Price catalogs** (`priceCatalogs:` in configuration files, Admin → Governance → Price catalogs,
+`GET|PUT|DELETE /api/v1/price-catalogs/:id`; `POST /api/v1/price-catalogs/:id/estimate { plan, action? }` tries a
+catalog and the plan policies on a plan without a run). The read-only `builtin` catalog is a **sample** of approximate
+public pay-as-you-go list prices (USD, Linux, no discounts) for common Azure, AWS and Google Cloud resources
+(`apps/server/src/plan/builtin-prices.ts`): declare your own catalog with your prices and currency, and `extends:
+builtin` (or another catalog, same currency) for the rest.
+
+```yaml
+priceCatalogs:
+  - identifier: default
+    title: Acme prices
+    currency: USD                  # a catalog extends only catalogs of the same currency
+    extends: builtin               # what this one does not price comes from the sample
+    hoursPerMonth: 730
+    prices:
+      - { provider: azurerm, type: azurerm_linux_virtual_machine, match: { size: Standard_D2s_v5, region: westeurope }, hourly: 0.081, vcpu: 2, memoryGb: 8 }
+      - { provider: azurerm, type: azurerm_managed_disk, match: { storage_account_type: Premium_LRS }, perUnit: [{ attribute: disk_size_gb, monthly: 0.14, watts: 0.0012 }] }
+      - { provider: azurerm, type: azurerm_kubernetes_cluster_node_pool, match: { vm_size: "Standard_D4*" }, hourly: 0.17, quantity: { attribute: node_count, default: 3 } }
+      - { provider: aws, type: "aws_iam_*", free: true }
+      - { provider: azurerm, type: azurerm_storage_account, usageBased: true, note: Capacity and operations are not in the plan }
+```
+
+`provider` is the provider's short name (`azurerm`, `aws`, `google`), `type` the resource type; both, and string
+values of `match`, accept `*` globs; a `match` value may be a list (any of). `match` keys are attribute paths of the
+planned values (`size`, `default_node_pool.0.vm_size`: nested blocks are lists) and `region` (the resource's `location`
+/ `region` / zone, else the provider's `region`; Azure locations are normalised, `West Europe` = `westeurope`).
+`perUnit[]`: `{ attribute, scale (e.g. 1/1024 for MB), default (when unknown), monthly | hourly, watts }`.
+
+**Carbon** (an **estimate**, labelled as such everywhere, Cloud Carbon Footprint method): average power (`watts`, or
+`vcpu` × `carbon.wattsPerVcpu[provider]` + `memoryGb` × `carbon.wattsPerGbMemory`, plus per-unit watts) × hours ×
+`carbon.pue[provider]` × `carbon.gridIntensity[region]` (kgCO2e per kWh, `defaultGridIntensity` for unknown regions).
+The built-in coefficients (CCF averages: 2.12–2.49 W per vCPU at 50 % utilisation, 0.392 W per GB of memory, 1.2 W per
+TB of SSD, PUE 1.1–1.185, regional grid factors) are approximations to compare requests and regions; operational
+emissions only (embodied emissions and networking are not included). Override them in your catalog's `carbon:`.
+
+**Plan policies.** Three sources, one list of findings with a severity:
+
+- the organization's **policies with `target: plan`** (`severity: critical | warning | advisory`, `match.actions` to
+  restrict them): guard rails that workflow authors cannot remove, managed like the other policies;
+- the step's own `policies: [{ id, title, severity, expression, message }]` (messages are plain text: the step
+  configuration is rendered with the run context before the check);
+- **OPA**: `opa: { url, path, headers, severity, input }` → `POST <url>/v1/data/<path>` with `{ "input": <plan> }`
+  (`input: context` sends the rule context below instead). The decision is a list of messages (strings or
+  `{ msg | message, severity?, address? }`; default severity `critical`), or an object with `deny` / `violation`
+  (critical), `warn` (warning) and `info` / `advisory` (advisory) lists, as in conftest and the OPA Terraform tutorial.
+  OPA unreachable, or no decision at `path`, is a critical finding (fail closed).
+- `budget: { maxMonthly, maxDelta, severity (default warning) }`.
+
+JSONata rules see `{ resources, changes, cost, carbon, plan, inputs, action, principal, entity }`: `resources[]` are
+the managed resources (`address`, `type`, `provider`, `action`: create | update | replace | delete | no-op | forget,
+`region`, `before`, `after`, `cost: { monthly, before, delta, pricing }`), `changes` the same without `no-op`, `cost`
+the totals (`monthly`, `before`, `delta`, `currency`, `unmatched`), `plan` the raw plan. As with every policy, `true`
+complies and anything else (and an evaluation error) is a finding; in addition a **list** complies when empty and
+gives one finding per item, so `[changes[<condition>].address]` names the offending resources (wrap the path in
+`[ ]`: JSONata returns nothing, not an empty list, when nothing matches). Policy messages may embed `{{ }}` over that
+context (`item` is the current list item).
+
+**Outcomes.** `critical` → the step fails (`Blocked: …`), the run stops before the apply, the output (with the
+findings) stays on the run. `warning` → `onWarning: override` (default): the step succeeds with
+`output.requiresOverride: true` and `gate: override`, and an approval step with
+`if: steps.plan.output.requiresOverride` is the override (the approvers see the summary); `onWarning: fail` treats
+warnings as blocking, `ignore` only reports them. `advisory` → logged on the run and sent to the requester as an in-app
+notification (`notify: false` to turn off).
+
+**Output** (`steps.<id>.output`, typed `PlanCheckOutput` in packages/shared): `{ kind: "plan-check", gate: pass |
+override | blocked, requiresOverride, changes: { create, update, replace, delete, no-op, forget }, cost: { currency,
+monthly, before, delta, complete, unmatched, usageBased, catalog }, carbon: { monthlyKg, beforeKg, deltaKg, method },
+violations: [{ policy, title, severity, message, source, address? }], counts: { critical, warning, advisory },
+resources: [{ address, type, provider, action, region, pricing, monthly, before, delta, co2eKg, co2eDeltaKg, note? }],
+truncated, summary }`. `resources` keeps the `maxResources` (default 50) biggest changes; the full report is attached
+to the step as the artifact `plan-check.json` (`report: false` to skip it). `summary` is Markdown (totals, the biggest
+changes as a table, the findings) for approval messages and notifications. The run page shows the output as a cost
+table with the findings.
+
+**Storing the estimate.** A `catalog` step after the apply writes `{{ steps.plan.output.cost.monthly }}` (a number),
+`cost.currency`, `carbon.monthlyKg` and `cost.complete` onto the entity (declare them in the blueprint): FinOps
+tables, dashboards and scorecards then read them. It is the estimate at request time; actual costs from billing
+exports are not ingested.
+
+The complete workflow, with a price catalog, plan policies of each severity, the ADO plan pipeline and how to wire it
+into the V2 lean setup, is [examples/plan-check](../examples/plan-check/README.md).
+
+**Manual verification.** Tested with fixture plans (create, update, delete, replace), a fake Azure DevOps artifact
+API and a real `opa run --server` when the binary is installed (`OPA_BIN`). Not verified live: the plan pipeline
+against a real organization and subscription, reading a large `plan.json` through the Azure DevOps artifact API,
+and the built-in prices against current price lists (they are a sample).
+
 ### Workflow tests
 
 An action may declare tests, run with mocks by `POST /actions/:id/tests/run { name?, definition? }` (admin; `definition`
@@ -439,6 +584,7 @@ action, custom request signing, binary or multipart payloads, streaming, or a pr
 | `connector-api` | `connection`, `method`, `path`, `query`, `headers`, `body` | a raw call within the connection's `api` allow-list; output `{ status, body, headers }` |
 | `catalog` | `operation: upsert\|delete`, `blueprint`, `identifier`, `title`, `team`, `properties`, `relations`, `merge`, `cascade` (delete: also the entities that point to it) | immediate |
 | `tekton` | `pipeline`, `namespace`, `params`, `serviceAccountName`, `context` | creates a `PipelineRun` of an existing Pipeline and follows its `Succeeded` condition (the platform's service account needs create/get/patch on `pipelineruns.tekton.dev`) |
+| `plan-check` | `plan` \| `planArtifact` \| `planUrl` \| `ado`, `priceCatalog`, `budget`, `policies`, `opa`, `onWarning`, `unpriced`, `notify`, `maxResources`, `report` | cost, carbon and policy checks of a Terraform / OpenTofu plan ([Plan checks](#plan-checks-cost-carbon-policies)). Immediate; critical findings fail the step |
 | `scaffolder` | `provider: github\|gitlab\|azure-devops`, `mode: pull-request\|new-repository`, `templateRepo`, `templatePath`, `templateRef`, `repo`, `baseBranch`, `targetPath`, `variables`, `title`, `branch`, `token`, `apiUrl`/`baseUrl`, `organization`/`project` (azure-devops); new-repository: `description`, `visibility`, `defaultBranch`, `topics`, `team`, `teamPermission`, `ownerType`, `reuseExisting`, `namespace` (gitlab); `reviewers` (azure-devops) | renders a template repository (`{{ variable }}` placeholders in paths and text files; unknown variables fail) and publishes it. Immediate; output below |
 
 ### Scaffolder output and modes
@@ -581,7 +727,7 @@ scorecards:
       - { identifier: has_docs, title: Has docs, level: Silver, expression: properties.docs != null }
 ```
 
-**Policies** (`policies:`, admin UI *Policies*). A policy is a JSONata guard evaluated before a run is queued (`target: run`, filter with `match.actions`) or before an entity is created, updated or deleted through the API or the catalog invoker (`target: entity`, filter with `match.blueprints` and `match.operations`). The context is `{ inputs, entity, previous, principal, action, blueprint, operation }` (`entity` is what would be stored, `previous` the stored entity; `principal` has `id`, `email`, `name`, `role`, `roles`, `teams`). The expression must evaluate to exactly `true` to allow; any other result, and any evaluation error, denies (fail closed) with `403` `{ error, policy, message }` and a `policy.denied` audit entry. `message` may embed `{{ expression }}` over the same context. Disabled policies are ignored. Integration syncs, configuration seeding and cascading deletes of referrers are not gated. Policies are per organization; those declared in configuration files are managed (read-only through the API).
+**Policies** (`policies:`, admin UI *Policies*). A policy is a JSONata guard evaluated before a run is queued (`target: run`, filter with `match.actions`) or before an entity is created, updated or deleted through the API or the catalog invoker (`target: entity`, filter with `match.blueprints` and `match.operations`). `target: plan` policies (with a `severity`) are evaluated by `plan-check` steps on infrastructure plans instead ([Plan checks](#plan-checks-cost-carbon-policies)). The context is `{ inputs, entity, previous, principal, action, blueprint, operation }` (`entity` is what would be stored, `previous` the stored entity; `principal` has `id`, `email`, `name`, `role`, `roles`, `teams`). The expression must evaluate to exactly `true` to allow; any other result, and any evaluation error, denies (fail closed) with `403` `{ error, policy, message }` and a `policy.denied` audit entry. `message` may embed `{{ expression }}` over the same context. Disabled policies are ignored. Integration syncs, configuration seeding and cascading deletes of referrers are not gated. Policies are per organization; those declared in configuration files are managed (read-only through the API).
 
 ```yaml
 policies:

@@ -1,0 +1,50 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.0",
+  "resource_changes": [
+    {
+      "address": "azurerm_resource_group.svc",
+      "mode": "managed",
+      "type": "azurerm_resource_group",
+      "name": "svc",
+      "provider_name": "registry.terraform.io/hashicorp/azurerm",
+      "change": {
+        "actions": ["no-op"],
+        "before": { "name": "rg-payments-api", "location": "westeurope" },
+        "after": { "name": "rg-payments-api", "location": "westeurope" }
+      }
+    },
+    {
+      "address": "azurerm_linux_virtual_machine.api",
+      "mode": "managed",
+      "type": "azurerm_linux_virtual_machine",
+      "name": "api",
+      "provider_name": "registry.terraform.io/hashicorp/azurerm",
+      "change": {
+        "actions": ["update"],
+        "before": { "name": "vm-payments-api", "location": "westeurope", "size": "Standard_B2s", "tags": { "costCenter": "CC-4711" } },
+        "after": { "name": "vm-payments-api", "location": "westeurope", "size": "Standard_D4s_v5", "tags": { "costCenter": "CC-4711" } }
+      }
+    },
+    {
+      "address": "azurerm_kubernetes_cluster.aks",
+      "mode": "managed",
+      "type": "azurerm_kubernetes_cluster",
+      "name": "aks",
+      "provider_name": "registry.terraform.io/hashicorp/azurerm",
+      "change": {
+        "actions": ["update"],
+        "before": {
+          "name": "aks-payments",
+          "location": "francecentral",
+          "default_node_pool": [{ "name": "system", "vm_size": "Standard_D2s_v5", "node_count": 2 }]
+        },
+        "after": {
+          "name": "aks-payments",
+          "location": "francecentral",
+          "default_node_pool": [{ "name": "system", "vm_size": "Standard_D2s_v5", "node_count": 3 }]
+        }
+      }
+    }
+  ]
+}
