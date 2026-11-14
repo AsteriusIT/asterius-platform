@@ -1,0 +1,1 @@
+terraform import asterius_dashboard.platform_home platform-home

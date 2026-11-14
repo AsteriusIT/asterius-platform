@@ -39,6 +39,36 @@ jobs:
           helm lint deploy/helm/asterius-platform --set database.cnpg.enabled=true --set auth.providers=local \
             --set rbac.clusterRead.enabled=true --set 'rbac.jobNamespaces={jobs}' --set metrics.serviceMonitor.enabled=true
 
+  # Terraform / OpenTofu provider: unit tests, docs freshness, release config, then acceptance tests and every example
+  # against a throwaway server (fresh SQLite).
+  terraform-provider:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform-provider-asterius
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: terraform-provider-asterius/go.mod
+          cache-dependency-path: terraform-provider-asterius/go.sum
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+        working-directory: .
+      - run: make vet test docs-check
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: '~> v2'
+          args: check
+          workdir: terraform-provider-asterius
+      - run: make testacc-local
+
   # Vulnerabilities in the lockfile (all workspaces): fails on fixable HIGH/CRITICAL findings.
   dependencies:
     runs-on: ubuntu-latest
