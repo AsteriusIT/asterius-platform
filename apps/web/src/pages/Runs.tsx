@@ -10,6 +10,7 @@ import {
   Modal,
   MultiSelect,
   NativeSelect,
+  Pill,
   SegmentedControl,
   Select,
   SimpleGrid,
@@ -87,8 +88,14 @@ export const runColumns = [
 /** The filters grow in the row of the scope switch and go to their own row under this width (px). */
 const FILTERS_FLEX = '1 1 640px';
 
+const withoutKeys = (prev: URLSearchParams, keys: string[]) => {
+  const out = new URLSearchParams(prev);
+  for (const k of keys) out.delete(k);
+  return out;
+};
+
 export function Runs() {
-  const [params, set] = useUrlParams();
+  const [params, set, setParams] = useUrlParams();
   const navigate = useNavigate();
   const scope = params.get('scope') ?? 'mine';
   const status = params.get('status')?.split(',').filter(Boolean) ?? [];
@@ -96,10 +103,14 @@ export function Runs() {
   const action = params.get('action');
   const blueprint = params.get('blueprint');
   const entity = params.get('entity');
+  // Set by chart drill-downs: a creation-time range and an owner team.
+  const since = params.get('since');
+  const until = params.get('until');
+  const team = params.get('team');
   const blueprints = useQuery({ queryKey: ['blueprints'], queryFn: api.blueprints, staleTime: 30_000 });
   const actions = useQuery({ queryKey: ['actions', 'all'], queryFn: () => api.actions(), staleTime: 60_000 });
   const q = useQuery({
-    queryKey: ['runs', scope, status.join(','), action, blueprint, entity, page],
+    queryKey: ['runs', scope, status.join(','), action, blueprint, entity, since, until, team, page],
     queryFn: () =>
       api.runs({
         mine: scope === 'mine',
@@ -108,6 +119,9 @@ export function Runs() {
         action: action ?? undefined,
         blueprint: blueprint ?? undefined,
         entity: entity ?? undefined,
+        since: since ?? undefined,
+        until: until ?? undefined,
+        team: team ?? undefined,
         limit: PAGE,
         offset: (page - 1) * PAGE,
       }),
@@ -162,6 +176,24 @@ export function Runs() {
           />
         </SimpleGrid>
       </Group>
+      {(since || until || team) && (
+        <Group gap="2xs" aria-label="Other filters">
+          {(since || until) && (
+            <Pill
+              withRemoveButton
+              removeButtonProps={{ 'aria-label': 'Remove the date filter' }}
+              onRemove={() => setParams((prev) => withoutKeys(prev, ['since', 'until', 'page']), { replace: true })}
+            >
+              Created {since ? `from ${since.slice(0, 10)}` : ''} {until ? `before ${until.slice(0, 10)}` : ''}
+            </Pill>
+          )}
+          {team && (
+            <Pill withRemoveButton removeButtonProps={{ 'aria-label': 'Remove the team filter' }} onRemove={() => set('team', null)}>
+              Team {team}
+            </Pill>
+          )}
+        </Group>
+      )}
       <DataTable
         rows={q.data?.items}
         loading={q.isPending}

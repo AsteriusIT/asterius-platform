@@ -39,6 +39,8 @@ import {
   IconTrash,
   IconTrophy,
   IconLayoutGrid,
+  IconChartLine,
+  IconId,
 } from '@tabler/icons-react';
 import { api } from '../../lib/api';
 import { Markdown } from '../ui';
@@ -48,7 +50,7 @@ import { FormBuilder, identityProblems, IdentityFields, SLUG, type EditorProps, 
 /** Form editor of dashboards: identity + placement, and an ordered list of widgets with a per-type form. */
 
 type Widget = Record<string, unknown> & { type: string };
-type Placement = 'none' | 'home' | 'team' | 'blueprint';
+type Placement = 'none' | 'home' | 'team' | 'blueprint' | 'entity';
 
 export interface DashboardDoc {
   identifier: string;
@@ -57,6 +59,7 @@ export interface DashboardDoc {
   default: boolean;
   team: string | null;
   blueprint: string | null;
+  scope?: 'catalog' | 'entity';
   widgets: Widget[];
   [k: string]: unknown;
 }
@@ -72,7 +75,8 @@ export const toDashboardDoc = (v: Record<string, unknown>): DashboardDoc => ({
   widgets: Array.isArray(v.widgets) ? (v.widgets as Widget[]).filter((w) => w && typeof w === 'object') : [],
 });
 
-const placementOf = (d: DashboardDoc): Placement => (d.blueprint ? 'blueprint' : d.team ? 'team' : d.default ? 'home' : 'none');
+const placementOf = (d: DashboardDoc): Placement =>
+  d.blueprint !== null && d.scope === 'entity' ? 'entity' : d.blueprint ? 'blueprint' : d.team ? 'team' : d.default ? 'home' : 'none';
 
 const WIDGET_TYPES: { type: string; label: string; description: string; icon: ReactNode; initial: Record<string, unknown> }[] = [
   {
@@ -100,6 +104,20 @@ const WIDGET_TYPES: { type: string; label: string; description: string; icon: Re
     initial: { days: 30 },
   },
   { type: 'markdown', label: 'Markdown', description: 'Free text: links, notes, instructions', icon: <IconMarkdown size={18} />, initial: { content: '' } },
+  {
+    type: 'chart',
+    label: 'Chart',
+    description: 'Trend over time: scorecard levels, runs, DORA, entity counts',
+    icon: <IconChartLine size={18} />,
+    initial: { chart: 'line', interval: 'week', days: 90, series: { kind: 'runs', metric: 'count' } },
+  },
+  {
+    type: 'entity',
+    label: 'Entity section',
+    description: 'Entity pages: its properties, scorecards, relations or links',
+    icon: <IconId size={18} />,
+    initial: { show: 'properties' },
+  },
 ];
 const typeInfo = (t: string) => WIDGET_TYPES.find((x) => x.type === t);
 
@@ -116,6 +134,11 @@ export function dashboardProblems(doc: DashboardDoc): string[] {
     if (w.type === 'count' || w.type === 'table') missing('blueprint', 'blueprint');
     if (w.type === 'scorecard') missing('scorecard', 'scorecard');
     if (w.type === 'markdown') missing('content', 'content');
+    if (w.type === 'chart') {
+      const series = (w.series ?? {}) as Record<string, unknown>;
+      if (series.kind === 'scorecard' && !series.scorecard) out.push(`${at}: scorecard is required`);
+      if (series.kind === 'entities' && !series.blueprint) out.push(`${at}: blueprint is required`);
+    }
     for (const key of ['blueprint', 'scorecard', 'action', 'team']) {
       const v = w[key];
       if (typeof v === 'string' && v && !SLUG.test(v)) out.push(`${at}: ${key} must be a valid identifier`);
@@ -131,7 +154,7 @@ export function DashboardBuilder(props: EditorProps) {
       size="76rem"
       noun="dashboard"
       toDoc={toDashboardDoc}
-      toBody={(d) => ({ ...d, team: d.team || null, blueprint: d.blueprint || null })}
+      toBody={(d) => ({ ...d, team: d.team || null, blueprint: d.blueprint || null, scope: d.blueprint && d.scope === 'entity' ? 'entity' : 'catalog' })}
       problems={dashboardProblems}
       tabs={[
         { value: 'general', label: 'Dashboard', icon: <IconLayoutDashboard size={16} />, render: (ctx) => <General {...ctx} /> },
@@ -148,10 +171,11 @@ function General(ctx: FormContext<DashboardDoc>) {
   const placement = placementOf(doc);
   const choose = (p: string) => {
     // A pending choice keeps its empty value until the Select fills it, so the control stays on that option.
-    if (p === 'home') set({ default: true, team: null, blueprint: null });
-    else if (p === 'team') set({ default: false, team: doc.team ?? '', blueprint: null });
-    else if (p === 'blueprint') set({ default: false, team: null, blueprint: doc.blueprint ?? '' });
-    else set({ default: false, team: null, blueprint: null });
+    if (p === 'home') set({ default: true, team: null, blueprint: null, scope: 'catalog' });
+    else if (p === 'team') set({ default: false, team: doc.team ?? '', blueprint: null, scope: 'catalog' });
+    else if (p === 'blueprint') set({ default: false, team: null, blueprint: doc.blueprint ?? '', scope: 'catalog' });
+    else if (p === 'entity') set({ default: false, team: null, blueprint: doc.blueprint ?? '', scope: 'entity' });
+    else set({ default: false, team: null, blueprint: null, scope: 'catalog' });
   };
   const [pending, setPending] = useState<Placement | null>(null);
   const shown = pending ?? placement;
@@ -174,6 +198,7 @@ function General(ctx: FormContext<DashboardDoc>) {
             { value: 'home', label: 'Home page (everyone)' },
             { value: 'team', label: 'Team home' },
             { value: 'blueprint', label: 'Blueprint page' },
+            { value: 'entity', label: 'Entity pages' },
           ]}
         />
         {shown === 'team' && (
@@ -186,10 +211,14 @@ function General(ctx: FormContext<DashboardDoc>) {
             onChange={(v) => set({ team: v ?? '' })}
           />
         )}
-        {shown === 'blueprint' && (
+        {(shown === 'blueprint' || shown === 'entity') && (
           <Select
             label="Blueprint"
-            description="Shown on the catalog page of this blueprint"
+            description={
+              shown === 'entity'
+                ? 'Replaces the overview of each entity page of this blueprint; widgets are filtered to the entity'
+                : 'Shown on the catalog page of this blueprint'
+            }
             searchable
             data={(blueprints.data ?? []).map((b) => ({ value: b.identifier, label: b.title }))}
             value={doc.blueprint || null}
@@ -452,6 +481,31 @@ function WidgetForm({ widget, onChange }: { widget: Widget; onChange: (w: Widget
         </>
       )}
       {widget.type === 'insights' && <InsightsFields widget={widget} setKey={setKey} num={num} />}
+      {widget.type === 'chart' && <ChartFields widget={widget} setKey={setKey} num={num} blueprints={blueprintData} />}
+      {widget.type === 'entity' && (
+        <SimpleGrid cols={{ base: 1, sm: 2 }}>
+          <Select
+            label="Section"
+            allowDeselect={false}
+            data={[
+              { value: 'properties', label: 'Properties' },
+              { value: 'scorecards', label: 'Scorecards' },
+              { value: 'relations', label: 'Relations' },
+              { value: 'links', label: 'Links' },
+            ]}
+            value={(widget.show as string) ?? 'properties'}
+            onChange={(v) => setKey('show', v ?? 'properties')}
+          />
+          {widget.show === 'properties' && (
+            <TagsInput
+              label="Properties"
+              description="Empty: every property, in the schema's order"
+              value={(widget.properties as string[]) ?? []}
+              onChange={(v) => setKey('properties', v)}
+            />
+          )}
+        </SimpleGrid>
+      )}
       {widget.type === 'markdown' && (
         <SimpleGrid cols={{ base: 1, sm: 2 }}>
           <Textarea
@@ -611,5 +665,132 @@ function MultiActions({ value, onChange }: { value: string[]; onChange: (v: stri
       value={value}
       onChange={onChange}
     />
+  );
+}
+
+const SERIES_KINDS = [
+  { value: 'runs', label: 'Runs' },
+  { value: 'scorecard', label: 'Scorecard levels' },
+  { value: 'dora', label: 'DORA metric' },
+  { value: 'entities', label: 'Entity count' },
+];
+const METRICS: Record<string, { value: string; label: string }[]> = {
+  runs: [
+    { value: 'count', label: 'Count by status' },
+    { value: 'duration', label: 'Duration (p50 / p90)' },
+    { value: 'failureRate', label: 'Failure rate' },
+  ],
+  dora: [
+    { value: 'deploymentFrequency', label: 'Deployment frequency' },
+    { value: 'leadTime', label: 'Lead time for changes' },
+    { value: 'changeFailureRate', label: 'Change failure rate' },
+    { value: 'mttr', label: 'Time to restore' },
+  ],
+};
+
+/** A chart widget: its look and window, then what it plots (`series`). DORA sources keep the insights defaults (YAML for more). */
+function ChartFields({
+  widget,
+  setKey,
+  num,
+  blueprints,
+}: {
+  widget: Widget;
+  setKey: (key: string, value: unknown) => void;
+  num: (key: string, label: string, min: number, max: number, description?: string) => ReactNode;
+  blueprints: { value: string; label: string }[];
+}) {
+  const series = (widget.series as Record<string, unknown> | undefined) ?? { kind: 'runs' };
+  const kind = String(series.kind ?? 'runs');
+  const metrics = METRICS[kind];
+  const setSeries = (field: string, value: unknown) => {
+    const next = { ...series };
+    if (value === '' || value === undefined || value === null || (Array.isArray(value) && !value.length)) delete next[field];
+    else next[field] = value;
+    setKey('series', next);
+  };
+  return (
+    <>
+      <SimpleGrid cols={{ base: 1, sm: 4 }}>
+        <Select
+          label="Chart"
+          allowDeselect={false}
+          data={[
+            { value: 'line', label: 'Line' },
+            { value: 'bar', label: 'Bar' },
+            { value: 'area', label: 'Area' },
+          ]}
+          value={(widget.chart as string) ?? 'line'}
+          onChange={(v) => setKey('chart', v ?? 'line')}
+        />
+        <Select
+          label="Interval"
+          allowDeselect={false}
+          data={[
+            { value: 'day', label: 'Day' },
+            { value: 'week', label: 'Week' },
+            { value: 'month', label: 'Month' },
+          ]}
+          value={(widget.interval as string) ?? 'week'}
+          onChange={(v) => setKey('interval', v ?? 'week')}
+        />
+        {num('days', 'Window (days)', 1, 365, 'Ending now')}
+        <Switch label="Stacked" mt="lg" checked={widget.stacked === true} onChange={(e) => setKey('stacked', e.currentTarget.checked || undefined)} />
+      </SimpleGrid>
+      <SimpleGrid cols={{ base: 1, sm: 3 }}>
+        <Select
+          label="Plot"
+          allowDeselect={false}
+          data={SERIES_KINDS}
+          value={kind}
+          onChange={(v) => {
+            const k = v ?? 'runs';
+            setKey('series', METRICS[k] ? { kind: k, metric: METRICS[k][0].value } : { kind: k });
+          }}
+        />
+        {metrics && (
+          <Select
+            label="Metric"
+            allowDeselect={false}
+            data={metrics}
+            value={(series.metric as string) ?? metrics[0].value}
+            onChange={(v) => setSeries('metric', v)}
+          />
+        )}
+        {kind === 'runs' && <ActionSelect value={(series.action as string) ?? null} onChange={(v) => setSeries('action', v)} label="Only this action" />}
+        {kind === 'scorecard' && <ScorecardSelect value={(series.scorecard as string) ?? ''} onChange={(v) => setSeries('scorecard', v)} />}
+        {kind === 'dora' && <MultiActions value={(series.deploymentActions as string[]) ?? []} onChange={(v) => setSeries('deploymentActions', v)} />}
+        {kind === 'entities' && (
+          <>
+            <Select
+              label="Blueprint"
+              withAsterisk
+              searchable
+              data={blueprints}
+              value={(series.blueprint as string) || null}
+              onChange={(v) => setSeries('blueprint', v ?? '')}
+            />
+            <TextInput
+              label="Group by"
+              description="Empty: one line. A property name, team or source"
+              value={(series.groupBy as string) ?? ''}
+              onChange={(e) => setSeries('groupBy', e.currentTarget.value.trim())}
+              styles={MONO_INPUT}
+            />
+          </>
+        )}
+      </SimpleGrid>
+      {kind === 'entities' && (
+        <SegmentedControl
+          w="fit-content"
+          value={(series.mode as string) ?? 'total'}
+          onChange={(v) => setSeries('mode', v)}
+          data={[
+            { value: 'total', label: 'Running total' },
+            { value: 'created', label: 'New per interval' },
+          ]}
+        />
+      )}
+    </>
   );
 }

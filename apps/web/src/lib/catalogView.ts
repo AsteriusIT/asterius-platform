@@ -35,6 +35,9 @@ export function parseFilters(values: string[]): Record<string, string> {
 }
 export const formatFilters = (f: Record<string, string>) => Object.entries(f).map(([k, v]) => `${k}:${v}`);
 
+/** Scorecard level filters are repeated `level=scorecard:level` URL parameters (`none`: below the first level). */
+export const parseLevels = parseFilters;
+
 /** Properties usable as columns and filters. */
 export const listableProps = (bp: Blueprint) =>
   Object.keys(bp.schema.properties).filter((k) => !bp.schema.properties[k].hidden && bp.schema.properties[k].format !== 'markdown');

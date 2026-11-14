@@ -83,6 +83,16 @@
   --brand-tok-comment: #6f6f6f;
   --brand-tok-punct: #6b7280;
   --brand-tok-template: #c026d3;
+  --brand-chart-1: #2a78d6;
+  --brand-chart-2: #eb6834;
+  --brand-chart-3: #10a37f;
+  --brand-chart-4: #eda100;
+  --brand-chart-5: #e87ba4;
+  --brand-chart-6: #008300;
+  --brand-chart-7: #6250d6;
+  --brand-chart-8: #e34948;
+  --brand-chart-grid: rgba(0, 0, 0, 0.08);
+  --brand-chart-axis: #6f6f6f;
 }
 
 [data-mantine-color-scheme='dark'] {
@@ -125,4 +135,14 @@
   --brand-tok-comment: #8e8e8e;
   --brand-tok-punct: #9ca3af;
   --brand-tok-template: #f0abfc;
+  --brand-chart-1: #3987e5;
+  --brand-chart-2: #d95926;
+  --brand-chart-3: #199e70;
+  --brand-chart-4: #c98500;
+  --brand-chart-5: #d55181;
+  --brand-chart-6: #0ca30c;
+  --brand-chart-7: #9085e9;
+  --brand-chart-8: #e66767;
+  --brand-chart-grid: rgba(255, 255, 255, 0.1);
+  --brand-chart-axis: #9c9c9c;
 }

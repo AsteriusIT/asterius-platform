@@ -138,6 +138,47 @@ const blueprints = [
   },
 ];
 
+/** Chart data is frozen by the visual tests (e2e/visual/dashboards.spec.ts): only the layout matters here. */
+const dashboards: Json[] = [
+  {
+    identifier: 'environment-trends',
+    title: 'Environment trends',
+    blueprint: 'environment',
+    widgets: [
+      {
+        type: 'chart',
+        title: 'Requests by status',
+        width: 6,
+        chart: 'bar',
+        stacked: true,
+        interval: 'week',
+        days: 56,
+        series: { kind: 'runs', action: 'request-environment' },
+      },
+      {
+        type: 'chart',
+        title: 'Environments by type',
+        width: 6,
+        chart: 'line',
+        interval: 'week',
+        days: 56,
+        series: { kind: 'entities', blueprint: 'environment', groupBy: 'type' },
+      },
+    ],
+  },
+  {
+    identifier: 'environment-page',
+    title: 'Environment page',
+    blueprint: 'environment',
+    scope: 'entity',
+    widgets: [
+      { type: 'markdown', width: 12, content: '**{{ entity.title }}** runs in `{{ entity.properties.region }}`.' },
+      { type: 'entity', show: 'properties', width: 5 },
+      { type: 'chart', title: 'Runs on this environment', width: 7, chart: 'area', stacked: true, interval: 'week', days: 56, series: { kind: 'runs' } },
+    ],
+  },
+];
+
 interface SeedEntity {
   blueprint: string;
   identifier: string;
@@ -580,6 +621,9 @@ async function build(): Promise<SeedState> {
   for (const d of connectorDefs) await call('PUT', `/api/v1/connectors/${d.identifier}`, a, d);
   for (const c of connections) await call('PUT', `/api/v1/connections/${c.identifier}`, a, c);
   for (const i of connectionIntegrations) await call('PUT', `/api/v1/integrations/${i.identifier}`, a, i);
+
+  // Trend charts on the Environment catalog page and the dashboard of its entity pages (no other screen shows them).
+  for (const d of dashboards) await call('PUT', `/api/v1/dashboards/${d.identifier}`, a, d);
 
   // A saved catalog view (the views menu of the catalog list) and a favourite action.
   await call('POST', '/api/v1/views', a, { name: 'Production services', blueprint: 'service', query: 'f=lifecycle:production&sort=title' });

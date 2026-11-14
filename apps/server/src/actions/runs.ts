@@ -308,6 +308,10 @@ export interface RunQuery {
   action?: string;
   blueprint?: string;
   entity?: string;
+  /** Created at or after this ISO time. */
+  since?: string;
+  /** Created before this ISO time. */
+  until?: string;
   limit: number;
   offset: number;
   /** Keyset cursor from a previous page (newest first). */
@@ -325,7 +329,8 @@ async function approverRunIds(p: Principal): Promise<string[]> {
   return rows.filter((r) => approverOf(p, r)).map((r) => r.id);
 }
 
-export async function listRuns(q: RunQuery, p0: Principal): Promise<RunPage> {
+/** WHERE clauses (alias `r`) of the runs the principal may see: the current organization and the viewer policy. */
+export async function runVisibility(p0: Principal): Promise<{ where: string[]; params: SqlValue[] }> {
   const p = await withDelegators(p0);
   const where: string[] = ['r.org_id = ?'];
   const params: SqlValue[] = [orgId()];
@@ -349,6 +354,11 @@ export async function listRuns(q: RunQuery, p0: Principal): Promise<RunPage> {
     where.push(`(${ors.join(' OR ')})`);
     params.push(...vals);
   }
+  return { where, params };
+}
+
+export async function listRuns(q: RunQuery, p0: Principal): Promise<RunPage> {
+  const { where, params } = await runVisibility(p0);
   const add = (clause: string, v: SqlValue) => {
     where.push(clause);
     params.push(v);
@@ -364,6 +374,8 @@ export async function listRuns(q: RunQuery, p0: Principal): Promise<RunPage> {
   if (q.action) add('r.action = ?', q.action);
   if (q.blueprint) add('r.blueprint = ?', q.blueprint);
   if (q.entity) add('r.entity = ?', q.entity);
+  if (q.since) add('r.created_at >= ?', q.since);
+  if (q.until) add('r.created_at < ?', q.until);
   if (q.status?.length) {
     where.push(`r.status IN (${q.status.map(() => '?').join(',')})`);
     params.push(...q.status);

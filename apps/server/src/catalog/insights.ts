@@ -67,15 +67,61 @@ const relationTargets = (e: Entity, relation: string): string[] => {
 const matchesService = (e: Entity, service: string | undefined, relation: string) =>
   !service || e.identifier === service || relationTargets(e, relation).includes(service);
 
-interface Deploy {
+export interface Deploy {
   at: number;
   failed: boolean;
   mergedAt: number | null;
 }
 
+/** The raw DORA events of a window: finished deployments and resolved incidents (creation time and hours to restore). */
+export interface DoraEvents {
+  haveDeploySource: boolean;
+  deploys: Deploy[];
+  incidents: { at: number; hours: number }[];
+}
+
 export async function computeInsights(cfg: InsightsConfig, p: Principal, nowMs = Date.now()): Promise<Insights> {
   const until = nowMs;
   const since = until - cfg.days * DAY;
+  const { haveDeploySource, deploys, incidents } = await doraEvents(cfg, p, since, until);
+  const failed = deploys.filter((d) => d.failed).length;
+  const successes = deploys.filter((d) => !d.failed);
+  const freq = haveDeploySource ? successes.length / cfg.days : null;
+  const leads = leadTimes(successes);
+  const lead = median(leads);
+  const cfr = deploys.length ? failed / deploys.length : null;
+  const durations = incidents.map((i) => i.hours);
+  const mttr = median(durations);
+
+  return {
+    days: cfg.days,
+    since: new Date(since).toISOString(),
+    until: new Date(until).toISOString(),
+    deploymentFrequency: {
+      value: freq === null ? null : round(freq, 3),
+      unit: 'per_day',
+      count: successes.length,
+      band: freq === null ? null : bands.deploymentFrequency(freq),
+    },
+    leadTime: { value: lead === null ? null : round(lead), unit: 'hours', samples: leads.length, band: lead === null ? null : bands.leadTime(lead) },
+    changeFailureRate: {
+      value: cfr === null ? null : round(cfr, 4),
+      unit: 'ratio',
+      failed,
+      total: deploys.length,
+      band: cfr === null ? null : bands.changeFailureRate(cfr),
+    },
+    mttr: { value: mttr === null ? null : round(mttr), unit: 'hours', incidents: durations.length, band: mttr === null ? null : bands.mttr(mttr) },
+  };
+}
+
+/** Hours from merge to deploy of the successful deployments that carry a merge time. */
+export const leadTimes = (successes: Deploy[]) => successes.flatMap((d) => (d.mergedAt !== null && d.at >= d.mergedAt ? [(d.at - d.mergedAt) / HOUR] : []));
+
+export { median, round };
+
+/** Deployments and incidents of [since, until] (ms), from the configured sources, as the viewer may read them. */
+export async function doraEvents(cfg: Omit<InsightsConfig, 'days'>, p: Principal, since: number, until: number): Promise<DoraEvents> {
   const inWindow = (t: number | null): t is number => t !== null && t >= since && t <= until;
   const dep = cfg.deployments;
 
@@ -122,45 +168,17 @@ export async function computeInsights(cfg: InsightsConfig, p: Principal, nowMs =
     }
   }
 
-  const failed = deploys.filter((d) => d.failed).length;
-  const successes = deploys.filter((d) => !d.failed);
-  const freq = haveDeploySource ? successes.length / cfg.days : null;
-  const leads = successes.flatMap((d) => (d.mergedAt !== null && d.at >= d.mergedAt ? [(d.at - d.mergedAt) / HOUR] : []));
-  const lead = median(leads);
-  const cfr = deploys.length ? failed / deploys.length : null;
-
   // ---- incidents ----
   const inc = cfg.incidents;
-  const durations: number[] = [];
+  const incidents: DoraEvents['incidents'] = [];
   if (await readable(inc.blueprint, p)) {
     for (const e of await scan(inc.blueprint, cfg.team, p)) {
       if (!matchesService(e, cfg.service, inc.serviceRelation)) continue;
       const created = ms(e.properties[inc.createdProperty]) ?? ms(e.createdAt);
       const resolved = ms(e.properties[inc.resolvedProperty]);
       if (!inWindow(created) || resolved === null || resolved < created) continue;
-      durations.push((resolved - created) / HOUR);
+      incidents.push({ at: created, hours: (resolved - created) / HOUR });
     }
   }
-  const mttr = median(durations);
-
-  return {
-    days: cfg.days,
-    since: new Date(since).toISOString(),
-    until: new Date(until).toISOString(),
-    deploymentFrequency: {
-      value: freq === null ? null : round(freq, 3),
-      unit: 'per_day',
-      count: successes.length,
-      band: freq === null ? null : bands.deploymentFrequency(freq),
-    },
-    leadTime: { value: lead === null ? null : round(lead), unit: 'hours', samples: leads.length, band: lead === null ? null : bands.leadTime(lead) },
-    changeFailureRate: {
-      value: cfr === null ? null : round(cfr, 4),
-      unit: 'ratio',
-      failed,
-      total: deploys.length,
-      band: cfr === null ? null : bands.changeFailureRate(cfr),
-    },
-    mttr: { value: mttr === null ? null : round(mttr), unit: 'hours', incidents: durations.length, band: mttr === null ? null : bands.mttr(mttr) },
-  };
+  return { haveDeploySource, deploys, incidents };
 }

@@ -93,8 +93,35 @@ describe('DashboardBuilder', () => {
       default: true,
       team: null,
       blueprint: null,
+      scope: 'catalog',
       widgets: template.widgets,
     });
+  });
+
+  it('places a dashboard on the entity pages of a blueprint, with chart and entity widgets', async () => {
+    const value = {
+      ...template,
+      default: false,
+      blueprint: 'service',
+      scope: 'entity',
+      widgets: [
+        { type: 'entity', show: 'properties', width: 6 },
+        { type: 'chart', width: 6, chart: 'line', interval: 'week', days: 90, series: { kind: 'scorecard' } },
+      ],
+    };
+    const { onSave } = setup({ value });
+    expect(await screen.findByRole('radio', { name: 'Entity pages', checked: true })).toBeTruthy();
+    expect(screen.getByText(/Replaces the overview of each entity page/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect(await screen.findByText(/Widget 2 \(chart\): scorecard is required/)).toBeTruthy();
+    expect(onSave).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('tab', { name: /Widgets/ }));
+    fireEvent.click(within(widgets()[1]).getByText('Chart', { selector: 'p' }));
+    expect(within(widgets()[1]).getAllByLabelText('Plot').length).toBeGreaterThan(0);
+    expect(within(widgets()[1]).getByLabelText(/^Window/)).toBeTruthy();
+    fireEvent.click(within(widgets()[0]).getByText('Entity section', { selector: 'p' }));
+    expect(within(widgets()[0]).getAllByLabelText('Section').length).toBeGreaterThan(0);
   });
 
   it('opens managed dashboards read-only', async () => {
