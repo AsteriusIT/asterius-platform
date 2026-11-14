@@ -1,0 +1,1 @@
+terraform import asterius_connection.inventory_prod inventory-prod

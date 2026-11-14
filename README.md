@@ -101,6 +101,8 @@ See [docs/EXTENDING.md](docs/EXTENDING.md) for the API, the callback contract an
 
 **Configuration as code per organization.** The default organization reads `CONFIG_DIR`; another organization reads `CONFIG_DIR/orgs/<slug>/` (mounted by the operators) or **its own Git repository** (https, read-only token kept as an organization secret, pulled every 2 minutes). Organizations can also be declared in the platform files (`organizations: [{ slug, name, domains, admins }]`).
 
+**Terraform / OpenTofu provider.** [terraform-provider-asterius/](terraform-provider-asterius/) manages blueprints, entities, actions, integrations, webhooks, teams, secrets (write-only), scorecards, policies, dashboards, connectors and connections through the API, with import by identifier and data sources; resources declared in `CONFIG_DIR` stay read-only. See [docs/TERRAFORM.md](docs/TERRAFORM.md).
+
 **MCP server.** `POST /api/mcp` (also `/api/v1/mcp`, Streamable HTTP) lets AI assistants search the catalog, read entities, start self-service actions and follow runs, with the permissions of the token's owner in the token's organization:
 
 ```bash

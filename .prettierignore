@@ -14,3 +14,4 @@ config
 data-*
 clients
 packages/brand/brand.css
+terraform-provider-asterius

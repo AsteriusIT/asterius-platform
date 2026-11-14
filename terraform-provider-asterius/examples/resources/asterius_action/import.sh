@@ -1,0 +1,1 @@
+terraform import asterius_action.register_service register-service
