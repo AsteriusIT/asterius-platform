@@ -29,7 +29,7 @@ jobs:
       SINK_URL: http://localhost:9099
       ENTITIES: ${{ inputs.entities || '100000' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: 24
