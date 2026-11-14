@@ -39,6 +39,7 @@ import { triggerBadge, workflowSummary } from '../../lib/workflow';
 import { BlueprintBuilder } from '../../components/builder/BlueprintBuilder';
 import { PolicyBuilder, ScorecardBuilder } from '../../components/builder/GovernanceBuilders';
 import { DashboardBuilder } from '../../components/builder/DashboardBuilder';
+import { PriceCatalogBuilder } from '../../components/builder/PriceCatalogBuilder';
 
 const G = {
   scm: 'Source control',
@@ -541,6 +542,7 @@ export function PriceCatalogsAdmin() {
         },
       ]}
       toEditable={(c) => strip(c, ['managed', 'builtin'])}
+      editor={(p) => <PriceCatalogBuilder {...p} />}
       save={api.savePriceCatalog}
       remove={(c) => api.deletePriceCatalog(c.identifier)}
     />
