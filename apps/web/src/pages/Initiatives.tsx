@@ -12,6 +12,7 @@ import { DataTable } from '../components/DataTable';
 import { ProgressTrend } from '../components/ProgressTrend';
 import { Empty, ErrorAlert, Loading, PageHeader, StatValue, TimeAgo } from '../components/ui';
 import { deadlineLabel, expectedOn, pct, STATUS_LOOK, teamLabel, trendSeries } from '../lib/initiatives';
+import { InitiativeBuilder } from '../components/builder/InitiativeBuilder';
 import { ResourceAdmin, strip } from './admin/ResourceAdmin';
 
 export function InitiativeStatusBadge({ status }: { status: InitiativeStatus }) {
@@ -401,7 +402,7 @@ function ExemptionModal(props: {
   );
 }
 
-/** Admin page: define initiatives (YAML editor; managed ones are read-only). */
+/** Admin page: define initiatives (form editor with JSON / YAML views; managed ones are read-only). */
 export function InitiativesAdmin() {
   return (
     <ResourceAdmin<Initiative>
@@ -444,6 +445,7 @@ export function InitiativesAdmin() {
         },
       ]}
       toEditable={(i) => strip(i, ['managed', 'blueprint', 'scorecardTitle', 'status', 'progress', 'expected', 'daysLeft', 'error'])}
+      editor={(p) => <InitiativeBuilder {...p} />}
       save={api.saveInitiative}
       remove={(i) => api.deleteInitiative(i.identifier)}
       removeWarning={() => 'Its snapshots and exemptions are deleted with it.'}
