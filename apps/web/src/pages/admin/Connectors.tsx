@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Alert, Badge, Button, Code, Group, Select, Stack, Tabs, Text } from '@mantine/core';
 import { modals } from '@mantine/modals';
 import { notifications } from '@mantine/notifications';
@@ -13,7 +13,7 @@ import { authInputs, categoryLabel, methodLabel, pickerOrder } from '../../lib/c
 import { DataTable } from '../../components/DataTable';
 import { EntityIcon } from '../../components/icons';
 import { ICON } from '@asterius/brand';
-import { ResourceEditor } from '../../components/ResourceEditor';
+import { ConnectorBuilder } from '../../components/builder/ConnectorBuilder';
 import { SchemaForm, initialValues, type FormValues } from '../../components/SchemaForm';
 import { Section } from '../../components/Section';
 import { SidePanel } from '../../components/SidePanel';
@@ -51,15 +51,23 @@ const TEMPLATE: Record<string, unknown> = {
   },
 };
 
-const HELP = (
-  <Alert color="gray" variant="light">
-    <Text fz="sm">
-      <b>fields</b> is the connection form (it must declare <Code>baseUrl</Code>); <b>auth</b> lists the methods connections choose from; <b>kinds</b> are what
-      integrations list; <b>operations</b> are what workflow steps call. Templates are <Code>{'{{ }}'}</Code> JSONata over <Code>connection</Code>,{' '}
-      <Code>inputs</Code> and <Code>output</Code>. Never put credentials here: connections hold them as secret references.
-    </Text>
-  </Alert>
-);
+/** Why a definition opens read-only (configuration-managed ones get FormBuilder's ManagedNotice). */
+function readOnlyNotice(d: ConnectorDefinition, canWrite: boolean): ReactNode {
+  if (d.builtin)
+    return (
+      <Alert color="gray" variant="light">
+        Built-in connector: it ships with the platform and cannot be changed. {canWrite ? 'Duplicate it to make your own; the' : 'The'} JSON / YAML tabs show
+        the document to copy.
+      </Alert>
+    );
+  if (!canWrite && !d.managed)
+    return (
+      <Alert color="gray" variant="light">
+        Only admins change connector definitions. You can copy the JSON / YAML.
+      </Alert>
+    );
+  return undefined;
+}
 
 function NameCell({ d }: { d: ConnectorDefinition }) {
   return (
@@ -95,7 +103,13 @@ export function ConnectorsAdmin() {
   const connections = useQuery({ queryKey: ['connections'], queryFn: api.connections });
   const [params, setParam] = useUrlParams();
   const shown = q.data?.find((d) => d.identifier === params.get('open')) ?? null;
-  const [editing, setEditing] = useState<{ value: Record<string, unknown>; isNew: boolean; version?: number; readOnly?: boolean } | null>(null);
+  const [editing, setEditing] = useState<{
+    value: Record<string, unknown>;
+    isNew: boolean;
+    version?: number;
+    readOnly?: boolean;
+    notice?: ReactNode;
+  } | null>(null);
   const count = (id: string) => (connections.data ?? []).filter((c) => c.connector === id).length;
 
   const save = async (id: string, body: Record<string, unknown>) => {
@@ -104,7 +118,14 @@ export function ConnectorsAdmin() {
     void qc.invalidateQueries({ queryKey: ['connector-versions', id] });
     return r;
   };
-  const edit = (d: ConnectorDefinition) => setEditing({ value: strip(d, STORED), isNew: false, version: d.version, readOnly: d.managed || !canWrite });
+  const edit = (d: ConnectorDefinition) =>
+    setEditing({
+      value: strip(d, STORED),
+      isNew: false,
+      version: d.version,
+      readOnly: d.builtin || d.managed || !canWrite,
+      notice: readOnlyNotice(d, canWrite),
+    });
   const duplicate = (d: ConnectorDefinition) => {
     setParam('open', null);
     setEditing({ value: { ...strip(d, STORED), identifier: `${d.identifier}-custom`, title: `${d.title} (custom)` }, isNew: true });
@@ -159,13 +180,11 @@ export function ConnectorsAdmin() {
         ]}
       />
       <ConnectorPanel def={shown} canWrite={canWrite} onClose={() => setParam('open', null)} onEdit={edit} onDuplicate={duplicate} onDelete={remove} />
-      <ResourceEditor
-        title={editing?.isNew ? 'New connector' : `${editing?.readOnly ? 'View' : 'Edit'} ${String(editing?.value.identifier ?? '')}`}
+      <ConnectorBuilder
         value={editing?.value ?? null}
         isNew={!!editing?.isNew}
         readOnly={editing?.readOnly}
-        help={HELP}
-        readOnlyNotice={canWrite ? undefined : 'Only admins change connector definitions. You can copy this YAML.'}
+        readOnlyNotice={editing?.notice}
         onClose={() => setEditing(null)}
         onSave={save}
       />
@@ -214,11 +233,9 @@ export function ConnectorPanel({
                 Duplicate
               </Button>
             )}
-            {!def.builtin && (
-              <Button size="xs" variant="default" leftSection={<IconPencil size={ICON.sm} />} onClick={() => onEdit(def)}>
-                {editable ? 'Edit' : 'View'}
-              </Button>
-            )}
+            <Button size="xs" variant="default" leftSection={<IconPencil size={ICON.sm} />} onClick={() => onEdit(def)}>
+              {editable ? 'Edit' : 'View'}
+            </Button>
             {editable && (
               <Button size="xs" variant="subtle" color="red" leftSection={<IconTrash size={ICON.sm} />} onClick={() => onDelete(def)}>
                 Delete
