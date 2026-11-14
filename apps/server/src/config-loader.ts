@@ -21,6 +21,7 @@ import { deleteIntegration, listIntegrations, upsertIntegration } from './integr
 import { deleteScorecard, evaluateAllEntities, listScorecards, upsertScorecard } from './catalog/scorecards.js';
 import { deletePolicy, listPolicies, upsertPolicy } from './policies/policies.js';
 import { deleteDashboard, listDashboards, upsertDashboard } from './catalog/dashboards.js';
+import { deleteInitiative, listInitiatives, upsertInitiative } from './catalog/initiatives.js';
 import { deleteWebhook, getWebhook, listWebhooks, upsertWebhook } from './webhooks/webhooks.js';
 import { deleteFragment, dependencyOrder, listFragments, upsertFragment } from './actions/fragments.js';
 import { deleteConnector, listConnectors, upsertConnector } from './integrations/connectors/definitions.js';
@@ -28,7 +29,7 @@ import { checkConnectionsOf, deleteConnection, listConnections, upsertConnection
 
 /**
  * Configuration as code, per organization. Files (*.yaml / *.yml / *.json) declare `teams`, `blueprints`, `connectors`,
- * `connections`, `fragments`, `actions`, `integrations`, `webhooks`, `scorecards`, `policies`, `dashboards` and seed `entities` of one organization:
+ * `connections`, `fragments`, `actions`, `integrations`, `webhooks`, `scorecards`, `policies`, `dashboards`, `initiatives` and seed `entities` of one organization:
  *   CONFIG_DIR/*                 the default organization, plus `organizations:` (platform-level declarations)
  *   CONFIG_DIR/orgs/<slug>/**    organization <slug> (a ConfigMap or git-sync volume per tenant)
  *   a Git repository             set by the organization's admins (Settings → Configuration as code)
@@ -109,6 +110,7 @@ export function readConfigDir(dir = config.CONFIG_DIR, opts: { platform?: boolea
         'scorecards',
         'policies',
         'dashboards',
+        'initiatives',
       ] as const)
         for (const item of parsed.data[kind]) {
           const key = `${kind}/${item.identifier}`;
@@ -293,6 +295,16 @@ export async function applyConfig(loaded: LoadedConfig, log: FastifyBaseLogger):
     (d) => upsertDashboard(d, m),
     (id) => deleteDashboard(id, m),
   );
+  // After the scorecards they target.
+  await applyKind(
+    log,
+    errs,
+    'initiative',
+    data.initiatives,
+    await listInitiatives(),
+    (i) => upsertInitiative(i, m),
+    (id) => deleteInitiative(id, m),
+  );
   // Blueprints last: actions and integrations that used a removed blueprint are gone by now.
   // The entities the configuration seeded go with them; entities created by people or integrations keep their
   // blueprint (it stays, with a warning). Removed blueprints may relate to each other: retry until no progress.
@@ -458,6 +470,7 @@ export async function planConfig(loaded?: LoadedConfig): Promise<PlanItem[]> {
   plan('scorecard', d.scorecards, await listScorecards());
   plan('policy', d.policies, await listPolicies());
   plan('dashboard', d.dashboards, await listDashboards());
+  plan('initiative', d.initiatives, await listInitiatives());
   return out;
 }
 
@@ -473,6 +486,7 @@ const KINDS = [
   'scorecards',
   'policies',
   'dashboards',
+  'initiatives',
 ] as const;
 
 /** What a reload of the current organization would change: declared vs currently managed identifiers. Nothing is applied. */
@@ -496,6 +510,7 @@ export async function configDiff() {
     scorecards: await listScorecards(),
     policies: await listPolicies(),
     dashboards: await listDashboards(),
+    initiatives: await listInitiatives(),
   };
   const kinds: Record<string, { added: string[]; removed: string[]; kept: string[] }> = {};
   for (const k of KINDS) {
@@ -539,6 +554,7 @@ export async function importConfig(text: string, dryRun: boolean): Promise<Recor
   for (const sc of merged.scorecards) await upsertScorecard(sc, { knownBlueprints: knownTargets });
   for (const p of merged.policies) await upsertPolicy(p);
   for (const d of merged.dashboards) await upsertDashboard(d);
+  for (const i of merged.initiatives) await upsertInitiative(i);
   return counts;
 }
 
@@ -710,6 +726,7 @@ export async function exportDefinitions() {
     scorecards: (await listScorecards()).map((s) => strip(s as never, ['managed'])),
     policies: (await listPolicies()).map((p) => strip(p as never, ['managed'])),
     dashboards: (await listDashboards()).map((d) => strip(d as never, ['managed'])),
+    initiatives: (await listInitiatives()).map((i) => strip(i as never, ['managed'])),
   };
 }
 
@@ -732,8 +749,9 @@ export async function managedCounts() {
      UNION ALL SELECT 'fragments', count(*) FROM fragments WHERE managed = 1 AND org_id = ?
      UNION ALL SELECT 'teams', count(*) FROM teams WHERE managed = 1 AND org_id = ?
      UNION ALL SELECT 'connectors', count(*) FROM connectors WHERE managed = 1 AND org_id = ?
-     UNION ALL SELECT 'connections', count(*) FROM connections WHERE managed = 1 AND org_id = ?`,
-    ...Array(11).fill(orgId()),
+     UNION ALL SELECT 'connections', count(*) FROM connections WHERE managed = 1 AND org_id = ?
+     UNION ALL SELECT 'initiatives', count(*) FROM initiatives WHERE managed = 1 AND org_id = ?`,
+    ...Array(12).fill(orgId()),
   );
   return Object.fromEntries(rows.map((r) => [r.k, Number(r.n)]));
 }

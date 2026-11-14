@@ -39,6 +39,7 @@ const entity = () => import('./pages/EntityPage');
 const selfService = () => import('./pages/SelfService');
 const runs = () => import('./pages/Runs');
 const todo = () => import('./pages/Todo');
+const initiatives = () => import('./pages/Initiatives');
 const profile = () => import('./pages/Profile');
 const definitions = () => import('./pages/admin/Definitions');
 const connections = () => import('./pages/admin/Connections');
@@ -117,6 +118,8 @@ const routes: RouteObject[] = [
                 ],
               },
               { path: '/todo', element: page(todo, 'Todo') },
+              { path: '/initiatives', element: page(initiatives, 'Initiatives') },
+              { path: '/initiatives/:id', element: page(initiatives, 'InitiativePage') },
               { path: '/approvals', element: <Navigate to="/todo" replace /> },
               { path: '/profile', element: page(profile, 'Profile') },
               { path: '/orgs/new', element: page(organization, 'NewOrganization') },
@@ -138,6 +141,7 @@ const routes: RouteObject[] = [
                   { path: 'dashboards', element: page(definitions, 'DashboardsAdmin') },
                   { path: 'scorecards', element: page(definitions, 'ScorecardsAdmin') },
                   { path: 'policies', element: page(definitions, 'PoliciesAdmin') },
+                  { path: 'initiatives', element: page(initiatives, 'InitiativesAdmin') },
                   { path: 'fragments', element: page(definitions, 'FragmentsAdmin') },
                   { path: 'webhooks', element: page(definitions, 'WebhooksAdmin') },
                   { path: 'teams', element: page(access, 'TeamsAdmin') },

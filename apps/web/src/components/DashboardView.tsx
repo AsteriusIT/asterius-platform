@@ -6,6 +6,7 @@ import { api } from '../lib/api';
 import { DataTable } from './DataTable';
 import { PropertyValue } from './PropertyValue';
 import { Empty, ErrorAlert, Loading, Markdown, StatusBadge, StatValue, TimeAgo } from './ui';
+import { deadlineLabel, pct, STATUS_LOOK, teamLabel } from '../lib/initiatives';
 
 type Data<T extends string> = Extract<WidgetData, { type: T }>;
 
@@ -58,6 +59,8 @@ function WidgetBody({ widget, data }: { widget: DashboardWidget; data: WidgetDat
       return <RunsList data={data} />;
     case 'insights':
       return <Insights data={data} />;
+    case 'initiative':
+      return <InitiativeCard data={data} />;
     case 'table':
       return <EntityTable widget={widget as Extract<DashboardWidget, { type: 'table' }>} data={data} />;
     default:
@@ -180,6 +183,44 @@ function EntityTable({ widget, data }: { widget: Extract<DashboardWidget, { type
         </Anchor>
       )}
     </>
+  );
+}
+
+function InitiativeCard({ data }: { data: Data<'initiative'> }) {
+  const s = STATUS_LOOK[data.status];
+  return (
+    <Stack gap="xs">
+      <Group justify="space-between" gap="xs">
+        <Anchor component={Link} to={`/initiatives/${data.initiative}`} fz="sm" fw={500}>
+          {data.title}
+        </Anchor>
+        <Badge color={s.color} variant="light">
+          {s.label}
+        </Badge>
+      </Group>
+      <Group justify="space-between" align="flex-end">
+        <StatValue size="lg">{pct(data.progress.ratio)}</StatValue>
+        <Text fz="xs" c="dimmed">
+          {data.progress.passing} of {data.progress.total} · {data.status === 'done' ? 'complete' : deadlineLabel(data.daysLeft)}
+        </Text>
+      </Group>
+      <Progress value={data.progress.ratio * 100} size="sm" color={data.progress.ratio >= 1 ? 'teal' : 'blue'} />
+      {data.teams.length > 1 && (
+        <Stack gap="3xs">
+          <Text fz="xs" c="dimmed">
+            Furthest behind
+          </Text>
+          {data.teams.slice(0, 3).map((t) => (
+            <Group key={t.team ?? '-'} justify="space-between" gap="xs">
+              <Text fz="xs">{teamLabel(t.team)}</Text>
+              <Text fz="xs" fw={500}>
+                {t.passing} / {t.total}
+              </Text>
+            </Group>
+          ))}
+        </Stack>
+      )}
+    </Stack>
   );
 }
 

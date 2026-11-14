@@ -1,15 +1,16 @@
 import { useState } from 'react';
-import { Badge, Button, Card, Group, Stack, Text, Textarea, Title } from '@mantine/core';
+import { Anchor, Badge, Button, Card, Group, Stack, Text, Textarea, Title } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useNavigate } from 'react-router';
+import { Link, useNavigate } from 'react-router';
 import { IconBell, IconCheck, IconX } from '@tabler/icons-react';
-import type { Run, WaitingOn } from '@asterius/shared';
+import type { InitiativeTodo, Run, WaitingOn } from '@asterius/shared';
 import { api, errorText } from '../lib/api';
 import { DataTable } from '../components/DataTable';
 import { openNotifications } from '../components/NotificationCenter';
 import { Empty, PageHeader, TimeAgo } from '../components/ui';
 import { runColumns } from './Runs';
+import { deadlineLabel, groupTodo } from '../lib/initiatives';
 
 const onError = (e: unknown) => notifications.show({ color: 'red', message: errorText(e) });
 const approvalKey = (r: Run) => `${r.id}/${r.pendingStep?.id ?? ''}`;
@@ -177,11 +178,65 @@ export function WaitingOnOthers() {
   );
 }
 
+/** Entities of the caller's teams below the target of a running initiative, grouped by initiative, with the failing rules. */
+export function InitiativeItems({ items }: { items: InitiativeTodo[] }) {
+  const navigate = useNavigate();
+  return (
+    <Stack gap="md">
+      {groupTodo(items).map((g) => (
+        <div key={g.initiative.identifier}>
+          <Group gap="xs" mb="2xs">
+            <Anchor component={Link} to={`/initiatives/${g.initiative.identifier}`} fw={500} fz="sm">
+              {g.initiative.title}
+            </Anchor>
+            <Text fz="xs" c="dimmed">
+              {g.initiative.targetLevel ? `target ${g.initiative.targetLevel} · ` : ''}
+              {deadlineLabel(g.initiative.daysLeft)}
+            </Text>
+          </Group>
+          <DataTable
+            rows={g.items}
+            rowKey={(i) => i.entity.identifier}
+            onRowClick={(i) => navigate(`/catalog/${i.entity.blueprint}/${encodeURIComponent(i.entity.identifier)}`)}
+            columns={[
+              {
+                key: 'e',
+                label: 'Entity',
+                render: (i: InitiativeTodo) => (
+                  <Text fz="sm" fw={500}>
+                    {i.entity.title}
+                  </Text>
+                ),
+              },
+              { key: 't', label: 'Team', render: (i: InitiativeTodo) => i.entity.team ?? '—' },
+              {
+                key: 'f',
+                label: 'To fix',
+                wrap: true,
+                render: (i: InitiativeTodo) => (
+                  <Group gap="3xs">
+                    {i.failing.map((f) => (
+                      <Badge key={f.rule} size="sm" variant="light" color="red" tt="none">
+                        {f.title}
+                      </Badge>
+                    ))}
+                  </Group>
+                ),
+              },
+            ]}
+          />
+        </div>
+      ))}
+    </Stack>
+  );
+}
+
 /** One inbox for what needs the caller: decisions to make, their requests waiting on others, and notifications. */
 export function Todo() {
   const approvals = useQuery({ queryKey: ['approvals'], queryFn: api.approvals, refetchInterval: 15_000 });
   const waiting = useQuery({ queryKey: ['runs-waiting'], queryFn: () => api.runsWaiting(), refetchInterval: 30_000 });
   const inbox = useQuery({ queryKey: ['notifications'], queryFn: () => api.notifications({ limit: 50 }), refetchInterval: 30_000 });
+  const initiatives = useQuery({ queryKey: ['my-initiatives'], queryFn: api.myInitiatives, refetchInterval: 300_000 });
   const count = (n?: number) =>
     n ? (
       <Badge size="sm" variant="light" circle={n < 10}>
@@ -191,7 +246,11 @@ export function Todo() {
   const unread = inbox.data?.unread ?? 0;
   return (
     <Stack gap="lg">
-      <PageHeader title="To do" description="Decisions waiting for you, and your requests waiting on others." refresh={[approvals, waiting, inbox]} />
+      <PageHeader
+        title="To do"
+        description="Decisions waiting for you, and your requests waiting on others."
+        refresh={[approvals, waiting, inbox, initiatives]}
+      />
       <section aria-label="Waiting for your decision">
         <Group gap="xs" mb="xs">
           <Title order={4}>Waiting for your decision</Title>
@@ -206,6 +265,15 @@ export function Todo() {
         </Group>
         <WaitingOnOthers />
       </section>
+      {!!initiatives.data?.length && (
+        <section aria-label="Initiatives: entities of your teams to fix">
+          <Group gap="xs" mb="xs">
+            <Title order={4}>Initiatives: entities of your teams to fix</Title>
+            {count(initiatives.data.length)}
+          </Group>
+          <InitiativeItems items={initiatives.data} />
+        </section>
+      )}
       <Card padding="md">
         <Group justify="space-between">
           <Group gap="sm">

@@ -6,6 +6,7 @@ import { runCatalogTool } from './tools.js';
 import { truncate } from './model.js';
 import { errorMessage } from '../lib/errors.js';
 import { appUrl } from '../orgs/orgs.js';
+import { initiativeViews } from '../catalog/initiatives.js';
 
 /**
  * The platform as a Model Context Protocol server (Streamable HTTP transport, stateless JSON responses).
@@ -123,6 +124,24 @@ const TOOLS: ToolDef[] = [
         url: `${runs}${r.id}`,
       }));
     },
+  },
+  {
+    name: 'list_initiatives',
+    description: 'Scorecard initiatives (target level and deadline) with their status and progress: entities at the target / in scope.',
+    inputSchema: obj({}),
+    annotations: { readOnlyHint: true },
+    run: async (_i, p) =>
+      (await initiativeViews(p)).map((i) => ({
+        identifier: i.identifier,
+        title: i.title,
+        scorecard: i.scorecard,
+        targetLevel: i.targetLevel,
+        deadline: i.deadline,
+        status: i.status,
+        passing: i.progress.passing,
+        total: i.progress.total,
+        url: `/initiatives/${i.identifier}`,
+      })),
   },
   {
     name: 'get_run',

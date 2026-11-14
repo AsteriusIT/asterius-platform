@@ -37,6 +37,7 @@ import {
   IconStack2,
   IconTable,
   IconTrash,
+  IconTarget,
   IconTrophy,
   IconLayoutGrid,
 } from '@tabler/icons-react';
@@ -99,6 +100,7 @@ const WIDGET_TYPES: { type: string; label: string; description: string; icon: Re
     icon: <IconChartBar size={18} />,
     initial: { days: 30 },
   },
+  { type: 'initiative', label: 'Initiative', description: 'Progress of a scorecard initiative', icon: <IconTarget size={18} />, initial: { initiative: '' } },
   { type: 'markdown', label: 'Markdown', description: 'Free text: links, notes, instructions', icon: <IconMarkdown size={18} />, initial: { content: '' } },
 ];
 const typeInfo = (t: string) => WIDGET_TYPES.find((x) => x.type === t);
@@ -115,8 +117,9 @@ export function dashboardProblems(doc: DashboardDoc): string[] {
     };
     if (w.type === 'count' || w.type === 'table') missing('blueprint', 'blueprint');
     if (w.type === 'scorecard') missing('scorecard', 'scorecard');
+    if (w.type === 'initiative') missing('initiative', 'initiative');
     if (w.type === 'markdown') missing('content', 'content');
-    for (const key of ['blueprint', 'scorecard', 'action', 'team']) {
+    for (const key of ['blueprint', 'scorecard', 'action', 'team', 'initiative']) {
       const v = w[key];
       if (typeof v === 'string' && v && !SLUG.test(v)) out.push(`${at}: ${key} must be a valid identifier`);
     }
@@ -404,6 +407,7 @@ function WidgetForm({ widget, onChange }: { widget: Widget; onChange: (w: Widget
         </>
       )}
       {widget.type === 'scorecard' && <ScorecardSelect value={(widget.scorecard as string) ?? ''} onChange={(v) => setKey('scorecard', v)} />}
+      {widget.type === 'initiative' && <InitiativeSelect value={(widget.initiative as string) ?? ''} onChange={(v) => setKey('initiative', v)} />}
       {widget.type === 'runs' && (
         <>
           <SimpleGrid cols={{ base: 1, sm: 2 }}>
@@ -486,6 +490,20 @@ function ScorecardSelect({ value, onChange }: { value: string; onChange: (v: str
       withAsterisk
       searchable
       data={(scorecards.data ?? []).map((s) => ({ value: s.identifier, label: s.title }))}
+      value={value || null}
+      onChange={(v) => onChange(v ?? '')}
+    />
+  );
+}
+
+function InitiativeSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const initiatives = useQuery({ queryKey: ['initiatives'], queryFn: api.initiatives });
+  return (
+    <Select
+      label="Initiative"
+      withAsterisk
+      searchable
+      data={(initiatives.data ?? []).map((i) => ({ value: i.identifier, label: i.title }))}
       value={value || null}
       onChange={(v) => onChange(v ?? '')}
     />

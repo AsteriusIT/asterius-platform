@@ -10,6 +10,7 @@ import { purgeExpiredTombstones } from './catalog/entities.js';
 import { purgeVersions } from './catalog/history.js';
 import { expireAllOrganizations } from './catalog/expiry.js';
 import { evaluateEverything, purgeScorecardHistory } from './catalog/scorecards.js';
+import { tickAllInitiatives } from './catalog/initiatives.js';
 
 /** Rows deleted per statement: small enough to keep locks short on a busy Postgres (runs cascade to logs and steps). */
 const CHUNK = 2000;
@@ -82,6 +83,9 @@ export async function housekeeping(log: FastifyBaseLogger) {
     const scored = await evaluateEverything();
     await purgeScorecardHistory(new Date(Date.now() - 365 * 86400_000).toISOString());
     if (scored) log.debug({ scored }, 'scorecards re-evaluated');
+    // Initiatives, on fresh results: daily snapshots, status events and reminders (each claimed, see catalog/initiatives.ts).
+    const initiatives = await tickAllInitiatives();
+    if (initiatives.events + initiatives.reminders) log.info(initiatives, 'initiatives: events and reminders sent');
     const versions = await purgeVersions(new Date(Date.now() - config.HISTORY_RETENTION_DAYS * 86400_000).toISOString());
     metrics.purged('entity_versions', versions.changes);
     const tombstones = await purgeExpiredTombstones();

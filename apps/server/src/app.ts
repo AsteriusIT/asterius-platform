@@ -20,6 +20,7 @@ import { integrationRoutes } from './routes/integrations.js';
 import { connectorRoutes } from './routes/connectors.js';
 import { adminRoutes } from './routes/admin.js';
 import { policyRoutes } from './routes/policies.js';
+import { initiativeRoutes } from './routes/initiatives.js';
 import { fragmentRoutes } from './routes/fragments.js';
 import { orgRoutes } from './routes/orgs.js';
 import { migrateLiteralWebhookSecrets } from './webhooks/webhooks.js';
@@ -163,6 +164,7 @@ export async function buildApp(opts: AppOptions = {}): Promise<FastifyInstance> 
     async (v1) => {
       await v1.register(catalogRoutes);
       await v1.register(policyRoutes);
+      await v1.register(initiativeRoutes);
       await v1.register(fragmentRoutes);
       await v1.register(actionRoutes);
       await v1.register(integrationRoutes);

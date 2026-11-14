@@ -24,6 +24,7 @@ import {
   IconActivity,
   IconCategory2,
   IconChecklist,
+  IconTarget,
   IconDots,
   IconHome,
   IconLayoutSidebarLeftCollapse,
@@ -290,6 +291,7 @@ export function Layout() {
           <NavItem {...item('/self-service')} label="Self-service" icon={<IconRocket size={ICON.lg} />} tour="self-service" />
           <NavItem {...item('/runs')} label="Runs" icon={<IconActivity size={ICON.lg} />} tour="runs" />
           <NavItem {...item('/catalog')} label="Catalog" icon={<IconCategory2 size={ICON.lg} />} end={entityTotal} tour="catalog" />
+          <NavItem {...item('/initiatives')} label="Initiatives" icon={<IconTarget size={ICON.lg} />} />
 
           {adminCategories.length > 0 && (
             <div data-tour="admin">

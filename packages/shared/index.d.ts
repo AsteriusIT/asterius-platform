@@ -701,7 +701,16 @@ export interface BlackoutSpan {
 
 export interface EventTrigger {
   type: 'event';
-  event: 'entity.created' | 'entity.updated' | 'entity.deleted' | 'entity.expired' | 'scorecard.changed' | 'run.finished';
+  event:
+    | 'entity.created'
+    | 'entity.updated'
+    | 'entity.deleted'
+    | 'entity.expired'
+    | 'scorecard.changed'
+    | 'run.finished'
+    | 'initiative.at_risk'
+    | 'initiative.overdue'
+    | 'initiative.completed';
   blueprint?: string | null;
   /** run.finished: only runs of this action. */
   action?: string | null;
@@ -1240,6 +1249,97 @@ export interface ScorecardSummary {
   trend: { day: string; distribution: Record<string, number> }[];
 }
 
+// ---------- initiatives ----------
+/** A scorecard target with a deadline: entities in scope must reach `targetLevel` and pass `rules`. */
+export interface Initiative {
+  identifier: string;
+  title: string;
+  description: string;
+  scorecard: string;
+  targetLevel: string | null;
+  rules: string[];
+  /** YYYY-MM-DD. */
+  startDate: string;
+  deadline: string;
+  /** Only entities of these teams; empty: the whole blueprint. */
+  teams: string[];
+  owner: string | null;
+  enabled: boolean;
+  reminderDays: number;
+  managed: boolean;
+}
+
+export type InitiativeStatus = 'on_track' | 'at_risk' | 'overdue' | 'done';
+
+export interface InitiativeCounts {
+  /** Entities at or above the target. */
+  passing: number;
+  /** Entities in scope (exempted ones excluded). */
+  total: number;
+  exempted: number;
+  /** passing / total (1 when nothing is in scope). */
+  ratio: number;
+}
+
+export interface InitiativeView extends Initiative {
+  blueprint: string;
+  scorecardTitle: string;
+  status: InitiativeStatus;
+  progress: InitiativeCounts;
+  /** Where progress should be today on a straight line from the start (0 to 1). */
+  expected: number;
+  daysLeft: number;
+  /** Set when the scorecard is missing or the target no longer matches it. */
+  error?: string;
+}
+
+export interface InitiativeTeamProgress extends InitiativeCounts {
+  /** Owner team; null: entities without a team. */
+  team: string | null;
+}
+
+export interface InitiativeDetail extends InitiativeView {
+  byTeam: InitiativeTeamProgress[];
+  /** One point per day (daily snapshots, today live). */
+  trend: { day: string; passing: number; total: number; teams: Record<string, { passing: number; total: number }> }[];
+  /** Rules an entity must pass (levels up to the target, plus `rules`). */
+  requiredRules: { rule: string; title: string; level: string }[];
+}
+
+export interface InitiativeEntity {
+  identifier: string;
+  title: string;
+  team: string | null;
+  level: string | null;
+  passing: boolean;
+  /** Required rules that fail (exempted rules left out). */
+  failing: { rule: string; title: string; level: string }[];
+  /** The whole entity is exempted (left out of the counts). */
+  exempt: boolean;
+  /** Rules exempted for this entity. */
+  exemptRules: string[];
+}
+
+export interface InitiativeExemption {
+  id: string;
+  initiative: string;
+  entity: string;
+  /** null: the whole entity. */
+  rule: string | null;
+  reason: string;
+  expiresAt: string;
+  grantedBy: { id: string | null; email: string | null };
+  createdAt: string;
+  active: boolean;
+}
+
+/** A failing entity of one of the caller's teams (To do inbox). */
+export interface InitiativeTodo {
+  initiative: { identifier: string; title: string; deadline: string; targetLevel: string | null; daysLeft: number };
+  entity: { blueprint: string; identifier: string; title: string; team: string | null };
+  failing: { rule: string; title: string; level: string }[];
+}
+
 // ---------- fragments ----------
 /** Reusable steps, included in workflows by `type: fragment` steps. */
 export interface Fragment {
@@ -1601,7 +1701,8 @@ export type DashboardWidget =
       limit: number;
     })
   | (WidgetBase & { type: 'insights' } & InsightsConfig)
-  | (WidgetBase & { type: 'markdown'; content: string });
+  | (WidgetBase & { type: 'markdown'; content: string })
+  | (WidgetBase & { type: 'initiative'; initiative: string });
 
 export interface Dashboard {
   identifier: string;
@@ -1623,7 +1724,18 @@ export type WidgetData =
   | { type: 'approvals'; items: Run[]; total: number }
   | { type: 'table'; blueprint: string; items: Entity[]; total: number }
   | ({ type: 'insights' } & Insights)
-  | { type: 'markdown' };
+  | { type: 'markdown' }
+  | {
+      type: 'initiative';
+      initiative: string;
+      title: string;
+      status: InitiativeStatus;
+      deadline: string;
+      daysLeft: number;
+      progress: InitiativeCounts;
+      /** The teams furthest behind (lowest ratio first). */
+      teams: InitiativeTeamProgress[];
+    };
 
 // ---- preferences/views ----
 /** Per-user, per-organization preferences (GET/PUT /api/v1/me/preferences). Form drafts stay in the browser. */

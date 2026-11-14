@@ -895,7 +895,10 @@
                           "entity.deleted",
                           "entity.expired",
                           "scorecard.changed",
-                          "run.finished"
+                          "run.finished",
+                          "initiative.at_risk",
+                          "initiative.overdue",
+                          "initiative.completed"
                         ]
                       },
                       "blueprint": {
@@ -3168,7 +3171,7 @@
             "type": "array",
             "items": {
               "type": "string",
-              "pattern": "^(\\*|(entity|run|approval|sync|step|team|user|scorecard)\\.\\*|entity\\.(created|updated|deleted)|run\\.(created|updated|sla_breached)|approval\\.(requested|decided)|sync\\.(finished|failed)|step\\.(started|finished|sla_breached)|team\\.(created|updated|deleted)|user\\.(created|updated)|scorecard\\.changed)$"
+              "pattern": "^(\\*|(entity|run|approval|sync|step|team|user|scorecard|initiative)\\.\\*|entity\\.(created|updated|deleted)|run\\.(created|updated|sla_breached)|approval\\.(requested|decided)|sync\\.(finished|failed)|step\\.(started|finished|sla_breached)|team\\.(created|updated|deleted)|user\\.(created|updated)|scorecard\\.changed|initiative\\.(at_risk|overdue|completed))$"
             }
           },
           "blueprints": {
@@ -3354,6 +3357,133 @@
           "title",
           "target",
           "expression"
+        ]
+      },
+      "Initiative": {
+        "type": "object",
+        "properties": {
+          "identifier": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "description": {
+            "default": "",
+            "type": "string",
+            "maxLength": 4000
+          },
+          "scorecard": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+          },
+          "targetLevel": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 40
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rules": {
+            "default": [],
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+            }
+          },
+          "startDate": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+          },
+          "deadline": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+          },
+          "teams": {
+            "default": [],
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+            }
+          },
+          "owner": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "email",
+                "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "enabled": {
+            "default": true,
+            "type": "boolean"
+          },
+          "reminderDays": {
+            "default": 7,
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 90
+          }
+        },
+        "required": [
+          "identifier",
+          "title",
+          "scorecard",
+          "startDate",
+          "deadline"
+        ]
+      },
+      "InitiativeExemptionInput": {
+        "type": "object",
+        "properties": {
+          "entity": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/@+=-]{0,199}$"
+          },
+          "rule": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 1000
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+          }
+        },
+        "required": [
+          "entity",
+          "reason",
+          "expiresAt"
         ]
       },
       "Fragment": {
@@ -7056,7 +7186,10 @@
                                 "entity.deleted",
                                 "entity.expired",
                                 "scorecard.changed",
-                                "run.finished"
+                                "run.finished",
+                                "initiative.at_risk",
+                                "initiative.overdue",
+                                "initiative.completed"
                               ]
                             },
                             "blueprint": {
@@ -9337,7 +9470,7 @@
                   "type": "array",
                   "items": {
                     "type": "string",
-                    "pattern": "^(\\*|(entity|run|approval|sync|step|team|user|scorecard)\\.\\*|entity\\.(created|updated|deleted)|run\\.(created|updated|sla_breached)|approval\\.(requested|decided)|sync\\.(finished|failed)|step\\.(started|finished|sla_breached)|team\\.(created|updated|deleted)|user\\.(created|updated)|scorecard\\.changed)$"
+                    "pattern": "^(\\*|(entity|run|approval|sync|step|team|user|scorecard|initiative)\\.\\*|entity\\.(created|updated|deleted)|run\\.(created|updated|sla_breached)|approval\\.(requested|decided)|sync\\.(finished|failed)|step\\.(started|finished|sla_breached)|team\\.(created|updated|deleted)|user\\.(created|updated)|scorecard\\.changed|initiative\\.(at_risk|overdue|completed))$"
                   }
                 },
                 "blueprints": {
@@ -10012,6 +10145,33 @@
                           "type",
                           "content"
                         ]
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "title": {
+                            "type": "string",
+                            "maxLength": 100
+                          },
+                          "width": {
+                            "default": 6,
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 12
+                          },
+                          "type": {
+                            "type": "string",
+                            "const": "initiative"
+                          },
+                          "initiative": {
+                            "type": "string",
+                            "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "initiative"
+                        ]
                       }
                     ]
                   }
@@ -10020,6 +10180,102 @@
               "required": [
                 "identifier",
                 "title"
+              ]
+            }
+          },
+          "initiatives": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "identifier": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                },
+                "title": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100
+                },
+                "description": {
+                  "default": "",
+                  "type": "string",
+                  "maxLength": 4000
+                },
+                "scorecard": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                },
+                "targetLevel": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 40
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "rules": {
+                  "default": [],
+                  "maxItems": 100,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+                  }
+                },
+                "startDate": {
+                  "type": "string",
+                  "format": "date",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                },
+                "deadline": {
+                  "type": "string",
+                  "format": "date",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                },
+                "teams": {
+                  "default": [],
+                  "maxItems": 100,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                  }
+                },
+                "owner": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "email",
+                      "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "enabled": {
+                  "default": true,
+                  "type": "boolean"
+                },
+                "reminderDays": {
+                  "default": 7,
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 90
+                }
+              },
+              "required": [
+                "identifier",
+                "title",
+                "scorecard",
+                "startDate",
+                "deadline"
               ]
             }
           },
@@ -14003,6 +14259,164 @@
         ],
         "additionalProperties": false
       },
+      "InitiativeView": {
+        "type": "object",
+        "properties": {
+          "identifier": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "description": {
+            "default": "",
+            "type": "string",
+            "maxLength": 4000
+          },
+          "scorecard": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+          },
+          "targetLevel": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 40
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rules": {
+            "default": [],
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+            }
+          },
+          "startDate": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+          },
+          "deadline": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+          },
+          "teams": {
+            "default": [],
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+            }
+          },
+          "owner": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "email",
+                "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "enabled": {
+            "default": true,
+            "type": "boolean"
+          },
+          "reminderDays": {
+            "default": 7,
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 90
+          },
+          "managed": {
+            "type": "boolean"
+          },
+          "blueprint": {
+            "type": "string"
+          },
+          "scorecardTitle": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "on_track",
+              "at_risk",
+              "overdue",
+              "done"
+            ]
+          },
+          "progress": {
+            "type": "object",
+            "properties": {
+              "passing": {
+                "type": "number"
+              },
+              "total": {
+                "type": "number"
+              },
+              "exempted": {
+                "type": "number"
+              },
+              "ratio": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "passing",
+              "total",
+              "exempted",
+              "ratio"
+            ],
+            "additionalProperties": false
+          },
+          "expected": {
+            "type": "number",
+            "description": "Where progress should be today on a straight line from the start (0 to 1)"
+          },
+          "daysLeft": {
+            "type": "number"
+          },
+          "error": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "identifier",
+          "title",
+          "description",
+          "scorecard",
+          "rules",
+          "startDate",
+          "deadline",
+          "teams",
+          "enabled",
+          "reminderDays",
+          "managed",
+          "blueprint",
+          "scorecardTitle",
+          "status",
+          "progress",
+          "expected",
+          "daysLeft"
+        ],
+        "additionalProperties": false,
+        "description": "An initiative with its progress (entities at the target / in scope, exempted ones excluded)"
+      },
       "FragmentView": {
         "type": "object",
         "properties": {
@@ -15999,7 +16413,7 @@
             "type": "array",
             "items": {
               "type": "string",
-              "pattern": "^(\\*|(entity|run|approval|sync|step|team|user|scorecard)\\.\\*|entity\\.(created|updated|deleted)|run\\.(created|updated|sla_breached)|approval\\.(requested|decided)|sync\\.(finished|failed)|step\\.(started|finished|sla_breached)|team\\.(created|updated|deleted)|user\\.(created|updated)|scorecard\\.changed)$"
+              "pattern": "^(\\*|(entity|run|approval|sync|step|team|user|scorecard|initiative)\\.\\*|entity\\.(created|updated|deleted)|run\\.(created|updated|sla_breached)|approval\\.(requested|decided)|sync\\.(finished|failed)|step\\.(started|finished|sla_breached)|team\\.(created|updated|deleted)|user\\.(created|updated)|scorecard\\.changed|initiative\\.(at_risk|overdue|completed))$"
             }
           },
           "blueprints": {
@@ -22861,6 +23275,373 @@
         }
       }
     },
+    "/api/v1/initiatives": {
+      "get": {
+        "operationId": "getInitiatives",
+        "tags": [
+          "initiatives"
+        ],
+        "summary": "GET /api/v1/initiatives",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/InitiativeView"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/api/v1/initiatives/{id}": {
+      "delete": {
+        "operationId": "deleteInitiativesById",
+        "tags": [
+          "initiatives"
+        ],
+        "summary": "DELETE /api/v1/initiatives/{id}",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      },
+      "get": {
+        "operationId": "getInitiativesById",
+        "tags": [
+          "initiatives"
+        ],
+        "summary": "GET /api/v1/initiatives/{id}",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      },
+      "put": {
+        "operationId": "putInitiativesById",
+        "tags": [
+          "initiatives"
+        ],
+        "summary": "PUT /api/v1/initiatives/{id}",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Initiative"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/api/v1/initiatives/{id}/entities": {
+      "get": {
+        "operationId": "getInitiativesEntitiesById",
+        "tags": [
+          "initiatives"
+        ],
+        "summary": "GET /api/v1/initiatives/{id}/entities",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/api/v1/initiatives/{id}/exemptions": {
+      "get": {
+        "operationId": "getInitiativesExemptionsById",
+        "tags": [
+          "initiatives"
+        ],
+        "summary": "GET /api/v1/initiatives/{id}/exemptions",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      },
+      "post": {
+        "operationId": "postInitiativesExemptionsById",
+        "tags": [
+          "initiatives"
+        ],
+        "summary": "POST /api/v1/initiatives/{id}/exemptions",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InitiativeExemptionInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/api/v1/initiatives/{id}/exemptions/{exemption}": {
+      "delete": {
+        "operationId": "deleteInitiativesExemptionsByIdExemption",
+        "tags": [
+          "initiatives"
+        ],
+        "summary": "DELETE /api/v1/initiatives/{id}/exemptions/{exemption}",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "exemption",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
     "/api/v1/insights": {
       "get": {
         "operationId": "getInsights",
@@ -23556,6 +24337,40 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/api/v1/me/initiatives": {
+      "get": {
+        "operationId": "getMeInitiatives",
+        "tags": [
+          "me"
+        ],
+        "summary": "GET /api/v1/me/initiatives",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
           },
           "400": {
             "description": "Validation error",

@@ -32,7 +32,10 @@ export type EventType =
   | 'team.deleted'
   | 'user.created'
   | 'user.updated'
-  | 'scorecard.changed';
+  | 'scorecard.changed'
+  | 'initiative.at_risk'
+  | 'initiative.overdue'
+  | 'initiative.completed';
 
 /** `run.finished` is internal: it fires event triggers of workflows but is not offered to outbound webhooks. */
 export interface DomainEvent {

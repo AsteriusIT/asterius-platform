@@ -1,0 +1,26 @@
+# Initiatives: a scorecard target with a deadline. Failing services show up in the To do of their owner teams,
+# progress and trend per team on /initiatives/<id>, and initiative.* events can drive webhooks and workflows.
+initiatives:
+  - identifier: supply-chain-silver
+    title: Every service at Silver supply-chain security
+    description: SBOMs published and no open critical vulnerability, for every service of the product teams.
+    scorecard: supply-chain-security # supply-chain.yaml
+    targetLevel: Silver
+    startDate: '2026-11-01'
+    deadline: '2027-03-31'
+    teams: [payments, checkout] # empty: every service
+    owner: null # an email: that person may grant exemptions and gets the reminders too
+    reminderDays: 7 # weekly reminder to the teams with failing services until the deadline
+  - identifier: sbom-everywhere
+    title: An SBOM for every service
+    scorecard: supply-chain-security
+    rules: [has_sbom] # specific rules instead of (or on top of) a level
+    startDate: '2026-11-01'
+    deadline: '2026-12-31'
+
+dashboards:
+  - identifier: initiatives
+    title: Initiatives
+    widgets:
+      - { type: initiative, initiative: supply-chain-silver, width: 6 }
+      - { type: initiative, initiative: sbom-everywhere, width: 6 }
