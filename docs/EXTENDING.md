@@ -120,7 +120,7 @@ trigger:                                           # cron (5 fields) in an IANA 
   inputs: { day: "{{ schedule.at }}" }
 trigger:                                           # catalog events and finished runs; JSONata filter over { event }
   type: event
-  event: entity.created                            # entity.created | entity.updated | entity.deleted | entity.expired | scorecard.changed | run.finished
+  event: entity.created                            # entity.created | entity.updated | entity.deleted | entity.expired | scorecard.changed | run.finished | initiative.at_risk | initiative.overdue | initiative.completed
   blueprint: service
   filter: 'event.entity.properties.tier = "gold"'
   inputs: { name: "{{ event.entity.identifier }}" }   # the entity of the event is the run's entity
@@ -556,6 +556,8 @@ All endpoints take `Authorization: Bearer <token>`. Personal tokens come from th
 | `POST /api/v1/blueprints/:bp/impact` · `…/migrate` · `GET …/validation` | check a proposed blueprint against its entities, migrate (rename / default / remove), last background report (admin) |
 | `GET /api/v1/insights?days=&team=&service=` | the DORA metrics of the organization, as the caller may read them |
 | `GET /api/v1/policies` · `PUT\|DELETE /api/v1/policies/:id` | policy gate definitions (admin) |
+| `GET /api/v1/initiatives` · `GET …/initiatives/:id` · `GET …/:id/entities?status=failing\|passing\|exempt&team=` · `PUT\|DELETE …/initiatives/:id` | scorecard initiatives with progress, per-team breakdown and trend (PUT/DELETE: admin) |
+| `GET\|POST /api/v1/initiatives/:id/exemptions` · `DELETE …/exemptions/:exemption` · `GET /api/v1/me/initiatives` | exemptions (POST/DELETE: admins and the owner), the caller's teams' failing entities |
 | `GET /api/v1/dashboards/resolve?blueprint=` · `GET …/dashboards/:id/data` | the dashboard to show and its widget data |
 | `GET /api/v1/actions` · `POST /api/v1/actions/:id/runs` `{ entity?, inputs }` | trigger actions from scripts |
 | `GET /api/v1/runs?mine=true&status=…` · `GET /api/v1/runs/:id` | runs with logs and approvals |
@@ -566,7 +568,7 @@ Entity identifiers may contain `/`, `:` and `@` (third-party ids); URL-encode th
 
 ## Catalog governance
 
-All of these are declared in the configuration files like the other resources (`scorecards:`, `policies:`, `dashboards:`), or in the admin UI.
+All of these are declared in the configuration files like the other resources (`scorecards:`, `initiatives:`, `policies:`, `dashboards:`), or in the admin UI.
 
 **Scorecards.** Rules are JSONata over the entity (`properties`, `relations`, `computed`, `team`, `related.<relation>[]` for the entities it points to, `incoming.<blueprint.relation>[]` for those pointing to it). Levels are ordered; an entity reaches a level when it passes the rules of that level and the levels below. Results are recomputed on every entity write and hourly, level changes emit `scorecard.changed`, and workflows can read `entity.scorecards.<id>.level` / `.rank` in `if` conditions and templates.
 
@@ -579,6 +581,21 @@ scorecards:
     rules:
       - { identifier: has_owner, title: Has an owner, level: Bronze, expression: team != null }
       - { identifier: has_docs, title: Has docs, level: Silver, expression: properties.docs != null }
+```
+
+**Initiatives** (`initiatives:`, admin UI *Governance → Initiatives*, everyone: *Initiatives* in the sidebar). An initiative turns a scorecard into tracked work: the entities of the scorecard's blueprint (only those of `teams`, when set) must reach `targetLevel` and/or pass the listed `rules` between `startDate` and `deadline` (`YYYY-MM-DD`). An entity is done when every rule of the levels up to the target and every listed rule passes; progress is done / in scope, overall and per owner team. The status is `done` (everything in scope at the target), `overdue` (past the deadline), `at_risk` (more than 10 points behind the straight line from the start to the deadline) or `on_track`. Once a day a snapshot of the progress (overall and per team) is written, giving the trend; status changes emit `initiative.at_risk`, `initiative.overdue` and `initiative.completed` (`data: { initiative, from, status, progress, teams }`) for webhooks and workflow event triggers. Failing entities appear in the *To do* of the members of their owner team, with the rules to fix. Every `reminderDays` (default 7, `0`: never) until the deadline, the members of the teams with failing entities and the `owner` get an in-app notification and a message on the channels of their *approvals* preference. Snapshots, events and reminders run with the hourly housekeeping and are each claimed by a conditional UPDATE, so several replicas never send twice. **Exemptions**: admins and the `owner` exempt an entity (it leaves the counts) or one rule of it (that rule counts as passing) with a reason and an expiry (at most a year), audited as `initiative.exemption.granted` / `revoked`; expired exemptions stop applying by themselves. The `initiative` dashboard widget shows status, progress and the teams furthest behind; the MCP server lists initiatives with `list_initiatives`.
+
+```yaml
+initiatives:
+  - identifier: silver-by-march
+    title: Every service at Silver
+    scorecard: production-readiness
+    targetLevel: Silver            # and/or rules: [has_docs]
+    startDate: '2026-11-01'
+    deadline: '2027-03-31'
+    teams: [payments, checkout]    # optional; empty: every entity of the blueprint
+    owner: lead@example.com        # optional: grants exemptions, gets the reminders
+    reminderDays: 7
 ```
 
 **Policies** (`policies:`, admin UI *Policies*). A policy is a JSONata guard evaluated before a run is queued (`target: run`, filter with `match.actions`) or before an entity is created, updated or deleted through the API or the catalog invoker (`target: entity`, filter with `match.blueprints` and `match.operations`). The context is `{ inputs, entity, previous, principal, action, blueprint, operation }` (`entity` is what would be stored, `previous` the stored entity; `principal` has `id`, `email`, `name`, `role`, `roles`, `teams`). The expression must evaluate to exactly `true` to allow; any other result, and any evaluation error, denies (fail closed) with `403` `{ error, policy, message }` and a `policy.denied` audit entry. `message` may embed `{{ expression }}` over the same context. Disabled policies are ignored. Integration syncs, configuration seeding and cascading deletes of referrers are not gated. Policies are per organization; those declared in configuration files are managed (read-only through the API).
@@ -599,7 +616,7 @@ policies:
 
 **Supply chain.** Vulnerability and SBOM blueprints, Snyk and CycloneDX mappings and a security scorecard are described in [SUPPLY-CHAIN.md](SUPPLY-CHAIN.md).
 
-**Dashboards.** Widgets: `count` (optionally `groupBy` a property, `team` or `source`), `scorecard`, `runs`, `approvals`, `table` (a saved view), `insights` (DORA metrics, below), `markdown`. A dashboard with `default: true` is the home page; with `team:` it is the home page of that team; with `blueprint:` it appears on that blueprint's catalog page.
+**Dashboards.** Widgets: `count` (optionally `groupBy` a property, `team` or `source`), `scorecard`, `runs`, `approvals`, `table` (a saved view), `insights` (DORA metrics, below), `initiative` (`initiative: <id>`), `markdown`. A dashboard with `default: true` is the home page; with `team:` it is the home page of that team; with `blueprint:` it appears on that blueprint's catalog page.
 
 **Delivery insights (DORA).** The `insights` widget shows the four DORA metrics over `days` (default 30) as stat tiles with their band (elite / high / medium / low); the same numbers are served by `GET /api/v1/insights`, scoped to the organization and to the blueprints the caller may read. Optional `team` / `service` filters. Sources, all configurable:
 - *Deployment frequency* and *change failure rate*: entities of `deployments.blueprint` (default `deployment`, e.g. the Argo CD preset, whose example mapping sets `deployedAt` and `status` from the last sync operation) with `timeProperty` (default `deployedAt`) in the window and a `statusProperty` (default `status`) matching `successValues` (`success`, `succeeded`, `healthy`, `synced`) or `failureValues` (`failure`, `failed`, `error`, `degraded`); other states are ignored. `deploymentActions` adds the runs of those actions (SUCCESS = deployment, FAILURE = failed deployment).
@@ -620,7 +637,7 @@ blueprints:
 
 ## Outbound webhooks
 
-The payload has the form `{ id, type, at, blueprint, actor, data }`. Event types are `entity.created`, `entity.updated` (with `data.before`), `entity.deleted`, `entity.expired` (`data: { entity, property, expiresAt }`), `run.created`, `run.updated`, `run.sla_breached` (`data: { runId, action, status, createdAt, breachedAt }`), `step.started`, `step.finished`, `step.sla_breached` (`data: { runId, action, stepId, name, status, slaMinutes, startedAt, breachedAt }`) and `scorecard.changed` (`data: { scorecard, entity, from, to, passed, total }`). Requests carry the headers `X-Asterius-Event`, `X-Asterius-Delivery` and `X-Asterius-Signature: t=<unix seconds>,v1=<hex>`, where `v1 = HMAC-SHA256(secret, "<t>.<body>")`. Receivers must recompute it over the raw body, compare in constant time, and reject timestamps more than **5 minutes** from their clock (replay protection); the timestamp is refreshed on every retry. `secret` and `secondarySecret` must be references (`${secret:NAME}` / `${env:NAME}`); literal values are rejected.
+The payload has the form `{ id, type, at, blueprint, actor, data }`. Event types are `entity.created`, `entity.updated` (with `data.before`), `entity.deleted`, `entity.expired` (`data: { entity, property, expiresAt }`), `run.created`, `run.updated`, `run.sla_breached` (`data: { runId, action, status, createdAt, breachedAt }`), `step.started`, `step.finished`, `step.sla_breached` (`data: { runId, action, stepId, name, status, slaMinutes, startedAt, breachedAt }`) `scorecard.changed` (`data: { scorecard, entity, from, to, passed, total }`) and `initiative.at_risk` / `initiative.overdue` / `initiative.completed` (`data: { initiative, from, status, progress, teams }`). Requests carry the headers `X-Asterius-Event`, `X-Asterius-Delivery` and `X-Asterius-Signature: t=<unix seconds>,v1=<hex>`, where `v1 = HMAC-SHA256(secret, "<t>.<body>")`. Receivers must recompute it over the raw body, compare in constant time, and reject timestamps more than **5 minutes** from their clock (replay protection); the timestamp is refreshed on every retry. `secret` and `secondarySecret` must be references (`${secret:NAME}` / `${env:NAME}`); literal values are rejected.
 
 **Rotating a signing secret without downtime:** (1) create the new secret and set it as `secondarySecret`: deliveries now carry two `v1=` entries, one per secret; (2) make receivers accept either (any matching `v1`) and switch them to the new secret; (3) move the new secret to `secret` and remove `secondarySecret`.
 

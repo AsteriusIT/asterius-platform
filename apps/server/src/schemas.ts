@@ -184,6 +184,44 @@ export const scorecardDef = z
 export type ScorecardDef = z.infer<typeof scorecardDef>;
 
 /**
+ * Initiative: a scorecard target with a deadline (e.g. every service at Silver by June 30). The scope is the
+ * scorecard's blueprint, optionally only the entities of some teams. An entity is done when it reaches `targetLevel`
+ * and passes every rule listed in `rules` (either may be omitted, not both).
+ */
+export const initiativeDef = z
+  .object({
+    identifier: slug,
+    title: z.string().min(1).max(100),
+    description: z.string().max(4000).default(''),
+    scorecard: slug,
+    /** A level of the scorecard: entities at or above it are done. */
+    targetLevel: z.string().min(1).max(40).nullish(),
+    /** Rule identifiers of the scorecard that must pass (in addition to the target level, if any). */
+    rules: z.array(fieldName).max(100).default([]),
+    /** YYYY-MM-DD. */
+    startDate: z.iso.date(),
+    deadline: z.iso.date(),
+    /** Only entities owned by these teams; empty: every entity of the blueprint. */
+    teams: z.array(slug).max(100).default([]),
+    /** Email of the person accountable for the initiative (may grant exemptions). */
+    owner: z.string().email().toLowerCase().nullish(),
+    enabled: z.boolean().default(true),
+    /** Remind the teams with failing entities every N days until the deadline; 0: never. */
+    reminderDays: z.number().int().min(0).max(90).default(7),
+  })
+  .refine((i) => !!i.targetLevel || i.rules.length > 0, { message: 'Set a targetLevel, rules, or both', path: ['targetLevel'] })
+  .refine((i) => i.startDate <= i.deadline, { message: 'The deadline must not be before the start date', path: ['deadline'] });
+export type InitiativeDef = z.infer<typeof initiativeDef>;
+
+export const initiativeExemptionInput = z.object({
+  entity: entityId,
+  /** A rule identifier: only that rule counts as passing; omitted: the entity leaves the counts. */
+  rule: fieldName.nullish(),
+  reason: z.string().min(3).max(1000),
+  expiresAt: z.iso.datetime({ offset: true }),
+});
+
+/**
  * Policy gate: a JSONata expression evaluated before a run is queued (`target: run`) or an entity is created, updated
  * or deleted through the API or the catalog invoker (`target: entity`). The expression must evaluate to `true` to allow;
  * anything else, and any evaluation error, denies. The context is `{ inputs, entity, previous, principal, action, blueprint, operation }`.
@@ -300,6 +338,8 @@ export const dashboardWidget = z.discriminatedUnion('type', [
   }),
   z.object({ ...widgetBase, type: z.literal('insights'), ...insightsConfig.shape }),
   z.object({ ...widgetBase, type: z.literal('markdown'), content: z.string().max(10_000) }),
+  /** Progress of a scorecard initiative (status, done / in scope, the teams furthest behind). */
+  z.object({ ...widgetBase, type: z.literal('initiative'), initiative: slug }),
 ]);
 export type DashboardWidgetDef = z.infer<typeof dashboardWidget>;
 
@@ -649,7 +689,17 @@ export const scheduleTrigger = z.object({
     })
     .optional(),
 });
-export const EVENT_TRIGGERS = ['entity.created', 'entity.updated', 'entity.deleted', 'entity.expired', 'scorecard.changed', 'run.finished'] as const;
+export const EVENT_TRIGGERS = [
+  'entity.created',
+  'entity.updated',
+  'entity.deleted',
+  'entity.expired',
+  'scorecard.changed',
+  'run.finished',
+  'initiative.at_risk',
+  'initiative.overdue',
+  'initiative.completed',
+] as const;
 export const eventTrigger = z.object({
   type: z.literal('event'),
   event: z.enum(EVENT_TRIGGERS),
@@ -1164,6 +1214,9 @@ export const WEBHOOK_EVENTS = [
   'user.created',
   'user.updated',
   'scorecard.changed',
+  'initiative.at_risk',
+  'initiative.overdue',
+  'initiative.completed',
 ] as const;
 
 const RESERVED_HEADERS = /^(host|content-length|content-type|transfer-encoding|connection|x-asterius-.*)$/i;
@@ -1180,7 +1233,7 @@ export const webhookDef = z.object({
       z
         .string()
         .regex(
-          /^(\*|(entity|run|approval|sync|step|team|user|scorecard)\.\*|entity\.(created|updated|deleted)|run\.(created|updated|sla_breached)|approval\.(requested|decided)|sync\.(finished|failed)|step\.(started|finished|sla_breached)|team\.(created|updated|deleted)|user\.(created|updated)|scorecard\.changed)$/,
+          /^(\*|(entity|run|approval|sync|step|team|user|scorecard|initiative)\.\*|entity\.(created|updated|deleted)|run\.(created|updated|sla_breached)|approval\.(requested|decided)|sync\.(finished|failed)|step\.(started|finished|sla_breached)|team\.(created|updated|deleted)|user\.(created|updated)|scorecard\.changed|initiative\.(at_risk|overdue|completed))$/,
         ),
     )
     .min(1),
@@ -1317,6 +1370,7 @@ export const configFile = z.object({
   scorecards: z.array(scorecardDef).default([]),
   policies: z.array(policyDef).default([]),
   dashboards: z.array(dashboardDef).default([]),
+  initiatives: z.array(initiativeDef).default([]),
   fragments: z.array(fragmentDef).default([]),
   /** Connector definitions of the organization (the built-in ones ship with the platform). */
   connectors: z.array(connectorDef).default([]),

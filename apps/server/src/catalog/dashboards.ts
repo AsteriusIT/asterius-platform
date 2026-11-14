@@ -9,6 +9,7 @@ import { getScorecard, scorecardSummary } from './scorecards.js';
 import { getBlueprintCached } from './blueprints.js';
 import { visibleBlueprints } from '../auth/access.js';
 import { computeInsights } from './insights.js';
+import { initiativeWidget } from './initiatives.js';
 import { orgId } from '../orgs/context.js';
 
 /**
@@ -132,6 +133,8 @@ async function widgetData(w: DashboardWidget, p: Principal): Promise<WidgetData>
     }
     case 'markdown':
       return { type: 'markdown' };
+    case 'initiative':
+      return initiativeWidget(p, w.initiative);
   }
 }
 

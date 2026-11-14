@@ -26,7 +26,7 @@ interface Recipient {
   name: string;
 }
 
-async function deliver(to: Recipient, channels: Channel[], subject: string, body: string, link: string) {
+export async function deliver(to: Recipient, channels: Channel[], subject: string, body: string, link: string) {
   for (const ch of channels) {
     try {
       if (ch === 'email') {
