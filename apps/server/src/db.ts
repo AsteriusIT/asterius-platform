@@ -321,6 +321,18 @@ CREATE TABLE fragment_versions (
       `);
     },
   },
+  {
+    id: 13,
+    name: 'entity-page dashboards and chart series index',
+    async up(d) {
+      // dashboards.scope: `catalog` (header of the blueprint's catalog page) or `entity` (overview of its entity pages).
+      // entities_blueprint_created: entity-count charts bucket the entities of one blueprint by creation date.
+      await d.exec(`
+        ALTER TABLE dashboards ADD COLUMN scope TEXT NOT NULL DEFAULT 'catalog';
+        CREATE INDEX entities_blueprint_created ON entities(org_id, blueprint, created_at);
+      `);
+    },
+  },
 ];
 
 /**

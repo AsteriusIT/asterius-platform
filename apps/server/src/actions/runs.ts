@@ -319,6 +319,10 @@ export interface RunQuery {
   agent?: string;
   /** ui · api · mcp · workflow. */
   channel?: string;
+  /** Created at or after this ISO time. */
+  since?: string;
+  /** Created before this ISO time. */
+  until?: string;
   limit: number;
   offset: number;
   /** Keyset cursor from a previous page (newest first). */
@@ -336,7 +340,8 @@ async function approverRunIds(p: Principal): Promise<string[]> {
   return rows.filter((r) => approverOf(p, r)).map((r) => r.id);
 }
 
-export async function listRuns(q: RunQuery, p0: Principal): Promise<RunPage> {
+/** WHERE clauses (alias `r`) of the runs the principal may see: the current organization and the viewer policy. */
+export async function runVisibility(p0: Principal): Promise<{ where: string[]; params: SqlValue[] }> {
   const p = await withDelegators(p0);
   const where: string[] = ['r.org_id = ?'];
   const params: SqlValue[] = [orgId()];
@@ -360,6 +365,19 @@ export async function listRuns(q: RunQuery, p0: Principal): Promise<RunPage> {
     where.push(`(${ors.join(' OR ')})`);
     params.push(...vals);
   }
+  // Agents read the runs of their allowed workflows only (lists, charts and every other reader of this policy).
+  if (p.agent) {
+    if (!p.agent.workflows.length) where.push('1 = 0');
+    else {
+      where.push(`r.action IN (${p.agent.workflows.map(() => '?').join(',')})`);
+      params.push(...p.agent.workflows);
+    }
+  }
+  return { where, params };
+}
+
+export async function listRuns(q: RunQuery, p0: Principal): Promise<RunPage> {
+  const { where, params } = await runVisibility(p0);
   const add = (clause: string, v: SqlValue) => {
     where.push(clause);
     params.push(v);
@@ -379,14 +397,8 @@ export async function listRuns(q: RunQuery, p0: Principal): Promise<RunPage> {
   else if (q.agent === '-') where.push('r.agent IS NULL');
   else if (q.agent) add('r.agent = ?', q.agent);
   if (q.channel) add('r.channel = ?', q.channel);
-  // Agents read the runs of their allowed workflows only.
-  if (p.agent) {
-    if (!p.agent.workflows.length) where.push('1 = 0');
-    else {
-      where.push(`r.action IN (${p.agent.workflows.map(() => '?').join(',')})`);
-      params.push(...p.agent.workflows);
-    }
-  }
+  if (q.since) add('r.created_at >= ?', q.since);
+  if (q.until) add('r.created_at < ?', q.until);
   if (q.status?.length) {
     where.push(`r.status IN (${q.status.map(() => '?').join(',')})`);
     params.push(...q.status);

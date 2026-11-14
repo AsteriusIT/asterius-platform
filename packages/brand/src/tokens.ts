@@ -96,6 +96,17 @@ export const schemeVariables = {
     '--tok-comment': '#6f6f6f',
     '--tok-punct': '#6b7280',
     '--tok-template': '#c026d3',
+    // chart series, fixed order (see chartSeries): never cycled, never re-ordered by rank
+    '--chart-1': '#2a78d6',
+    '--chart-2': '#eb6834',
+    '--chart-3': '#10a37f',
+    '--chart-4': '#eda100',
+    '--chart-5': '#e87ba4',
+    '--chart-6': '#008300',
+    '--chart-7': '#6250d6',
+    '--chart-8': '#e34948',
+    '--chart-grid': 'rgba(0, 0, 0, 0.08)',
+    '--chart-axis': '#6f6f6f',
   },
   dark: {
     '--mantine-color-body': '#212121',
@@ -140,5 +151,23 @@ export const schemeVariables = {
     '--tok-comment': '#8e8e8e',
     '--tok-punct': '#9ca3af',
     '--tok-template': '#f0abfc',
+    '--chart-1': '#3987e5',
+    '--chart-2': '#d95926',
+    '--chart-3': '#199e70',
+    '--chart-4': '#c98500',
+    '--chart-5': '#d55181',
+    '--chart-6': '#0ca30c',
+    '--chart-7': '#9085e9',
+    '--chart-8': '#e66767',
+    '--chart-grid': 'rgba(255, 255, 255, 0.1)',
+    '--chart-axis': '#9c9c9c',
   },
 } as const;
+
+/**
+ * Categorical chart colours, in this fixed order (`--chart-1`…`--chart-8` in both schemes): blue, orange, the brand green,
+ * yellow, magenta, green, violet, red. Validated as sets (adjacent-pair colour-vision-deficiency ΔE >= 8, normal-vision
+ * ΔE >= 15, lightness band) on the light page and on the dark raised surface; yellow and magenta are under 3:1 on white,
+ * so charts always offer their values as a table. A ninth series folds into "Other".
+ */
+export const chartSeries = 8;

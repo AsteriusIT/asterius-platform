@@ -10544,6 +10544,14 @@
                     }
                   ]
                 },
+                "scope": {
+                  "default": "catalog",
+                  "type": "string",
+                  "enum": [
+                    "catalog",
+                    "entity"
+                  ]
+                },
                 "default": {
                   "default": false,
                   "type": "boolean"
@@ -10945,6 +10953,322 @@
                         "required": [
                           "type",
                           "initiative"
+                        ]
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "title": {
+                            "type": "string",
+                            "maxLength": 100
+                          },
+                          "width": {
+                            "default": 6,
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 12
+                          },
+                          "type": {
+                            "type": "string",
+                            "const": "chart"
+                          },
+                          "chart": {
+                            "default": "line",
+                            "type": "string",
+                            "enum": [
+                              "line",
+                              "bar",
+                              "area"
+                            ]
+                          },
+                          "stacked": {
+                            "default": false,
+                            "type": "boolean"
+                          },
+                          "interval": {
+                            "default": "week",
+                            "type": "string",
+                            "enum": [
+                              "day",
+                              "week",
+                              "month"
+                            ]
+                          },
+                          "days": {
+                            "default": 90,
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 365
+                          },
+                          "series": {
+                            "oneOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "const": "scorecard"
+                                  },
+                                  "scorecard": {
+                                    "type": "string",
+                                    "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "scorecard"
+                                ]
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "const": "runs"
+                                  },
+                                  "metric": {
+                                    "default": "count",
+                                    "type": "string",
+                                    "enum": [
+                                      "count",
+                                      "duration",
+                                      "failureRate"
+                                    ]
+                                  },
+                                  "action": {
+                                    "type": "string",
+                                    "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                                  },
+                                  "team": {
+                                    "type": "string",
+                                    "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                                  },
+                                  "status": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string",
+                                      "enum": [
+                                        "PENDING_APPROVAL",
+                                        "QUEUED",
+                                        "IN_PROGRESS",
+                                        "SUCCESS",
+                                        "FAILURE",
+                                        "REJECTED",
+                                        "CANCELLED"
+                                      ]
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "kind"
+                                ]
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "const": "dora"
+                                  },
+                                  "metric": {
+                                    "default": "deploymentFrequency",
+                                    "type": "string",
+                                    "enum": [
+                                      "deploymentFrequency",
+                                      "leadTime",
+                                      "changeFailureRate",
+                                      "mttr"
+                                    ]
+                                  },
+                                  "team": {
+                                    "type": "string",
+                                    "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                                  },
+                                  "service": {
+                                    "type": "string",
+                                    "maxLength": 200
+                                  },
+                                  "deployments": {
+                                    "default": {},
+                                    "type": "object",
+                                    "properties": {
+                                      "blueprint": {
+                                        "default": "deployment",
+                                        "type": "string",
+                                        "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                                      },
+                                      "timeProperty": {
+                                        "default": "deployedAt",
+                                        "type": "string",
+                                        "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+                                      },
+                                      "statusProperty": {
+                                        "default": "status",
+                                        "type": "string",
+                                        "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+                                      },
+                                      "successValues": {
+                                        "default": [
+                                          "success",
+                                          "succeeded",
+                                          "healthy",
+                                          "synced"
+                                        ],
+                                        "type": "array",
+                                        "items": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "failureValues": {
+                                        "default": [
+                                          "failure",
+                                          "failed",
+                                          "error",
+                                          "degraded"
+                                        ],
+                                        "type": "array",
+                                        "items": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "mergedProperty": {
+                                        "default": "mergedAt",
+                                        "type": "string",
+                                        "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+                                      },
+                                      "serviceRelation": {
+                                        "default": "service",
+                                        "type": "string",
+                                        "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+                                      }
+                                    }
+                                  },
+                                  "deploymentActions": {
+                                    "default": [],
+                                    "maxItems": 20,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string",
+                                      "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                                    }
+                                  },
+                                  "incidents": {
+                                    "default": {},
+                                    "type": "object",
+                                    "properties": {
+                                      "blueprint": {
+                                        "default": "incident",
+                                        "type": "string",
+                                        "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                                      },
+                                      "createdProperty": {
+                                        "default": "createdAt",
+                                        "type": "string",
+                                        "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+                                      },
+                                      "resolvedProperty": {
+                                        "default": "resolvedAt",
+                                        "type": "string",
+                                        "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+                                      },
+                                      "serviceRelation": {
+                                        "default": "service",
+                                        "type": "string",
+                                        "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+                                      }
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "kind"
+                                ]
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "const": "entities"
+                                  },
+                                  "blueprint": {
+                                    "type": "string",
+                                    "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                                  },
+                                  "mode": {
+                                    "default": "total",
+                                    "type": "string",
+                                    "enum": [
+                                      "total",
+                                      "created"
+                                    ]
+                                  },
+                                  "groupBy": {
+                                    "type": "string",
+                                    "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+                                  },
+                                  "filters": {
+                                    "default": {},
+                                    "type": "object",
+                                    "propertyNames": {
+                                      "type": "string",
+                                      "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+                                    },
+                                    "additionalProperties": {
+                                      "type": "string"
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "blueprint"
+                                ]
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "series"
+                        ]
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "title": {
+                            "type": "string",
+                            "maxLength": 100
+                          },
+                          "width": {
+                            "default": 6,
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 12
+                          },
+                          "type": {
+                            "type": "string",
+                            "const": "entity"
+                          },
+                          "show": {
+                            "type": "string",
+                            "enum": [
+                              "properties",
+                              "scorecards",
+                              "relations",
+                              "links"
+                            ]
+                          },
+                          "properties": {
+                            "maxItems": 50,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+                            }
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "show"
                         ]
                       }
                     ]

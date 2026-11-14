@@ -751,3 +751,46 @@ export async function countEntities(blueprint: string, filters: Record<string, s
   const groups = rows.map((r) => ({ key: r.k ?? '—', count: Number(r.n) }));
   return { value: groups.reduce((a, g) => a + g.count, 0), groups };
 }
+
+/**
+ * Entities of a blueprint the viewer may read, counted per creation day (UTC) from `since` on, plus those created before
+ * it (the starting total), optionally per value of `groupBy`. Chart series (catalog/charts.ts); index entities_blueprint_created.
+ */
+export async function entityCreationCounts(
+  blueprint: string,
+  filters: Record<string, string>,
+  groupBy: string | undefined,
+  since: string,
+  viewer: Principal,
+): Promise<{ before: { k: string; n: number }[]; days: { d: string; k: string; n: number }[] }> {
+  const where = ['org_id = ?', 'blueprint = ?'];
+  const params: SqlValue[] = [orgId(), blueprint];
+  const vf = await readFilter(viewer);
+  if (vf) {
+    where.push(vf.sql);
+    params.push(...vf.params);
+  }
+  for (const [k, v] of Object.entries(filters)) {
+    if (!PROP.test(k)) throw badRequest(`Invalid filter property "${k}"`);
+    where.push(`COALESCE(${jsonText(k)}, ${computedText(k)}) = ?`);
+    params.push(dialect === 'sqlite' && (v === 'true' || v === 'false') ? (v === 'true' ? '1' : '0') : v);
+  }
+  if (groupBy && !PROP.test(groupBy)) throw badRequest(`Invalid property "${groupBy}"`);
+  const col = !groupBy ? "''" : groupBy === 'team' || groupBy === 'source' ? groupBy : `COALESCE(${jsonText(groupBy)}, ${computedText(groupBy)})`;
+  const w = where.join(' AND ');
+  const before = await all<{ k: string | null; n: number }>(
+    `SELECT ${col} AS k, count(*) AS n FROM entities WHERE ${w} AND created_at < ?${groupBy ? ` GROUP BY ${col}` : ''}`,
+    ...params,
+    since,
+  );
+  const days = await all<{ d: string; k: string | null; n: number }>(
+    `SELECT substr(created_at, 1, 10) AS d, ${col} AS k, count(*) AS n FROM entities WHERE ${w} AND created_at >= ? GROUP BY substr(created_at, 1, 10)${groupBy ? `, ${col}` : ''}`,
+    ...params,
+    since,
+  );
+  const key = (k: string | null) => (k == null || k === '' ? (groupBy ? '—' : '') : String(k));
+  return {
+    before: before.map((r) => ({ k: key(r.k), n: Number(r.n) })),
+    days: days.map((r) => ({ d: r.d, k: key(r.k), n: Number(r.n) })),
+  };
+}

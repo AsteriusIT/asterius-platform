@@ -11,6 +11,9 @@ export default defineConfig({
     proxy: { '/api': { target: 'http://localhost:8080', changeOrigin: true } },
   },
   build: {
+    // The dashboard charts (@mantine/charts, Recharts) are not a group: components/charts/TrendChart is imported lazily,
+    // so the library lands in that chunk alone, loaded on the first chart (a group would also pull the d3 modules it
+    // shares with @xyflow/react, and make the workflow pages load it).
     rolldownOptions: {
       output: {
         // Long-cached vendor chunks, app code stays small.

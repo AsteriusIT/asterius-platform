@@ -310,9 +310,14 @@ export const api = {
     limit?: number;
     offset?: number;
     filters?: Record<string, string>;
+    /** Scorecard → level (`none`: below the first level). */
+    levels?: Record<string, string>;
   }) => {
-    const { blueprint, filters, ...rest } = q;
-    const f = Object.fromEntries(Object.entries(filters ?? {}).map(([k, v]) => [`filter.${k}`, v]));
+    const { blueprint, filters, levels, ...rest } = q;
+    const f = Object.fromEntries([
+      ...Object.entries(filters ?? {}).map(([k, v]) => [`filter.${k}`, v]),
+      ...Object.entries(levels ?? {}).map(([k, v]) => [`scorecard.${k}`, v]),
+    ]);
     return request<EntityPage>('GET', v1(`${blueprint ? `/blueprints/${enc(blueprint)}` : ''}/entities${qs({ ...rest, ...f })}`));
   },
   entityGraph: async (bp: string, id: string, depth = 2): Promise<EntityGraph> => {
@@ -377,6 +382,10 @@ export const api = {
     entity?: string;
     /** An agent identifier, `*` (any agent) or `-` (none). */
     agent?: string;
+    team?: string;
+    /** Created at or after / before (ISO date or time). */
+    since?: string;
+    until?: string;
     limit?: number;
     offset?: number;
   }) => request<RunPage>('GET', v1(`/runs${qs(q)}`)),
@@ -452,8 +461,11 @@ export const api = {
     request<Record<string, Record<string, string | null>>>('GET', v1(`/blueprints/${enc(bp)}/scorecard-levels${qs({ ids: ids.join(',') })}`)),
 
   dashboards: () => request<Dashboard[]>('GET', v1('/dashboards')),
-  resolveDashboard: (blueprint?: string) => request<Dashboard | null>('GET', v1(`/dashboards/resolve${qs({ blueprint })}`)),
-  dashboardData: (id: string) => request<WidgetData[]>('GET', v1(`/dashboards/${enc(id)}/data`)),
+  /** `scope: 'entity'`: the dashboard that replaces the overview of the blueprint's entity pages. */
+  resolveDashboard: (blueprint?: string, scope?: 'catalog' | 'entity') =>
+    request<Dashboard | null>('GET', v1(`/dashboards/resolve${qs({ blueprint, scope })}`)),
+  /** `entity`: the entity an entity-page dashboard is shown for. */
+  dashboardData: (id: string, entity?: string) => request<WidgetData[]>('GET', v1(`/dashboards/${enc(id)}/data${qs({ entity })}`)),
   saveDashboard: (id: string, body: unknown) => request<Dashboard>('PUT', v1(`/dashboards/${enc(id)}`), body),
   deleteDashboard: (id: string) => request('DELETE', v1(`/dashboards/${enc(id)}`)),
 

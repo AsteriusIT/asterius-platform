@@ -35,6 +35,7 @@ in dark, plus the sidebar folded with `{ folded: true }`. Baselines are in `visu
 | `work.spec.ts`    | to do (+ folded), self-service, run dialog, runs (+ folded), run graph, run "All logs" panel, step waiting for an approval    |
 | `catalog.spec.ts` | catalog list (+ folded), filtered list with the views menu, entity overview, entity history                          |
 | `admin.spec.ts`   | workflow editor, step dialog, blueprints (+ folded), blueprint editor, users, teams                                  |
+| `dashboards.spec.ts` | trend charts on a catalog page, their table view, an entity page with an entity dashboard (chart data frozen in the spec) |
 
 What keeps the pixels stable (all in `support/visual.ts`):
 

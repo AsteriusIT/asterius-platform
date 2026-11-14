@@ -575,7 +575,7 @@ export function DashboardsAdmin() {
   return (
     <ResourceAdmin<Dashboard>
       title="Dashboards"
-      description="Widgets (counts, scorecard levels, runs, approvals, saved tables, DORA insights, markdown) shown on the home page, per team, or on a blueprint's page."
+      description="Widgets (counts, scorecard levels, runs, approvals, saved tables, DORA insights, trend charts, markdown) shown on the home page, per team, on a blueprint's page, or as the overview of its entity pages."
       queryKey="dashboards"
       editor={(p) => <DashboardBuilder {...p} />}
       list={api.dashboards}
@@ -584,7 +584,17 @@ export function DashboardsAdmin() {
           key: 'w',
           label: 'Where',
           render: (d) =>
-            d.blueprint ? <Badge color="gray">{d.blueprint} page</Badge> : d.team ? <Badge>{d.team} home</Badge> : d.default ? 'Home (everyone)' : '—',
+            d.blueprint ? (
+              <Badge color="gray">
+                {d.blueprint} {d.scope === 'entity' ? 'entity pages' : 'page'}
+              </Badge>
+            ) : d.team ? (
+              <Badge>{d.team} home</Badge>
+            ) : d.default ? (
+              'Home (everyone)'
+            ) : (
+              '—'
+            ),
         },
         { key: 'n', label: 'Widgets', render: (d) => d.widgets.length },
       ]}
@@ -601,6 +611,23 @@ export function DashboardsAdmin() {
               { type: 'count', title: 'By tier', blueprint: 'service', groupBy: 'tier', width: 3 },
               { type: 'approvals', width: 6 },
               { type: 'runs', mine: true, width: 12 },
+            ],
+          },
+        },
+        {
+          label: 'Entity page',
+          value: {
+            identifier: 'service-page',
+            title: 'Service page',
+            description: '',
+            blueprint: 'service',
+            scope: 'entity',
+            widgets: [
+              { type: 'markdown', content: '**{{ entity.title }}** is owned by {{ entity.team }}.', width: 12 },
+              { type: 'entity', show: 'properties', width: 7 },
+              { type: 'entity', show: 'scorecards', width: 5 },
+              { type: 'chart', title: 'Runs', chart: 'bar', stacked: true, interval: 'week', days: 60, series: { kind: 'runs', metric: 'count' }, width: 7 },
+              { type: 'entity', show: 'relations', width: 5 },
             ],
           },
         },

@@ -376,6 +376,38 @@ export type InsightsConfig = z.infer<typeof insightsConfig>;
 const widgetBase = { title: z.string().max(100).optional(), width: z.number().int().min(1).max(12).default(6) };
 const filterMap = z.record(fieldName, z.string()).prefault({});
 
+/**
+ * What a `chart` widget plots: a series bucketed by day, week or month over a window ending now, computed for the viewer
+ * (catalog/charts.ts). On an entity page the series is filtered to the entity.
+ */
+export const chartSeries = z.discriminatedUnion('kind', [
+  /** Entities per level of a scorecard (replayed from scorecard_history). */
+  z.object({ kind: z.literal('scorecard'), scorecard: slug }),
+  /** Runs started per bucket by status, their duration (p50 / p90, minutes) or their failure rate. */
+  z.object({
+    kind: z.literal('runs'),
+    metric: z.enum(['count', 'duration', 'failureRate']).default('count'),
+    action: slug.optional(),
+    team: slug.optional(),
+    status: z.array(z.enum(['PENDING_APPROVAL', 'QUEUED', 'IN_PROGRESS', 'SUCCESS', 'FAILURE', 'REJECTED', 'CANCELLED'])).optional(),
+  }),
+  /** One DORA metric per bucket, from the same sources as the `insights` widget. */
+  z.object({
+    kind: z.literal('dora'),
+    metric: z.enum(['deploymentFrequency', 'leadTime', 'changeFailureRate', 'mttr']).default('deploymentFrequency'),
+    ...insightsConfig.omit({ days: true }).shape,
+  }),
+  /** Entities of a blueprint by creation date: running total (`total`) or new ones per bucket (`created`), optionally per property value. */
+  z.object({
+    kind: z.literal('entities'),
+    blueprint: slug,
+    mode: z.enum(['total', 'created']).default('total'),
+    groupBy: propName.optional(),
+    filters: z.record(propName, z.string()).prefault({}),
+  }),
+]);
+export type ChartSeriesDef = z.infer<typeof chartSeries>;
+
 /** Widgets of a dashboard; the server computes their data for the viewer. */
 export const dashboardWidget = z.discriminatedUnion('type', [
   /** Number of entities, or their distribution by a property (`team`, `source` or any top-level property). */
@@ -414,21 +446,41 @@ export const dashboardWidget = z.discriminatedUnion('type', [
   z.object({ ...widgetBase, type: z.literal('markdown'), content: z.string().max(10_000) }),
   /** Progress of a scorecard initiative (status, done / in scope, the teams furthest behind). */
   z.object({ ...widgetBase, type: z.literal('initiative'), initiative: slug }),
+  z.object({
+    ...widgetBase,
+    type: z.literal('chart'),
+    chart: z.enum(['line', 'bar', 'area']).default('line'),
+    stacked: z.boolean().default(false),
+    interval: z.enum(['day', 'week', 'month']).default('week'),
+    days: z.number().int().min(1).max(365).default(90),
+    series: chartSeries,
+  }),
+  /** A section of the current entity (dashboards with `scope: entity`): its properties, scorecards, relations or links. */
+  z.object({
+    ...widgetBase,
+    type: z.literal('entity'),
+    show: z.enum(['properties', 'scorecards', 'relations', 'links']),
+    /** `show: properties`: only these, in this order. */
+    properties: z.array(propName).max(50).optional(),
+  }),
 ]);
 export type DashboardWidgetDef = z.infer<typeof dashboardWidget>;
 
-export const dashboardDef = z.object({
-  identifier: slug,
-  title: z.string().min(1).max(100),
-  description: z.string().max(2000).default(''),
-  /** Default dashboard of the home page for members of this team. */
-  team: slug.nullish(),
-  /** Shown on the catalog page of this blueprint. */
-  blueprint: slug.nullish(),
-  /** Home page for everyone (when no team dashboard applies). */
-  default: z.boolean().default(false),
-  widgets: z.array(dashboardWidget).max(30).default([]),
-});
+export const dashboardDef = z
+  .object({
+    identifier: slug,
+    title: z.string().min(1).max(100),
+    description: z.string().max(2000).default(''),
+    /** Default dashboard of the home page for members of this team. */
+    team: slug.nullish(),
+    /** Shown on the catalog page of this blueprint (`scope: catalog`) or as the overview of its entity pages (`scope: entity`). */
+    blueprint: slug.nullish(),
+    scope: z.enum(['catalog', 'entity']).default('catalog'),
+    /** Home page for everyone (when no team dashboard applies). */
+    default: z.boolean().default(false),
+    widgets: z.array(dashboardWidget).max(30).default([]),
+  })
+  .refine((d) => d.scope !== 'entity' || !!d.blueprint, { message: 'scope: entity needs a blueprint', path: ['scope'] });
 export type DashboardDef = z.infer<typeof dashboardDef>;
 
 export const invokerConfig = z.object({ type: z.string().min(1) }).passthrough();
@@ -1480,6 +1532,11 @@ export const entityQueryBody = z.object({
   relations: z
     .array(z.object({ relation: z.string().max(64), target: z.union([z.string().max(200), z.array(z.string().max(200)).max(100)]) }))
     .max(10)
+    .optional(),
+  /** Entities at this level of a scorecard (`none`: below the first level). */
+  scorecards: z
+    .array(z.object({ scorecard: slug, level: z.string().min(1).max(100) }))
+    .max(5)
     .optional(),
   sort: z.string().regex(SORT_RE, 'title | updated | identifier | relevance | prop:<name>').optional(),
   dir: z.enum(['asc', 'desc']).optional(),

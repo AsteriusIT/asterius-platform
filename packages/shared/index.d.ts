@@ -281,6 +281,8 @@ export interface EntityQueryBody {
   source?: string;
   filters?: PropertyFilter[];
   relations?: RelationFilter[];
+  /** Entities at this level of a scorecard (`none`: below the first level). Query string: `scorecard.<id>=<level>`. */
+  scorecards?: { scorecard: string; level: string }[];
   /** title | updated | identifier | relevance | prop:<name> */
   sort?: string;
   dir?: 'asc' | 'desc';
@@ -1816,6 +1818,16 @@ export interface Insights {
   mttr: { value: number | null; unit: 'hours'; incidents: number; band: DoraBand | null };
 }
 
+export type RunsChartMetric = 'count' | 'duration' | 'failureRate';
+export type DoraChartMetric = 'deploymentFrequency' | 'leadTime' | 'changeFailureRate' | 'mttr';
+
+/** What a `chart` widget plots. */
+export type ChartSeriesDef =
+  | { kind: 'scorecard'; scorecard: string }
+  | { kind: 'runs'; metric: RunsChartMetric; action?: string; team?: string; status?: RunStatus[] }
+  | ({ kind: 'dora'; metric: DoraChartMetric } & Omit<InsightsConfig, 'days'>)
+  | { kind: 'entities'; blueprint: string; mode: 'total' | 'created'; groupBy?: string; filters: Record<string, string> };
+
 export type DashboardWidget =
   | (WidgetBase & { type: 'count'; blueprint: string; filters: Record<string, string>; groupBy?: string })
   | (WidgetBase & { type: 'scorecard'; scorecard: string })
@@ -1832,7 +1844,16 @@ export type DashboardWidget =
     })
   | (WidgetBase & { type: 'insights' } & InsightsConfig)
   | (WidgetBase & { type: 'markdown'; content: string })
-  | (WidgetBase & { type: 'initiative'; initiative: string });
+  | (WidgetBase & { type: 'initiative'; initiative: string })
+  | (WidgetBase & {
+      type: 'chart';
+      chart: 'line' | 'bar' | 'area';
+      stacked: boolean;
+      interval: 'day' | 'week' | 'month';
+      days: number;
+      series: ChartSeriesDef;
+    })
+  | (WidgetBase & { type: 'entity'; show: 'properties' | 'scorecards' | 'relations' | 'links'; properties?: string[] });
 
 export interface Dashboard {
   identifier: string;
@@ -1840,6 +1861,8 @@ export interface Dashboard {
   description: string;
   team: string | null;
   blueprint: string | null;
+  /** `catalog`: header of the blueprint's catalog page; `entity`: overview of each entity page of the blueprint. */
+  scope: 'catalog' | 'entity';
   default: boolean;
   widgets: DashboardWidget[];
   managed: boolean;
@@ -1854,7 +1877,7 @@ export type WidgetData =
   | { type: 'approvals'; items: Run[]; total: number }
   | { type: 'table'; blueprint: string; items: Entity[]; total: number }
   | ({ type: 'insights' } & Insights)
-  | { type: 'markdown' }
+  | { type: 'markdown'; content?: string }
   | {
       type: 'initiative';
       initiative: string;
@@ -1865,7 +1888,37 @@ export type WidgetData =
       progress: InitiativeCounts;
       /** The teams furthest behind (lowest ratio first). */
       teams: InitiativeTeamProgress[];
-    };
+    }
+  | ChartData
+  | { type: 'entity' };
+
+/**
+ * A computed chart: `buckets` are the start dates (YYYY-MM-DD, UTC) of the intervals, each series has one value per
+ * bucket (null: no data). `drill` says which list a click on a point opens.
+ */
+export interface ChartData {
+  type: 'chart';
+  interval: 'day' | 'week' | 'month';
+  buckets: string[];
+  /** Unit of the values: a count, minutes, hours, a ratio (0-1) or per day. */
+  unit: 'count' | 'minutes' | 'hours' | 'ratio' | 'per_day';
+  series: ChartSeriesData[];
+  /** Which list a point opens: entities of a blueprint (catalog filters) or runs; null: none. */
+  drill: { kind: 'catalog'; blueprint: string } | { kind: 'runs' } | null;
+}
+
+export interface ChartSeriesData {
+  key: string;
+  label: string;
+  /** Mantine colour chosen by the server (run status, scorecard level colour); else the categorical order applies. */
+  color?: string;
+  values: (number | null)[];
+  /**
+   * URL parameters of the list this series drills into (catalog: `f`, `level`; runs: `scope`, `status`, `action`, `team`,
+   * `blueprint`, `entity`). For runs the client adds the bucket's `since` / `until`.
+   */
+  filter?: Record<string, string[]>;
+}
 
 // ---- preferences/views ----
 /** Per-user, per-organization preferences (GET/PUT /api/v1/me/preferences). Form drafts stay in the browser. */

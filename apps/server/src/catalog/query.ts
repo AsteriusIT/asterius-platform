@@ -26,9 +26,14 @@ const csv = (v: string) =>
  * `filter.tier=1` (eq) · `filter.tier[gt]=2` · `filter.lang[in]=go,rust` · `filter.tier[between]=1,3` ·
  * `filter.owner[exists]=true` · `relation.system=payments` (or `a,b`).
  */
-export function parseFilterParams(query: Record<string, unknown>): { filters: PropertyFilter[]; relations: RelationFilter[] } {
+export function parseFilterParams(query: Record<string, unknown>): {
+  filters: PropertyFilter[];
+  relations: RelationFilter[];
+  scorecards: { scorecard: string; level: string }[];
+} {
   const filters: PropertyFilter[] = [];
   const relations: RelationFilter[] = [];
+  const scorecards: { scorecard: string; level: string }[] = [];
   for (const [key, raw] of Object.entries(query)) {
     if (typeof raw !== 'string') continue;
     const f = /^filter\.([^[]+?)(?:\[(\w+)\])?$/.exec(key);
@@ -41,8 +46,10 @@ export function parseFilterParams(query: Record<string, unknown>): { filters: Pr
     }
     const r = /^relation\.(.+)$/.exec(key);
     if (r) relations.push({ relation: r[1]!, target: csv(raw) });
+    const sc = /^scorecard\.(.+)$/.exec(key);
+    if (sc && raw) scorecards.push({ scorecard: sc[1]!, level: raw });
   }
-  return { filters, relations };
+  return { filters, relations, scorecards };
 }
 
 // ---------- compilation ----------
@@ -223,6 +230,15 @@ export async function compileEntityQuery(q: EntityQueryBody, myTeams?: string[])
   }
   for (const f of q.filters ?? []) where.push(propertyClause(f, params));
   for (const r of q.relations ?? []) where.push(relationClause(r, params));
+  for (const sc of q.scorecards ?? []) {
+    if (!/^[a-z][a-z0-9_-]{0,63}$/.test(sc.scorecard)) throw badRequest(`Invalid scorecard "${sc.scorecard}"`);
+    const none = sc.level === 'none';
+    params.push(sc.scorecard, ...(none ? [] : [sc.level]));
+    // Scored entities only: one not evaluated yet has no level, not even `none`.
+    where.push(
+      `EXISTS (SELECT 1 FROM scorecard_results s WHERE s.org_id = entities.org_id AND s.blueprint = entities.blueprint AND s.entity = entities.identifier AND s.scorecard = ? AND ${none ? 's.level IS NULL' : 's.level = ?'})`,
+    );
+  }
 
   const sort = (q.sort ?? (terms.length ? 'relevance' : 'title')).replace(/^prop\./, 'prop:') as SortKey;
   const orderParams: SqlValue[] = [];

@@ -167,11 +167,21 @@ export async function catalogRoutes(app: FastifyInstance) {
   });
   app.get('/dashboards', async () => listDashboards());
   app.get('/dashboards/resolve', async (req) => {
-    const { blueprint } = z.object({ blueprint: z.string().optional() }).parse(req.query);
-    return resolveDashboard(req.principal, blueprint);
+    const { blueprint, scope } = z.object({ blueprint: z.string().optional(), scope: z.enum(['catalog', 'entity']).optional() }).parse(req.query);
+    return resolveDashboard(req.principal, blueprint, scope);
   });
   app.get('/dashboards/:id', async (req) => getDashboard(idParam.parse(req.params).id));
-  app.get('/dashboards/:id/data', async (req) => dashboardData(await getDashboard(idParam.parse(req.params).id), req.principal));
+  /** `entity`: the entity an entity-page dashboard (`scope: entity`) is shown for; its widgets are filtered to it. */
+  app.get('/dashboards/:id/data', async (req) => {
+    const d = await getDashboard(idParam.parse(req.params).id);
+    const { entity: id } = z.object({ entity: z.string().max(200).optional() }).parse(req.query);
+    if (id === undefined) return dashboardData(d, req.principal);
+    if (d.scope !== 'entity' || !d.blueprint) throw badRequest('Only a dashboard with scope: entity takes an entity');
+    const e = await getEntity(d.blueprint, id);
+    // 404 rather than 403: do not reveal that a hidden entity exists.
+    if (!(await canRead(req.principal, e))) throw notFound(`Entity ${d.blueprint}/${id}`);
+    return dashboardData(d, req.principal, e);
+  });
   app.put('/dashboards/:id', { preHandler: requireAdmin }, async (req) => {
     const { id } = idParam.parse(req.params);
     const { dashboard, created } = await upsertDashboard({ ...(req.body as object), identifier: id });

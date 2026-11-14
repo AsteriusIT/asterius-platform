@@ -10,6 +10,7 @@ import {
   Modal,
   MultiSelect,
   NativeSelect,
+  Pill,
   SegmentedControl,
   Select,
   SimpleGrid,
@@ -102,8 +103,14 @@ export const runColumns = [
 /** The filters grow in the row of the scope switch and go to their own row under this width (px). */
 const FILTERS_FLEX = '1 1 640px';
 
+const withoutKeys = (prev: URLSearchParams, keys: string[]) => {
+  const out = new URLSearchParams(prev);
+  for (const k of keys) out.delete(k);
+  return out;
+};
+
 export function Runs() {
-  const [params, set] = useUrlParams();
+  const [params, set, setParams] = useUrlParams();
   const navigate = useNavigate();
   const scope = params.get('scope') ?? 'mine';
   const status = params.get('status')?.split(',').filter(Boolean) ?? [];
@@ -111,12 +118,16 @@ export function Runs() {
   const action = params.get('action');
   const blueprint = params.get('blueprint');
   const entity = params.get('entity');
+  // Set by chart drill-downs: a creation-time range and an owner team.
+  const since = params.get('since');
+  const until = params.get('until');
+  const team = params.get('team');
   // `?agent=`: runs started by an AI agent (`*`: any), linked from Admin > Agents.
   const agent = params.get('agent');
   const blueprints = useQuery({ queryKey: ['blueprints'], queryFn: api.blueprints, staleTime: 30_000 });
   const actions = useQuery({ queryKey: ['actions', 'all'], queryFn: () => api.actions(), staleTime: 60_000 });
   const q = useQuery({
-    queryKey: ['runs', scope, status.join(','), action, blueprint, entity, agent, page],
+    queryKey: ['runs', scope, status.join(','), action, blueprint, entity, agent, since, until, team, page],
     queryFn: () =>
       api.runs({
         mine: scope === 'mine',
@@ -126,6 +137,9 @@ export function Runs() {
         blueprint: blueprint ?? undefined,
         entity: entity ?? undefined,
         agent: agent ?? undefined,
+        since: since ?? undefined,
+        until: until ?? undefined,
+        team: team ?? undefined,
         limit: PAGE,
         offset: (page - 1) * PAGE,
       }),
@@ -183,6 +197,24 @@ export function Runs() {
       {agent && (
         <Group gap="xs">
           <Select aria-label="Filter by AI agent" data={agentFilterOptions([agent])} value={agent} onChange={(v) => set('agent', v ?? '')} clearable w={240} />
+        </Group>
+      )}
+      {(since || until || team) && (
+        <Group gap="2xs" aria-label="Other filters">
+          {(since || until) && (
+            <Pill
+              withRemoveButton
+              removeButtonProps={{ 'aria-label': 'Remove the date filter' }}
+              onRemove={() => setParams((prev) => withoutKeys(prev, ['since', 'until', 'page']), { replace: true })}
+            >
+              Created {since ? `from ${since.slice(0, 10)}` : ''} {until ? `before ${until.slice(0, 10)}` : ''}
+            </Pill>
+          )}
+          {team && (
+            <Pill withRemoveButton removeButtonProps={{ 'aria-label': 'Remove the team filter' }} onRemove={() => set('team', null)}>
+              Team {team}
+            </Pill>
+          )}
         </Group>
       )}
       <DataTable

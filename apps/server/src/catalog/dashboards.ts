@@ -1,4 +1,4 @@
-import type { Dashboard, DashboardWidget, WidgetData } from '@asterius/shared';
+import type { Dashboard, DashboardWidget, Entity, WidgetData } from '@asterius/shared';
 import { all, bool, json, now, one, run } from '../db.js';
 import { errorMessage, managedError, notFound } from '../lib/errors.js';
 import { dashboardDef, type DashboardDef } from '../schemas.js';
@@ -11,6 +11,8 @@ import { visibleBlueprints } from '../auth/access.js';
 import { computeInsights } from './insights.js';
 import { initiativeWidget } from './initiatives.js';
 import { orgId } from '../orgs/context.js';
+import { chartData, type EntityContext } from './charts.js';
+import { render } from '../lib/expr.js';
 
 /**
  * Dashboards: a set of widgets (entity counts, scorecard levels, recent runs, pending approvals, saved table
@@ -24,6 +26,7 @@ interface Row {
   description: string;
   team: string | null;
   blueprint: string | null;
+  scope: string | null;
   is_default: number;
   widgets: string;
   managed: number;
@@ -35,6 +38,7 @@ const toDashboard = (r: Row): Dashboard => ({
   description: r.description,
   team: r.team,
   blueprint: r.blueprint,
+  scope: r.scope === 'entity' ? 'entity' : 'catalog',
   default: bool(r.is_default),
   widgets: json(r.widgets, []),
   managed: bool(r.managed),
@@ -56,17 +60,27 @@ export async function upsertDashboard(input: unknown, opts: { managed?: boolean 
   const existing = await one<Row>('SELECT * FROM dashboards WHERE org_id = ? AND identifier = ?', org, def.identifier);
   if (existing && bool(existing.managed) && !opts.managed) throw managedError('Dashboard', def.identifier);
   const t = now();
-  const vals = [def.title, def.description, def.team ?? null, def.blueprint ?? null, def.default ? 1 : 0, JSON.stringify(def.widgets), opts.managed ? 1 : 0, t];
+  const vals = [
+    def.title,
+    def.description,
+    def.team ?? null,
+    def.blueprint ?? null,
+    def.scope,
+    def.default ? 1 : 0,
+    JSON.stringify(def.widgets),
+    opts.managed ? 1 : 0,
+    t,
+  ];
   if (existing)
     await run(
-      'UPDATE dashboards SET title = ?, description = ?, team = ?, blueprint = ?, is_default = ?, widgets = ?, managed = ?, updated_at = ? WHERE org_id = ? AND identifier = ?',
+      'UPDATE dashboards SET title = ?, description = ?, team = ?, blueprint = ?, scope = ?, is_default = ?, widgets = ?, managed = ?, updated_at = ? WHERE org_id = ? AND identifier = ?',
       ...vals,
       org,
       def.identifier,
     );
   else
     await run(
-      'INSERT INTO dashboards (title, description, team, blueprint, is_default, widgets, managed, updated_at, created_at, org_id, identifier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO dashboards (title, description, team, blueprint, scope, is_default, widgets, managed, updated_at, created_at, org_id, identifier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       ...vals,
       t,
       org,
@@ -83,20 +97,26 @@ export async function deleteDashboard(id: string, opts: { managed?: boolean } = 
 
 /**
  * The dashboard to show: for a blueprint page, the dashboard of that blueprint (the viewer's team first); for the
- * home page, the dashboard of one of the viewer's teams, else the default one. Null: the built-in page.
+ * home page, the dashboard of one of the viewer's teams, else the default one; for an entity page (`scope: entity`), the
+ * entity dashboard of its blueprint. Null: the built-in page.
  */
-export async function resolveDashboard(p: Principal, blueprint?: string): Promise<Dashboard | null> {
+export async function resolveDashboard(p: Principal, blueprint?: string, scope: Dashboard['scope'] = 'catalog'): Promise<Dashboard | null> {
   const all_ = await listDashboards();
   const mine = (d: Dashboard) => !!d.team && p.teams.includes(d.team);
   if (blueprint) {
-    const forBlueprint = all_.filter((d) => d.blueprint === blueprint);
+    const forBlueprint = all_.filter((d) => d.blueprint === blueprint && d.scope === scope);
     return forBlueprint.find(mine) ?? forBlueprint.find((d) => !d.team) ?? null;
   }
+  if (scope === 'entity') return null;
   const home = all_.filter((d) => !d.blueprint);
   return home.find(mine) ?? home.find((d) => d.default && !d.team) ?? null;
 }
 
-async function widgetData(w: DashboardWidget, p: Principal): Promise<WidgetData> {
+/** Markdown values come from entity properties: neutralise what would make them links, images or HTML. */
+const escapeMarkdown = (text: string) => text.replace(/[\\`*_[\]()<>!|#]/g, (c) => `\\${c}`);
+
+async function widgetData(w: DashboardWidget, p: Principal, entity?: Entity): Promise<WidgetData> {
+  const ctx: EntityContext | undefined = entity ? { blueprint: entity.blueprint, identifier: entity.identifier } : undefined;
   switch (w.type) {
     case 'count':
       return { type: 'count', ...(await countEntities(w.blueprint, w.filters, w.groupBy, p)) };
@@ -108,7 +128,10 @@ async function widgetData(w: DashboardWidget, p: Principal): Promise<WidgetData>
       return { type: 'scorecard', scorecard: sc.identifier, title: sc.title, levels: sc.levels, distribution: s.distribution, total: s.total };
     }
     case 'runs': {
-      const r = await listRuns({ mine: w.mine ? p.id : undefined, status: w.status, action: w.action, limit: w.limit, offset: 0 }, p);
+      const r = await listRuns(
+        { mine: w.mine ? p.id : undefined, status: w.status, action: w.action, blueprint: ctx?.blueprint, entity: ctx?.identifier, limit: w.limit, offset: 0 },
+        p,
+      );
       return { type: 'runs', items: r.items, total: r.total ?? r.items.length };
     }
     case 'approvals': {
@@ -129,16 +152,27 @@ async function widgetData(w: DashboardWidget, p: Principal): Promise<WidgetData>
     }
     case 'insights': {
       const { type: _t, title: _ti, width: _w, ...cfg } = w;
-      return { type: 'insights', ...(await computeInsights(cfg, p)) };
+      return { type: 'insights', ...(await computeInsights(ctx ? { ...cfg, service: ctx.identifier } : cfg, p)) };
     }
-    case 'markdown':
-      return { type: 'markdown' };
+    case 'markdown': {
+      if (!entity || !w.content.includes('{{')) return { type: 'markdown' };
+      // `{{ expression }}` over the entity (JSONata), as in action templates; no secret or environment references.
+      const { value } = await render(w.content, { entity }, async () => '', { noRefs: true, wrap: escapeMarkdown });
+      return { type: 'markdown', content: String(value ?? '') };
+    }
     case 'initiative':
       return initiativeWidget(p, w.initiative);
+    case 'chart':
+      return chartData(w, p, ctx);
+    case 'entity':
+      return { type: 'entity' };
   }
 }
 
-/** Data of every widget; a failing widget reports its error instead of breaking the dashboard. */
-export async function dashboardData(d: Dashboard, p: Principal): Promise<WidgetData[]> {
-  return Promise.all(d.widgets.map((w) => widgetData(w, p).catch((err): WidgetData => ({ error: errorMessage(err) }))));
+/**
+ * Data of every widget; a failing widget reports its error instead of breaking the dashboard. `entity`: the entity an
+ * entity-page dashboard is shown for (already checked readable by the caller); its widgets are filtered to it.
+ */
+export async function dashboardData(d: Dashboard, p: Principal, entity?: Entity): Promise<WidgetData[]> {
+  return Promise.all(d.widgets.map((w) => widgetData(w, p, entity).catch((err): WidgetData => ({ error: errorMessage(err) }))));
 }

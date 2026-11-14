@@ -689,7 +689,7 @@ All endpoints take `Authorization: Bearer <token>`. Personal tokens come from th
 | Method & path | |
 |---|---|
 | `GET /api/v1/blueprints` · `PUT/DELETE /api/v1/blueprints/:bp` | blueprints (PUT/DELETE: admin) |
-| `GET /api/v1/blueprints/:bp/entities?search=&team=&sort=title\|updated&limit=&offset=&filter.<prop>=<value>` | list and search |
+| `GET /api/v1/blueprints/:bp/entities?search=&team=&sort=title\|updated&limit=&offset=&filter.<prop>=<value>&scorecard.<id>=<level>` | list and search (`scorecard.<id>=none`: below the first level) |
 | `GET /api/v1/entities?search=` | search across blueprints |
 | `GET /api/v1/blueprints/:bp/entities/:id` · `…/related` · `…/actions` | entity, relations both ways, available day-2 actions |
 | `PUT /api/v1/blueprints/:bp/entities/:id` | create or replace (idempotent) |
@@ -704,9 +704,9 @@ All endpoints take `Authorization: Bearer <token>`. Personal tokens come from th
 | `GET /api/v1/policies` · `PUT\|DELETE /api/v1/policies/:id` | policy gate definitions (admin) |
 | `GET /api/v1/initiatives` · `GET …/initiatives/:id` · `GET …/:id/entities?status=failing\|passing\|exempt&team=` · `PUT\|DELETE …/initiatives/:id` | scorecard initiatives with progress, per-team breakdown and trend (PUT/DELETE: admin) |
 | `GET\|POST /api/v1/initiatives/:id/exemptions` · `DELETE …/exemptions/:exemption` · `GET /api/v1/me/initiatives` | exemptions (POST/DELETE: admins and the owner), the caller's teams' failing entities |
-| `GET /api/v1/dashboards/resolve?blueprint=` · `GET …/dashboards/:id/data` | the dashboard to show and its widget data |
+| `GET /api/v1/dashboards/resolve?blueprint=&scope=` · `GET …/dashboards/:id/data?entity=` | the dashboard to show (`scope=entity`: of an entity page) and its widget data |
 | `GET /api/v1/actions` · `POST /api/v1/actions/:id/runs` `{ entity?, inputs }` | trigger actions from scripts |
-| `GET /api/v1/runs?mine=true&status=…` · `GET /api/v1/runs/:id` | runs with logs and approvals |
+| `GET /api/v1/runs?mine=true&status=…&action=&team=&since=&until=` · `GET /api/v1/runs/:id` | runs with logs and approvals (`since` / `until`: creation time) |
 | `POST /api/v1/runs/:id/approve\|reject\|cancel` | `{ comment }` |
 | `POST /api/v1/ingest/:integration` | inbound webhook (integration secret, not a user token) |
 
@@ -762,7 +762,27 @@ policies:
 
 **Supply chain.** Vulnerability and SBOM blueprints, Snyk and CycloneDX mappings and a security scorecard are described in [SUPPLY-CHAIN.md](SUPPLY-CHAIN.md).
 
-**Dashboards.** Widgets: `count` (optionally `groupBy` a property, `team` or `source`), `scorecard`, `runs`, `approvals`, `table` (a saved view), `insights` (DORA metrics, below), `initiative` (`initiative: <id>`), `markdown`. A dashboard with `default: true` is the home page; with `team:` it is the home page of that team; with `blueprint:` it appears on that blueprint's catalog page.
+**Dashboards.** Widgets: `count` (optionally `groupBy` a property, `team` or `source`), `scorecard`, `runs`, `approvals`, `table` (a saved view), `insights` (DORA metrics, below), `initiative` (`initiative: <id>`), `markdown`, `chart` (trends, below) and `entity` (entity pages, below). A dashboard with `default: true` is the home page; with `team:` it is the home page of that team; with `blueprint:` it appears on that blueprint's catalog page; with `blueprint:` and `scope: entity` it is the overview of that blueprint's entity pages.
+
+**Trend charts.** A `chart` widget plots one `series`, computed on the server for the viewer (the blueprints, runs and scorecards they may read) and bucketed by `interval` (`day`, `week` starting Monday, `month`; UTC) over `days` (default 90) ending now; `chart` is `line` (default), `bar` or `area`, `stacked: true` stacks bars and areas. Series:
+- `kind: scorecard`, `scorecard`: entities per level at the end of each bucket, replayed from the scorecard history (`Below first level` included; levels keep their colour).
+- `kind: runs`, `metric`: `count` (runs started per bucket, one series per status), `duration` (p50 and p90 of finished runs, in minutes) or `failureRate` (failed / (succeeded + failed)); optional `action`, `team`, `status`.
+- `kind: dora`, `metric`: `deploymentFrequency`, `leadTime`, `changeFailureRate` or `mttr`, with the sources of the `insights` widget (`deployments`, `deploymentActions`, `incidents`, `team`, `service`).
+- `kind: entities`, `blueprint`: entities by creation date, `mode: total` (running total, default) or `created` (new ones per bucket), optionally per `groupBy` value (eight series at most, the rest folds into "Other") and `filters`. Deleted entities are not counted.
+
+Clicking a bar or a point opens the list behind it: the runs list filtered by the series (status, action, team) and the bucket's dates (`/runs?status=FAILURE&since=…&until=…`), or the catalog list of the blueprint with the series' filters (`f=language:go`, `level=<scorecard>:<level>` for a scorecard level; the catalog shows the entities as they are now, not as they were then). Legend items link to the same lists without the dates. Each chart has a table view of every value (the toggle at its top right), and the chart library (`@mantine/charts`, Recharts) is loaded on the first chart only. Colours come from the brand's categorical chart palette (`--chart-1`…`--chart-8` in `@asterius/brand`, validated for colour-vision deficiencies in both schemes): in that fixed order, a run status always in the same colour.
+
+```yaml
+- type: chart
+  title: Deploy runs by status
+  chart: bar
+  stacked: true
+  interval: week
+  days: 60
+  series: { kind: runs, metric: count, action: deploy-service }
+```
+
+**Entity pages.** A dashboard with `blueprint: <id>` and `scope: entity` replaces the *Overview* tab of every entity of that blueprint (the other tabs stay; the viewer's team dashboard wins, like on catalog pages). Its widgets take the entity as context: `entity` widgets show one of its sections (`show: properties`, optionally only `properties: [a, b]`, `scorecards`, `relations`, `links`); `runs` widgets and `runs` charts list its runs; `insights` and `dora` charts take it as the `service`; `scorecard` charts follow its level; `markdown` may embed `{{ expression }}` (JSONata over `{ entity }`, values escaped, no secret references). Other widgets behave as anywhere else. The data comes from `GET /api/v1/dashboards/:id/data?entity=<identifier>` (404 when the viewer cannot read the entity). Without such a dashboard the built-in overview is shown. See `service-page` in `examples/demo-config/dashboards.yaml`.
 
 **Delivery insights (DORA).** The `insights` widget shows the four DORA metrics over `days` (default 30) as stat tiles with their band (elite / high / medium / low); the same numbers are served by `GET /api/v1/insights`, scoped to the organization and to the blueprints the caller may read. Optional `team` / `service` filters. Sources, all configurable:
 - *Deployment frequency* and *change failure rate*: entities of `deployments.blueprint` (default `deployment`, e.g. the Argo CD preset, whose example mapping sets `deployedAt` and `status` from the last sync operation) with `timeProperty` (default `deployedAt`) in the window and a `statusProperty` (default `status`) matching `successValues` (`success`, `succeeded`, `healthy`, `synced`) or `failureValues` (`failure`, `failed`, `error`, `degraded`); other states are ignored. `deploymentActions` adds the runs of those actions (SUCCESS = deployment, FAILURE = failed deployment).

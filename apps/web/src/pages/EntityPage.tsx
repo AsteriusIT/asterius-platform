@@ -1,16 +1,16 @@
 import { useState } from 'react';
-import { Anchor, Badge, Button, Card, Grid, Group, Menu, SegmentedControl, SimpleGrid, Stack, Table, Tabs, Text, Tooltip } from '@mantine/core';
+import { Badge, Button, Card, Grid, Group, Menu, SegmentedControl, Stack, Tabs, Text, Tooltip } from '@mantine/core';
 import { modals } from '@mantine/modals';
 import { notifications } from '@mantine/notifications';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
-import { IconCheck, IconChevronDown, IconDots, IconPencil, IconTrash, IconX } from '@tabler/icons-react';
-import type { Action, Blueprint, Entity, ScorecardResult } from '@asterius/shared';
+import { useNavigate, useParams, useSearchParams } from 'react-router';
+import { IconDots, IconPencil, IconTrash } from '@tabler/icons-react';
+import type { Action, Blueprint, Entity } from '@asterius/shared';
 import { api, errorText } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { formOf } from '../lib/permissions';
-import { PropertyValue } from '../components/PropertyValue';
-import { orderedFields } from '../components/SchemaForm';
+import { DashboardView } from '../components/DashboardView';
+import { EntityProperties, entityLinks, LinkList, RelationGroups, ScorecardRules } from '../components/EntitySections';
 import { ActionRunModal } from '../components/ActionRunModal';
 import { EntityHistory } from '../components/EntityHistory';
 import { DataTable } from '../components/DataTable';
@@ -18,7 +18,7 @@ import { EntityEditor } from '../components/EntityEditor';
 import { CodeBlock } from '../components/CodeEditor';
 import { EntityIcon } from '../components/icons';
 import { RelationGraph } from '../components/RelationGraph';
-import { Empty, LevelBadge, Markdown, Mono, PageHeader, QueryView, StatusBadge, TimeAgo } from '../components/ui';
+import { Markdown, Mono, PageHeader, QueryView, StatusBadge, TimeAgo } from '../components/ui';
 import { UserChip } from '../components/UserChip';
 
 export function EntityPage() {
@@ -30,8 +30,6 @@ export function EntityPage() {
 
 const TABS = ['overview', 'docs', 'graph', 'history', 'runs', 'json'];
 
-const entityLink = (e: Pick<Entity, 'blueprint' | 'identifier'>) => `/catalog/${e.blueprint}/${encodeURIComponent(e.identifier)}`;
-
 function EntityView({ bp, e }: { bp: Blueprint; e: Entity }) {
   const { user, isAdmin } = useAuth();
   const navigate = useNavigate();
@@ -40,9 +38,13 @@ function EntityView({ bp, e }: { bp: Blueprint; e: Entity }) {
   const [editing, setEditing] = useState(false);
   const [params, setParams] = useSearchParams();
   const tab = TABS.includes(params.get('tab') ?? '') ? params.get('tab')! : 'overview';
-  const links = Object.entries(bp.schema.properties)
-    .filter(([k, p]) => p.format === 'url' && typeof e.properties[k] === 'string' && /^https?:\/\//.test(e.properties[k] as string))
-    .map(([k, p]) => ({ label: p.title ?? k, href: e.properties[k] as string }));
+  const links = entityLinks(bp, e);
+  // An entity-page dashboard of the blueprint (`scope: entity`) replaces the built-in overview.
+  const dashboard = useQuery({
+    queryKey: ['dashboard-resolve', bp.identifier, 'entity'],
+    queryFn: () => api.resolveDashboard(bp.identifier, 'entity'),
+    staleTime: 60_000,
+  });
   const hasDocs = Object.entries(bp.schema.properties).some(([k, p]) => p.format === 'docs' && typeof e.properties[k] === 'string' && !!e.properties[k]);
   const related = useQuery({ queryKey: ['related', bp.identifier, e.identifier], queryFn: () => api.related(bp.identifier, e.identifier) });
   const actions = useQuery({ queryKey: ['entity-actions', bp.identifier, e.identifier], queryFn: () => api.entityActions(bp.identifier, e.identifier) });
@@ -168,85 +170,55 @@ function EntityView({ bp, e }: { bp: Blueprint; e: Entity }) {
         </Tabs.List>
 
         <Tabs.Panel value="overview">
-          <Grid>
-            <Grid.Col span={{ base: 12, md: 7 }}>
-              <Card>
-                <Text fw={600} mb="sm">
-                  Properties
-                </Text>
-                <Table withRowBorders={false} verticalSpacing="2xs" highlightOnHover={false}>
-                  <Table.Tbody>
-                    {orderedFields(bp.schema).map((k) => (
-                      <Table.Tr key={k}>
-                        <Table.Td w="35%" c="dimmed" fz="sm" className="align-top">
-                          {bp.schema.properties[k].title ?? k}
-                        </Table.Td>
-                        <Table.Td>
-                          <PropertyValue schema={bp.schema.properties[k]} value={e.properties[k]} />
-                        </Table.Td>
-                      </Table.Tr>
-                    ))}
-                    {Object.entries(bp.computed ?? {}).map(([k, c]) => (
-                      <Table.Tr key={`computed-${k}`}>
-                        <Table.Td w="35%" c="dimmed" fz="sm" className="align-top">
-                          <Tooltip label={`Computed (${c.kind})`}>
-                            <span>{c.title ?? k}</span>
-                          </Tooltip>
-                        </Table.Td>
-                        <Table.Td>
-                          <PropertyValue value={e.computed?.[k]} />
-                        </Table.Td>
-                      </Table.Tr>
-                    ))}
-                    {Object.keys(e.properties)
-                      .filter((k) => !bp.schema.properties[k])
-                      .map((k) => (
-                        <Table.Tr key={k}>
-                          <Table.Td c="dimmed" fz="sm">
-                            {k}
-                          </Table.Td>
-                          <Table.Td>
-                            <PropertyValue value={e.properties[k]} />
-                          </Table.Td>
-                        </Table.Tr>
-                      ))}
-                  </Table.Tbody>
-                </Table>
-              </Card>
-            </Grid.Col>
-            <Grid.Col span={{ base: 12, md: 5 }}>
-              <Stack>
-                {(scorecards.data ?? []).map((sc) => (
-                  <ScorecardCard key={sc.scorecard} result={sc} />
-                ))}
-                {links.length > 0 && (
-                  <Card>
-                    <Text fw={600} mb="xs">
-                      Links
-                    </Text>
-                    <Stack gap="3xs">
-                      {links.map((l) => (
-                        <Anchor key={l.href} href={l.href} target="_blank" rel="noopener noreferrer" fz="sm">
-                          {l.label}
-                        </Anchor>
-                      ))}
-                    </Stack>
-                  </Card>
-                )}
-                <QueryView q={related}>
-                  {(rel) => (
-                    <>
-                      <RelationCard title="Relations" groups={Object.entries(bp.relations).map(([name, r]) => [r.title ?? name, rel.outgoing[name] ?? []])} />
-                      <RelationCard
-                        title="Referenced by"
-                        groups={Object.entries(rel.incoming).map(([k, list]) => [rel.incomingTitles?.[k] ?? k.replace('.', ' · '), list])}
-                      />
-                    </>
+          {dashboard.data ? (
+            <DashboardView dashboard={dashboard.data} entity={e} blueprint={bp} />
+          ) : (
+            <Grid>
+              <Grid.Col span={{ base: 12, md: 7 }}>
+                <Card>
+                  <Text fw={600} mb="sm">
+                    Properties
+                  </Text>
+                  <EntityProperties bp={bp} e={e} />
+                </Card>
+              </Grid.Col>
+              <Grid.Col span={{ base: 12, md: 5 }}>
+                <Stack>
+                  {(scorecards.data ?? []).map((sc) => (
+                    <Card key={sc.scorecard}>
+                      <ScorecardRules result={sc} />
+                    </Card>
+                  ))}
+                  {links.length > 0 && (
+                    <Card>
+                      <Text fw={600} mb="xs">
+                        Links
+                      </Text>
+                      <LinkList links={links} />
+                    </Card>
                   )}
-                </QueryView>
-              </Stack>
-            </Grid.Col>
-          </Grid>
+                  <QueryView q={related}>
+                    {(rel) => (
+                      <>
+                        <Card>
+                          <Text fw={600} mb="sm">
+                            Relations
+                          </Text>
+                          <RelationGroups groups={Object.entries(bp.relations).map(([name, r]) => [r.title ?? name, rel.outgoing[name] ?? []])} />
+                        </Card>
+                        <Card>
+                          <Text fw={600} mb="sm">
+                            Referenced by
+                          </Text>
+                          <RelationGroups groups={Object.entries(rel.incoming).map(([k, list]) => [rel.incomingTitles?.[k] ?? k.replace('.', ' · '), list])} />
+                        </Card>
+                      </>
+                    )}
+                  </QueryView>
+                </Stack>
+              </Grid.Col>
+            </Grid>
+          )}
         </Tabs.Panel>
 
         {hasDocs && (
@@ -306,44 +278,10 @@ function EntityView({ bp, e }: { bp: Blueprint; e: Entity }) {
           void qc.invalidateQueries({ queryKey: ['related'] });
           void qc.invalidateQueries({ queryKey: ['history'] });
           void qc.invalidateQueries({ queryKey: ['entity-scorecards'] });
+          void qc.invalidateQueries({ queryKey: ['dashboard-data'] });
         }}
       />
     </Stack>
-  );
-}
-
-function ScorecardCard({ result }: { result: ScorecardResult }) {
-  return (
-    <Card>
-      <Group justify="space-between" mb="sm">
-        <Text fw={600}>{result.scorecardTitle}</Text>
-        <Group gap="xs">
-          <Text fz="xs" c="dimmed">
-            {result.passed}/{result.total} rules
-          </Text>
-          <LevelBadge level={result.level} color={result.levelColor} />
-        </Group>
-      </Group>
-      <Stack gap="3xs">
-        {result.rules.map((r) => (
-          <Group key={r.rule} gap="xs" wrap="nowrap" align="flex-start">
-            {r.passed ? <IconCheck size={16} color="var(--mantine-color-green-6)" /> : <IconX size={16} color="var(--mantine-color-red-6)" />}
-            <Text fz="sm" flex={1}>
-              {r.title}
-              {r.error && (
-                <Text span fz="xs" c="red">
-                  {' '}
-                  ({r.error})
-                </Text>
-              )}
-            </Text>
-            <Badge size="xs" color="gray" variant="outline">
-              {r.level}
-            </Badge>
-          </Group>
-        ))}
-      </Stack>
-    </Card>
   );
 }
 
@@ -380,47 +318,6 @@ function GraphPanel({ bp, id }: { bp: string; id: string }) {
         />
       </Group>
       <QueryView q={q}>{(g) => <RelationGraph graph={g} />}</QueryView>
-    </Card>
-  );
-}
-
-function RelationCard({ title, groups }: { title: string; groups: [string, Entity[]][] }) {
-  const nonEmpty = groups.filter(([, l]) => l.length);
-  return (
-    <Card>
-      <Text fw={600} mb="sm">
-        {title}
-      </Text>
-      {!nonEmpty.length && <Empty title="None" />}
-      <SimpleGrid cols={1} spacing="sm">
-        {nonEmpty.map(([label, list]) => (
-          <div key={label}>
-            <Group gap="3xs" mb="3xs">
-              <IconChevronDown size={14} />
-              <Text fz="xs" c="dimmed" fw={500}>
-                {label}
-              </Text>
-            </Group>
-            <Group gap="2xs">
-              {list.map((x) =>
-                x.source === 'missing' ? (
-                  <Tooltip key={x.identifier} label="Not in the catalog (yet)">
-                    <Badge color="gray" variant="outline" td="line-through">
-                      {x.identifier}
-                    </Badge>
-                  </Tooltip>
-                ) : (
-                  <Anchor key={`${x.blueprint}/${x.identifier}`} component={Link} to={entityLink(x)}>
-                    <Badge variant="light" className="clickable">
-                      {x.title}
-                    </Badge>
-                  </Anchor>
-                ),
-              )}
-            </Group>
-          </div>
-        ))}
-      </SimpleGrid>
     </Card>
   );
 }

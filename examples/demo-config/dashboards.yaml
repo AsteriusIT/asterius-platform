@@ -1,5 +1,5 @@
 dashboards:
-  # Shown on the catalog page of the Deployment blueprint: the four DORA metrics over the last 30 days.
+  # Shown on the catalog page of the Deployment blueprint: the four DORA metrics over the last 30 days, then their trend.
   # Deployments come from the `deployment` blueprint (Argo CD preset / CI events) and from successful or failed runs of the
   # listed actions; incidents from the `incident` blueprint (PagerDuty preset). Add `team:` or `service:` to filter.
   - identifier: delivery
@@ -14,3 +14,93 @@ dashboards:
         deploymentActions: [deploy-service]
         deployments: { blueprint: deployment, timeProperty: deployedAt, mergedProperty: mergedAt }
         incidents: { blueprint: incident }
+      # Trend charts: a series computed for the viewer, bucketed by day / week / month over `days` ending now.
+      # A click on a bar or a point opens the list behind it (here the deployments; for runs, the runs of that week).
+      - type: chart
+        title: Deployments per week
+        width: 6
+        chart: bar
+        interval: week
+        days: 90
+        series: { kind: dora, metric: deploymentFrequency, deploymentActions: [deploy-service] }
+      - type: chart
+        title: Change failure rate
+        width: 6
+        chart: line
+        interval: week
+        days: 90
+        series: { kind: dora, metric: changeFailureRate, deploymentActions: [deploy-service] }
+
+  # Shown on the catalog page of the Service blueprint: readiness and run trends.
+  - identifier: service-trends
+    title: Service trends
+    blueprint: service
+    widgets:
+      - type: chart
+        title: Supply chain security levels
+        width: 6
+        chart: area
+        stacked: true
+        interval: week
+        days: 90
+        series: { kind: scorecard, scorecard: supply-chain-security }
+      - type: chart
+        title: Deploy runs by status
+        width: 6
+        chart: bar
+        stacked: true
+        interval: week
+        days: 60
+        series: { kind: runs, metric: count, action: deploy-service }
+      - type: chart
+        title: Deploy duration (minutes)
+        width: 6
+        interval: week
+        days: 60
+        series: { kind: runs, metric: duration, action: deploy-service }
+      - type: chart
+        title: Services by language
+        width: 6
+        chart: line
+        interval: month
+        days: 365
+        series: { kind: entities, blueprint: service, mode: total, groupBy: language }
+
+  # The overview of every service page (`scope: entity`): widgets take the service as context — its properties, its
+  # scorecards, its relations, markdown templated over it, and charts and runs filtered to it.
+  - identifier: service-page
+    title: Service page
+    blueprint: service
+    scope: entity
+    widgets:
+      - type: markdown
+        width: 12
+        content: "**{{ entity.title }}** is a tier {{ entity.properties.tier }} {{ entity.properties.language }} service owned by {{ entity.team ? entity.team : 'no team' }}."
+      - type: entity
+        show: properties
+        width: 7
+      - type: entity
+        show: scorecards
+        width: 5
+      - type: chart
+        title: Runs on this service
+        width: 7
+        chart: bar
+        stacked: true
+        interval: week
+        days: 60
+        series: { kind: runs, metric: count }
+      - type: entity
+        show: relations
+        width: 5
+      - type: chart
+        title: Deployments of this service
+        width: 7
+        chart: bar
+        interval: week
+        days: 90
+        series: { kind: dora, metric: deploymentFrequency, deploymentActions: [deploy-service] }
+      - type: runs
+        title: Latest runs
+        width: 5
+        limit: 5
