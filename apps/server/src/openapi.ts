@@ -1,10 +1,9 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import { tokenInput } from './auth/scopes.js';
 import { DESCRIPTOR_SCHEMA } from './integrations/sources/descriptors.js';
 import {
   actionDef,
-  agentDef,
-  mcpServerDef,
   blueprintDef,
   configFile,
   connectionDef,
@@ -41,10 +40,9 @@ const COMPONENTS: Record<string, z.ZodType> = {
   Fragment: fragmentDef,
   Connector: connectorDef,
   Connection: connectionDef,
-  Agent: agentDef,
-  McpServer: mcpServerDef,
   EntityInput: entityInput,
   DelegationInput: delegationInput,
+  TokenInput: tokenInput,
   ConfigFile: configFile,
 };
 
@@ -142,16 +140,6 @@ const OUTPUTS: Record<string, z.ZodType> = {
     checkedAt: iso,
   }),
   ConnectionUsage: z.object({ integrations: z.array(str), actions: z.array(str), fragments: z.array(str) }),
-  AgentView: agentDef.safeExtend({ version: z.number(), managed: z.boolean(), tokens: z.number().optional(), createdAt: iso, updatedAt: iso }),
-  McpServerView: mcpServerDef.safeExtend({ version: z.number(), managed: z.boolean(), createdAt: iso, updatedAt: iso }),
-  McpServerTestResult: z.object({
-    ok: z.boolean(),
-    message: str,
-    server: z.object({ name: str.optional(), version: str.optional(), protocolVersion: str.optional() }).optional(),
-    tools: z.array(z.object({ name: str, description: str.optional(), allowed: z.boolean() })),
-    missing: z.array(str).describe('Allow-listed tool names the server does not offer'),
-  }),
-  AgentToken: z.object({ id: str, token: str.describe('Shown once') }),
   Delivery: z.object({
     id: str,
     webhook: str,
@@ -215,14 +203,6 @@ const RESPONSES: Record<string, string> = {
   'PUT /api/v1/connections/:id': 'ConnectionView',
   'GET /api/v1/connections/:id/usage': 'ConnectionUsage',
   'POST /api/v1/connections/:id/test': 'ConnectionTestResult',
-  'GET /api/v1/agents': 'AgentView[]',
-  'GET /api/v1/agents/:id': 'AgentView',
-  'PUT /api/v1/agents/:id': 'AgentView',
-  'POST /api/v1/agents/:id/tokens': 'AgentToken',
-  'GET /api/v1/mcp-servers': 'McpServerView[]',
-  'GET /api/v1/mcp-servers/:id': 'McpServerView',
-  'PUT /api/v1/mcp-servers/:id': 'McpServerView',
-  'POST /api/v1/mcp-servers/:id/test': 'McpServerTestResult',
   'GET /api/v1/runs': 'RunPage',
   'GET /api/v1/runs/:id': 'Run',
   'GET /api/v1/config/status': 'ConfigStatus',
@@ -247,11 +227,10 @@ const BODIES: Record<string, string> = {
   'PUT /api/v1/fragments/:id': 'Fragment',
   'PUT /api/v1/connectors/:id': 'Connector',
   'PUT /api/v1/connections/:id': 'Connection',
-  'PUT /api/v1/agents/:id': 'Agent',
-  'PUT /api/v1/mcp-servers/:id': 'McpServer',
   'POST /api/v1/blueprints/:bp/entities': 'EntityInput',
   'PUT /api/v1/blueprints/:bp/entities/:id': 'EntityInput',
   'PUT /api/v1/me/delegation': 'DelegationInput',
+  'POST /api/v1/tokens': 'TokenInput',
 };
 
 const qp = (name: string, schema: Record<string, unknown>, description: string) => ({ name, in: 'query', required: false, description, schema });
@@ -274,14 +253,8 @@ const QUERIES: Record<string, ReturnType<typeof qp>[]> = {
     qp('incidentBlueprint', { type: 'string' }, 'Blueprint holding incidents'),
     qp('deploymentActions', { type: 'string' }, 'Comma-separated actions whose runs count as deployments'),
   ],
-  'GET /api/v1/audit': [
-    qp('channel', { type: 'string', enum: ['ui', 'api', 'mcp', 'workflow'] }, 'How the call came in'),
-    qp('agent', { type: 'string' }, 'Registered AI agent identifier; `*`: any agent; `-`: no agent'),
-  ],
-  'GET /api/v1/runs': [
-    qp('channel', { type: 'string', enum: ['ui', 'api', 'mcp', 'workflow'] }, 'How the run was requested'),
-    qp('agent', { type: 'string' }, 'Runs started by this AI agent; `*`: by any agent; `-`: by none'),
-  ],
+  'GET /api/v1/audit': [qp('channel', { type: 'string', enum: ['ui', 'api', 'mcp', 'workflow'] }, 'How the call came in')],
+  'GET /api/v1/runs': [qp('channel', { type: 'string', enum: ['ui', 'api', 'mcp', 'workflow'] }, 'How the run was requested')],
 };
 
 /** Route-specific error descriptions. */

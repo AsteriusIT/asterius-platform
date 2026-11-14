@@ -71,7 +71,7 @@ describe('audit log', () => {
   it('exports CSV neutralizing formulas, and NDJSON; exporting is audited', async () => {
     await admin.put('/api/v1/teams/evil', { title: '=HYPERLINK("http://evil")' });
     const csv = (await admin.get('/api/v1/audit/export?format=csv&action=team.*')).data as string;
-    expect(csv.split('\n')[0]).toBe('id,at,action,actor,target,detail,channel,agent');
+    expect(csv.split('\n')[0]).toBe('id,at,action,actor,target,detail,channel');
     expect(csv).toContain('team.created');
     const nd = (await app.inject({ method: 'GET', url: '/api/v1/audit/export?format=json', headers: { authorization: `Bearer ${adminToken}` } })).body;
     const lines = nd

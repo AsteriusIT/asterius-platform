@@ -18,7 +18,7 @@ import { initiativeViews } from '../catalog/initiatives.js';
  * The platform as a Model Context Protocol server (Streamable HTTP transport, stateless JSON responses).
  * Callers authenticate with an API token and act with that user's permissions in the token's organization: the
  * catalog is readable, actions are started (and runs read) exactly as through the API. Approving is not exposed.
- * Registered AI agents (agents/agents.ts) get the same tools narrowed by their allow-lists, without the approval queue.
+ * A token restricted to workflows (auth/users.ts) lists, starts and reads only those.
  */
 
 const PROTOCOL_VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05'];
@@ -28,8 +28,6 @@ interface ToolDef {
   description: string;
   inputSchema: Record<string, unknown>;
   annotations?: Record<string, unknown>;
-  /** Offered to people only, not to agents. */
-  humansOnly?: boolean;
   run: (input: Record<string, unknown>, p: Principal) => Promise<unknown>;
 }
 
@@ -56,7 +54,8 @@ const TOOLS: ToolDef[] = [
       role: p.role,
       roles: p.roles,
       teams: p.teams,
-      agent: p.agent ? { identifier: p.agent.identifier, title: p.agent.title, workflows: p.agent.workflows, blueprints: p.agent.blueprints } : null,
+      // Restrictions of the API token of the call, when it has some.
+      ...(p.token ? { token: { scopes: p.token.scopes, blueprints: p.token.blueprints, workflows: p.token.workflows ?? null } } : {}),
     }),
   },
   {
@@ -181,7 +180,6 @@ const TOOLS: ToolDef[] = [
     description: 'Requests and workflow steps waiting for a decision you can make. Decisions stay with people: there is no tool to approve.',
     inputSchema: obj({ limit: { type: 'number' } }),
     annotations: { readOnlyHint: true },
-    humansOnly: true,
     run: async (i, p) => {
       const { items } = await pendingApprovals(p, { limit: Math.min(Math.max(Number(i.limit) || 20, 1), 100) });
       const runs = await appUrl('/runs/');
@@ -227,8 +225,6 @@ const TOOLS: ToolDef[] = [
 
 export const MCP_TOOL_NAMES = TOOLS.map((t) => t.name);
 
-const toolsFor = (p: Principal) => (p.agent ? TOOLS.filter((t) => !t.humansOnly) : TOOLS);
-
 type Id = string | number | null;
 interface Rpc {
   jsonrpc: '2.0';
@@ -264,17 +260,17 @@ async function handleOne(raw: unknown, p: Principal): Promise<RpcResult | undefi
           capabilities: { tools: { listChanged: false } },
           serverInfo: { name: 'asterius-platform', version: '1' },
           instructions:
-            'Search the software catalog, read entity docs, scorecards and DORA insights, list and start self-service actions, and follow runs. Calls use your permissions (narrowed to the allow-lists of the agent you act as, if any).',
+            'Search the software catalog, read entity docs, scorecards and DORA insights, list and start self-service actions, and follow runs. Calls use your permissions.',
         },
       };
     }
     case 'ping':
       return { jsonrpc: '2.0', id, result: {} };
     case 'tools/list':
-      return { jsonrpc: '2.0', id, result: { tools: toolsFor(p).map(({ run: _run, humansOnly: _h, ...t }) => t) } };
+      return { jsonrpc: '2.0', id, result: { tools: TOOLS.map(({ run: _run, ...t }) => t) } };
     case 'tools/call': {
       const name = typeof m.params?.name === 'string' ? m.params.name : '';
-      const tool = toolsFor(p).find((t) => t.name === name);
+      const tool = TOOLS.find((t) => t.name === name);
       if (!tool) return err(id, -32602, `Unknown tool "${name}"`);
       const args = (m.params?.arguments ?? {}) as Record<string, unknown>;
       try {

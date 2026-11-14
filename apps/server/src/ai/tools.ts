@@ -8,7 +8,7 @@ import { http } from '../lib/http.js';
 import { triggerRun } from '../actions/runs.js';
 import type { AgentStepGuardrails } from './guardrails.js';
 import type { ToolSet } from './model.js';
-import type { McpBinding } from '../agents/mcp-tools.js';
+import type { McpBinding } from './mcp-tools.js';
 
 /** Tools offered to models: read-only catalog lookups, and write tools that act as the run's user inside allow-lists. */
 
@@ -149,7 +149,7 @@ export function httpAllowed(url: string, hosts: string[]): URL {
 
 /**
  * Tools of an agent step. Every write is checked against the step's guardrails and the run user's permissions, counted and
- * audited. `mcp`: the allow-listed tools of registered MCP servers (agents/mcp-tools.ts); each call counts as a write.
+ * audited (channel `workflow`). `mcp`: the allow-listed tools of the step's MCP connection (mcp-tools.ts); each call counts as a write.
  */
 export function agentToolSet(tools: string[], g: AgentStepGuardrails, ctx: AgentToolContext, mcp?: McpBinding): ToolSet | undefined {
   const defs: Tool[] = [];
@@ -158,7 +158,7 @@ export function agentToolSet(tools: string[], g: AgentStepGuardrails, ctx: Agent
   if (mcp && tools.includes('mcp')) defs.push(...mcp.defs);
   if (!defs.length) return undefined;
   let writes = 0;
-  const actor = { ...actorOf(ctx.principal), channel: 'workflow' as const, agent: ctx.principal.agent?.identifier ?? null };
+  const actor = { ...actorOf(ctx.principal), channel: 'workflow' as const };
   const write = async (kind: string, target: string, detail: Record<string, unknown>, fn: () => Promise<unknown>) => {
     if (++writes > g.maxWrites) throw new Error(`Write limit reached (${g.maxWrites} per step)`);
     await audit(actor, `agent.${kind}`, target, { runId: ctx.runId, stepId: ctx.stepId, ...detail });
@@ -193,7 +193,7 @@ export function agentToolSet(tools: string[], g: AgentStepGuardrails, ctx: Agent
         if (!g.actions.includes(action)) throw new Error(`Action "${action}" is not allowed (allowed: ${g.actions.join(', ')})`);
         if (action === ctx.actionId) throw new Error('An agent cannot start the action it belongs to');
         return write('trigger_action', action, {}, async () => {
-          const r = await triggerRun(ctx.principal, action, {
+          const r = await triggerRun({ ...ctx.principal, channel: 'workflow' }, action, {
             entity: str(input.entity) || null,
             inputs: input.inputs && typeof input.inputs === 'object' ? (input.inputs as Record<string, unknown>) : {},
           });

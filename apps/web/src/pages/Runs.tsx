@@ -57,7 +57,7 @@ import { PropertyValue } from '../components/PropertyValue';
 import { initialValues, SchemaForm, validateValues, type FormValues } from '../components/SchemaForm';
 import { UserChip } from '../components/UserChip';
 import { ViaBadge } from '../components/ViaBadge';
-import { agentFilterOptions } from '../lib/agents';
+import { CHANNEL_OPTIONS } from '../lib/channels';
 import { appHref } from '../lib/orgUrl';
 import { isPlanCheck, PlanCheckSummary } from '../components/PlanCheckSummary';
 
@@ -86,11 +86,12 @@ export const runColumns = [
   {
     key: 'u',
     label: 'Requested by',
+    // The channel is shown when the request did not come from the web UI (API token, MCP, AI agent step).
     render: (r: Run) =>
-      r.agent ? (
+      r.channel && r.channel !== 'ui' ? (
         <Group gap="xs" wrap="nowrap">
           <UserChip user={r.triggeredBy} />
-          <ViaBadge channel={r.channel} agent={r.agent} />
+          <ViaBadge channel={r.channel} />
         </Group>
       ) : (
         <UserChip user={r.triggeredBy} />
@@ -122,12 +123,11 @@ export function Runs() {
   const since = params.get('since');
   const until = params.get('until');
   const team = params.get('team');
-  // `?agent=`: runs started by an AI agent (`*`: any), linked from Admin > Agents.
-  const agent = params.get('agent');
+  const channel = params.get('channel');
   const blueprints = useQuery({ queryKey: ['blueprints'], queryFn: api.blueprints, staleTime: 30_000 });
   const actions = useQuery({ queryKey: ['actions', 'all'], queryFn: () => api.actions(), staleTime: 60_000 });
   const q = useQuery({
-    queryKey: ['runs', scope, status.join(','), action, blueprint, entity, agent, since, until, team, page],
+    queryKey: ['runs', scope, status.join(','), action, blueprint, entity, channel, since, until, team, page],
     queryFn: () =>
       api.runs({
         mine: scope === 'mine',
@@ -136,7 +136,7 @@ export function Runs() {
         action: action ?? undefined,
         blueprint: blueprint ?? undefined,
         entity: entity ?? undefined,
-        agent: agent ?? undefined,
+        channel: channel ?? undefined,
         since: since ?? undefined,
         until: until ?? undefined,
         team: team ?? undefined,
@@ -149,7 +149,7 @@ export function Runs() {
   return (
     <Stack>
       <PageHeader title="Runs" description="Every self-service request and its execution." refresh={q} />
-      {/* The four filters share the row left by the scope switch, in equal widths; short of room they wrap together under it. */}
+      {/* The filters share the row left by the scope switch, in equal widths; short of room they wrap together under it. */}
       <Group align="flex-start">
         <SegmentedControl
           value={scope}
@@ -160,7 +160,7 @@ export function Runs() {
             { value: 'all', label: 'Everyone' },
           ]}
         />
-        <SimpleGrid cols={{ base: 1, xs: 2, md: 4 }} spacing="sm" flex={FILTERS_FLEX} miw={0}>
+        <SimpleGrid cols={{ base: 1, xs: 2, md: 5 }} spacing="sm" flex={FILTERS_FLEX} miw={0}>
           <MultiSelect
             placeholder={status.length ? undefined : 'Any status'}
             aria-label="Filter by status"
@@ -192,13 +192,16 @@ export function Runs() {
             value={action}
             onChange={(v) => set('action', v ?? '')}
           />
+          <Select
+            placeholder="Any channel"
+            aria-label="Filter by channel"
+            clearable
+            data={CHANNEL_OPTIONS}
+            value={channel}
+            onChange={(v) => set('channel', v ?? '')}
+          />
         </SimpleGrid>
       </Group>
-      {agent && (
-        <Group gap="xs">
-          <Select aria-label="Filter by AI agent" data={agentFilterOptions([agent])} value={agent} onChange={(v) => set('agent', v ?? '')} clearable w={240} />
-        </Group>
-      )}
       {(since || until || team) && (
         <Group gap="2xs" aria-label="Other filters">
           {(since || until) && (

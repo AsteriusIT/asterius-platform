@@ -27,13 +27,11 @@ import { deleteWebhook, getWebhook, listWebhooks, upsertWebhook } from './webhoo
 import { deleteFragment, dependencyOrder, listFragments, upsertFragment } from './actions/fragments.js';
 import { deleteConnector, listConnectors, upsertConnector } from './integrations/connectors/definitions.js';
 import { checkConnectionsOf, deleteConnection, listConnections, upsertConnection } from './integrations/connectors/connections.js';
-import { deleteAgent, listAgents, upsertAgent } from './agents/agents.js';
-import { deleteMcpServer, listMcpServers, upsertMcpServer } from './agents/mcp-servers.js';
 
 /**
  * Configuration as code, per organization. Files (*.yaml / *.yml / *.json) declare `teams`, `blueprints`, `connectors`,
  * `connections`, `fragments`, `actions`, `integrations`, `webhooks`, `scorecards`, `policies`, `priceCatalogs`, `dashboards`,
- * `initiatives`, `agents`, `mcpServers` and seed `entities` of one organization:
+ * `initiatives` and seed `entities` of one organization:
  *   CONFIG_DIR/*                 the default organization, plus `organizations:` (platform-level declarations)
  *   CONFIG_DIR/orgs/<slug>/**    organization <slug> (a ConfigMap or git-sync volume per tenant)
  *   a Git repository             set by the organization's admins (Settings → Configuration as code)
@@ -115,8 +113,6 @@ export function readConfigDir(dir = config.CONFIG_DIR, opts: { platform?: boolea
         'policies',
         'priceCatalogs',
         'dashboards',
-        'agents',
-        'mcpServers',
         'initiatives',
       ] as const)
         for (const item of parsed.data[kind]) {
@@ -311,25 +307,6 @@ export async function applyConfig(loaded: LoadedConfig, log: FastifyBaseLogger):
     (d) => upsertDashboard(d, m),
     (id) => deleteDashboard(id, m),
   );
-  // Agent governance: external MCP servers, then the agents (their owner team exists by now).
-  await applyKind(
-    log,
-    errs,
-    'mcp-server',
-    data.mcpServers,
-    await listMcpServers(),
-    (s) => upsertMcpServer(s, m),
-    (id) => deleteMcpServer(id, m),
-  );
-  await applyKind(
-    log,
-    errs,
-    'agent',
-    data.agents,
-    await listAgents(),
-    (a) => upsertAgent(a, m),
-    (id) => deleteAgent(id, m),
-  );
   // After the scorecards they target.
   await applyKind(
     log,
@@ -506,8 +483,6 @@ export async function planConfig(loaded?: LoadedConfig): Promise<PlanItem[]> {
   plan('policy', d.policies, await listPolicies());
   plan('priceCatalog', d.priceCatalogs, await listPriceCatalogs({ builtin: false }));
   plan('dashboard', d.dashboards, await listDashboards());
-  plan('mcp-server', d.mcpServers, await listMcpServers());
-  plan('agent', d.agents, await listAgents(), ['tokens']);
   plan('initiative', d.initiatives, await listInitiatives());
   return out;
 }
@@ -525,8 +500,6 @@ const KINDS = [
   'policies',
   'priceCatalogs',
   'dashboards',
-  'agents',
-  'mcpServers',
   'initiatives',
 ] as const;
 
@@ -552,8 +525,6 @@ export async function configDiff() {
     policies: await listPolicies(),
     priceCatalogs: await listPriceCatalogs({ builtin: false }),
     dashboards: await listDashboards(),
-    agents: await listAgents(),
-    mcpServers: await listMcpServers(),
     initiatives: await listInitiatives(),
   };
   const kinds: Record<string, { added: string[]; removed: string[]; kept: string[] }> = {};
@@ -599,8 +570,6 @@ export async function importConfig(text: string, dryRun: boolean): Promise<Recor
   for (const p of merged.policies) await upsertPolicy(p);
   for (const c of merged.priceCatalogs) await upsertPriceCatalog(c);
   for (const d of merged.dashboards) await upsertDashboard(d);
-  for (const s of merged.mcpServers) await upsertMcpServer(s);
-  for (const a of merged.agents) await upsertAgent(a);
   for (const i of merged.initiatives) await upsertInitiative(i);
   return counts;
 }
@@ -774,8 +743,6 @@ export async function exportDefinitions() {
     policies: (await listPolicies()).map((p) => strip(p as never, ['managed'])),
     priceCatalogs: (await listPriceCatalogs({ builtin: false })).map((c) => strip(c as never, ['managed'])),
     dashboards: (await listDashboards()).map((d) => strip(d as never, ['managed'])),
-    agents: (await listAgents()).map((a) => strip(a as never, ['managed', 'version', 'tokens', 'createdAt', 'updatedAt'])),
-    mcpServers: (await listMcpServers()).map((s) => strip(s as never, ['managed', 'version', 'createdAt', 'updatedAt'])),
     initiatives: (await listInitiatives()).map((i) => strip(i as never, ['managed'])),
   };
 }
@@ -801,10 +768,8 @@ export async function managedCounts() {
      UNION ALL SELECT 'teams', count(*) FROM teams WHERE managed = 1 AND org_id = ?
      UNION ALL SELECT 'connectors', count(*) FROM connectors WHERE managed = 1 AND org_id = ?
      UNION ALL SELECT 'connections', count(*) FROM connections WHERE managed = 1 AND org_id = ?
-     UNION ALL SELECT 'agents', count(*) FROM agents WHERE managed = 1 AND org_id = ?
-     UNION ALL SELECT 'mcpServers', count(*) FROM mcp_servers WHERE managed = 1 AND org_id = ?
      UNION ALL SELECT 'initiatives', count(*) FROM initiatives WHERE managed = 1 AND org_id = ?`,
-    ...Array(15).fill(orgId()),
+    ...Array(13).fill(orgId()),
   );
   return Object.fromEntries(rows.map((r) => [r.k, Number(r.n)]));
 }

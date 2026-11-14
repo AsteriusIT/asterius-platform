@@ -107,6 +107,8 @@ steps:
     output: { url: "steps.provision.link" }
 ```
 
+Agent steps can also call the tools of your MCP gateway (or of one MCP server) through a connection: `tools: [mcp]`, `mcp: { connection: mcp-gateway }` (a read-write connection of the built-in `mcp` connector that allows the workflow) and `guardrails: { mcpTools: [search_issues] }` (the only tools offered to the model; required). See docs/MCP.md.
+
 Step outputs: invoke → the invoker result (webhook response, callback `result`); approval → `{ approved, by, comments }` (plus `tiers: [{ name, approved, by, comments }]` for tiered steps, `delegated: [{ by, for }]` when a delegate decided, `expired: true` after an `onExpiry` outcome); agent → the structured fields or `{ text }`; transform → its keys. Every step also exposes `steps.<id>.status` and `steps.<id>.link`. The run result is the outputs by step id.
 
 ### Other triggers

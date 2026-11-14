@@ -19,7 +19,7 @@ describe('auditToCsv', () => {
 
 describe('AuditAdmin', () => {
   it('sends the selected actor filter', async () => {
-    vi.spyOn(api, 'auditFacets').mockResolvedValue({ actions: ['team.created'], actors: ['admin@example.com'], agents: [] });
+    vi.spyOn(api, 'auditFacets').mockResolvedValue({ actions: ['team.created'], actors: ['admin@example.com'] });
     const audit = vi.spyOn(api, 'audit').mockResolvedValue([]);
     renderUi(<AuditAdmin />);
     await waitFor(() => expect(audit).toHaveBeenCalled());

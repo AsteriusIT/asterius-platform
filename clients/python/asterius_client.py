@@ -124,30 +124,6 @@ class AsteriusClient:
         """POST /api/v1/actions/dry-run"""
         return self._request("POST", f"/api/v1/actions/dry-run", query)
 
-    def get_agents(self, query: Optional[dict] = None) -> Any:
-        """GET /api/v1/agents"""
-        return self._request("GET", f"/api/v1/agents", query)
-
-    def delete_agents_by_id(self, id: str, query: Optional[dict] = None) -> Any:
-        """DELETE /api/v1/agents/{id}"""
-        return self._request("DELETE", f"/api/v1/agents/{urllib.parse.quote(id, safe='')}", query)
-
-    def get_agents_by_id(self, id: str, query: Optional[dict] = None) -> Any:
-        """GET /api/v1/agents/{id}"""
-        return self._request("GET", f"/api/v1/agents/{urllib.parse.quote(id, safe='')}", query)
-
-    def put_agents_by_id(self, id: str, body: dict, query: Optional[dict] = None) -> Any:
-        """PUT /api/v1/agents/{id}"""
-        return self._request("PUT", f"/api/v1/agents/{urllib.parse.quote(id, safe='')}", query, body)
-
-    def get_agents_tokens_by_id(self, id: str, query: Optional[dict] = None) -> Any:
-        """GET /api/v1/agents/{id}/tokens"""
-        return self._request("GET", f"/api/v1/agents/{urllib.parse.quote(id, safe='')}/tokens", query)
-
-    def post_agents_tokens_by_id(self, id: str, query: Optional[dict] = None) -> Any:
-        """POST /api/v1/agents/{id}/tokens"""
-        return self._request("POST", f"/api/v1/agents/{urllib.parse.quote(id, safe='')}/tokens", query)
-
     def post_ai_ask(self, query: Optional[dict] = None) -> Any:
         """POST /api/v1/ai/ask"""
         return self._request("POST", f"/api/v1/ai/ask", query)
@@ -636,26 +612,6 @@ class AsteriusClient:
         """POST /api/v1/mcp"""
         return self._request("POST", f"/api/v1/mcp", query)
 
-    def get_mcp_servers(self, query: Optional[dict] = None) -> Any:
-        """GET /api/v1/mcp-servers"""
-        return self._request("GET", f"/api/v1/mcp-servers", query)
-
-    def delete_mcp_servers_by_id(self, id: str, query: Optional[dict] = None) -> Any:
-        """DELETE /api/v1/mcp-servers/{id}"""
-        return self._request("DELETE", f"/api/v1/mcp-servers/{urllib.parse.quote(id, safe='')}", query)
-
-    def get_mcp_servers_by_id(self, id: str, query: Optional[dict] = None) -> Any:
-        """GET /api/v1/mcp-servers/{id}"""
-        return self._request("GET", f"/api/v1/mcp-servers/{urllib.parse.quote(id, safe='')}", query)
-
-    def put_mcp_servers_by_id(self, id: str, body: dict, query: Optional[dict] = None) -> Any:
-        """PUT /api/v1/mcp-servers/{id}"""
-        return self._request("PUT", f"/api/v1/mcp-servers/{urllib.parse.quote(id, safe='')}", query, body)
-
-    def post_mcp_servers_test_by_id(self, id: str, query: Optional[dict] = None) -> Any:
-        """POST /api/v1/mcp-servers/{id}/test"""
-        return self._request("POST", f"/api/v1/mcp-servers/{urllib.parse.quote(id, safe='')}/test", query)
-
     def delete_me_delegation(self, query: Optional[dict] = None) -> Any:
         """DELETE /api/v1/me/delegation"""
         return self._request("DELETE", f"/api/v1/me/delegation", query)
@@ -992,9 +948,9 @@ class AsteriusClient:
         """GET /api/v1/tokens"""
         return self._request("GET", f"/api/v1/tokens", query)
 
-    def post_tokens(self, query: Optional[dict] = None) -> Any:
+    def post_tokens(self, body: dict, query: Optional[dict] = None) -> Any:
         """POST /api/v1/tokens"""
-        return self._request("POST", f"/api/v1/tokens", query)
+        return self._request("POST", f"/api/v1/tokens", query, body)
 
     def delete_tokens_by_id(self, id: str, query: Optional[dict] = None) -> Any:
         """DELETE /api/v1/tokens/{id}"""

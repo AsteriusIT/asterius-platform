@@ -113,7 +113,7 @@ Remote clients (Claude.ai, ChatGPT connectors) sign in with OAuth 2.1 against th
 
 `whoami` and `list_approvals` show the token's organization and what waits for a decision; approving requests is deliberately not exposed to assistants. `get_scorecards`, `get_entity_docs` and `get_dora_insights` read scorecard results, entity docs and DORA metrics.
 
-**AI agent governance.** *Admin → Governance → Agents* registers AI agents (config `agents:`): owner team, allowed workflows, readable blueprints. An agent works with tokens bound to it (or as an OAuth MCP client), with its user's rights narrowed by its allow-lists, never approves, and its calls are filterable in the audit log and the runs list. *Admin → Governance → MCP servers* (config `mcpServers:`) registers external MCP servers whose allow-listed tools AI agent steps may call. See [docs/MCP.md](docs/MCP.md#agents).
+**AI agents.** An agent is a service account (or a person) with an API token: give the token a `workflows` allow-list and it only lists and starts those workflows, only reads their runs and never approves. Audit entries and runs record the channel of each call (`ui`, `api`, `mcp`, `workflow`), filterable in the audit log and the runs list. AI agent steps reach external MCP tools through an ordinary connection to your MCP gateway (connector `mcp`), with an allow-list of tools per step. See [docs/MCP.md](docs/MCP.md#agents).
 
 ## Deploying on Kubernetes
 

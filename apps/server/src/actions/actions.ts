@@ -1,4 +1,5 @@
 import { checkConnectionRef } from '../integrations/connectors/connections.js';
+import { checkMcpConnection } from '../ai/mcp-tools.js';
 import { getInvoker } from './invokers/index.js';
 import type { Action, ActionTrigger, InvokerConfig, WorkflowStep, WorkflowTest, WorkflowTrigger } from '@asterius/shared';
 import { invalidateTriggerCache } from './triggers.js';
@@ -13,9 +14,8 @@ import { actionDef, type ActionDef, type BlackoutWindowDef, type FragmentDef } f
 import { validator } from '../catalog/validation.js';
 import { stepsOf, validateRunTemplates, validateWorkflow, type Step } from './workflow.js';
 import { expandWorkflow, fragmentLookup } from './fragments.js';
-import { isAdmin, matchesSubjects, type Principal } from '../auth/users.js';
+import { isAdmin, matchesSubjects, tokenMayRun, type Principal } from '../auth/users.js';
 import { orgId } from '../orgs/context.js';
-import { agentMayRun } from '../agents/agents.js';
 
 interface Row {
   identifier: string;
@@ -117,12 +117,12 @@ export const blueprintOf = (a: Action): string | null => (a.trigger && 'blueprin
 /** A workflow runs once it has a trigger and at least one step. */
 export const isRunnable = (a: Action) => !!a.trigger && a.steps.length > 0;
 
-/** Workflows this principal may start by submitting their form (on an entity of `ownerTeam` for day-2 ones). Agents: their allowed workflows only. */
+/** Workflows this principal may start by submitting their form (on an entity of `ownerTeam` for day-2 ones), within the workflows of its API token. */
 export const canTrigger = (a: Action, p: Principal, ownerTeam: string | null) =>
   a.enabled &&
   isRunnable(a) &&
   (a.trigger?.type === 'form' || a.trigger?.type === 'api') &&
-  agentMayRun(p, a.identifier) &&
+  tokenMayRun(p, a.identifier) &&
   matchesSubjects(p, a.trigger.allowed, ownerTeam);
 
 export async function getAction(id: string): Promise<Action> {
@@ -167,6 +167,8 @@ export async function upsertAction(
     if (check) await check(inv as Record<string, unknown>, { workflow: def.identifier });
     else await checkConnectionRef('invoker', inv.type, inv as Record<string, unknown>, { workflow: def.identifier });
   }
+  // AI agent steps using the `mcp` tool: their connection is an MCP one this workflow may use.
+  for (const s of expanded) if (s.type === 'agent' && s.tools.includes('mcp') && s.mcp) await checkMcpConnection(s.mcp.connection, def.identifier);
   const existing = await one<Row>('SELECT * FROM actions WHERE org_id = ? AND identifier = ?', org, def.identifier);
   if (existing && bool(existing.managed) && !opts.managed) throw managedError('Action', def.identifier);
   if (opts.ifMatch !== undefined && (existing ? Number(existing.version) : undefined) !== opts.ifMatch) throw await staleAction(def.identifier, opts.ifMatch);

@@ -104,10 +104,7 @@ export async function authenticateAccessToken(req: FastifyRequest, token: string
         }
       }
     }
-    const p = await principalFor(req, { user, ...(org ? { token: { id: 'oauth', scopes: null, blueprints: null, ipAllow: null, org } } : {}) });
-    // The client the token was issued to: an agent may be registered for it (routes/mcp.ts).
-    const client = typeof payload.azp === 'string' ? payload.azp : typeof payload.client_id === 'string' ? payload.client_id : undefined;
-    return client ? { ...p, oauthClient: client } : p;
+    return await principalFor(req, { user, ...(org ? { token: { id: 'oauth', scopes: null, blueprints: null, ipAllow: null, org } } : {}) });
   } catch (err) {
     req.log.debug({ err }, 'mcp access token refused');
     return undefined;

@@ -36,18 +36,10 @@ export const requireRole = (...roles: string[]) =>
       return reply.code(403).send({ error: `Admin or ${roles.join('/')} role required` });
   };
 
-/**
- * AI agents (agents/agents.ts) reach only the blueprints of their allow-list, whatever the operation: the allow-list
- * narrows the rights of the user they act for. Unknown blueprint (no identifier): refused.
- */
-export const agentReaches = (p: Principal, bp: { identifier?: string }) =>
-  !p.agent || p.agent.blueprints.includes('*') || (!!bp.identifier && p.agent.blueprints.includes(bp.identifier));
-
 const isRule = (s: Subjects | undefined): s is Subjects => !!s && !!(s.roles?.length || s.teams?.length || s.users?.length || s.ownerTeam);
 
 /** May the principal perform `op` on an entity of `bp` owned by `ownerTeam`? */
-export function can(p: Principal, bp: Pick<Blueprint, 'permissions'> & { identifier?: string }, op: Operation, ownerTeam: string | null): boolean {
-  if (!agentReaches(p, bp)) return false;
+export function can(p: Principal, bp: Pick<Blueprint, 'permissions'>, op: Operation, ownerTeam: string | null): boolean {
   if (isAdmin(p)) return true;
   const rule = bp.permissions?.[op];
   if (isRule(rule)) return matchesSubjects(p, rule, ownerTeam);
@@ -55,8 +47,7 @@ export function can(p: Principal, bp: Pick<Blueprint, 'permissions'> & { identif
 }
 
 /** Access on every entity (true), only on entities of the principal's teams ('team'), or none (false). */
-export function accessOf(p: Principal, bp: Pick<Blueprint, 'permissions'> & { identifier?: string }, op: Operation): Access {
-  if (!agentReaches(p, bp)) return false;
+export function accessOf(p: Principal, bp: Pick<Blueprint, 'permissions'>, op: Operation): Access {
   if (isAdmin(p)) return true;
   const rule = bp.permissions?.[op];
   if (!isRule(rule)) return op === 'read' || op === 'run' ? true : p.teams.length ? 'team' : false;
@@ -88,16 +79,6 @@ export const invalidateAccessCache = () => {
  * query itself, so pagination and totals never include hidden rows.
  */
 export async function readFilter(p: Principal, alias = ''): Promise<{ sql: string; params: SqlValue[] } | undefined> {
-  const rules = await ruleFilter(p, alias);
-  if (!p.agent || p.agent.blueprints.includes('*')) return rules;
-  // Agents: only the blueprints of their allow-list, on top of the read rules.
-  const col = alias ? `${alias}.blueprint` : 'blueprint';
-  const bps = p.agent.blueprints;
-  const scope = bps.length ? { sql: `${col} IN (${bps.map(() => '?').join(',')})`, params: [...bps] as SqlValue[] } : { sql: '1 = 0', params: [] };
-  return rules ? { sql: `(${rules.sql} AND ${scope.sql})`, params: [...rules.params, ...scope.params] } : { sql: `(${scope.sql})`, params: scope.params };
-}
-
-async function ruleFilter(p: Principal, alias: string): Promise<{ sql: string; params: SqlValue[] } | undefined> {
   if (isAdmin(p)) return undefined;
   const restricted = await restrictedBlueprints();
   if (!restricted.length) return undefined;

@@ -14,8 +14,7 @@ import { InlineCode } from '../../components/CodeEditor';
 import { Mono, PageHeader, QueryView, StatValue, TimeAgo } from '../../components/ui';
 import { UserChip } from '../../components/UserChip';
 import { ViaBadge } from '../../components/ViaBadge';
-import { agentFilterOptions, CHANNEL_OPTIONS } from '../../lib/agents';
-import { useSearchParams } from 'react-router';
+import { CHANNEL_OPTIONS } from '../../lib/channels';
 
 const PAGE = 50;
 
@@ -28,9 +27,6 @@ export function AuditAdmin() {
   const [debouncedTarget] = useDebouncedValue(target, 300);
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
-  // `?agent=<id>` (link from Admin > Agents) opens the log on that agent's calls.
-  const [params] = useSearchParams();
-  const [agent, setAgent] = useState<string | null>(params.get('agent'));
   const [channel, setChannel] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const facets = useQuery({ queryKey: ['audit-facets'], queryFn: api.auditFacets, staleTime: 60_000 });
@@ -42,7 +38,6 @@ export function AuditAdmin() {
     target: debouncedTarget,
     from: from || undefined,
     to: to ? `${to}T23:59:59.999Z` : undefined,
-    agent: agent ?? undefined,
     channel: channel ?? undefined,
   };
   const q = useQuery({
@@ -91,16 +86,6 @@ export function AuditAdmin() {
         <TextInput label="Resource" placeholder="Target contains" value={target} onChange={(e) => reset(setTarget)(e.currentTarget.value)} w={180} />
         <TextInput label="From" type="date" value={from} onChange={(e) => reset(setFrom)(e.currentTarget.value)} />
         <TextInput label="To" type="date" value={to} onChange={(e) => reset(setTo)(e.currentTarget.value)} />
-        <Select
-          label="AI agent"
-          placeholder="Everyone"
-          searchable
-          clearable
-          data={agentFilterOptions([...(facets.data?.agents ?? []), ...(agent ? [agent] : [])].filter((v, i, a) => a.indexOf(v) === i))}
-          value={agent}
-          onChange={reset(setAgent)}
-          w={200}
-        />
         <Select label="Channel" placeholder="Any" clearable data={CHANNEL_OPTIONS} value={channel} onChange={reset(setChannel)} w={160} />
       </Group>
       <DataTable
@@ -112,7 +97,7 @@ export function AuditAdmin() {
         columns={[
           { key: 'w', label: 'When', render: (a) => <TimeAgo at={a.at} /> },
           { key: 'u', label: 'Who', render: (a) => <UserChip user={a.actorEmail} /> },
-          { key: 'v', label: 'Via', render: (a) => <ViaBadge channel={a.channel} agent={a.agent} /> },
+          { key: 'v', label: 'Via', render: (a) => <ViaBadge channel={a.channel} /> },
           { key: 'a', label: 'Action', render: (a) => <Mono>{a.action}</Mono> },
           {
             key: 't',

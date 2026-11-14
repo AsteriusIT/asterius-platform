@@ -68,13 +68,10 @@ import type {
   ConnectorDefinition,
   ConnectorVersion,
   RenderedConnectorRequest,
-  Agent,
-  McpServer,
-  McpServerTestResult,
 } from '@asterius/shared';
 import { urlOrg } from './orgUrl';
 
-/** Filters of the audit log (GET /audit, /audit/export). `agent`: an identifier, `*` (any agent) or `-` (none). */
+/** Filters of the audit log (GET /audit, /audit/export). */
 export type AuditFilters = {
   search?: string;
   actor?: string;
@@ -83,7 +80,6 @@ export type AuditFilters = {
   from?: string;
   to?: string;
   channel?: string;
-  agent?: string;
 };
 
 export interface SimulationResult {
@@ -380,8 +376,8 @@ export const api = {
     action?: string;
     blueprint?: string;
     entity?: string;
-    /** An agent identifier, `*` (any agent) or `-` (none). */
-    agent?: string;
+    /** ui, api, mcp or workflow. */
+    channel?: string;
     team?: string;
     /** Created at or after / before (ISO date or time). */
     since?: string;
@@ -482,11 +478,13 @@ export const api = {
   users: () => request<PublicUser[]>('GET', v1('/users')),
   userLookup: () => request<{ id: string; name: string; email: string }[]>('GET', v1('/users/lookup')),
   updateUser: (id: string, body: { role?: string; active?: boolean; teams?: string[] }) => request<PublicUser>('PATCH', v1(`/users/${enc(id)}`), body),
-  createServiceAccount: (body: { name: string; role: string; teams: string[] }) =>
+  createServiceAccount: (body: { name: string; role: string; teams: string[]; workflows?: string[] }) =>
     request<{ user: PublicUser; token: string }>('POST', v1('/service-accounts'), body),
 
   tokens: (all = false) => request<ApiToken[]>('GET', v1(`/tokens${qs({ all: all || undefined })}`)),
-  createToken: (name: string, expiresInDays: number | null) => request<{ id: string; token: string }>('POST', v1('/tokens'), { name, expiresInDays }),
+  /** `workflows`: restrict the token to these workflows (it cannot approve either); empty: no restriction. */
+  createToken: (name: string, expiresInDays: number | null, workflows: string[] = []) =>
+    request<{ id: string; token: string }>('POST', v1('/tokens'), { name, expiresInDays, ...(workflows.length ? { workflows } : {}) }),
   deleteToken: (id: string) => request('DELETE', v1(`/tokens/${enc(id)}`)),
 
   secrets: () => request<SecretInfo[]>('GET', v1('/secrets')),
@@ -497,13 +495,9 @@ export const api = {
   audit: (q: AuditFilters & { limit?: number; offset?: number }) => request<AuditEntry[]>('GET', v1(`/audit${qs(q)}`)),
   auditExport: (q: AuditFilters, format: 'csv' | 'json') => request<string>('GET', v1(`/audit/export${qs({ ...q, format })}`)),
   auditFacets: () =>
-    request<{ actions: { value: string; count: number }[]; actors: { value: string; count: number }[]; agents?: { value: string; count: number }[] }>(
-      'GET',
-      v1('/audit/facets'),
-    ).then((f) => ({
+    request<{ actions: { value: string; count: number }[]; actors: { value: string; count: number }[] }>('GET', v1('/audit/facets')).then((f) => ({
       actions: f.actions.map((x) => x.value),
       actors: f.actors.map((x) => x.value),
-      agents: (f.agents ?? []).map((x) => x.value),
     })),
   allDeliveries: (q: { status?: string; limit?: number; offset?: number }) => request<Delivery[]>('GET', v1(`/deliveries${qs(q)}`)),
   redeliverMany: (ids: string[]) => request<{ queued: number }>('POST', v1('/deliveries/redeliver'), { ids }),
@@ -596,20 +590,6 @@ export const api = {
   testConnection: (id: string) => request<ConnectionTestResult>('POST', v1(`/connections/${enc(id)}/test`), {}),
   connectionUsage: (id: string) => request<ConnectionUsage>('GET', v1(`/connections/${enc(id)}/usage`)),
   // ---- end connections & connectors admin ----
-  // ---- agent governance ----
-  agents: () => request<Agent[]>('GET', v1('/agents')),
-  saveAgent: (id: string, body: unknown, opts?: { ifMatch?: number }) =>
-    request<Agent>('PUT', v1(`/agents/${enc(id)}`), body, { headers: ifMatch(opts?.ifMatch) }),
-  deleteAgent: (id: string) => request('DELETE', v1(`/agents/${enc(id)}`)),
-  agentTokens: (id: string) => request<ApiToken[]>('GET', v1(`/agents/${enc(id)}/tokens`)),
-  createAgentToken: (id: string, body: { name?: string; expiresInDays?: number | null }) =>
-    request<{ id: string; token: string }>('POST', v1(`/agents/${enc(id)}/tokens`), body),
-  mcpServers: () => request<McpServer[]>('GET', v1('/mcp-servers')),
-  saveMcpServer: (id: string, body: unknown, opts?: { ifMatch?: number }) =>
-    request<McpServer>('PUT', v1(`/mcp-servers/${enc(id)}`), body, { headers: ifMatch(opts?.ifMatch) }),
-  deleteMcpServer: (id: string) => request('DELETE', v1(`/mcp-servers/${enc(id)}`)),
-  testMcpServer: (id: string) => request<McpServerTestResult>('POST', v1(`/mcp-servers/${enc(id)}/test`), {}),
-  // ---- end agent governance ----
 };
 
 const ifMatch = (version?: number): Record<string, string> => (version === undefined ? {} : { 'if-match': `"${version}"` });

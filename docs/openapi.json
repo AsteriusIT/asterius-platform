@@ -1676,6 +1676,18 @@
                         ]
                       }
                     },
+                    "mcp": {
+                      "type": "object",
+                      "properties": {
+                        "connection": {
+                          "type": "string",
+                          "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                        }
+                      },
+                      "required": [
+                        "connection"
+                      ]
+                    },
                     "guardrails": {
                       "default": {
                         "entityBlueprints": [],
@@ -1745,7 +1757,7 @@
                           "type": "array",
                           "items": {
                             "type": "string",
-                            "pattern": "^[a-z][a-z0-9_-]{0,63}\\/[A-Za-z0-9_.:-]{1,128}$"
+                            "pattern": "^[A-Za-z0-9_.:/-]{1,128}$"
                           }
                         }
                       }
@@ -4463,6 +4475,18 @@
                         ]
                       }
                     },
+                    "mcp": {
+                      "type": "object",
+                      "properties": {
+                        "connection": {
+                          "type": "string",
+                          "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                        }
+                      },
+                      "required": [
+                        "connection"
+                      ]
+                    },
                     "guardrails": {
                       "default": {
                         "entityBlueprints": [],
@@ -4532,7 +4556,7 @@
                           "type": "array",
                           "items": {
                             "type": "string",
-                            "pattern": "^[a-z][a-z0-9_-]{0,63}\\/[A-Za-z0-9_.:-]{1,128}$"
+                            "pattern": "^[A-Za-z0-9_.:/-]{1,128}$"
                           }
                         }
                       }
@@ -5636,6 +5660,7 @@
               "security",
               "artifacts",
               "identity",
+              "ai",
               "internal",
               "other"
             ]
@@ -6421,235 +6446,6 @@
           "connector"
         ]
       },
-      "Agent": {
-        "type": "object",
-        "properties": {
-          "identifier": {
-            "type": "string",
-            "pattern": "^[a-z][a-z0-9_-]{0,63}$"
-          },
-          "title": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 100
-          },
-          "description": {
-            "default": "",
-            "type": "string",
-            "maxLength": 2000
-          },
-          "ownerTeam": {
-            "type": "string",
-            "pattern": "^[a-z][a-z0-9_-]{0,63}$"
-          },
-          "workflows": {
-            "default": [],
-            "maxItems": 200,
-            "type": "array",
-            "items": {
-              "type": "string",
-              "pattern": "^[a-z][a-z0-9_-]{0,63}$"
-            }
-          },
-          "blueprints": {
-            "default": [],
-            "maxItems": 200,
-            "type": "array",
-            "items": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "pattern": "^[a-z][a-z0-9_-]{0,63}$"
-                },
-                {
-                  "type": "string",
-                  "const": "*"
-                }
-              ]
-            }
-          },
-          "oauthClients": {
-            "default": [],
-            "maxItems": 20,
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 200
-            }
-          },
-          "enabled": {
-            "default": true,
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "identifier",
-          "title",
-          "ownerTeam"
-        ]
-      },
-      "McpServer": {
-        "type": "object",
-        "properties": {
-          "identifier": {
-            "type": "string",
-            "pattern": "^[a-z][a-z0-9_-]{0,63}$"
-          },
-          "title": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 100
-          },
-          "description": {
-            "default": "",
-            "type": "string",
-            "maxLength": 2000
-          },
-          "url": {
-            "type": "string",
-            "format": "uri"
-          },
-          "auth": {
-            "anyOf": [
-              {
-                "oneOf": [
-                  {
-                    "type": "object",
-                    "properties": {
-                      "type": {
-                        "type": "string",
-                        "const": "bearer"
-                      },
-                      "token": {
-                        "type": "string",
-                        "minLength": 1
-                      }
-                    },
-                    "required": [
-                      "type",
-                      "token"
-                    ]
-                  },
-                  {
-                    "type": "object",
-                    "properties": {
-                      "type": {
-                        "type": "string",
-                        "const": "header"
-                      },
-                      "headers": {
-                        "type": "object",
-                        "propertyNames": {
-                          "type": "string",
-                          "pattern": "^[A-Za-z0-9-]{1,100}$"
-                        },
-                        "additionalProperties": {
-                          "type": "string",
-                          "maxLength": 4000
-                        }
-                      }
-                    },
-                    "required": [
-                      "type",
-                      "headers"
-                    ]
-                  },
-                  {
-                    "type": "object",
-                    "properties": {
-                      "type": {
-                        "type": "string",
-                        "const": "basic"
-                      },
-                      "username": {
-                        "type": "string"
-                      },
-                      "password": {
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "type",
-                      "username",
-                      "password"
-                    ]
-                  },
-                  {
-                    "type": "object",
-                    "properties": {
-                      "type": {
-                        "type": "string",
-                        "const": "oauth2-client-credentials"
-                      },
-                      "tokenUrl": {
-                        "type": "string",
-                        "format": "uri"
-                      },
-                      "clientId": {
-                        "type": "string",
-                        "minLength": 1
-                      },
-                      "clientSecret": {
-                        "type": "string",
-                        "minLength": 1
-                      },
-                      "scope": {
-                        "type": "string"
-                      },
-                      "audience": {
-                        "type": "string"
-                      },
-                      "authStyle": {
-                        "default": "body",
-                        "type": "string",
-                        "enum": [
-                          "body",
-                          "basic"
-                        ]
-                      }
-                    },
-                    "required": [
-                      "type",
-                      "tokenUrl",
-                      "clientId",
-                      "clientSecret"
-                    ]
-                  }
-                ]
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "tools": {
-            "minItems": 1,
-            "maxItems": 100,
-            "type": "array",
-            "items": {
-              "type": "string",
-              "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
-            }
-          },
-          "timeoutSeconds": {
-            "default": 30,
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 120
-          },
-          "enabled": {
-            "default": true,
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "identifier",
-          "title",
-          "url",
-          "tools"
-        ]
-      },
       "EntityInput": {
         "type": "object",
         "properties": {
@@ -6738,6 +6534,69 @@
         },
         "required": [
           "delegate"
+        ]
+      },
+      "TokenInput": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "expiresInDays": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 730
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "scopes": {
+            "maxItems": 6,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "catalog:read",
+                "catalog:write",
+                "runs:read",
+                "runs:trigger",
+                "admin"
+              ]
+            }
+          },
+          "blueprints": {
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 64
+            }
+          },
+          "ipAllow": {
+            "maxItems": 50,
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "workflows": {
+            "description": "Restrict the token to these workflows: it lists and starts only them, reads only their runs and cannot approve",
+            "maxItems": 200,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+            }
+          }
+        },
+        "required": [
+          "name"
         ]
       },
       "ConfigFile": {
@@ -8472,6 +8331,18 @@
                               ]
                             }
                           },
+                          "mcp": {
+                            "type": "object",
+                            "properties": {
+                              "connection": {
+                                "type": "string",
+                                "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                              }
+                            },
+                            "required": [
+                              "connection"
+                            ]
+                          },
                           "guardrails": {
                             "default": {
                               "entityBlueprints": [],
@@ -8541,7 +8412,7 @@
                                 "type": "array",
                                 "items": {
                                   "type": "string",
-                                  "pattern": "^[a-z][a-z0-9_-]{0,63}\\/[A-Za-z0-9_.:-]{1,128}$"
+                                  "pattern": "^[A-Za-z0-9_.:/-]{1,128}$"
                                 }
                               }
                             }
@@ -12092,6 +11963,18 @@
                               ]
                             }
                           },
+                          "mcp": {
+                            "type": "object",
+                            "properties": {
+                              "connection": {
+                                "type": "string",
+                                "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                              }
+                            },
+                            "required": [
+                              "connection"
+                            ]
+                          },
                           "guardrails": {
                             "default": {
                               "entityBlueprints": [],
@@ -12161,7 +12044,7 @@
                                 "type": "array",
                                 "items": {
                                   "type": "string",
-                                  "pattern": "^[a-z][a-z0-9_-]{0,63}\\/[A-Za-z0-9_.:-]{1,128}$"
+                                  "pattern": "^[A-Za-z0-9_.:/-]{1,128}$"
                                 }
                               }
                             }
@@ -13269,6 +13152,7 @@
                     "security",
                     "artifacts",
                     "identity",
+                    "ai",
                     "internal",
                     "other"
                   ]
@@ -14056,243 +13940,6 @@
                 "identifier",
                 "title",
                 "connector"
-              ]
-            }
-          },
-          "agents": {
-            "default": [],
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "identifier": {
-                  "type": "string",
-                  "pattern": "^[a-z][a-z0-9_-]{0,63}$"
-                },
-                "title": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 100
-                },
-                "description": {
-                  "default": "",
-                  "type": "string",
-                  "maxLength": 2000
-                },
-                "ownerTeam": {
-                  "type": "string",
-                  "pattern": "^[a-z][a-z0-9_-]{0,63}$"
-                },
-                "workflows": {
-                  "default": [],
-                  "maxItems": 200,
-                  "type": "array",
-                  "items": {
-                    "type": "string",
-                    "pattern": "^[a-z][a-z0-9_-]{0,63}$"
-                  }
-                },
-                "blueprints": {
-                  "default": [],
-                  "maxItems": 200,
-                  "type": "array",
-                  "items": {
-                    "anyOf": [
-                      {
-                        "type": "string",
-                        "pattern": "^[a-z][a-z0-9_-]{0,63}$"
-                      },
-                      {
-                        "type": "string",
-                        "const": "*"
-                      }
-                    ]
-                  }
-                },
-                "oauthClients": {
-                  "default": [],
-                  "maxItems": 20,
-                  "type": "array",
-                  "items": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 200
-                  }
-                },
-                "enabled": {
-                  "default": true,
-                  "type": "boolean"
-                }
-              },
-              "required": [
-                "identifier",
-                "title",
-                "ownerTeam"
-              ]
-            }
-          },
-          "mcpServers": {
-            "default": [],
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "identifier": {
-                  "type": "string",
-                  "pattern": "^[a-z][a-z0-9_-]{0,63}$"
-                },
-                "title": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 100
-                },
-                "description": {
-                  "default": "",
-                  "type": "string",
-                  "maxLength": 2000
-                },
-                "url": {
-                  "type": "string",
-                  "format": "uri"
-                },
-                "auth": {
-                  "anyOf": [
-                    {
-                      "oneOf": [
-                        {
-                          "type": "object",
-                          "properties": {
-                            "type": {
-                              "type": "string",
-                              "const": "bearer"
-                            },
-                            "token": {
-                              "type": "string",
-                              "minLength": 1
-                            }
-                          },
-                          "required": [
-                            "type",
-                            "token"
-                          ]
-                        },
-                        {
-                          "type": "object",
-                          "properties": {
-                            "type": {
-                              "type": "string",
-                              "const": "header"
-                            },
-                            "headers": {
-                              "type": "object",
-                              "propertyNames": {
-                                "type": "string",
-                                "pattern": "^[A-Za-z0-9-]{1,100}$"
-                              },
-                              "additionalProperties": {
-                                "type": "string",
-                                "maxLength": 4000
-                              }
-                            }
-                          },
-                          "required": [
-                            "type",
-                            "headers"
-                          ]
-                        },
-                        {
-                          "type": "object",
-                          "properties": {
-                            "type": {
-                              "type": "string",
-                              "const": "basic"
-                            },
-                            "username": {
-                              "type": "string"
-                            },
-                            "password": {
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "type",
-                            "username",
-                            "password"
-                          ]
-                        },
-                        {
-                          "type": "object",
-                          "properties": {
-                            "type": {
-                              "type": "string",
-                              "const": "oauth2-client-credentials"
-                            },
-                            "tokenUrl": {
-                              "type": "string",
-                              "format": "uri"
-                            },
-                            "clientId": {
-                              "type": "string",
-                              "minLength": 1
-                            },
-                            "clientSecret": {
-                              "type": "string",
-                              "minLength": 1
-                            },
-                            "scope": {
-                              "type": "string"
-                            },
-                            "audience": {
-                              "type": "string"
-                            },
-                            "authStyle": {
-                              "default": "body",
-                              "type": "string",
-                              "enum": [
-                                "body",
-                                "basic"
-                              ]
-                            }
-                          },
-                          "required": [
-                            "type",
-                            "tokenUrl",
-                            "clientId",
-                            "clientSecret"
-                          ]
-                        }
-                      ]
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "tools": {
-                  "minItems": 1,
-                  "maxItems": 100,
-                  "type": "array",
-                  "items": {
-                    "type": "string",
-                    "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
-                  }
-                },
-                "timeoutSeconds": {
-                  "default": 30,
-                  "type": "integer",
-                  "minimum": 1,
-                  "maximum": 120
-                },
-                "enabled": {
-                  "default": true,
-                  "type": "boolean"
-                }
-              },
-              "required": [
-                "identifier",
-                "title",
-                "url",
-                "tools"
               ]
             }
           },
@@ -16791,6 +16438,19 @@
                         ]
                       }
                     },
+                    "mcp": {
+                      "type": "object",
+                      "properties": {
+                        "connection": {
+                          "type": "string",
+                          "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                        }
+                      },
+                      "required": [
+                        "connection"
+                      ],
+                      "additionalProperties": false
+                    },
                     "guardrails": {
                       "default": {
                         "entityBlueprints": [],
@@ -16860,7 +16520,7 @@
                           "type": "array",
                           "items": {
                             "type": "string",
-                            "pattern": "^[a-z][a-z0-9_-]{0,63}\\/[A-Za-z0-9_.:-]{1,128}$"
+                            "pattern": "^[A-Za-z0-9_.:/-]{1,128}$"
                           }
                         }
                       },
@@ -18181,6 +17841,7 @@
               "security",
               "artifacts",
               "identity",
+              "ai",
               "internal",
               "other"
             ]
@@ -19131,368 +18792,6 @@
           "integrations",
           "actions",
           "fragments"
-        ],
-        "additionalProperties": false
-      },
-      "AgentView": {
-        "type": "object",
-        "properties": {
-          "identifier": {
-            "type": "string",
-            "pattern": "^[a-z][a-z0-9_-]{0,63}$"
-          },
-          "title": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 100
-          },
-          "description": {
-            "default": "",
-            "type": "string",
-            "maxLength": 2000
-          },
-          "ownerTeam": {
-            "type": "string",
-            "pattern": "^[a-z][a-z0-9_-]{0,63}$"
-          },
-          "workflows": {
-            "default": [],
-            "maxItems": 200,
-            "type": "array",
-            "items": {
-              "type": "string",
-              "pattern": "^[a-z][a-z0-9_-]{0,63}$"
-            }
-          },
-          "blueprints": {
-            "default": [],
-            "maxItems": 200,
-            "type": "array",
-            "items": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "pattern": "^[a-z][a-z0-9_-]{0,63}$"
-                },
-                {
-                  "type": "string",
-                  "const": "*"
-                }
-              ]
-            }
-          },
-          "oauthClients": {
-            "default": [],
-            "maxItems": 20,
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 200
-            }
-          },
-          "enabled": {
-            "default": true,
-            "type": "boolean"
-          },
-          "version": {
-            "type": "number"
-          },
-          "managed": {
-            "type": "boolean"
-          },
-          "tokens": {
-            "type": "number"
-          },
-          "createdAt": {
-            "type": "string",
-            "description": "ISO 8601 timestamp"
-          },
-          "updatedAt": {
-            "type": "string",
-            "description": "ISO 8601 timestamp"
-          }
-        },
-        "required": [
-          "identifier",
-          "title",
-          "description",
-          "ownerTeam",
-          "workflows",
-          "blueprints",
-          "oauthClients",
-          "enabled",
-          "version",
-          "managed",
-          "createdAt",
-          "updatedAt"
-        ],
-        "additionalProperties": false
-      },
-      "McpServerView": {
-        "type": "object",
-        "properties": {
-          "identifier": {
-            "type": "string",
-            "pattern": "^[a-z][a-z0-9_-]{0,63}$"
-          },
-          "title": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 100
-          },
-          "description": {
-            "default": "",
-            "type": "string",
-            "maxLength": 2000
-          },
-          "url": {
-            "type": "string",
-            "format": "uri"
-          },
-          "auth": {
-            "anyOf": [
-              {
-                "oneOf": [
-                  {
-                    "type": "object",
-                    "properties": {
-                      "type": {
-                        "type": "string",
-                        "const": "bearer"
-                      },
-                      "token": {
-                        "type": "string",
-                        "minLength": 1
-                      }
-                    },
-                    "required": [
-                      "type",
-                      "token"
-                    ],
-                    "additionalProperties": false
-                  },
-                  {
-                    "type": "object",
-                    "properties": {
-                      "type": {
-                        "type": "string",
-                        "const": "header"
-                      },
-                      "headers": {
-                        "type": "object",
-                        "propertyNames": {
-                          "type": "string",
-                          "pattern": "^[A-Za-z0-9-]{1,100}$"
-                        },
-                        "additionalProperties": {
-                          "type": "string",
-                          "maxLength": 4000
-                        }
-                      }
-                    },
-                    "required": [
-                      "type",
-                      "headers"
-                    ],
-                    "additionalProperties": false
-                  },
-                  {
-                    "type": "object",
-                    "properties": {
-                      "type": {
-                        "type": "string",
-                        "const": "basic"
-                      },
-                      "username": {
-                        "type": "string"
-                      },
-                      "password": {
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "type",
-                      "username",
-                      "password"
-                    ],
-                    "additionalProperties": false
-                  },
-                  {
-                    "type": "object",
-                    "properties": {
-                      "type": {
-                        "type": "string",
-                        "const": "oauth2-client-credentials"
-                      },
-                      "tokenUrl": {
-                        "type": "string",
-                        "format": "uri"
-                      },
-                      "clientId": {
-                        "type": "string",
-                        "minLength": 1
-                      },
-                      "clientSecret": {
-                        "type": "string",
-                        "minLength": 1
-                      },
-                      "scope": {
-                        "type": "string"
-                      },
-                      "audience": {
-                        "type": "string"
-                      },
-                      "authStyle": {
-                        "default": "body",
-                        "type": "string",
-                        "enum": [
-                          "body",
-                          "basic"
-                        ]
-                      }
-                    },
-                    "required": [
-                      "type",
-                      "tokenUrl",
-                      "clientId",
-                      "clientSecret",
-                      "authStyle"
-                    ],
-                    "additionalProperties": false
-                  }
-                ]
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "tools": {
-            "minItems": 1,
-            "maxItems": 100,
-            "type": "array",
-            "items": {
-              "type": "string",
-              "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
-            }
-          },
-          "timeoutSeconds": {
-            "default": 30,
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 120
-          },
-          "enabled": {
-            "default": true,
-            "type": "boolean"
-          },
-          "version": {
-            "type": "number"
-          },
-          "managed": {
-            "type": "boolean"
-          },
-          "createdAt": {
-            "type": "string",
-            "description": "ISO 8601 timestamp"
-          },
-          "updatedAt": {
-            "type": "string",
-            "description": "ISO 8601 timestamp"
-          }
-        },
-        "required": [
-          "identifier",
-          "title",
-          "description",
-          "url",
-          "tools",
-          "timeoutSeconds",
-          "enabled",
-          "version",
-          "managed",
-          "createdAt",
-          "updatedAt"
-        ],
-        "additionalProperties": false
-      },
-      "McpServerTestResult": {
-        "type": "object",
-        "properties": {
-          "ok": {
-            "type": "boolean"
-          },
-          "message": {
-            "type": "string"
-          },
-          "server": {
-            "type": "object",
-            "properties": {
-              "name": {
-                "type": "string"
-              },
-              "version": {
-                "type": "string"
-              },
-              "protocolVersion": {
-                "type": "string"
-              }
-            },
-            "additionalProperties": false
-          },
-          "tools": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "name": {
-                  "type": "string"
-                },
-                "description": {
-                  "type": "string"
-                },
-                "allowed": {
-                  "type": "boolean"
-                }
-              },
-              "required": [
-                "name",
-                "allowed"
-              ],
-              "additionalProperties": false
-            }
-          },
-          "missing": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Allow-listed tool names the server does not offer"
-          }
-        },
-        "required": [
-          "ok",
-          "message",
-          "tools",
-          "missing"
-        ],
-        "additionalProperties": false
-      },
-      "AgentToken": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "token": {
-            "type": "string",
-            "description": "Shown once"
-          }
-        },
-        "required": [
-          "id",
-          "token"
         ],
         "additionalProperties": false
       },
@@ -20799,290 +20098,6 @@
         }
       }
     },
-    "/api/v1/agents": {
-      "get": {
-        "operationId": "getAgents",
-        "tags": [
-          "agents"
-        ],
-        "summary": "GET /api/v1/agents",
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/AgentView"
-                  }
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Validation error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not found"
-          }
-        }
-      }
-    },
-    "/api/v1/agents/{id}": {
-      "delete": {
-        "operationId": "deleteAgentsById",
-        "tags": [
-          "agents"
-        ],
-        "summary": "DELETE /api/v1/agents/{id}",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          },
-          "400": {
-            "description": "Validation error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not found"
-          }
-        }
-      },
-      "get": {
-        "operationId": "getAgentsById",
-        "tags": [
-          "agents"
-        ],
-        "summary": "GET /api/v1/agents/{id}",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AgentView"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Validation error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not found"
-          }
-        }
-      },
-      "put": {
-        "operationId": "putAgentsById",
-        "tags": [
-          "agents"
-        ],
-        "summary": "PUT /api/v1/agents/{id}",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/Agent"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AgentView"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Validation error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not found"
-          }
-        }
-      }
-    },
-    "/api/v1/agents/{id}/tokens": {
-      "get": {
-        "operationId": "getAgentsTokensById",
-        "tags": [
-          "agents"
-        ],
-        "summary": "GET /api/v1/agents/{id}/tokens",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          },
-          "400": {
-            "description": "Validation error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not found"
-          }
-        }
-      },
-      "post": {
-        "operationId": "postAgentsTokensById",
-        "tags": [
-          "agents"
-        ],
-        "summary": "POST /api/v1/agents/{id}/tokens",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AgentToken"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Validation error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not found"
-          }
-        }
-      }
-    },
     "/api/v1/ai/ask": {
       "post": {
         "operationId": "postAiAsk",
@@ -21791,15 +20806,6 @@
                 "mcp",
                 "workflow"
               ]
-            }
-          },
-          {
-            "name": "agent",
-            "in": "query",
-            "required": false,
-            "description": "Registered AI agent identifier; `*`: any agent; `-`: no agent",
-            "schema": {
-              "type": "string"
             }
           }
         ],
@@ -26543,249 +25549,6 @@
         }
       }
     },
-    "/api/v1/mcp-servers": {
-      "get": {
-        "operationId": "getMcpServers",
-        "tags": [
-          "mcp-servers"
-        ],
-        "summary": "GET /api/v1/mcp-servers",
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/McpServerView"
-                  }
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Validation error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not found"
-          }
-        }
-      }
-    },
-    "/api/v1/mcp-servers/{id}": {
-      "delete": {
-        "operationId": "deleteMcpServersById",
-        "tags": [
-          "mcp-servers"
-        ],
-        "summary": "DELETE /api/v1/mcp-servers/{id}",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success"
-          },
-          "400": {
-            "description": "Validation error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not found"
-          }
-        }
-      },
-      "get": {
-        "operationId": "getMcpServersById",
-        "tags": [
-          "mcp-servers"
-        ],
-        "summary": "GET /api/v1/mcp-servers/{id}",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/McpServerView"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Validation error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not found"
-          }
-        }
-      },
-      "put": {
-        "operationId": "putMcpServersById",
-        "tags": [
-          "mcp-servers"
-        ],
-        "summary": "PUT /api/v1/mcp-servers/{id}",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/McpServer"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/McpServerView"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Validation error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not found"
-          }
-        }
-      }
-    },
-    "/api/v1/mcp-servers/{id}/test": {
-      "post": {
-        "operationId": "postMcpServersTestById",
-        "tags": [
-          "mcp-servers"
-        ],
-        "summary": "POST /api/v1/mcp-servers/{id}/test",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/McpServerTestResult"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Validation error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated"
-          },
-          "403": {
-            "description": "Forbidden"
-          },
-          "404": {
-            "description": "Not found"
-          }
-        }
-      }
-    },
     "/api/v1/me/delegation": {
       "delete": {
         "operationId": "deleteMeDelegation",
@@ -28321,15 +27084,6 @@
                 "mcp",
                 "workflow"
               ]
-            }
-          },
-          {
-            "name": "agent",
-            "in": "query",
-            "required": false,
-            "description": "Runs started by this AI agent; `*`: by any agent; `-`: by none",
-            "schema": {
-              "type": "string"
             }
           }
         ],
@@ -30241,6 +28995,16 @@
         ],
         "summary": "POST /api/v1/tokens",
         "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TokenInput"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Success"

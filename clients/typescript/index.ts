@@ -323,6 +323,9 @@ export type Action = {
       order?: Array<string>;
     };
     tools?: Array<"catalog" | "upsert_entity" | "trigger_action" | "http" | "mcp">;
+    mcp?: {
+      connection: string;
+    };
     guardrails?: {
       entityBlueprints?: Array<string>;
       actions?: Array<string>;
@@ -861,6 +864,9 @@ export type Fragment = {
       order?: Array<string>;
     };
     tools?: Array<"catalog" | "upsert_entity" | "trigger_action" | "http" | "mcp">;
+    mcp?: {
+      connection: string;
+    };
     guardrails?: {
       entityBlueprints?: Array<string>;
       actions?: Array<string>;
@@ -1071,7 +1077,7 @@ export type Connector = {
   title: string;
   description?: string;
   icon?: string | null;
-  category?: "source-control" | "ci-cd" | "cloud" | "incident" | "observability" | "itsm" | "project-management" | "security" | "artifacts" | "identity" | "internal" | "other";
+  category?: "source-control" | "ci-cd" | "cloud" | "incident" | "observability" | "itsm" | "project-management" | "security" | "artifacts" | "identity" | "ai" | "internal" | "other";
   fields?: {
     properties?: {
       [key: string]: Connector_schema0;
@@ -1242,48 +1248,6 @@ export type Connection = {
   };
 };
 
-export type Agent = {
-  identifier: string;
-  title: string;
-  description?: string;
-  ownerTeam: string;
-  workflows?: Array<string>;
-  blueprints?: Array<string | "*">;
-  oauthClients?: Array<string>;
-  enabled?: boolean;
-};
-
-export type McpServer = {
-  identifier: string;
-  title: string;
-  description?: string;
-  url: string;
-  auth?: {
-    type: "bearer";
-    token: string;
-  } | {
-    type: "header";
-    headers: {
-      [key: string]: string;
-    };
-  } | {
-    type: "basic";
-    username: string;
-    password: string;
-  } | {
-    type: "oauth2-client-credentials";
-    tokenUrl: string;
-    clientId: string;
-    clientSecret: string;
-    scope?: string;
-    audience?: string;
-    authStyle?: "body" | "basic";
-  } | null;
-  tools: Array<string>;
-  timeoutSeconds?: number;
-  enabled?: boolean;
-};
-
 export type EntityInput = {
   identifier: string;
   title?: string;
@@ -1300,6 +1264,15 @@ export type DelegationInput = {
   delegate: string;
   startsAt?: string | null;
   endsAt?: string | null;
+};
+
+export type TokenInput = {
+  name: string;
+  expiresInDays?: number | null;
+  scopes?: Array<"catalog:read" | "catalog:write" | "runs:read" | "runs:trigger" | "admin">;
+  blueprints?: Array<string>;
+  ipAllow?: Array<string>;
+  workflows?: Array<string>;
 };
 
 export type ConfigFile = {
@@ -1636,6 +1609,9 @@ export type ConfigFile = {
         order?: Array<string>;
       };
       tools?: Array<"catalog" | "upsert_entity" | "trigger_action" | "http" | "mcp">;
+      mcp?: {
+        connection: string;
+      };
       guardrails?: {
         entityBlueprints?: Array<string>;
         actions?: Array<string>;
@@ -2306,6 +2282,9 @@ export type ConfigFile = {
         order?: Array<string>;
       };
       tools?: Array<"catalog" | "upsert_entity" | "trigger_action" | "http" | "mcp">;
+      mcp?: {
+        connection: string;
+      };
       guardrails?: {
         entityBlueprints?: Array<string>;
         actions?: Array<string>;
@@ -2515,7 +2494,7 @@ export type ConfigFile = {
     title: string;
     description?: string;
     icon?: string | null;
-    category?: "source-control" | "ci-cd" | "cloud" | "incident" | "observability" | "itsm" | "project-management" | "security" | "artifacts" | "identity" | "internal" | "other";
+    category?: "source-control" | "ci-cd" | "cloud" | "incident" | "observability" | "itsm" | "project-management" | "security" | "artifacts" | "identity" | "ai" | "internal" | "other";
     fields?: {
       properties?: {
         [key: string]: ConfigFile_schema0;
@@ -2683,46 +2662,6 @@ export type ConfigFile = {
       methods?: Array<"GET" | "POST" | "PUT" | "PATCH" | "DELETE">;
       paths: Array<string>;
     };
-  }>;
-  agents?: Array<{
-    identifier: string;
-    title: string;
-    description?: string;
-    ownerTeam: string;
-    workflows?: Array<string>;
-    blueprints?: Array<string | "*">;
-    oauthClients?: Array<string>;
-    enabled?: boolean;
-  }>;
-  mcpServers?: Array<{
-    identifier: string;
-    title: string;
-    description?: string;
-    url: string;
-    auth?: {
-      type: "bearer";
-      token: string;
-    } | {
-      type: "header";
-      headers: {
-        [key: string]: string;
-      };
-    } | {
-      type: "basic";
-      username: string;
-      password: string;
-    } | {
-      type: "oauth2-client-credentials";
-      tokenUrl: string;
-      clientId: string;
-      clientSecret: string;
-      scope?: string;
-      audience?: string;
-      authStyle?: "body" | "basic";
-    } | null;
-    tools: Array<string>;
-    timeoutSeconds?: number;
-    enabled?: boolean;
   }>;
   entities?: Array<{
     identifier: string;
@@ -3211,6 +3150,9 @@ export type FragmentView = {
       order?: Array<string>;
     };
     tools: Array<"catalog" | "upsert_entity" | "trigger_action" | "http" | "mcp">;
+    mcp?: {
+      connection: string;
+    };
     guardrails: {
       entityBlueprints: Array<string>;
       actions: Array<string>;
@@ -3442,7 +3384,7 @@ export type ConnectorView = {
   title: string;
   description: string;
   icon?: string | null;
-  category: "source-control" | "ci-cd" | "cloud" | "incident" | "observability" | "itsm" | "project-management" | "security" | "artifacts" | "identity" | "internal" | "other";
+  category: "source-control" | "ci-cd" | "cloud" | "incident" | "observability" | "itsm" | "project-management" | "security" | "artifacts" | "identity" | "ai" | "internal" | "other";
   fields: {
     properties: {
       [key: string]: ConnectorView_schema0;
@@ -3633,78 +3575,6 @@ export type ConnectionUsage = {
   integrations: Array<string>;
   actions: Array<string>;
   fragments: Array<string>;
-};
-
-export type AgentView = {
-  identifier: string;
-  title: string;
-  description: string;
-  ownerTeam: string;
-  workflows: Array<string>;
-  blueprints: Array<string | "*">;
-  oauthClients: Array<string>;
-  enabled: boolean;
-  version: number;
-  managed: boolean;
-  tokens?: number;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type McpServerView = {
-  identifier: string;
-  title: string;
-  description: string;
-  url: string;
-  auth?: {
-    type: "bearer";
-    token: string;
-  } | {
-    type: "header";
-    headers: {
-      [key: string]: string;
-    };
-  } | {
-    type: "basic";
-    username: string;
-    password: string;
-  } | {
-    type: "oauth2-client-credentials";
-    tokenUrl: string;
-    clientId: string;
-    clientSecret: string;
-    scope?: string;
-    audience?: string;
-    authStyle: "body" | "basic";
-  } | null;
-  tools: Array<string>;
-  timeoutSeconds: number;
-  enabled: boolean;
-  version: number;
-  managed: boolean;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type McpServerTestResult = {
-  ok: boolean;
-  message: string;
-  server?: {
-    name?: string;
-    version?: string;
-    protocolVersion?: string;
-  };
-  tools: Array<{
-    name: string;
-    description?: string;
-    allowed: boolean;
-  }>;
-  missing: Array<string>;
-};
-
-export type AgentToken = {
-  id: string;
-  token: string;
 };
 
 export type Delivery = {
@@ -3961,36 +3831,6 @@ export class AsteriusClient {
   /** POST /api/v1/actions/dry-run */
   postActionsDryRun(query?: Record<string, string | number | undefined>): Promise<unknown> {
     return this.request('POST', `/api/v1/actions/dry-run`, { query });
-  }
-
-  /** GET /api/v1/agents */
-  getAgents(query?: Record<string, string | number | undefined>): Promise<Array<AgentView>> {
-    return this.request('GET', `/api/v1/agents`, { query });
-  }
-
-  /** DELETE /api/v1/agents/{id} */
-  deleteAgentsById(id: string, query?: Record<string, string | number | undefined>): Promise<unknown> {
-    return this.request('DELETE', `/api/v1/agents/${encodeURIComponent(id)}`, { query });
-  }
-
-  /** GET /api/v1/agents/{id} */
-  getAgentsById(id: string, query?: Record<string, string | number | undefined>): Promise<AgentView> {
-    return this.request('GET', `/api/v1/agents/${encodeURIComponent(id)}`, { query });
-  }
-
-  /** PUT /api/v1/agents/{id} */
-  putAgentsById(id: string, body: Agent, query?: Record<string, string | number | undefined>): Promise<AgentView> {
-    return this.request('PUT', `/api/v1/agents/${encodeURIComponent(id)}`, { query, body });
-  }
-
-  /** GET /api/v1/agents/{id}/tokens */
-  getAgentsTokensById(id: string, query?: Record<string, string | number | undefined>): Promise<unknown> {
-    return this.request('GET', `/api/v1/agents/${encodeURIComponent(id)}/tokens`, { query });
-  }
-
-  /** POST /api/v1/agents/{id}/tokens */
-  postAgentsTokensById(id: string, query?: Record<string, string | number | undefined>): Promise<AgentToken> {
-    return this.request('POST', `/api/v1/agents/${encodeURIComponent(id)}/tokens`, { query });
   }
 
   /** POST /api/v1/ai/ask */
@@ -4603,31 +4443,6 @@ export class AsteriusClient {
     return this.request('POST', `/api/v1/mcp`, { query });
   }
 
-  /** GET /api/v1/mcp-servers */
-  getMcpServers(query?: Record<string, string | number | undefined>): Promise<Array<McpServerView>> {
-    return this.request('GET', `/api/v1/mcp-servers`, { query });
-  }
-
-  /** DELETE /api/v1/mcp-servers/{id} */
-  deleteMcpServersById(id: string, query?: Record<string, string | number | undefined>): Promise<unknown> {
-    return this.request('DELETE', `/api/v1/mcp-servers/${encodeURIComponent(id)}`, { query });
-  }
-
-  /** GET /api/v1/mcp-servers/{id} */
-  getMcpServersById(id: string, query?: Record<string, string | number | undefined>): Promise<McpServerView> {
-    return this.request('GET', `/api/v1/mcp-servers/${encodeURIComponent(id)}`, { query });
-  }
-
-  /** PUT /api/v1/mcp-servers/{id} */
-  putMcpServersById(id: string, body: McpServer, query?: Record<string, string | number | undefined>): Promise<McpServerView> {
-    return this.request('PUT', `/api/v1/mcp-servers/${encodeURIComponent(id)}`, { query, body });
-  }
-
-  /** POST /api/v1/mcp-servers/{id}/test */
-  postMcpServersTestById(id: string, query?: Record<string, string | number | undefined>): Promise<McpServerTestResult> {
-    return this.request('POST', `/api/v1/mcp-servers/${encodeURIComponent(id)}/test`, { query });
-  }
-
   /** DELETE /api/v1/me/delegation */
   deleteMeDelegation(query?: Record<string, string | number | undefined>): Promise<unknown> {
     return this.request('DELETE', `/api/v1/me/delegation`, { query });
@@ -5049,8 +4864,8 @@ export class AsteriusClient {
   }
 
   /** POST /api/v1/tokens */
-  postTokens(query?: Record<string, string | number | undefined>): Promise<unknown> {
-    return this.request('POST', `/api/v1/tokens`, { query });
+  postTokens(body: TokenInput, query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('POST', `/api/v1/tokens`, { query, body });
   }
 
   /** DELETE /api/v1/tokens/{id} */

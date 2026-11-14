@@ -8,27 +8,24 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 
 /**
  * How the work came in, recorded on audit entries and runs: `ui` (browser session), `api` (API token), `mcp` (the MCP
- * endpoint), `workflow` (an AI agent step); `agent`: the registered agent acting (agents/agents.ts). Unset: platform jobs.
+ * endpoint), `workflow` (an AI agent step). Unset: platform jobs.
  */
-export interface Via {
-  channel: 'ui' | 'api' | 'mcp' | 'workflow' | null;
-  agent: string | null;
-}
+export type Channel = 'ui' | 'api' | 'mcp' | 'workflow';
 
 interface OrgStore {
   orgId: string | null;
-  via?: Via;
+  channel?: Channel;
 }
 
 const als = new AsyncLocalStorage<OrgStore>();
 
 /** The channel of the current request (null outside requests). */
-export const currentVia = (): Via | null => als.getStore()?.via ?? null;
+export const currentChannel = (): Channel | null => als.getStore()?.channel ?? null;
 
 /** Record the channel of the current request (after authentication). */
-export function enterVia(via: Via) {
+export function enterChannel(channel: Channel) {
   const store = als.getStore();
-  if (store) store.via = via;
+  if (store) store.channel = channel;
 }
 
 /** The current organization id; throws outside an organization context. */
@@ -43,8 +40,8 @@ export const maybeOrgId = () => als.getStore()?.orgId ?? null;
 
 /** Run `fn` inside an organization (background jobs, config loader, tests). */
 export function withOrg<T>(id: string, fn: () => T): T {
-  const via = als.getStore()?.via; // work done for a request keeps its channel
-  return als.run(via ? { orgId: id, via } : { orgId: id }, fn);
+  const channel = als.getStore()?.channel; // work done for a request keeps its channel
+  return als.run(channel ? { orgId: id, channel } : { orgId: id }, fn);
 }
 
 /** HTTP: open an empty context for the request (onRequest); authentication fills it in. */

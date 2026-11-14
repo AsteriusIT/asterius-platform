@@ -1,14 +1,21 @@
 import { http } from '../lib/http.js';
-import { render } from '../lib/expr.js';
-import { resolveRef } from '../secrets.js';
-import type { McpServerDef } from '../schemas.js';
 
 /**
- * A minimal MCP client (Streamable HTTP transport, protocol 2025-06-18) for the external servers of Admin > MCP servers.
- * Requests go through lib/http.ts: SSRF guard on every connection, the server's timeout, no redirects, no retries (tool
- * calls may have effects). Responses may be JSON or a server-sent event stream; the session id the server returns at
- * initialization is sent back on every later request.
+ * A minimal MCP client (Streamable HTTP transport, protocol 2025-06-18) for the `mcp` tool of AI agent steps
+ * (ai/mcp-tools.ts): it talks to the MCP gateway or server a connection points at. Requests go through lib/http.ts: SSRF
+ * guard on every connection, a timeout, no redirects, no retries (tool calls may have effects). Responses may be JSON or
+ * a server-sent event stream; the session id the server returns at initialization is sent back on every later request.
  */
+
+/** Where to connect: the endpoint and the auth block of a resolved connection (secrets already resolved). */
+export interface McpEndpoint {
+  url: string;
+  /** Passed as `auth` to lib/http.ts. */
+  auth?: unknown;
+  /** Extra headers (the connector definition's). */
+  headers?: Record<string, string>;
+  timeoutMs: number;
+}
 
 export const MCP_CLIENT_PROTOCOL = '2025-06-18';
 
@@ -79,8 +86,7 @@ export function resultText(result: Record<string, unknown>): string {
 }
 
 /** Open a session with a server: initialize, then the `initialized` notification. */
-export async function connectMcp(def: Pick<McpServerDef, 'url' | 'auth' | 'timeoutSeconds'>): Promise<McpSession> {
-  const auth = def.auth ? (await render(def.auth, {}, resolveRef)).value : undefined;
+export async function connectMcp(def: McpEndpoint): Promise<McpSession> {
   /** Session id returned at initialization, sent back on every later request. */
   const session: { id?: string } = {};
   let protocol = MCP_CLIENT_PROTOCOL;
@@ -90,14 +96,15 @@ export async function connectMcp(def: Pick<McpServerDef, 'url' | 'auth' | 'timeo
     const res = await http<unknown>(def.url, {
       method: 'POST',
       headers: {
+        ...def.headers,
         accept: 'application/json, text/event-stream',
         'content-type': 'application/json',
         'mcp-protocol-version': protocol,
         ...(session.id ? { 'mcp-session-id': session.id } : {}),
       },
       body: JSON.stringify({ jsonrpc: '2.0', ...(notification ? {} : { id }), method, ...(params ? { params } : {}) }),
-      auth,
-      timeoutMs: def.timeoutSeconds * 1000,
+      auth: def.auth,
+      timeoutMs: def.timeoutMs,
       redirect: 'error',
       retry: false,
     });

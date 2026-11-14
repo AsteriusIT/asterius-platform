@@ -49,7 +49,6 @@ const access = () => import('./pages/admin/Access');
 const system = () => import('./pages/admin/System');
 const notificationsAdmin = () => import('./pages/admin/Notifications');
 const ai = () => import('./pages/admin/AiAdmin');
-const agents = () => import('./pages/admin/Agents');
 const organization = () => import('./pages/Organization');
 
 const queryClient = createQueryClient();
@@ -152,8 +151,6 @@ const routes: RouteObject[] = [
                   { path: 'secrets', element: page(access, 'SecretsAdmin') },
                   { path: 'deleted', element: page(system, 'DeletedAdmin') },
                   { path: 'audit', element: page(system, 'AuditAdmin') },
-                  { path: 'agents', element: page(agents, 'AgentsAdmin') },
-                  { path: 'mcp-servers', element: page(agents, 'McpServersAdmin') },
                   { path: 'ai', element: page(ai, 'AiAdmin') },
                   { path: 'config', element: page(system, 'ConfigAdmin') },
                   { path: 'notifications', element: page(notificationsAdmin, 'NotificationsAdmin') },

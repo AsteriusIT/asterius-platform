@@ -1,0 +1,40 @@
+# Built-in connector definition (docs/ARCHITECTURE.md, "Connectors").
+# A connection of this connector points at an MCP endpoint (Streamable HTTP): the organization's MCP / AI gateway, or one
+# MCP server. AI agent steps reach its tools with `tools: [mcp]`, `mcp: { connection: <id> }` and the allow-list
+# `guardrails.mcpTools` (docs/MCP.md). It has no kinds or operations: the platform's MCP client (ai/mcp-client.ts) talks to it.
+identifier: mcp
+title: MCP gateway or server
+description: An MCP endpoint (Streamable HTTP) whose allow-listed tools AI agent steps may call - your MCP / AI gateway, or a single MCP server.
+icon: robot
+category: ai
+fields:
+  properties:
+    baseUrl: { type: string, title: MCP endpoint URL, format: url, description: 'The Streamable HTTP endpoint, e.g. https://mcp-gateway.example.com/mcp' }
+    timeoutSeconds: { type: integer, title: Timeout (seconds), minimum: 1, maximum: 120, default: 30 }
+  required: [baseUrl]
+  order: [baseUrl, timeoutSeconds]
+auth:
+  - type: bearer
+    title: Bearer token
+  - type: header
+    title: API key header
+    headers: { X-API-Key: '{apiKey}' }
+  - type: oauth2-client-credentials
+    title: OAuth 2.0 client credentials
+authOptional: true
+# "Test connection" sends the MCP `initialize` request to the endpoint itself (path `/`: the base URL as it is).
+test:
+  method: POST
+  path: /
+  headers: { accept: 'application/json, text/event-stream' }
+  body:
+    jsonrpc: '2.0'
+    id: 1
+    method: initialize
+    params:
+      protocolVersion: '2025-06-18'
+      capabilities: {}
+      clientInfo: { name: asterius-platform, version: '1' }
+example:
+  fields: { baseUrl: https://mcp-gateway.example.com/mcp }
+  auth: { type: bearer, token: '${secret:MCP_GATEWAY_TOKEN}' }

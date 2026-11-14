@@ -8,8 +8,7 @@ import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
 import { purgeLoginFailures } from './lockout.js';
 import { audit } from '../audit.js';
 import { blueprintOfPath, grants, ipAllowed, requiredScope, type Scope } from './scopes.js';
-import { DEFAULT_ORG, enterOrg, enterVia, maybeOrgId, orgId, withOrg, type Via } from '../orgs/context.js';
-import { agentGrant } from '../agents/agents.js';
+import { DEFAULT_ORG, enterChannel, enterOrg, maybeOrgId, orgId, withOrg, type Channel } from '../orgs/context.js';
 import { addMember, findOrg, listMyOrgs, membership, orgRef } from '../orgs/orgs.js';
 
 // ---------- passwords & tokens ----------
@@ -69,26 +68,15 @@ export interface Principal {
   teams: string[];
   superadmin: boolean;
   org: OrgRef | null;
-  /** Set when the request authenticated with an API token that carries restrictions. */
-  token?: { id: string; scopes: string[] | null; blueprints: string[] | null };
+  /**
+   * Set when the request authenticated with an API token that carries restrictions. `workflows`: the only workflows
+   * (action identifiers) the token may see and start, and whose runs it may read (null: no restriction).
+   */
+  token?: { id: string; scopes: string[] | null; blueprints: string[] | null; workflows?: string[] | null };
   /** People whose approvals this principal may decide now (active out-of-office delegations, see auth/delegations.ts). */
   delegators?: Principal[];
   /** How the request came in (recorded on audit entries and runs). */
-  channel?: NonNullable<Via['channel']>;
-  /** Set when the caller acts as a registered AI agent: its allow-lists narrow every permission (agents/agents.ts). */
-  agent?: AgentGrant;
-  /** OAuth access tokens (MCP): the client the token was issued to (`azp` / `client_id`), which may identify an agent. */
-  oauthClient?: string;
-}
-
-/** What an agent principal may reach: the agent's allow-lists (agents/agents.ts). */
-export interface AgentGrant {
-  identifier: string;
-  title: string;
-  /** Workflows (action identifiers) it may see and start, and whose runs it may read. */
-  workflows: string[];
-  /** Blueprints it may read; `*`: every blueprint the user may read. */
-  blueprints: string[];
+  channel?: Channel;
 }
 
 /** Teams of the user in the current organization. */
@@ -482,8 +470,11 @@ export interface TokenRestrictions {
   /** Null: every blueprint. Only combinable with catalog scopes. */
   blueprints?: string[] | null;
   ipAllow?: string[] | null;
-  /** Bind the token to a registered AI agent (agents/agents.ts). */
-  agent?: string | null;
+  /**
+   * Null: every workflow. Otherwise the token only sees and starts these workflows (action identifiers), only reads
+   * their runs, and cannot decide approvals or answer input steps. This is how an AI agent is scoped.
+   */
+  workflows?: string[] | null;
 }
 
 /** Org policy: API_TOKEN_MAX_DAYS caps the lifetime and makes an expiry mandatory. */
@@ -503,7 +494,7 @@ export async function createApiToken(p: { name: string; userId: string; createdB
   const token = `${API_TOKEN_PREFIX}${randomToken()}`;
   const id = newId();
   await run(
-    'INSERT INTO api_tokens (id, org_id, name, token_hash, prefix, user_id, created_by, created_at, expires_at, scopes, blueprints, ip_allow, agent) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    'INSERT INTO api_tokens (id, org_id, name, token_hash, prefix, user_id, created_by, created_at, expires_at, scopes, blueprints, ip_allow, workflows) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
     id,
     orgId(),
     p.name,
@@ -516,12 +507,12 @@ export async function createApiToken(p: { name: string; userId: string; createdB
     p.scopes?.length ? JSON.stringify([...new Set(p.scopes)]) : null,
     p.blueprints?.length ? JSON.stringify(p.blueprints) : null,
     p.ipAllow?.length ? JSON.stringify(p.ipAllow) : null,
-    p.agent ?? null,
+    p.workflows?.length ? JSON.stringify([...new Set(p.workflows)]) : null,
   );
   return { id, token };
 }
 
-export async function listApiTokens(userId?: string, agent?: string): Promise<ApiToken[]> {
+export async function listApiTokens(userId?: string): Promise<ApiToken[]> {
   const rows = await all<{
     id: string;
     name: string;
@@ -534,13 +525,12 @@ export async function listApiTokens(userId?: string, agent?: string): Promise<Ap
     scopes: string | null;
     blueprints: string | null;
     ip_allow: string | null;
-    agent: string | null;
+    workflows: string | null;
   }>(
-    `SELECT t.id, t.name, t.prefix, t.user_id, u.name AS user_name, t.created_at, t.expires_at, t.last_used_at, t.scopes, t.blueprints, t.ip_allow, t.agent
-     FROM api_tokens t JOIN users u ON u.id = t.user_id WHERE t.org_id = ? ${userId ? 'AND t.user_id = ?' : ''} ${agent ? 'AND t.agent = ?' : ''} ORDER BY t.created_at DESC`,
+    `SELECT t.id, t.name, t.prefix, t.user_id, u.name AS user_name, t.created_at, t.expires_at, t.last_used_at, t.scopes, t.blueprints, t.ip_allow, t.workflows
+     FROM api_tokens t JOIN users u ON u.id = t.user_id WHERE t.org_id = ? ${userId ? 'AND t.user_id = ?' : ''} ORDER BY t.created_at DESC`,
     orgId(),
     ...(userId ? [userId] : []),
-    ...(agent ? [agent] : []),
   );
   return rows.map((r) => ({
     id: r.id,
@@ -554,7 +544,7 @@ export async function listApiTokens(userId?: string, agent?: string): Promise<Ap
     scopes: json<string[] | null>(r.scopes, null),
     blueprints: json<string[] | null>(r.blueprints, null),
     ipAllow: json<string[] | null>(r.ip_allow, null),
-    agent: r.agent ?? null,
+    workflows: json<string[] | null>(r.workflows, null),
   }));
 }
 
@@ -570,7 +560,7 @@ const lastUsedWrites = new Map<string, number>();
 export interface Resolved {
   user: UserRow;
   /** API tokens fix the organization of the request. */
-  token?: NonNullable<Principal['token']> & { ipAllow: string[] | null; org: string; agent?: string | null };
+  token?: NonNullable<Principal['token']> & { ipAllow: string[] | null; org: string };
 }
 
 async function userFromBearer(token: string, ip: string): Promise<Resolved | undefined> {
@@ -584,11 +574,11 @@ async function userFromBearer(token: string, ip: string): Promise<Resolved | und
         t_blueprints: string | null;
         t_ip: string | null;
         t_org: string;
-        t_agent: string | null;
+        t_workflows: string | null;
       }
     >(
       `SELECT u.*, t.id AS token_id, t.expires_at AS token_expires, t.scopes AS t_scopes, t.blueprints AS t_blueprints, t.ip_allow AS t_ip,
-         t.org_id AS t_org, t.agent AS t_agent
+         t.org_id AS t_org, t.workflows AS t_workflows
        FROM api_tokens t JOIN users u ON u.id = t.user_id WHERE t.token_hash = ?`,
       hash,
     );
@@ -610,7 +600,7 @@ async function userFromBearer(token: string, ip: string): Promise<Resolved | und
         blueprints: json<string[] | null>(row.t_blueprints, null),
         ipAllow,
         org: row.t_org,
-        agent: row.t_agent,
+        workflows: json<string[] | null>(row.t_workflows, null),
       },
     };
   }
@@ -734,41 +724,19 @@ export async function authenticate(req: FastifyRequest): Promise<Principal | und
   const token = header;
   const found = token ? await userFromBearer(token, req.ip) : undefined;
   if (!found || found.user.active !== 1) return undefined;
-  let principal = await principalFor(req, found);
-  if (found.token && (found.token.scopes || found.token.blueprints)) {
-    principal.token = { id: found.token.id, scopes: found.token.scopes, blueprints: found.token.blueprints };
+  const principal = await principalFor(req, found);
+  if (found.token && (found.token.scopes || found.token.blueprints || found.token.workflows)) {
+    principal.token = { id: found.token.id, scopes: found.token.scopes, blueprints: found.token.blueprints, workflows: found.token.workflows };
     enforceTokenRestrictions(principal, req);
-  }
-  if (found.token?.agent) {
-    // A token bound to an agent: refused once the agent is disabled or deleted, or its user may no longer act as it.
-    principal = { ...principal, agent: await agentGrant(found.token.agent, principal) };
-    enforceAgentRestrictions(req);
   }
   req.principal = withChannel(principal, found.token ? 'api' : 'ui');
   return req.principal;
 }
 
 /** Record how the request came in, on the principal and in the request context (audit entries, runs). */
-export function withChannel(p: Principal, channel: NonNullable<Via['channel']>): Principal {
-  const out = { ...p, channel };
-  enterVia({ channel, agent: out.agent?.identifier ?? null });
-  return out;
-}
-
-const AGENT_TRIGGER = /^actions\/[^/]+\/runs$/;
-
-/**
- * Agents on the REST API: read the catalog and runs, start runs; nothing else (no writes, approvals, administration).
- * The MCP endpoint applies the agent's rules per tool.
- */
-function enforceAgentRestrictions(req: FastifyRequest) {
-  const path = req.url.split('?')[0]!.replace(/\/$/, '');
-  if (path === '/api/mcp' || path === '/api/v1/mcp') return;
-  const rel = path.replace(/^\/api\/(v1\/)?/, '');
-  const needed = requiredScope(req.method, req.url);
-  if ((req.method === 'GET' || req.method === 'HEAD') && (needed === 'catalog:read' || needed === 'runs:read')) return;
-  if (req.method === 'POST' && AGENT_TRIGGER.test(rel)) return;
-  throw forbidden('AI agents can only read the catalog and runs and start the workflows they are allowed to run');
+export function withChannel(p: Principal, channel: Channel): Principal {
+  enterChannel(channel);
+  return { ...p, channel };
 }
 
 /** Scope and blueprint restrictions of API tokens (403 with the missing scope named). */
@@ -811,8 +779,15 @@ export async function requireAdmin(req: FastifyRequest, reply: FastifyReply) {
 }
 
 // ---------- authorization ----------
-/** Administrator bypasses. Agents never get them: an agent acting for an admin has what the rules grant, narrowed by its allow-lists. */
-export const isAdmin = (p: Principal) => p.role === 'admin' && !p.agent;
+export const isAdmin = (p: Principal) => p.role === 'admin';
+
+/** May the caller see and start this workflow? Always, unless its API token is restricted to other workflows. */
+export const tokenMayRun = (p: Pick<Principal, 'token'>, action: string) => !p.token?.workflows || p.token.workflows.includes(action);
+
+/** Approvals and input steps stay with people: a workflow-restricted token (an automation, an AI agent) cannot answer them. */
+export function assertUnrestrictedToken(p: Pick<Principal, 'token'>, what = 'decide on approvals') {
+  if (p.token?.workflows) throw forbidden(`A workflow-restricted API token cannot ${what}`);
+}
 
 /**
  * Does the principal match a subject list? Empty/undefined subjects match everyone.

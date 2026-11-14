@@ -46,7 +46,6 @@ import { collectRoutes, registerOpenApi } from './openapi.js';
 const VERSION = process.env.APP_VERSION ?? '0.1.0';
 import { aiRoutes } from './routes/ai.js';
 import { mcpMetadataRoutes, mcpRoutes } from './routes/mcp.js';
-import { agentRoutes } from './routes/agents.js';
 
 export interface AppOptions {
   reloadConfig?: (org?: string) => Promise<void>;
@@ -170,7 +169,6 @@ export async function buildApp(opts: AppOptions = {}): Promise<FastifyInstance> 
       await v1.register(actionRoutes);
       await v1.register(integrationRoutes);
       await v1.register(connectorRoutes);
-      await v1.register(agentRoutes);
       await v1.register(notificationRoutes);
       await v1.register(preferenceRoutes);
       await v1.register(aiRoutes);

@@ -5,7 +5,17 @@ import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
 import { emit } from '../events.js';
 import { audit, type Actor } from '../audit.js';
 import { maskText } from '../lib/mask.js';
-import { actorOf, automationPrincipal, isAdmin, matchesSubjects, principalOf, type Principal, type UserRow } from '../auth/users.js';
+import {
+  actorOf,
+  assertUnrestrictedToken,
+  automationPrincipal,
+  isAdmin,
+  matchesSubjects,
+  principalOf,
+  tokenMayRun,
+  type Principal,
+  type UserRow,
+} from '../auth/users.js';
 import { notify } from '../inbox.js';
 import { findEntity, getEntity } from '../catalog/entities.js';
 import { enforcePolicies } from '../policies/policies.js';
@@ -45,7 +55,6 @@ import { decodeCursor, encodeCursor } from '../lib/cursor.js';
 import { appUrl, findOrg, orgRef } from '../orgs/orgs.js';
 import { orgId, withOrg } from '../orgs/context.js';
 import { activeBlackout } from './blackouts.js';
-import { agentMayRun, assertHuman } from '../agents/agents.js';
 import { listArtifacts } from './artifacts.js';
 
 /**
@@ -115,9 +124,8 @@ export interface RunRow {
   approval_expires_at?: string | null;
   user_name?: string;
   user_email?: string;
-  /** Migration 10: how the run was requested and the agent that requested it. */
+  /** Migration 10: how the run was requested (ui, api, mcp, workflow). */
   channel?: string | null;
-  agent?: string | null;
 }
 
 const SELECT = 'SELECT r.*, u.name AS user_name, u.email AS user_email FROM runs r JOIN users u ON u.id = r.triggered_by';
@@ -175,7 +183,6 @@ const toRun = (r: RunRow, approvals: RunApproval[]): Run => ({
   endedAt: r.ended_at,
   slaBreachedAt: r.sla_breached_at ?? null,
   channel: (r.channel ?? null) as Run['channel'],
-  agent: r.agent ?? null,
 });
 
 /** Approvers default to admins when the policy names nobody. */
@@ -211,7 +218,7 @@ export async function getRunRow(id: string) {
  * it (run-level policy or an approval step of the workflow).
  */
 export async function canViewRun(p: Principal, r: RunRow, approvals: RunApproval[]): Promise<boolean> {
-  if (!agentMayRun(p, r.action)) return false; // agents: runs of their allowed workflows only
+  if (!tokenMayRun(p, r.action)) return false; // workflow-restricted tokens: runs of their workflows only
   if (isAdmin(p) || r.triggered_by === p.id) return true;
   if (r.team && p.teams.includes(r.team)) return true;
   if (approvals.some((a) => a.userId === p.id)) return true;
@@ -315,8 +322,6 @@ export interface RunQuery {
   action?: string;
   blueprint?: string;
   entity?: string;
-  /** An agent identifier; `*`: runs started by any agent; `-`: by no agent. */
-  agent?: string;
   /** ui · api · mcp · workflow. */
   channel?: string;
   /** Created at or after this ISO time. */
@@ -365,13 +370,11 @@ export async function runVisibility(p0: Principal): Promise<{ where: string[]; p
     where.push(`(${ors.join(' OR ')})`);
     params.push(...vals);
   }
-  // Agents read the runs of their allowed workflows only (lists, charts and every other reader of this policy).
-  if (p.agent) {
-    if (!p.agent.workflows.length) where.push('1 = 0');
-    else {
-      where.push(`r.action IN (${p.agent.workflows.map(() => '?').join(',')})`);
-      params.push(...p.agent.workflows);
-    }
+  // Workflow-restricted tokens read the runs of their workflows only (lists, charts and every other reader of this policy).
+  const allowed = p.token?.workflows;
+  if (allowed) {
+    where.push(`r.action IN (${allowed.map(() => '?').join(',')})`);
+    params.push(...allowed);
   }
   return { where, params };
 }
@@ -393,9 +396,6 @@ export async function listRuns(q: RunQuery, p0: Principal): Promise<RunPage> {
   if (q.action) add('r.action = ?', q.action);
   if (q.blueprint) add('r.blueprint = ?', q.blueprint);
   if (q.entity) add('r.entity = ?', q.entity);
-  if (q.agent === '*') where.push('r.agent IS NOT NULL');
-  else if (q.agent === '-') where.push('r.agent IS NULL');
-  else if (q.agent) add('r.agent = ?', q.agent);
   if (q.channel) add('r.channel = ?', q.channel);
   if (q.since) add('r.created_at >= ?', q.since);
   if (q.until) add('r.created_at < ?', q.until);
@@ -791,8 +791,8 @@ async function insertRun(n: NewRun): Promise<{ id: string; replay?: false } | { 
     if (group) await releaseSlot(id);
     return { replay: true };
   }
-  // Channel and agent of the request (agent governance: runs started by agents can be filtered).
-  if (p.channel || p.agent) await run('UPDATE runs SET channel = ?, agent = ? WHERE id = ?', p.channel ?? null, p.agent?.identifier ?? null, id);
+  // Channel of the request (ui, api, mcp, workflow), so the runs list can be filtered by it.
+  if (p.channel) await run('UPDATE runs SET channel = ? WHERE id = ?', p.channel, id);
   // The run SLA clock starts at the request (approval time included); housekeeping claims it once due (sla.ts).
   if (action.slaMinutes) await run('UPDATE runs SET sla_due_at = ? WHERE id = ?', new Date(Date.parse(t) + action.slaMinutes * 60_000).toISOString(), id);
   const via = n.source.type === 'form' || n.source.type === 'api' ? '' : ` (${n.source.type})`;
@@ -837,7 +837,7 @@ export async function triggerRun(
   idempotencyKey?: string,
   source?: RunSource,
 ): Promise<{ run: Run; created: boolean }> {
-  if (p.agent && !agentMayRun(p, actionId)) throw forbidden(`Agent "${p.agent.identifier}" is not allowed to run "${actionId}"`);
+  if (!tokenMayRun(p, actionId)) throw forbidden(`This API token is not allowed to run "${actionId}"`);
   const action = await getAction(actionId);
   checkRunnable(action);
   if (body.priority !== undefined && !isAdmin(p)) throw forbidden('Only admins can set the priority of a run');
@@ -931,7 +931,7 @@ export async function startAutomatedRun(
 
 // ---------- approvals ----------
 export async function decide(p0: Principal, runId: string, decision: 'approved' | 'rejected', comment: string): Promise<Run> {
-  assertHuman(p0);
+  assertUnrestrictedToken(p0);
   const p = await withDelegators(p0);
   const r = await getRunRow(runId);
   const approvals = (await approvalsOf([runId])).get(runId) ?? [];

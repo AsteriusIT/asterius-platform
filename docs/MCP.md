@@ -63,74 +63,81 @@ Claude Code and scripts can keep using `--header "Authorization: Bearer ast_…"
 
 | Tool | What it does |
 | --- | --- |
-| `whoami` | The user, organization, role, teams and the agent acted as (if any). |
+| `whoami` | The user, organization, role and teams, and the restrictions of the API token of the call (if any). |
 | `list_blueprints`, `search_catalog`, `get_entity` | Read the catalog (blueprint read rules apply). |
 | `get_scorecards` | Scorecard results of an entity (level, pass/fail per rule). |
 | `get_entity_docs` | The Markdown of an entity's `docs` property, fetched through the SSRF guard. |
 | `get_dora_insights` | DORA metrics over a window (`days`, `team`, `service`), from what the caller may read. |
+| `list_initiatives` | Scorecard initiatives with their status and progress. |
 | `list_actions`, `trigger_action` | List and start the self-service actions the caller may run. |
 | `list_runs`, `get_run` | Follow runs. |
-| `list_approvals` | What waits for the caller's decision (people only: not offered to agents). |
+| `list_approvals` | What waits for the caller's decision. |
 
 Every tool is read-only except `trigger_action`. There is no tool to approve, reject or answer an input step.
 
 ## Agents
 
-An **agent** is a registered, non-human principal of an organization (*Admin → Governance → Agents*, `PUT /api/v1/agents/:id`,
-or `agents:` in the configuration files):
+The platform has no agent registry: an AI agent is an ordinary caller. **Use a service account with a
+workflow-restricted token.**
 
-```yaml
-agents:
-  - identifier: release-bot
-    title: Release bot
-    ownerTeam: platform # its members (and the admins) issue its tokens and may act as it
-    workflows: [create-release, rollback] # the only actions it sees, starts and whose runs it reads
-    blueprints: [service, deployment] # the only blueprints it reads; ['*']: everything its user may read
-    oauthClients: [claude-connector] # OAuth clients (azp / client_id) that are this agent
-    enabled: true
+1. *Admin → Users & service accounts → Service account* (`POST /api/v1/service-accounts`): a non-human member of the
+   organization, with the role and teams that give it the catalog rights it needs (keep it a `member`).
+2. Give its token a **`workflows`** allow-list (*Restrict to workflows* in the form; `workflows: [create-release, rollback]`
+   in the API, also on `POST /api/v1/tokens` for a personal token):
+
+```bash
+curl -X POST https://platform.example.com/api/v1/service-accounts -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{ "name": "release-bot", "teams": ["platform"], "workflows": ["create-release", "rollback"] }'
 ```
 
-An agent has no rights of its own: it acts through a user and **its permissions are the intersection of its allow-lists
-and that user's rights**. It never uses administrator bypasses (an agent of an admin gets what the blueprint and
-workflow rules grant), never approves, rejects or answers input steps, and on the REST API only reads the catalog and runs
-and starts runs (`POST /api/v1/actions/:id/runs`); everything else is a 403. Disabling or deleting the agent stops its
-tokens at once (deleting revokes them).
+A token with `workflows`:
 
-How a caller is identified as an agent, in order:
+- lists and starts only those workflows (`GET /api/v1/actions`, `POST /api/v1/actions/:id/runs`, `list_actions`,
+  `trigger_action`), on top of what the workflow's own `allowed` rule grants its user;
+- reads only the runs of those workflows (`GET /api/v1/runs`, `get_run`, `list_runs`, run charts);
+- cannot approve, reject or answer an input step, whatever its user could decide;
+- cannot create other tokens.
 
-1. **An API token bound to the agent.** Issue it from *Agents → Tokens* or `POST /api/v1/agents/:id/tokens` (admins and
-   owner-team members, from a signed-in session). The token acts as the person who issued it, or for admins as a service
-   account (`userId`), narrowed by the agent. Use it as usual: `Authorization: Bearer ast_…`.
-2. **An OAuth MCP client registered for the agent.** When the access token's `azp` (or `client_id`) claim is listed in an
-   agent's `oauthClients`, every call of that client is that agent, whoever signs in. Register one client per agent in
-   Keycloak (or your authorization server) for this.
-3. **Self-selection on the MCP endpoint.** A person (session, personal token or OAuth token) adds
-   `X-Asterius-Agent: <agent>` (or `?agent=<agent>` to the MCP URL, for clients that cannot set headers) to act as an agent
-   they may use (admins and owner-team members). It can only narrow their rights; a credential bound to an agent cannot
-   claim another one.
+`workflows` narrows a token like its other restrictions do, and combines with them: `ipAllow` always applies, `scopes`
+(`catalog:read`, `runs:trigger`…) and `blueprints` apply on the REST API, and the rights of the service account (role,
+teams, blueprint permissions) bound everything. Absent or empty: no restriction. Revoke the token (or disable the
+account) to stop the agent. As before, the MCP endpoint refuses a token restricted to `blueprints` and a token whose
+`scopes` lack `admin`: for an MCP client, restrict the token with `workflows` and give the service account only the
+role and teams it needs.
 
-**Audit.** Audit entries and runs record the channel of the call (`ui` browser session, `api` API token, `mcp` MCP
-endpoint, `workflow` AI agent step) and the agent: filter with `GET /api/v1/audit?agent=<id>` (`*`: any agent, `-`: none)
-and `&channel=mcp`, `GET /api/v1/runs?agent=<id>`, or *Admin → Audit log → AI agent* and the agent's row actions. With
-`AUDIT_HASH_CHAIN`, the hash (chain version 3) covers the channel and the agent.
+Per-agent OAuth clients, tool catalogs and identity brokering belong to your MCP / AI gateway; the portal restricts what
+its own tokens may do.
 
-## External MCP servers for AI agent steps
+**Audit.** Audit entries and runs record the **channel** of the call: `ui` (browser session), `api` (API token), `mcp`
+(this endpoint), `workflow` (a tool call of an AI agent step). Filter with `GET /api/v1/audit?channel=mcp`,
+`GET /api/v1/runs?channel=mcp`, *Admin → Audit log → Channel* (column *Via*) and the channel filter of the runs list; CSV /
+NDJSON exports and the SIEM stream carry `channel`. The actor is the service account, so `?actor=` finds one agent. With
+`AUDIT_HASH_CHAIN`, the hash (chain version 3) covers the channel.
 
-*Admin → Governance → MCP servers* (`PUT /api/v1/mcp-servers/:id`, or `mcpServers:` in the configuration files) registers
-external MCP servers (Streamable HTTP). The **platform** is the client: calls go through its SSRF guard (`OUTBOUND_ALLOW` /
-`OUTBOUND_DENY`), with the server's timeout, no redirects and no retries.
+## External MCP tools for AI agent steps
+
+The platform has no MCP server registry either: **point a connection at your MCP gateway** (or at a single MCP server).
+*Admin → Connections → New → MCP gateway or server* (built-in connector `mcp`, or `connections:` in the configuration
+files):
 
 ```yaml
-mcpServers:
-  - identifier: tickets
-    title: Ticketing
-    url: https://mcp.tickets.example.com/mcp
-    auth: { type: bearer, token: '${secret:tickets-mcp-token}' } # bearer, header, basic or oauth2-client-credentials; references only
-    tools: [search_issues, get_issue] # the only tools agent steps may call (at least one)
-    timeoutSeconds: 30
+connections:
+  - identifier: mcp-gateway
+    title: MCP gateway
+    connector: mcp
+    fields: { baseUrl: https://mcp-gateway.example.com/mcp, timeoutSeconds: 30 } # the Streamable HTTP endpoint
+    auth: { type: bearer, token: '${secret:mcp-gateway-token}' } # bearer, header (X-API-Key) or oauth2-client-credentials; references only
+    access: read-write # MCP tools can change things
+    allowed: { workflows: [triage-incident], teams: [] } # who may use it (empty: any workflow)
 ```
 
-An AI agent step uses them with the `mcp` tool and its own allow-list:
+It is a connection like the others: credentials are secret references, `allowed` workflows / teams apply, changes are
+audited, *Test* sends the MCP `initialize` request, and it cannot be deleted while a workflow uses it. The **platform** is
+the MCP client: calls go through its SSRF guard (`OUTBOUND_ALLOW` / `OUTBOUND_DENY`), with the connection's timeout, no
+redirects and no retries.
+
+An AI agent step reaches it with the `mcp` tool, its connection and its own allow-list of tools:
 
 ```yaml
 steps:
@@ -138,15 +145,17 @@ steps:
     type: agent
     prompt: Find the open incident tickets of {{ entity.identifier }}
     tools: [catalog, mcp]
+    mcp: { connection: mcp-gateway }
     guardrails:
-      mcpTools: [tickets/search_issues] # server/tool
-      maxWrites: 5 # every MCP call counts, and is audited (agent.mcp_call)
+      mcpTools: [search_issues, get_issue] # tool names as the gateway lists them: the only ones offered to the model
+      maxWrites: 5 # every MCP call counts, and is audited (agent.mcp_call, target mcp-gateway/search_issues)
 ```
 
-Both allow-lists fail closed: `mcp` without `guardrails.mcpTools` is rejected when the workflow is saved; an unknown or
-disabled server, or a tool the server's `tools` does not allow, fails the step before the model is called; a tool the
-server does not offer is left out; the model can call nothing else. *Test* (`POST /api/v1/mcp-servers/:id/test`) connects,
-lists the server's tools and shows which ones the allow-list lets through, without calling any.
+It fails closed. When the workflow is saved: `mcp` without `mcp.connection` or without `guardrails.mcpTools`, an unknown
+connection, a connection of another connector, a read-only one or one that does not allow the workflow is rejected. When
+the step runs, before the model is called: a connection the run may not use (its `allowed` workflows / teams, its access)
+or an allow-listed tool the server does not offer fails the step. The model can call nothing outside
+`guardrails.mcpTools`. Which tools exist, and what each agent may reach behind the gateway, is the gateway's business.
 
 This differs from the step's `mcpServers` field, which hands remote servers to the Claude API (Anthropic provider only,
 called from Anthropic's side, per-step URL and token).
@@ -156,5 +165,5 @@ called from Anthropic's side, per-step URL and token).
 Not testable without live accounts; check once per environment: Claude.ai custom connector and ChatGPT connector sign-in
 against your Keycloak (redirect URI accepted, `aud` mapper works, token refresh after expiry), tool listing and a
 read-only tool call, and that a user without catalog access sees only permitted entities through the connector. For
-agents: a connector whose OAuth client is listed in an agent's `oauthClients` shows `agent` in `whoami` and only the
-agent's workflows in `list_actions`; an external MCP server of a real vendor answers *Test* with its tool list.
+agents: a service account token with `workflows` shows them in `whoami` and only those workflows in `list_actions`; a
+connection to your real MCP gateway answers *Test* and an AI agent step lists and calls an allow-listed tool through it.
