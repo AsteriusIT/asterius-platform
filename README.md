@@ -89,7 +89,7 @@ To plug in a **custom service**, use one of these paths:
 3. **HTTP source / inbound webhook / bulk API.** Use these to bring your service's data into the catalog without writing code.
 4. **Code plugin.** Implement the `Invoker` or `Source` interface (~50 lines) and register it, for what a connector cannot describe (several dependent calls, custom signing, non-HTTP protocols).
 
-Workflows can declare SLAs (`slaMinutes`: notification and `*.sla_breached` events when exceeded), attach files to runs (artifacts, uploaded through the step callback) and carry tests run with mocks (`POST /actions/:id/tests/run`, `node dist/cli.js actions test`).
+Workflows can declare SLAs (`slaMinutes`: notification and `*.sla_breached` events when exceeded), attach files to runs (artifacts, uploaded through the step callback) and carry tests run with mocks (`POST /actions/:id/tests/run`, `node dist/cli.js actions test`). A `plan-check` step estimates the monthly cost and carbon of a Terraform / OpenTofu plan from a price catalog and evaluates plan policies (JSONata, OPA) before the approval: critical findings stop the run ([docs/EXTENDING.md](docs/EXTENDING.md#plan-checks-cost-carbon-policies), [examples/plan-check](examples/plan-check)).
 
 See [docs/EXTENDING.md](docs/EXTENDING.md) for the API, the callback contract and the plugin interfaces.
 

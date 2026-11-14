@@ -300,6 +300,27 @@ CREATE TABLE fragment_versions (
   },
   { id: 10, name: 'agent registry, external MCP servers, call channels', up: agentsMigration },
   { id: 11, name: 'scorecard initiatives', up: initiativesMigration },
+  {
+    id: 12,
+    name: 'plan checks: price catalogs and policy severity',
+    async up(d) {
+      // price_catalogs: prices and power draw used by plan-check steps (plan/pricing.ts), the whole validated document
+      // in `definition`. policies.severity: `target: plan` policies are critical, warning or advisory.
+      await d.exec(`
+        CREATE TABLE price_catalogs (
+          org_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+          identifier TEXT NOT NULL,
+          title TEXT NOT NULL,
+          definition TEXT NOT NULL,
+          managed INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (org_id, identifier)
+        );
+        ALTER TABLE policies ADD COLUMN severity TEXT NOT NULL DEFAULT 'critical';
+      `);
+    },
+  },
 ];
 
 /**

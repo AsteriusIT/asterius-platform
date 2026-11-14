@@ -28,7 +28,8 @@ export interface PolicyDoc {
   title: string;
   description: string;
   enabled: boolean;
-  target: 'run' | 'entity';
+  target: 'run' | 'entity' | 'plan';
+  severity: 'critical' | 'warning' | 'advisory';
   match: { actions?: string[]; blueprints?: string[]; operations?: string[] };
   expression: string;
   message: string;
@@ -43,7 +44,8 @@ export const toPolicyDoc = (v: Record<string, unknown>): PolicyDoc => {
     title: String(v.title ?? ''),
     description: String(v.description ?? ''),
     enabled: v.enabled !== false,
-    target: v.target === 'entity' ? 'entity' : 'run',
+    target: v.target === 'entity' || v.target === 'plan' ? v.target : 'run',
+    severity: v.severity === 'warning' || v.severity === 'advisory' ? v.severity : 'critical',
     match: { actions: strings(m.actions), blueprints: strings(m.blueprints), operations: strings(m.operations) },
     expression: String(v.expression ?? ''),
     message: String(v.message ?? 'Denied by policy'),
@@ -53,18 +55,20 @@ export const toPolicyDoc = (v: Record<string, unknown>): PolicyDoc => {
 /** Only the filters relevant to the target, and none when empty ("all"). */
 export const policyBody = (d: PolicyDoc): Record<string, unknown> => {
   const match: Record<string, string[]> = {};
-  const keys = d.target === 'run' ? ['actions'] : ['blueprints', 'operations'];
+  const keys = d.target === 'entity' ? ['blueprints', 'operations'] : ['actions'];
   for (const k of keys) {
     const list = (d.match as Record<string, string[] | undefined>)[k] ?? [];
     if (list.length) match[k] = list;
   }
-  return { ...d, match };
+  // Severity only means something for plan policies.
+  const { severity: _severity, ...rest } = d;
+  return d.target === 'plan' ? { ...d, match } : { ...rest, match };
 };
 
 export const policyProblems = (d: PolicyDoc): string[] => {
   const out = identityProblems(d);
   if (!d.expression.trim()) out.push('Expression is required');
-  if (d.target === 'run' && d.match.operations?.length) out.push('Operations only apply to entity policies');
+  if (d.target !== 'entity' && d.match.operations?.length) out.push('Operations only apply to entity policies');
   return out;
 };
 
@@ -76,6 +80,15 @@ const POLICY_CONTEXT: [string, string][] = [
   ['action', 'the action being run (runs)'],
   ['blueprint', 'the blueprint of the entity (entities)'],
   ['operation', 'create, update or delete (entities)'],
+];
+
+const PLAN_CONTEXT: [string, string][] = [
+  ['resources', 'every managed resource of the plan: address, type, provider, action, region, before, after, cost'],
+  ['changes', 'the resources that change (action create, update, replace, delete)'],
+  ['cost', 'monthly, before, delta, currency, unmatched'],
+  ['carbon', 'monthlyKg, beforeKg, deltaKg (estimate)'],
+  ['plan', 'the raw plan (terraform show -json)'],
+  ['inputs / action / principal / entity', 'the run'],
 ];
 
 export function PolicyBuilder(props: EditorProps) {
@@ -116,9 +129,20 @@ export function PolicyBuilder(props: EditorProps) {
                   data={[
                     { value: 'run', label: 'Action runs' },
                     { value: 'entity', label: 'Entity writes' },
+                    { value: 'plan', label: 'Infrastructure plans' },
                   ]}
                 />
               </div>
+              {ctx.doc.target === 'plan' && (
+                <Select
+                  label="Severity"
+                  description="Critical fails the plan-check step; warning requires an override (approval); advisory is logged and notified"
+                  data={['critical', 'warning', 'advisory']}
+                  value={ctx.doc.severity}
+                  allowDeselect={false}
+                  onChange={(v) => v && ctx.set({ severity: v as PolicyDoc['severity'] })}
+                />
+              )}
             </Stack>
           ),
         },
@@ -128,7 +152,7 @@ export function PolicyBuilder(props: EditorProps) {
           icon: <IconFilter size={16} />,
           render: (ctx) => {
             const set = (patch: PolicyDoc['match']) => ctx.set({ match: { ...ctx.doc.match, ...patch } });
-            return ctx.doc.target === 'run' ? (
+            return ctx.doc.target !== 'entity' ? (
               <MultiSelect
                 label="Actions"
                 description="Leave empty to apply to all actions"
@@ -173,7 +197,11 @@ export function PolicyBuilder(props: EditorProps) {
               <Textarea
                 label="Expression"
                 withAsterisk
-                description="JSONata: must evaluate to true to allow; anything else, and any error, denies"
+                description={
+                  ctx.doc.target === 'plan'
+                    ? 'JSONata: true complies; a list ([changes[...].address]) gives one finding per item; anything else, and any error, is a finding'
+                    : 'JSONata: must evaluate to true to allow; anything else, and any error, denies'
+                }
                 autosize
                 minRows={3}
                 value={ctx.doc.expression}
@@ -183,7 +211,7 @@ export function PolicyBuilder(props: EditorProps) {
               <ExpressionStatus expression={ctx.doc.expression} context={{}} />
               <Alert variant="light" color="gray" title="Context variables" p="xs">
                 <Stack gap="4xs">
-                  {POLICY_CONTEXT.map(([k, d]) => (
+                  {(ctx.doc.target === 'plan' ? PLAN_CONTEXT : POLICY_CONTEXT).map(([k, d]) => (
                     <Text key={k} fz="xs">
                       <Code>{k}</Code> {d}
                     </Text>

@@ -1669,14 +1669,79 @@ export interface Policy {
   title: string;
   description: string;
   enabled: boolean;
-  /** `run`: before a run is queued; `entity`: before an entity is created, updated or deleted. */
-  target: 'run' | 'entity';
+  /** `run`: before a run is queued; `entity`: before an entity is created, updated or deleted; `plan`: by plan-check steps. */
+  target: 'run' | 'entity' | 'plan';
+  /** `plan` policies: critical fails the step, warning requires an override, advisory is logged and notified. */
+  severity: 'critical' | 'warning' | 'advisory';
   match: { actions?: string[]; blueprints?: string[]; operations?: ('create' | 'update' | 'delete')[] };
   /** JSONata over { inputs, entity, previous, principal, action, blueprint, operation }: true allows. */
   expression: string;
   /** Deny message (may embed {{ expression }}). */
   message: string;
   managed: boolean;
+}
+
+// ---------- plan checks (cost, carbon, policies) ----------
+/** A price catalog of plan-check steps (the document validated by `priceCatalogDef`). */
+export interface PriceCatalog {
+  identifier: string;
+  title: string;
+  description: string;
+  currency: string;
+  extends?: string;
+  hoursPerMonth: number;
+  freeProviders?: string[];
+  carbon: Record<string, unknown>;
+  prices: Record<string, unknown>[];
+  managed: boolean;
+  /** The sample table shipped with the platform (read-only). */
+  builtin?: boolean;
+}
+
+export type PlanChangeAction = 'create' | 'update' | 'delete' | 'replace' | 'no-op' | 'forget';
+export type PlanSeverity = 'critical' | 'warning' | 'advisory';
+
+/** One resource of the plan with its estimates (`before`: current state, `monthly`: after apply). */
+export interface PlanResourceEstimate {
+  address: string;
+  type: string;
+  provider: string;
+  action: PlanChangeAction;
+  region: string | null;
+  /** `priced`, `free`, `usage-based` (billed on usage the plan does not show) or `unmatched` (no price: not counted). */
+  pricing: 'priced' | 'free' | 'usage-based' | 'unmatched';
+  monthly: number;
+  before: number;
+  delta: number;
+  co2eKg: number;
+  co2eDeltaKg: number;
+  note?: string;
+}
+
+export interface PlanViolation {
+  policy: string;
+  title: string;
+  severity: PlanSeverity;
+  message: string;
+  source: 'policy' | 'rule' | 'opa' | 'budget' | 'pricing';
+  address?: string;
+}
+
+/** Output of a `plan-check` step (`steps.<id>.output`). */
+export interface PlanCheckOutput {
+  kind: 'plan-check';
+  gate: 'pass' | 'override' | 'blocked';
+  requiresOverride: boolean;
+  changes: Record<PlanChangeAction, number>;
+  cost: { currency: string; monthly: number; before: number; delta: number; complete: boolean; unmatched: string[]; usageBased: string[]; catalog: string };
+  carbon: { monthlyKg: number; beforeKg: number; deltaKg: number; method: string };
+  violations: PlanViolation[];
+  counts: Record<PlanSeverity, number>;
+  resources: PlanResourceEstimate[];
+  /** Resources left out of `resources` (the full list is the plan-check.json artifact). */
+  truncated: number;
+  /** Markdown summary for approval messages and notifications. */
+  summary: string;
 }
 
 // ---------- blueprint change impact ----------

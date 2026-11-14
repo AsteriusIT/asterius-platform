@@ -6,7 +6,19 @@ import { notifications } from '@mantine/notifications';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import { IconCopy, IconRefresh, IconSend } from '@tabler/icons-react';
-import type { Action, Blueprint, Connection, ConnectorDefinition, Dashboard, Fragment, Integration, Policy, Scorecard, Webhook } from '@asterius/shared';
+import type {
+  Action,
+  Blueprint,
+  Connection,
+  ConnectorDefinition,
+  Dashboard,
+  Fragment,
+  Integration,
+  Policy,
+  PriceCatalog,
+  Scorecard,
+  Webhook,
+} from '@asterius/shared';
 import { blankFragment, FragmentBuilder } from '../../components/builder/FragmentBuilder';
 import { useAppMutation } from '../../lib/queryClient';
 import { FormEditor } from '../../components/builder/FormEditor';
@@ -429,7 +441,11 @@ export function PoliciesAdmin() {
         {
           key: 't',
           label: 'Applies to',
-          render: (p) => <Badge color={p.target === 'run' ? 'blue' : 'grape'}>{p.target === 'run' ? 'runs' : 'entity writes'}</Badge>,
+          render: (p) => (
+            <Badge color={p.target === 'run' ? 'blue' : p.target === 'plan' ? 'teal' : 'grape'}>
+              {p.target === 'run' ? 'runs' : p.target === 'plan' ? `plans · ${p.severity}` : 'entity writes'}
+            </Badge>
+          ),
         },
         {
           key: 'm',
@@ -465,11 +481,68 @@ export function PoliciesAdmin() {
             message: 'A service must have an owner team',
           },
         },
+        {
+          label: 'Plan policy',
+          value: {
+            identifier: 'no-database-destroy',
+            title: 'Databases are not destroyed from self-service',
+            description: 'Evaluated by plan-check steps on the Terraform / OpenTofu plan.',
+            enabled: true,
+            target: 'plan',
+            severity: 'critical',
+            match: { actions: [] },
+            expression: '[changes[action in ["delete", "replace"] and type in ["azurerm_mssql_database", "aws_db_instance"]].address]',
+            message: 'Open a change request to destroy a database',
+          },
+        },
       ]}
       toEditable={(p) => strip(p, ['managed'])}
       editor={(p) => <PolicyBuilder {...p} />}
       save={api.savePolicy}
       remove={(p) => api.deletePolicy(p.identifier)}
+    />
+  );
+}
+
+export function PriceCatalogsAdmin() {
+  return (
+    <ResourceAdmin<PriceCatalog>
+      title="Price catalogs"
+      description="Monthly prices and power draw of cloud resources, used by plan-check steps to estimate the cost and carbon of a Terraform / OpenTofu plan before it is applied. The built-in sample is approximate list prices: declare your own and extend it."
+      queryKey="price-catalogs"
+      // The built-in sample opens read-only.
+      list={async () => (await api.priceCatalogs()).map((c) => (c.builtin ? { ...c, managed: true } : c))}
+      columns={[
+        { key: 'c', label: 'Currency', render: (c) => c.currency },
+        { key: 'x', label: 'Extends', render: (c) => (c.builtin ? <Badge color="gray">built-in</Badge> : (c.extends ?? '—')) },
+        { key: 'n', label: 'Prices', render: (c) => c.prices.length },
+      ]}
+      templates={[
+        {
+          label: 'Price catalog',
+          value: {
+            identifier: 'default',
+            title: 'Negotiated prices',
+            description: 'Used by plan-check steps that name no catalog.',
+            currency: 'USD',
+            extends: 'builtin',
+            prices: [
+              {
+                provider: 'azurerm',
+                type: 'azurerm_linux_virtual_machine',
+                match: { size: 'Standard_D2s_v5', region: 'westeurope' },
+                hourly: 0.081,
+                vcpu: 2,
+                memoryGb: 8,
+              },
+              { provider: 'aws', type: 'aws_instance', match: { instance_type: 't3.*' }, hourly: 0.03, note: 'Savings plan' },
+            ],
+          },
+        },
+      ]}
+      toEditable={(c) => strip(c, ['managed', 'builtin'])}
+      save={api.savePriceCatalog}
+      remove={(c) => api.deletePriceCatalog(c.identifier)}
     />
   );
 }

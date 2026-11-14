@@ -3315,7 +3315,17 @@
             "type": "string",
             "enum": [
               "run",
-              "entity"
+              "entity",
+              "plan"
+            ]
+          },
+          "severity": {
+            "default": "critical",
+            "type": "string",
+            "enum": [
+              "critical",
+              "warning",
+              "advisory"
             ]
           },
           "match": {
@@ -3495,6 +3505,250 @@
           "entity",
           "reason",
           "expiresAt"
+        ]
+      },
+      "PriceCatalog": {
+        "type": "object",
+        "properties": {
+          "identifier": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "description": {
+            "default": "",
+            "type": "string",
+            "maxLength": 2000
+          },
+          "currency": {
+            "default": "USD",
+            "type": "string",
+            "pattern": "^[A-Z]{3}$"
+          },
+          "extends": {
+            "type": "string",
+            "maxLength": 64
+          },
+          "hoursPerMonth": {
+            "default": 730,
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 744
+          },
+          "freeProviders": {
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 64
+            }
+          },
+          "carbon": {
+            "default": {},
+            "type": "object",
+            "properties": {
+              "pue": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string",
+                  "maxLength": 64
+                },
+                "additionalProperties": {
+                  "type": "number",
+                  "minimum": 1,
+                  "maximum": 3
+                }
+              },
+              "gridIntensity": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string",
+                  "maxLength": 64
+                },
+                "additionalProperties": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 2
+                }
+              },
+              "defaultGridIntensity": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 2
+              },
+              "wattsPerVcpu": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string",
+                  "maxLength": 64
+                },
+                "additionalProperties": {
+                  "type": "number",
+                  "minimum": 0
+                }
+              },
+              "wattsPerGbMemory": {
+                "type": "number",
+                "minimum": 0
+              }
+            }
+          },
+          "prices": {
+            "default": [],
+            "maxItems": 5000,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "provider": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "type": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "match": {
+                  "default": {},
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string",
+                    "maxLength": 200
+                  },
+                  "additionalProperties": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 200
+                      },
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "maxItems": 50,
+                        "type": "array",
+                        "items": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "maxLength": 200
+                            },
+                            {
+                              "type": "number"
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                },
+                "monthly": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "hourly": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "perUnit": {
+                  "maxItems": 10,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "attribute": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200
+                      },
+                      "scale": {
+                        "default": 1,
+                        "type": "number",
+                        "exclusiveMinimum": 0
+                      },
+                      "default": {
+                        "default": 0,
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "monthly": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "hourly": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "watts": {
+                        "type": "number",
+                        "minimum": 0
+                      }
+                    },
+                    "required": [
+                      "attribute"
+                    ]
+                  }
+                },
+                "quantity": {
+                  "type": "object",
+                  "properties": {
+                    "attribute": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "default": {
+                      "default": 1,
+                      "type": "number",
+                      "minimum": 0
+                    }
+                  },
+                  "required": [
+                    "attribute"
+                  ]
+                },
+                "free": {
+                  "type": "boolean"
+                },
+                "usageBased": {
+                  "type": "boolean"
+                },
+                "watts": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "vcpu": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "memoryGb": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "note": {
+                  "type": "string",
+                  "maxLength": 300
+                }
+              },
+              "required": [
+                "provider",
+                "type"
+              ]
+            }
+          }
+        },
+        "required": [
+          "identifier",
+          "title"
         ]
       },
       "Fragment": {
@@ -9934,7 +10188,17 @@
                   "type": "string",
                   "enum": [
                     "run",
-                    "entity"
+                    "entity",
+                    "plan"
+                  ]
+                },
+                "severity": {
+                  "default": "critical",
+                  "type": "string",
+                  "enum": [
+                    "critical",
+                    "warning",
+                    "advisory"
                   ]
                 },
                 "match": {
@@ -9987,6 +10251,254 @@
                 "title",
                 "target",
                 "expression"
+              ]
+            }
+          },
+          "priceCatalogs": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "identifier": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                },
+                "title": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100
+                },
+                "description": {
+                  "default": "",
+                  "type": "string",
+                  "maxLength": 2000
+                },
+                "currency": {
+                  "default": "USD",
+                  "type": "string",
+                  "pattern": "^[A-Z]{3}$"
+                },
+                "extends": {
+                  "type": "string",
+                  "maxLength": 64
+                },
+                "hoursPerMonth": {
+                  "default": 730,
+                  "type": "number",
+                  "exclusiveMinimum": 0,
+                  "maximum": 744
+                },
+                "freeProviders": {
+                  "maxItems": 100,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "maxLength": 64
+                  }
+                },
+                "carbon": {
+                  "default": {},
+                  "type": "object",
+                  "properties": {
+                    "pue": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string",
+                        "maxLength": 64
+                      },
+                      "additionalProperties": {
+                        "type": "number",
+                        "minimum": 1,
+                        "maximum": 3
+                      }
+                    },
+                    "gridIntensity": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string",
+                        "maxLength": 64
+                      },
+                      "additionalProperties": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 2
+                      }
+                    },
+                    "defaultGridIntensity": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 2
+                    },
+                    "wattsPerVcpu": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string",
+                        "maxLength": 64
+                      },
+                      "additionalProperties": {
+                        "type": "number",
+                        "minimum": 0
+                      }
+                    },
+                    "wattsPerGbMemory": {
+                      "type": "number",
+                      "minimum": 0
+                    }
+                  }
+                },
+                "prices": {
+                  "default": [],
+                  "maxItems": 5000,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "provider": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200
+                      },
+                      "type": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200
+                      },
+                      "match": {
+                        "default": {},
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string",
+                          "maxLength": 200
+                        },
+                        "additionalProperties": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "maxLength": 200
+                            },
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "maxItems": 50,
+                              "type": "array",
+                              "items": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "maxLength": 200
+                                  },
+                                  {
+                                    "type": "number"
+                                  }
+                                ]
+                              }
+                            }
+                          ]
+                        }
+                      },
+                      "monthly": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "hourly": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "perUnit": {
+                        "maxItems": 10,
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "attribute": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "scale": {
+                              "default": 1,
+                              "type": "number",
+                              "exclusiveMinimum": 0
+                            },
+                            "default": {
+                              "default": 0,
+                              "type": "number",
+                              "minimum": 0
+                            },
+                            "monthly": {
+                              "type": "number",
+                              "minimum": 0
+                            },
+                            "hourly": {
+                              "type": "number",
+                              "minimum": 0
+                            },
+                            "watts": {
+                              "type": "number",
+                              "minimum": 0
+                            }
+                          },
+                          "required": [
+                            "attribute"
+                          ]
+                        }
+                      },
+                      "quantity": {
+                        "type": "object",
+                        "properties": {
+                          "attribute": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 200
+                          },
+                          "default": {
+                            "default": 1,
+                            "type": "number",
+                            "minimum": 0
+                          }
+                        },
+                        "required": [
+                          "attribute"
+                        ]
+                      },
+                      "free": {
+                        "type": "boolean"
+                      },
+                      "usageBased": {
+                        "type": "boolean"
+                      },
+                      "watts": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "vcpu": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "memoryGb": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "note": {
+                        "type": "string",
+                        "maxLength": 300
+                      }
+                    },
+                    "required": [
+                      "provider",
+                      "type"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "identifier",
+                "title"
               ]
             }
           },
@@ -14704,7 +15216,17 @@
             "type": "string",
             "enum": [
               "run",
-              "entity"
+              "entity",
+              "plan"
+            ]
+          },
+          "severity": {
+            "default": "critical",
+            "type": "string",
+            "enum": [
+              "critical",
+              "warning",
+              "advisory"
             ]
           },
           "match": {
@@ -14762,6 +15284,7 @@
           "description",
           "enabled",
           "target",
+          "severity",
           "match",
           "expression",
           "message",
@@ -14926,6 +15449,271 @@
         ],
         "additionalProperties": false,
         "description": "An initiative with its progress (entities at the target / in scope, exempted ones excluded)"
+      },
+      "PriceCatalogView": {
+        "type": "object",
+        "properties": {
+          "identifier": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "description": {
+            "default": "",
+            "type": "string",
+            "maxLength": 2000
+          },
+          "currency": {
+            "default": "USD",
+            "type": "string",
+            "pattern": "^[A-Z]{3}$"
+          },
+          "extends": {
+            "type": "string",
+            "maxLength": 64
+          },
+          "hoursPerMonth": {
+            "default": 730,
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 744
+          },
+          "freeProviders": {
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 64
+            }
+          },
+          "carbon": {
+            "default": {},
+            "type": "object",
+            "properties": {
+              "pue": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string",
+                  "maxLength": 64
+                },
+                "additionalProperties": {
+                  "type": "number",
+                  "minimum": 1,
+                  "maximum": 3
+                }
+              },
+              "gridIntensity": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string",
+                  "maxLength": 64
+                },
+                "additionalProperties": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 2
+                }
+              },
+              "defaultGridIntensity": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 2
+              },
+              "wattsPerVcpu": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string",
+                  "maxLength": 64
+                },
+                "additionalProperties": {
+                  "type": "number",
+                  "minimum": 0
+                }
+              },
+              "wattsPerGbMemory": {
+                "type": "number",
+                "minimum": 0
+              }
+            },
+            "additionalProperties": false
+          },
+          "prices": {
+            "default": [],
+            "maxItems": 5000,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "provider": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "type": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "match": {
+                  "default": {},
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string",
+                    "maxLength": 200
+                  },
+                  "additionalProperties": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 200
+                      },
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "maxItems": 50,
+                        "type": "array",
+                        "items": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "maxLength": 200
+                            },
+                            {
+                              "type": "number"
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                },
+                "monthly": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "hourly": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "perUnit": {
+                  "maxItems": 10,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "attribute": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200
+                      },
+                      "scale": {
+                        "default": 1,
+                        "type": "number",
+                        "exclusiveMinimum": 0
+                      },
+                      "default": {
+                        "default": 0,
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "monthly": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "hourly": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "watts": {
+                        "type": "number",
+                        "minimum": 0
+                      }
+                    },
+                    "required": [
+                      "attribute",
+                      "scale",
+                      "default"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "quantity": {
+                  "type": "object",
+                  "properties": {
+                    "attribute": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "default": {
+                      "default": 1,
+                      "type": "number",
+                      "minimum": 0
+                    }
+                  },
+                  "required": [
+                    "attribute",
+                    "default"
+                  ],
+                  "additionalProperties": false
+                },
+                "free": {
+                  "type": "boolean"
+                },
+                "usageBased": {
+                  "type": "boolean"
+                },
+                "watts": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "vcpu": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "memoryGb": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "note": {
+                  "type": "string",
+                  "maxLength": 300
+                }
+              },
+              "required": [
+                "provider",
+                "type",
+                "match"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "managed": {
+            "type": "boolean"
+          },
+          "builtin": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "identifier",
+          "title",
+          "description",
+          "currency",
+          "hoursPerMonth",
+          "carbon",
+          "prices",
+          "managed"
+        ],
+        "additionalProperties": false
       },
       "FragmentView": {
         "type": "object",
@@ -26929,6 +27717,242 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/api/v1/price-catalogs": {
+      "get": {
+        "operationId": "getPriceCatalogs",
+        "tags": [
+          "price-catalogs"
+        ],
+        "summary": "GET /api/v1/price-catalogs",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PriceCatalogView"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/api/v1/price-catalogs/{id}": {
+      "delete": {
+        "operationId": "deletePriceCatalogsById",
+        "tags": [
+          "price-catalogs"
+        ],
+        "summary": "DELETE /api/v1/price-catalogs/{id}",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      },
+      "get": {
+        "operationId": "getPriceCatalogsById",
+        "tags": [
+          "price-catalogs"
+        ],
+        "summary": "GET /api/v1/price-catalogs/{id}",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PriceCatalogView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      },
+      "put": {
+        "operationId": "putPriceCatalogsById",
+        "tags": [
+          "price-catalogs"
+        ],
+        "summary": "PUT /api/v1/price-catalogs/{id}",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PriceCatalog"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PriceCatalogView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/api/v1/price-catalogs/{id}/estimate": {
+      "post": {
+        "operationId": "postPriceCatalogsEstimateById",
+        "tags": [
+          "price-catalogs"
+        ],
+        "summary": "POST /api/v1/price-catalogs/{id}/estimate",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
           },
           "400": {
             "description": "Validation error",

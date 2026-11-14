@@ -143,6 +143,7 @@ const routes: RouteObject[] = [
                   { path: 'scorecards', element: page(definitions, 'ScorecardsAdmin') },
                   { path: 'policies', element: page(definitions, 'PoliciesAdmin') },
                   { path: 'initiatives', element: page(initiatives, 'InitiativesAdmin') },
+                  { path: 'price-catalogs', element: page(definitions, 'PriceCatalogsAdmin') },
                   { path: 'fragments', element: page(definitions, 'FragmentsAdmin') },
                   { path: 'webhooks', element: page(definitions, 'WebhooksAdmin') },
                   { path: 'teams', element: page(access, 'TeamsAdmin') },

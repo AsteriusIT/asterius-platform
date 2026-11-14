@@ -1,0 +1,69 @@
+# portal-services-plan: the plan stage of the lean (OpenTofu) path, queued by the portal before the approval.
+# It runs `tofu plan` for one service and publishes the machine-readable plan as the build artifact `plan`
+# (file plan.json, the output of `tofu show -json`), which the portal's plan-check step reads
+# (examples/plan-check/config/plan-check.yaml). Nothing is applied here.
+#
+# Same inputs as portal-services-apply; keep the two pipelines on the same OpenTofu version, backend and variables so
+# that what was checked is what is applied. Not verified against a live Azure DevOps organization: see
+# docs/EXTENDING.md, "Plan checks", manual verification.
+
+trigger: none
+pr: none
+
+parameters:
+  - name: service # <team>/<service>
+    type: string
+  - name: environment
+    type: string
+    default: dev
+  - name: size
+    type: string
+    default: small
+  - name: runId # the portal run, for traceability (build tag run:<id>)
+    type: string
+    default: ''
+
+variables:
+  - name: TOFU_VERSION
+    value: 1.8.5
+  # Backend settings shared with portal-services-apply (a variable group); cloud credentials come from the service
+  # connection below (workload identity federation).
+  - group: portal-services-tofu
+
+pool:
+  vmImage: ubuntu-latest
+
+steps:
+  - checkout: self # the Portal repo: modules and the committed service specs
+
+  - bash: |
+      set -euo pipefail
+      [ -n "${{ parameters.runId }}" ] && echo "##vso[build.addbuildtag]run:${{ parameters.runId }}"
+      curl -fsSL "https://github.com/opentofu/opentofu/releases/download/v${TOFU_VERSION}/tofu_${TOFU_VERSION}_linux_amd64.zip" -o tofu.zip
+      unzip -q tofu.zip tofu -d "$(Agent.TempDirectory)/tofu" && echo "##vso[task.prependpath]$(Agent.TempDirectory)/tofu"
+    displayName: Install OpenTofu
+
+  - task: AzureCLI@2
+    displayName: tofu plan
+    inputs:
+      azureSubscription: portal-services # service connection used by the apply pipeline too
+      scriptType: bash
+      scriptLocation: inlineScript
+      addSpnToEnvironment: true
+      inlineScript: |
+        set -euo pipefail
+        export ARM_USE_OIDC=true ARM_CLIENT_ID="$servicePrincipalId" ARM_TENANT_ID="$tenantId" ARM_OIDC_TOKEN="$idToken"
+        export ARM_SUBSCRIPTION_ID="$(az account show --query id -o tsv)"
+        cd "services/${{ parameters.service }}"
+        tofu init -input=false -backend-config="key=${{ parameters.service }}/${{ parameters.environment }}.tfstate"
+        tofu plan -input=false -lock=false -out=tfplan \
+          -var "environment=${{ parameters.environment }}" -var "size=${{ parameters.size }}"
+        mkdir -p "$(Build.ArtifactStagingDirectory)/plan"
+        # The machine-readable plan: resource_changes with before / after, read by the portal.
+        tofu show -json tfplan > "$(Build.ArtifactStagingDirectory)/plan/plan.json"
+        # Also the human-readable one, for people opening the pipeline run.
+        tofu show -no-color tfplan > "$(Build.ArtifactStagingDirectory)/plan/plan.txt"
+
+  - publish: $(Build.ArtifactStagingDirectory)/plan
+    artifact: plan
+    displayName: Publish plan.json

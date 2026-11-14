@@ -20,6 +20,7 @@ import { reportWorkflowTests } from './actions/workflow-tests.js';
 import { deleteIntegration, listIntegrations, upsertIntegration } from './integrations/integrations.js';
 import { deleteScorecard, evaluateAllEntities, listScorecards, upsertScorecard } from './catalog/scorecards.js';
 import { deletePolicy, listPolicies, upsertPolicy } from './policies/policies.js';
+import { deletePriceCatalog, listPriceCatalogs, upsertPriceCatalog } from './plan/price-catalogs.js';
 import { deleteDashboard, listDashboards, upsertDashboard } from './catalog/dashboards.js';
 import { deleteInitiative, listInitiatives, upsertInitiative } from './catalog/initiatives.js';
 import { deleteWebhook, getWebhook, listWebhooks, upsertWebhook } from './webhooks/webhooks.js';
@@ -31,8 +32,8 @@ import { deleteMcpServer, listMcpServers, upsertMcpServer } from './agents/mcp-s
 
 /**
  * Configuration as code, per organization. Files (*.yaml / *.yml / *.json) declare `teams`, `blueprints`, `connectors`,
- * `connections`, `fragments`, `actions`, `integrations`, `webhooks`, `scorecards`, `policies`, `dashboards`, `initiatives`,
- * `agents`, `mcpServers` and seed `entities` of one organization:
+ * `connections`, `fragments`, `actions`, `integrations`, `webhooks`, `scorecards`, `policies`, `priceCatalogs`, `dashboards`,
+ * `initiatives`, `agents`, `mcpServers` and seed `entities` of one organization:
  *   CONFIG_DIR/*                 the default organization, plus `organizations:` (platform-level declarations)
  *   CONFIG_DIR/orgs/<slug>/**    organization <slug> (a ConfigMap or git-sync volume per tenant)
  *   a Git repository             set by the organization's admins (Settings → Configuration as code)
@@ -112,6 +113,7 @@ export function readConfigDir(dir = config.CONFIG_DIR, opts: { platform?: boolea
         'webhooks',
         'scorecards',
         'policies',
+        'priceCatalogs',
         'dashboards',
         'agents',
         'mcpServers',
@@ -290,6 +292,15 @@ export async function applyConfig(loaded: LoadedConfig, log: FastifyBaseLogger):
     await listPolicies(),
     (p) => upsertPolicy(p, m),
     (id) => deletePolicy(id, m),
+  );
+  await applyKind(
+    log,
+    errs,
+    'priceCatalog',
+    data.priceCatalogs,
+    await listPriceCatalogs({ builtin: false }),
+    (c) => upsertPriceCatalog(c, m),
+    (id) => deletePriceCatalog(id, m),
   );
   await applyKind(
     log,
@@ -493,6 +504,7 @@ export async function planConfig(loaded?: LoadedConfig): Promise<PlanItem[]> {
   plan('webhook', d.webhooks, await listWebhooks());
   plan('scorecard', d.scorecards, await listScorecards());
   plan('policy', d.policies, await listPolicies());
+  plan('priceCatalog', d.priceCatalogs, await listPriceCatalogs({ builtin: false }));
   plan('dashboard', d.dashboards, await listDashboards());
   plan('mcp-server', d.mcpServers, await listMcpServers());
   plan('agent', d.agents, await listAgents(), ['tokens']);
@@ -511,6 +523,7 @@ const KINDS = [
   'webhooks',
   'scorecards',
   'policies',
+  'priceCatalogs',
   'dashboards',
   'agents',
   'mcpServers',
@@ -537,6 +550,7 @@ export async function configDiff() {
     webhooks: await listWebhooks(),
     scorecards: await listScorecards(),
     policies: await listPolicies(),
+    priceCatalogs: await listPriceCatalogs({ builtin: false }),
     dashboards: await listDashboards(),
     agents: await listAgents(),
     mcpServers: await listMcpServers(),
@@ -583,6 +597,7 @@ export async function importConfig(text: string, dryRun: boolean): Promise<Recor
   for (const w of merged.webhooks) await upsertWebhook(w);
   for (const sc of merged.scorecards) await upsertScorecard(sc, { knownBlueprints: knownTargets });
   for (const p of merged.policies) await upsertPolicy(p);
+  for (const c of merged.priceCatalogs) await upsertPriceCatalog(c);
   for (const d of merged.dashboards) await upsertDashboard(d);
   for (const s of merged.mcpServers) await upsertMcpServer(s);
   for (const a of merged.agents) await upsertAgent(a);
@@ -757,6 +772,7 @@ export async function exportDefinitions() {
     webhooks,
     scorecards: (await listScorecards()).map((s) => strip(s as never, ['managed'])),
     policies: (await listPolicies()).map((p) => strip(p as never, ['managed'])),
+    priceCatalogs: (await listPriceCatalogs({ builtin: false })).map((c) => strip(c as never, ['managed'])),
     dashboards: (await listDashboards()).map((d) => strip(d as never, ['managed'])),
     agents: (await listAgents()).map((a) => strip(a as never, ['managed', 'version', 'tokens', 'createdAt', 'updatedAt'])),
     mcpServers: (await listMcpServers()).map((s) => strip(s as never, ['managed', 'version', 'createdAt', 'updatedAt'])),
@@ -779,6 +795,7 @@ export async function managedCounts() {
      UNION ALL SELECT 'webhooks', count(*) FROM webhooks WHERE managed = 1 AND org_id = ?
      UNION ALL SELECT 'scorecards', count(*) FROM scorecards WHERE managed = 1 AND org_id = ?
      UNION ALL SELECT 'policies', count(*) FROM policies WHERE managed = 1 AND org_id = ?
+     UNION ALL SELECT 'priceCatalogs', count(*) FROM price_catalogs WHERE managed = 1 AND org_id = ?
      UNION ALL SELECT 'dashboards', count(*) FROM dashboards WHERE managed = 1 AND org_id = ?
      UNION ALL SELECT 'fragments', count(*) FROM fragments WHERE managed = 1 AND org_id = ?
      UNION ALL SELECT 'teams', count(*) FROM teams WHERE managed = 1 AND org_id = ?
@@ -787,7 +804,7 @@ export async function managedCounts() {
      UNION ALL SELECT 'agents', count(*) FROM agents WHERE managed = 1 AND org_id = ?
      UNION ALL SELECT 'mcpServers', count(*) FROM mcp_servers WHERE managed = 1 AND org_id = ?
      UNION ALL SELECT 'initiatives', count(*) FROM initiatives WHERE managed = 1 AND org_id = ?`,
-    ...Array(14).fill(orgId()),
+    ...Array(15).fill(orgId()),
   );
   return Object.fromEntries(rows.map((r) => [r.k, Number(r.n)]));
 }

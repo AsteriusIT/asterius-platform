@@ -24,6 +24,7 @@ interface Row {
   filters: string;
   expression: string;
   message: string;
+  severity: string | null;
   managed: number;
 }
 
@@ -33,6 +34,7 @@ const toPolicy = (r: Row): Policy => ({
   description: r.description,
   enabled: bool(r.enabled),
   target: r.target as Policy['target'],
+  severity: (r.severity ?? 'critical') as Policy['severity'],
   match: json(r.filters, {}),
   expression: r.expression,
   message: r.message,
@@ -70,17 +72,28 @@ export async function upsertPolicy(input: unknown, opts: { managed?: boolean } =
   const existing = await one<Row>('SELECT * FROM policies WHERE org_id = ? AND identifier = ?', org, def.identifier);
   if (existing && bool(existing.managed) && !opts.managed) throw managedError('Policy', def.identifier);
   const t = now();
-  const vals = [def.title, def.description, def.enabled ? 1 : 0, def.target, JSON.stringify(def.match), def.expression, def.message, opts.managed ? 1 : 0, t];
+  const vals = [
+    def.title,
+    def.description,
+    def.enabled ? 1 : 0,
+    def.target,
+    def.severity,
+    JSON.stringify(def.match),
+    def.expression,
+    def.message,
+    opts.managed ? 1 : 0,
+    t,
+  ];
   if (existing)
     await run(
-      'UPDATE policies SET title = ?, description = ?, enabled = ?, target = ?, filters = ?, expression = ?, message = ?, managed = ?, updated_at = ? WHERE org_id = ? AND identifier = ?',
+      'UPDATE policies SET title = ?, description = ?, enabled = ?, target = ?, severity = ?, filters = ?, expression = ?, message = ?, managed = ?, updated_at = ? WHERE org_id = ? AND identifier = ?',
       ...vals,
       org,
       def.identifier,
     );
   else
     await run(
-      'INSERT INTO policies (title, description, enabled, target, filters, expression, message, managed, updated_at, created_at, org_id, identifier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO policies (title, description, enabled, target, severity, filters, expression, message, managed, updated_at, created_at, org_id, identifier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       ...vals,
       t,
       org,
@@ -108,9 +121,14 @@ export interface PolicyContext {
   operation?: 'create' | 'update' | 'delete' | 'run';
 }
 
+/** Enabled `target: plan` policies that apply to an action (evaluated by plan-check steps, plan/checks.ts). */
+export async function planPolicies(action: string): Promise<Policy[]> {
+  return (await enabledPolicies('plan')).filter((p) => !p.match.actions?.length || p.match.actions.includes(action));
+}
+
 const matches = (p: Policy, c: PolicyContext) => {
   const m = p.match;
-  if (p.target === 'run') return !m.actions?.length || (!!c.action && m.actions.includes(c.action.identifier));
+  if (p.target === 'run' || p.target === 'plan') return !m.actions?.length || (!!c.action && m.actions.includes(c.action.identifier));
   return (
     (!m.blueprints?.length || (!!c.blueprint && m.blueprints.includes(c.blueprint))) &&
     (!m.operations?.length || (!!c.operation && m.operations.includes(c.operation as never)))

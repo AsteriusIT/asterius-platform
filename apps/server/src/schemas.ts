@@ -225,17 +225,20 @@ export const initiativeExemptionInput = z.object({
  * Policy gate: a JSONata expression evaluated before a run is queued (`target: run`) or an entity is created, updated
  * or deleted through the API or the catalog invoker (`target: entity`). The expression must evaluate to `true` to allow;
  * anything else, and any evaluation error, denies. The context is `{ inputs, entity, previous, principal, action, blueprint, operation }`.
+ * `target: plan`: evaluated by `plan-check` steps over a Terraform / OpenTofu plan (plan/checks.ts), with a `severity`.
  */
 export const policyDef = z.object({
   identifier: slug,
   title: z.string().min(1).max(100),
   description: z.string().max(2000).default(''),
   enabled: z.boolean().default(true),
-  target: z.enum(['run', 'entity']),
+  target: z.enum(['run', 'entity', 'plan']),
+  /** `target: plan`: critical fails the step, warning requires an override (approval), advisory is logged and notified. */
+  severity: z.enum(['critical', 'warning', 'advisory']).default('critical'),
   /** Optional filters; an empty/missing filter matches everything. */
   match: z
     .object({
-      /** `target: run`: action identifiers. */
+      /** `target: run` / `plan`: action identifiers. */
       actions: z.array(slug).max(100).optional(),
       /** `target: entity`: blueprint identifiers. */
       blueprints: z.array(slug).max(100).optional(),
@@ -252,6 +255,77 @@ export const policyDef = z.object({
   message: z.string().max(1000).default('Denied by policy'),
 });
 export type PolicyDef = z.infer<typeof policyDef>;
+
+/**
+ * Price catalog of `plan-check` steps (plan/pricing.ts): monthly prices and power draw by provider, resource type and
+ * attributes of a Terraform / OpenTofu plan. `extends` layers it on another catalog (`builtin`: the sample table).
+ */
+const glob = z.string().min(1).max(200);
+const priceUnit = z.object({
+  /** Attribute path in the planned values (`disk_size_gb`, `default_node_pool.0.node_count`). */
+  attribute: z.string().min(1).max(200),
+  /** Multiplier applied to the attribute (e.g. 1/1024 for MB → GB). */
+  scale: z.number().positive().default(1),
+  /** Units when the attribute is unknown (computed after apply) or missing. */
+  default: z.number().min(0).default(0),
+  monthly: z.number().min(0).optional(),
+  hourly: z.number().min(0).optional(),
+  /** Average power draw per unit (carbon estimate). */
+  watts: z.number().min(0).optional(),
+});
+export const priceEntry = z.object({
+  /** Provider short name (`azurerm`, `aws`, `google`); `*` globs. */
+  provider: glob,
+  /** Resource type (`azurerm_linux_virtual_machine`, `aws_iam_*`). */
+  type: glob,
+  /** Attribute path → expected value (string globs, one of a list); `region` is the resource's region. */
+  match: z
+    .record(z.string().max(200), z.union([z.string().max(200), z.number(), z.boolean(), z.array(z.union([z.string().max(200), z.number()])).max(50)]))
+    .default({}),
+  monthly: z.number().min(0).optional(),
+  hourly: z.number().min(0).optional(),
+  perUnit: z.array(priceUnit).max(10).optional(),
+  /** Multiplies the whole entry (node count, capacity…). */
+  quantity: z.object({ attribute: z.string().min(1).max(200), default: z.number().min(0).default(1) }).optional(),
+  /** Not billed by itself (networking glue, IAM, a web app billed through its plan). */
+  free: z.boolean().optional(),
+  /** Billed on usage the plan does not show (storage capacity, requests): counted as 0 and listed as usage-based. */
+  usageBased: z.boolean().optional(),
+  /** Carbon: average power draw, or vCPUs and memory (converted with the catalog's coefficients). */
+  watts: z.number().min(0).optional(),
+  vcpu: z.number().min(0).optional(),
+  memoryGb: z.number().min(0).optional(),
+  note: z.string().max(300).optional(),
+});
+export type PriceEntry = z.infer<typeof priceEntry>;
+export const priceCatalogDef = z.object({
+  identifier: slug,
+  title: z.string().min(1).max(100),
+  description: z.string().max(2000).default(''),
+  currency: z
+    .string()
+    .regex(/^[A-Z]{3}$/, 'ISO 4217 code, e.g. EUR')
+    .default('USD'),
+  /** Catalog used for what this one does not price (`builtin`, or another catalog of the organization). */
+  extends: z.string().max(64).optional(),
+  hoursPerMonth: z.number().positive().max(744).default(730),
+  /** Providers whose resources are never billed (random, null, tls…): neither priced nor reported as unmatched. */
+  freeProviders: z.array(z.string().max(64)).max(100).optional(),
+  carbon: z
+    .object({
+      /** Power usage effectiveness per provider. */
+      pue: z.record(z.string().max(64), z.number().min(1).max(3)).optional(),
+      /** Grid emission factor per region, kgCO2e per kWh. */
+      gridIntensity: z.record(z.string().max(64), z.number().min(0).max(2)).optional(),
+      defaultGridIntensity: z.number().min(0).max(2).optional(),
+      /** Average watts per vCPU (per provider) and per GB of memory. */
+      wattsPerVcpu: z.record(z.string().max(64), z.number().min(0)).optional(),
+      wattsPerGbMemory: z.number().min(0).optional(),
+    })
+    .default({}),
+  prices: z.array(priceEntry).max(5000).default([]),
+});
+export type PriceCatalogDef = z.infer<typeof priceCatalogDef>;
 
 /** Data migrations offered when a blueprint changes: applied to the properties of its existing entities. */
 export const entityMigration = z.discriminatedUnion('type', [
@@ -1369,6 +1443,8 @@ export const configFile = z.object({
   webhooks: z.array(webhookDef).default([]),
   scorecards: z.array(scorecardDef).default([]),
   policies: z.array(policyDef).default([]),
+  /** Price catalogs of plan-check steps. */
+  priceCatalogs: z.array(priceCatalogDef).default([]),
   dashboards: z.array(dashboardDef).default([]),
   initiatives: z.array(initiativeDef).default([]),
   fragments: z.array(fragmentDef).default([]),
