@@ -1,0 +1,1 @@
+terraform import asterius_scorecard.production_readiness production-readiness

@@ -2,6 +2,7 @@ import type { ObjectSchema } from '@asterius/shared';
 import type { Principal } from '../auth/users.js';
 import { converse, makeClient, type Logger, type McpServerConfig } from '../ai/model.js';
 import { agentToolSet } from '../ai/tools.js';
+import { mcpBinding } from '../ai/mcp-tools.js';
 import type { WorkflowStepDef } from '../schemas.js';
 
 /**
@@ -10,7 +11,8 @@ import type { WorkflowStepDef } from '../schemas.js';
  *    interpolated values are fenced as untrusted data and secrets can never be referenced);
  *  - `output` (a JSON Schema built in the UI) turns on structured outputs: the answer is validated JSON;
  *  - `tools` lets the model look things up in the catalog and, inside the step's guardrails, act (upsert, trigger, HTTP);
- *  - `mcpServers` connect remote MCP servers (called by the Claude API).
+ *  - `mcpServers` connect remote MCP servers (called by the Claude API);
+ *  - the `mcp` tool reaches the organization's MCP gateway or server through a connection (called by the platform: ai/mcp-tools.ts).
  * The model loop, metering and budgets live in ai/model.ts. Retryable failures (rate limit, overload, network)
  * are retried by the step's retry policy.
  */
@@ -47,7 +49,12 @@ export async function runAgent(step: RenderedAgentStep, log: Logger, ctx: AgentR
     token: step.mcpTokens?.[i] || undefined,
     allowedTools: s.allowedTools,
   }));
-  const tools = agentToolSet(step.tools, step.guardrails, { runId: ctx.runId, stepId: ctx.stepId, actionId: ctx.action, principal: ctx.principal });
+  // MCP tools through a connection: resolved (and allow-listed) before the model is called; any misconfiguration fails the step.
+  const mcp =
+    step.tools.includes('mcp') && step.mcp
+      ? await mcpBinding(step.mcp.connection, step.guardrails.mcpTools, { workflow: ctx.action, team: ctx.team })
+      : undefined;
+  const tools = agentToolSet(step.tools, step.guardrails, { runId: ctx.runId, stepId: ctx.stepId, actionId: ctx.action, principal: ctx.principal }, mcp);
   const r = await converse({
     client,
     provider,

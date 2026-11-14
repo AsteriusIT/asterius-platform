@@ -7,7 +7,7 @@ import { evaluate, redact, redactDeep, render } from '../lib/expr.js';
 import { resolveRef, stepToken } from '../secrets.js';
 import { outputProblem, resolverFor } from './limits.js';
 import { audit, SYSTEM } from '../audit.js';
-import { actorOf, getUser, principalOf, type Principal } from '../auth/users.js';
+import { actorOf, assertUnrestrictedToken, getUser, principalOf, type Principal } from '../auth/users.js';
 import { findEntity } from '../catalog/entities.js';
 import { scorecardLevels } from '../catalog/scorecards.js';
 import { compact, validate } from '../catalog/validation.js';
@@ -792,6 +792,7 @@ export async function decideStep(
   comment: string,
   extra: { choice?: string; values?: Record<string, unknown> } = {},
 ) {
+  assertUnrestrictedToken(p0);
   const p = await withDelegators(p0);
   const r = await getRunRow(runId);
   const def = stepDefs(r).find((d) => d.id === stepId);

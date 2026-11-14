@@ -141,6 +141,11 @@ export interface ApiToken {
   scopes?: string[] | null;
   blueprints?: string[] | null;
   ipAllow?: string[] | null;
+  /**
+   * Workflows (action identifiers) the token is restricted to: it lists and starts only those, reads only their runs and
+   * cannot decide approvals or answer input steps (null: no restriction). This is how an AI agent is scoped.
+   */
+  workflows?: string[] | null;
 }
 
 // ---------- catalog ----------
@@ -279,6 +284,8 @@ export interface EntityQueryBody {
   source?: string;
   filters?: PropertyFilter[];
   relations?: RelationFilter[];
+  /** Entities at this level of a scorecard (`none`: below the first level). Query string: `scorecard.<id>=<level>`. */
+  scorecards?: { scorecard: string; level: string }[];
   /** title | updated | identifier | relevance | prop:<name> */
   sort?: string;
   dir?: 'asc' | 'desc';
@@ -462,7 +469,7 @@ export interface ApprovalStep extends WorkflowStepBase, ApprovalTimers {
 
 export type AgentEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
-export type AgentTool = 'catalog' | 'upsert_entity' | 'trigger_action' | 'http';
+export type AgentTool = 'catalog' | 'upsert_entity' | 'trigger_action' | 'http' | 'mcp';
 export type AiProvider = 'anthropic' | 'bedrock' | 'vertex';
 
 export interface AgentGuardrails {
@@ -471,6 +478,8 @@ export interface AgentGuardrails {
   httpHosts?: string[];
   httpMethods?: ('GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE')[];
   maxWrites?: number;
+  /** `mcp` tool: names of the tools the agent may call through the step's `mcp.connection`. */
+  mcpTools?: string[];
 }
 
 export interface AgentMcpServer {
@@ -492,6 +501,8 @@ export interface AgentStep extends WorkflowStepBase {
   /** catalog: read-only lookups · the others are governed write tools and need `guardrails`. */
   tools?: AgentTool[];
   guardrails?: AgentGuardrails;
+  /** `mcp` tool: the connection (connector `mcp`) to the organization's MCP gateway or server, called by the platform. */
+  mcp?: { connection: string };
   /** Remote MCP servers the model may use. */
   mcpServers?: AgentMcpServer[];
   maxTurns?: number;
@@ -701,7 +712,16 @@ export interface BlackoutSpan {
 
 export interface EventTrigger {
   type: 'event';
-  event: 'entity.created' | 'entity.updated' | 'entity.deleted' | 'entity.expired' | 'scorecard.changed' | 'run.finished';
+  event:
+    | 'entity.created'
+    | 'entity.updated'
+    | 'entity.deleted'
+    | 'entity.expired'
+    | 'scorecard.changed'
+    | 'run.finished'
+    | 'initiative.at_risk'
+    | 'initiative.overdue'
+    | 'initiative.completed';
   blueprint?: string | null;
   /** run.finished: only runs of this action. */
   action?: string | null;
@@ -864,6 +884,8 @@ export interface Run {
   actionVersion?: number | null;
   /** What started the run: form, api, schedule, event, webhook, workflow (parent run) or rerun. */
   trigger?: { type: string; [k: string]: unknown };
+  /** How the run was requested: ui, api, mcp or workflow (null: platform automation). */
+  channel?: CallChannel | null;
   createdAt: string;
   startedAt: string | null;
   endedAt: string | null;
@@ -1038,7 +1060,11 @@ export interface AuditEntry {
   actorEmail: string | null;
   target: string | null;
   detail: Record<string, unknown>;
+  /** ui (browser session), api (API token), mcp (MCP endpoint), workflow (AI agent step); null: platform job. */
+  channel?: CallChannel | null;
 }
+
+export type CallChannel = 'ui' | 'api' | 'mcp' | 'workflow';
 
 /**
  * A configuration field of a plugin, rendered by the UI builders. Values may contain `{{ }}` templates and
@@ -1240,6 +1266,97 @@ export interface ScorecardSummary {
   trend: { day: string; distribution: Record<string, number> }[];
 }
 
+// ---------- initiatives ----------
+/** A scorecard target with a deadline: entities in scope must reach `targetLevel` and pass `rules`. */
+export interface Initiative {
+  identifier: string;
+  title: string;
+  description: string;
+  scorecard: string;
+  targetLevel: string | null;
+  rules: string[];
+  /** YYYY-MM-DD. */
+  startDate: string;
+  deadline: string;
+  /** Only entities of these teams; empty: the whole blueprint. */
+  teams: string[];
+  owner: string | null;
+  enabled: boolean;
+  reminderDays: number;
+  managed: boolean;
+}
+
+export type InitiativeStatus = 'on_track' | 'at_risk' | 'overdue' | 'done';
+
+export interface InitiativeCounts {
+  /** Entities at or above the target. */
+  passing: number;
+  /** Entities in scope (exempted ones excluded). */
+  total: number;
+  exempted: number;
+  /** passing / total (1 when nothing is in scope). */
+  ratio: number;
+}
+
+export interface InitiativeView extends Initiative {
+  blueprint: string;
+  scorecardTitle: string;
+  status: InitiativeStatus;
+  progress: InitiativeCounts;
+  /** Where progress should be today on a straight line from the start (0 to 1). */
+  expected: number;
+  daysLeft: number;
+  /** Set when the scorecard is missing or the target no longer matches it. */
+  error?: string;
+}
+
+export interface InitiativeTeamProgress extends InitiativeCounts {
+  /** Owner team; null: entities without a team. */
+  team: string | null;
+}
+
+export interface InitiativeDetail extends InitiativeView {
+  byTeam: InitiativeTeamProgress[];
+  /** One point per day (daily snapshots, today live). */
+  trend: { day: string; passing: number; total: number; teams: Record<string, { passing: number; total: number }> }[];
+  /** Rules an entity must pass (levels up to the target, plus `rules`). */
+  requiredRules: { rule: string; title: string; level: string }[];
+}
+
+export interface InitiativeEntity {
+  identifier: string;
+  title: string;
+  team: string | null;
+  level: string | null;
+  passing: boolean;
+  /** Required rules that fail (exempted rules left out). */
+  failing: { rule: string; title: string; level: string }[];
+  /** The whole entity is exempted (left out of the counts). */
+  exempt: boolean;
+  /** Rules exempted for this entity. */
+  exemptRules: string[];
+}
+
+export interface InitiativeExemption {
+  id: string;
+  initiative: string;
+  entity: string;
+  /** null: the whole entity. */
+  rule: string | null;
+  reason: string;
+  expiresAt: string;
+  grantedBy: { id: string | null; email: string | null };
+  createdAt: string;
+  active: boolean;
+}
+
+/** A failing entity of one of the caller's teams (To do inbox). */
+export interface InitiativeTodo {
+  initiative: { identifier: string; title: string; deadline: string; targetLevel: string | null; daysLeft: number };
+  entity: { blueprint: string; identifier: string; title: string; team: string | null };
+  failing: { rule: string; title: string; level: string }[];
+}
+
 // ---------- fragments ----------
 /** Reusable steps, included in workflows by `type: fragment` steps. */
 export interface Fragment {
@@ -1290,6 +1407,7 @@ export type ConnectorCategory =
   | 'security'
   | 'artifacts'
   | 'identity'
+  | 'ai'
   | 'internal'
   | 'other';
 
@@ -1504,14 +1622,79 @@ export interface Policy {
   title: string;
   description: string;
   enabled: boolean;
-  /** `run`: before a run is queued; `entity`: before an entity is created, updated or deleted. */
-  target: 'run' | 'entity';
+  /** `run`: before a run is queued; `entity`: before an entity is created, updated or deleted; `plan`: by plan-check steps. */
+  target: 'run' | 'entity' | 'plan';
+  /** `plan` policies: critical fails the step, warning requires an override, advisory is logged and notified. */
+  severity: 'critical' | 'warning' | 'advisory';
   match: { actions?: string[]; blueprints?: string[]; operations?: ('create' | 'update' | 'delete')[] };
   /** JSONata over { inputs, entity, previous, principal, action, blueprint, operation }: true allows. */
   expression: string;
   /** Deny message (may embed {{ expression }}). */
   message: string;
   managed: boolean;
+}
+
+// ---------- plan checks (cost, carbon, policies) ----------
+/** A price catalog of plan-check steps (the document validated by `priceCatalogDef`). */
+export interface PriceCatalog {
+  identifier: string;
+  title: string;
+  description: string;
+  currency: string;
+  extends?: string;
+  hoursPerMonth: number;
+  freeProviders?: string[];
+  carbon: Record<string, unknown>;
+  prices: Record<string, unknown>[];
+  managed: boolean;
+  /** The sample table shipped with the platform (read-only). */
+  builtin?: boolean;
+}
+
+export type PlanChangeAction = 'create' | 'update' | 'delete' | 'replace' | 'no-op' | 'forget';
+export type PlanSeverity = 'critical' | 'warning' | 'advisory';
+
+/** One resource of the plan with its estimates (`before`: current state, `monthly`: after apply). */
+export interface PlanResourceEstimate {
+  address: string;
+  type: string;
+  provider: string;
+  action: PlanChangeAction;
+  region: string | null;
+  /** `priced`, `free`, `usage-based` (billed on usage the plan does not show) or `unmatched` (no price: not counted). */
+  pricing: 'priced' | 'free' | 'usage-based' | 'unmatched';
+  monthly: number;
+  before: number;
+  delta: number;
+  co2eKg: number;
+  co2eDeltaKg: number;
+  note?: string;
+}
+
+export interface PlanViolation {
+  policy: string;
+  title: string;
+  severity: PlanSeverity;
+  message: string;
+  source: 'policy' | 'rule' | 'opa' | 'budget' | 'pricing';
+  address?: string;
+}
+
+/** Output of a `plan-check` step (`steps.<id>.output`). */
+export interface PlanCheckOutput {
+  kind: 'plan-check';
+  gate: 'pass' | 'override' | 'blocked';
+  requiresOverride: boolean;
+  changes: Record<PlanChangeAction, number>;
+  cost: { currency: string; monthly: number; before: number; delta: number; complete: boolean; unmatched: string[]; usageBased: string[]; catalog: string };
+  carbon: { monthlyKg: number; beforeKg: number; deltaKg: number; method: string };
+  violations: PlanViolation[];
+  counts: Record<PlanSeverity, number>;
+  resources: PlanResourceEstimate[];
+  /** Resources left out of `resources` (the full list is the plan-check.json artifact). */
+  truncated: number;
+  /** Markdown summary for approval messages and notifications. */
+  summary: string;
 }
 
 // ---------- blueprint change impact ----------
@@ -1586,6 +1769,16 @@ export interface Insights {
   mttr: { value: number | null; unit: 'hours'; incidents: number; band: DoraBand | null };
 }
 
+export type RunsChartMetric = 'count' | 'duration' | 'failureRate';
+export type DoraChartMetric = 'deploymentFrequency' | 'leadTime' | 'changeFailureRate' | 'mttr';
+
+/** What a `chart` widget plots. */
+export type ChartSeriesDef =
+  | { kind: 'scorecard'; scorecard: string }
+  | { kind: 'runs'; metric: RunsChartMetric; action?: string; team?: string; status?: RunStatus[] }
+  | ({ kind: 'dora'; metric: DoraChartMetric } & Omit<InsightsConfig, 'days'>)
+  | { kind: 'entities'; blueprint: string; mode: 'total' | 'created'; groupBy?: string; filters: Record<string, string> };
+
 export type DashboardWidget =
   | (WidgetBase & { type: 'count'; blueprint: string; filters: Record<string, string>; groupBy?: string })
   | (WidgetBase & { type: 'scorecard'; scorecard: string })
@@ -1601,7 +1794,17 @@ export type DashboardWidget =
       limit: number;
     })
   | (WidgetBase & { type: 'insights' } & InsightsConfig)
-  | (WidgetBase & { type: 'markdown'; content: string });
+  | (WidgetBase & { type: 'markdown'; content: string })
+  | (WidgetBase & { type: 'initiative'; initiative: string })
+  | (WidgetBase & {
+      type: 'chart';
+      chart: 'line' | 'bar' | 'area';
+      stacked: boolean;
+      interval: 'day' | 'week' | 'month';
+      days: number;
+      series: ChartSeriesDef;
+    })
+  | (WidgetBase & { type: 'entity'; show: 'properties' | 'scorecards' | 'relations' | 'links'; properties?: string[] });
 
 export interface Dashboard {
   identifier: string;
@@ -1609,6 +1812,8 @@ export interface Dashboard {
   description: string;
   team: string | null;
   blueprint: string | null;
+  /** `catalog`: header of the blueprint's catalog page; `entity`: overview of each entity page of the blueprint. */
+  scope: 'catalog' | 'entity';
   default: boolean;
   widgets: DashboardWidget[];
   managed: boolean;
@@ -1623,7 +1828,48 @@ export type WidgetData =
   | { type: 'approvals'; items: Run[]; total: number }
   | { type: 'table'; blueprint: string; items: Entity[]; total: number }
   | ({ type: 'insights' } & Insights)
-  | { type: 'markdown' };
+  | { type: 'markdown'; content?: string }
+  | {
+      type: 'initiative';
+      initiative: string;
+      title: string;
+      status: InitiativeStatus;
+      deadline: string;
+      daysLeft: number;
+      progress: InitiativeCounts;
+      /** The teams furthest behind (lowest ratio first). */
+      teams: InitiativeTeamProgress[];
+    }
+  | ChartData
+  | { type: 'entity' };
+
+/**
+ * A computed chart: `buckets` are the start dates (YYYY-MM-DD, UTC) of the intervals, each series has one value per
+ * bucket (null: no data). `drill` says which list a click on a point opens.
+ */
+export interface ChartData {
+  type: 'chart';
+  interval: 'day' | 'week' | 'month';
+  buckets: string[];
+  /** Unit of the values: a count, minutes, hours, a ratio (0-1) or per day. */
+  unit: 'count' | 'minutes' | 'hours' | 'ratio' | 'per_day';
+  series: ChartSeriesData[];
+  /** Which list a point opens: entities of a blueprint (catalog filters) or runs; null: none. */
+  drill: { kind: 'catalog'; blueprint: string } | { kind: 'runs' } | null;
+}
+
+export interface ChartSeriesData {
+  key: string;
+  label: string;
+  /** Mantine colour chosen by the server (run status, scorecard level colour); else the categorical order applies. */
+  color?: string;
+  values: (number | null)[];
+  /**
+   * URL parameters of the list this series drills into (catalog: `f`, `level`; runs: `scope`, `status`, `action`, `team`,
+   * `blueprint`, `entity`). For runs the client adds the bucket's `since` / `until`.
+   */
+  filter?: Record<string, string[]>;
+}
 
 // ---- preferences/views ----
 /** Per-user, per-organization preferences (GET/PUT /api/v1/me/preferences). Form drafts stay in the browser. */

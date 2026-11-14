@@ -12,6 +12,8 @@ backups/
 .beads-credential-key
 .beads/proxieddb/
 data-*/
+# …but not the Terraform provider's docs/data-sources and examples/data-sources (Registry layout).
+!terraform-provider-asterius/**/data-sources/
 test-results/
 playwright-report/
 

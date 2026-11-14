@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Badge, Button, Card, Group, Menu, Select, SimpleGrid, Stack, Text, TextInput, ThemeIcon, UnstyledButton } from '@mantine/core';
+import { Badge, Button, Card, Group, Menu, Pill, Select, SimpleGrid, Stack, Text, TextInput, ThemeIcon, UnstyledButton } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { useDebouncedValue } from '@mantine/hooks';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -11,7 +11,19 @@ import { formOf, isRunnable } from '../lib/permissions';
 import { useAuth } from '../lib/auth';
 import { DataTable, type Column } from '../components/DataTable';
 import { ColumnPicker, FilterBar, ViewsMenu } from '../components/CatalogToolbar';
-import { downloadText, formatFilters, formatSort, listableProps, MY_TEAMS, nextSort, parseFilters, parseSort, toApiSort, toCsv } from '../lib/catalogView';
+import {
+  downloadText,
+  formatFilters,
+  formatSort,
+  listableProps,
+  MY_TEAMS,
+  nextSort,
+  parseFilters,
+  parseLevels,
+  parseSort,
+  toApiSort,
+  toCsv,
+} from '../lib/catalogView';
 import { columnsKey, usePreferences } from '../lib/preferences';
 import { useUrlParams } from '../lib/urlState';
 import { canRunOn } from '../lib/permissions';
@@ -108,6 +120,7 @@ function CatalogTable({ bp }: { bp: Blueprint }) {
   const visibleProps = (pickedCols ?? allProps.slice(0, 5)).filter((k) => allProps.includes(k));
   const sort = parseSort(params.get('sort'));
   const filters = useMemo(() => parseFilters(params.getAll('f')), [params]);
+  const levelFilters = useMemo(() => parseLevels(params.getAll('level')), [params]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const viewsKey = ['views', bp.identifier];
   const views = useQuery({ queryKey: viewsKey, queryFn: () => api.views(bp.identifier), enabled: !!user });
@@ -127,7 +140,7 @@ function CatalogTable({ bp }: { bp: Blueprint }) {
   const dashboard = useQuery({ queryKey: ['dashboard-resolve', bp.identifier], queryFn: () => api.resolveDashboard(bp.identifier) });
   const cards = useQuery({ queryKey: ['scorecards', bp.identifier], queryFn: () => api.scorecards(bp.identifier), staleTime: 60_000 });
   const entities = useQuery({
-    queryKey: ['entities', bp.identifier, debounced, team, page, sort, filters],
+    queryKey: ['entities', bp.identifier, debounced, team, page, sort, filters, levelFilters],
     queryFn: () => api.entities({ blueprint: bp.identifier, ...viewQuery(), limit: PAGE, offset: (page - 1) * PAGE }),
     placeholderData: keepPreviousData,
   });
@@ -159,6 +172,7 @@ function CatalogTable({ bp }: { bp: Blueprint }) {
     sort: sort ? toApiSort(sort.key, allProps) : undefined,
     order: sort?.dir,
     filters,
+    levels: levelFilters,
   });
 
   const setFilters = (next: Record<string, string>) =>
@@ -318,6 +332,31 @@ function CatalogTable({ bp }: { bp: Blueprint }) {
         </Button>
       </Group>
       <FilterBar bp={bp} props={allProps} filters={filters} onChange={setFilters} />
+      {Object.keys(levelFilters).length > 0 && (
+        <Group gap="2xs" aria-label="Scorecard filters">
+          {Object.entries(levelFilters).map(([sc, level]) => (
+            <Pill
+              key={sc}
+              withRemoveButton
+              removeButtonProps={{ 'aria-label': `Remove the ${sc} filter` }}
+              onRemove={() =>
+                setParams(
+                  (prev) => {
+                    const out = new URLSearchParams(prev);
+                    out.delete('level');
+                    out.delete('page');
+                    for (const [k, v] of Object.entries(levelFilters)) if (k !== sc) out.append('level', `${k}:${v}`);
+                    return out;
+                  },
+                  { replace: true },
+                )
+              }
+            >
+              {cards.data?.find((c) => c.identifier === sc)?.title ?? sc}: {level === 'none' ? 'below first level' : level}
+            </Pill>
+          ))}
+        </Group>
+      )}
       {selectedEntities.length > 0 && (
         <Group gap="sm">
           <Text fz="sm">{selectedEntities.length} selected</Text>
@@ -349,7 +388,7 @@ function CatalogTable({ bp }: { bp: Blueprint }) {
         error={entities.error}
         rowKey={(e) => e.identifier}
         onRowClick={(e) => navigate(`/catalog/${bp.identifier}/${encodeURIComponent(e.identifier)}`)}
-        empty={debounced || team || Object.keys(filters).length ? 'No match' : `No ${bp.title.toLowerCase()} yet`}
+        empty={debounced || team || Object.keys(filters).length || Object.keys(levelFilters).length ? 'No match' : `No ${bp.title.toLowerCase()} yet`}
         page={{ page, pageSize: PAGE, total: entities.data?.total ?? 0, onChange: (p) => set('page', String(p)) }}
       />
       <ActionRunModal action={runAction} entity={runOn} onClose={() => setRunAction(null)} />

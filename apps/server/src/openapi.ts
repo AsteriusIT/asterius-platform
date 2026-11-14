@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import { tokenInput } from './auth/scopes.js';
 import { DESCRIPTOR_SCHEMA } from './integrations/sources/descriptors.js';
 import {
   actionDef,
@@ -10,8 +11,11 @@ import {
   delegationInput,
   entityInput,
   fragmentDef,
+  initiativeDef,
+  initiativeExemptionInput,
   integrationDef,
   policyDef,
+  priceCatalogDef,
   teamDef,
   webhookDef,
 } from './schemas.js';
@@ -30,11 +34,15 @@ const COMPONENTS: Record<string, z.ZodType> = {
   Webhook: webhookDef,
   Team: teamDef,
   Policy: policyDef,
+  Initiative: initiativeDef,
+  InitiativeExemptionInput: initiativeExemptionInput,
+  PriceCatalog: priceCatalogDef,
   Fragment: fragmentDef,
   Connector: connectorDef,
   Connection: connectionDef,
   EntityInput: entityInput,
   DelegationInput: delegationInput,
+  TokenInput: tokenInput,
   ConfigFile: configFile,
 };
 
@@ -107,6 +115,19 @@ const OUTPUTS: Record<string, z.ZodType> = {
     webhookUrl: str.optional(),
   }),
   PolicyView: policyDef.safeExtend({ managed: z.boolean() }),
+  InitiativeView: initiativeDef
+    .safeExtend({
+      managed: z.boolean(),
+      blueprint: str,
+      scorecardTitle: str,
+      status: z.enum(['on_track', 'at_risk', 'overdue', 'done']),
+      progress: z.object({ passing: z.number(), total: z.number(), exempted: z.number(), ratio: z.number() }),
+      expected: z.number().describe('Where progress should be today on a straight line from the start (0 to 1)'),
+      daysLeft: z.number(),
+      error: str.optional(),
+    })
+    .describe('An initiative with its progress (entities at the target / in scope, exempted ones excluded)'),
+  PriceCatalogView: priceCatalogDef.safeExtend({ managed: z.boolean(), builtin: z.boolean().optional() }),
   FragmentView: fragmentDef.safeExtend({ version: z.number(), managed: z.boolean(), updatedAt: iso }),
   WebhookView: webhookDef.safeExtend({ managed: z.boolean(), hasSecret: z.boolean() }),
   ConnectorView: connectorDef.safeExtend({ builtin: z.boolean(), managed: z.boolean(), version: z.number(), updatedAt: iso.nullable() }),
@@ -165,6 +186,10 @@ const RESPONSES: Record<string, string> = {
   'GET /api/v1/policies': 'PolicyView[]',
   'GET /api/v1/policies/:id': 'PolicyView',
   'PUT /api/v1/policies/:id': 'PolicyView',
+  'GET /api/v1/initiatives': 'InitiativeView[]',
+  'GET /api/v1/price-catalogs': 'PriceCatalogView[]',
+  'GET /api/v1/price-catalogs/:id': 'PriceCatalogView',
+  'PUT /api/v1/price-catalogs/:id': 'PriceCatalogView',
   'GET /api/v1/fragments': 'FragmentView[]',
   'GET /api/v1/fragments/:id': 'FragmentView',
   'PUT /api/v1/fragments/:id': 'FragmentView',
@@ -196,12 +221,16 @@ const BODIES: Record<string, string> = {
   'PUT /api/v1/webhooks/:id': 'Webhook',
   'PUT /api/v1/teams/:id': 'Team',
   'PUT /api/v1/policies/:id': 'Policy',
+  'PUT /api/v1/initiatives/:id': 'Initiative',
+  'POST /api/v1/initiatives/:id/exemptions': 'InitiativeExemptionInput',
+  'PUT /api/v1/price-catalogs/:id': 'PriceCatalog',
   'PUT /api/v1/fragments/:id': 'Fragment',
   'PUT /api/v1/connectors/:id': 'Connector',
   'PUT /api/v1/connections/:id': 'Connection',
   'POST /api/v1/blueprints/:bp/entities': 'EntityInput',
   'PUT /api/v1/blueprints/:bp/entities/:id': 'EntityInput',
   'PUT /api/v1/me/delegation': 'DelegationInput',
+  'POST /api/v1/tokens': 'TokenInput',
 };
 
 const qp = (name: string, schema: Record<string, unknown>, description: string) => ({ name, in: 'query', required: false, description, schema });
@@ -224,6 +253,8 @@ const QUERIES: Record<string, ReturnType<typeof qp>[]> = {
     qp('incidentBlueprint', { type: 'string' }, 'Blueprint holding incidents'),
     qp('deploymentActions', { type: 'string' }, 'Comma-separated actions whose runs count as deployments'),
   ],
+  'GET /api/v1/audit': [qp('channel', { type: 'string', enum: ['ui', 'api', 'mcp', 'workflow'] }, 'How the call came in')],
+  'GET /api/v1/runs': [qp('channel', { type: 'string', enum: ['ui', 'api', 'mcp', 'workflow'] }, 'How the run was requested')],
 };
 
 /** Route-specific error descriptions. */

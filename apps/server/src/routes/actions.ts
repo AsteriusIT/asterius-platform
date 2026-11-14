@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import type { Action } from '@asterius/shared';
 import { audit } from '../audit.js';
-import { actorOf, authenticate, bearer, isAdmin, requireAdmin, requireUser } from '../auth/users.js';
+import { actorOf, authenticate, bearer, isAdmin, requireAdmin, requireUser, tokenMayRun } from '../auth/users.js';
 import { getEntity } from '../catalog/entities.js';
 import { listStepConnections } from '../actions/connector-steps.js';
 import { blueprintOf, canTrigger, isRunnable, deleteAction, forViewer, getAction, listActions, upsertAction } from '../actions/actions.js';
@@ -189,7 +189,7 @@ export async function actionRoutes(app: FastifyInstance) {
       const q = z.object({ blueprint: z.string().optional(), trigger: z.enum(['create', 'day-2', 'delete']).optional() }).parse(req.query);
       return (await listActions())
         .filter((a) => (!q.blueprint || blueprintOf(a) === q.blueprint) && (!q.trigger || (a.trigger?.type === 'form' && a.trigger.on === q.trigger)))
-        .filter((a) => isAdmin(req.principal) || a.enabled)
+        .filter((a) => (isAdmin(req.principal) || a.enabled) && tokenMayRun(req.principal, a.identifier))
         .map((a) => ({
           ...forViewer(a, req.principal),
           allowedForMe: a.trigger?.type === 'form' && a.trigger.on === 'create' ? canTrigger(a, req.principal, null) : undefined,
@@ -309,6 +309,12 @@ export async function actionRoutes(app: FastifyInstance) {
           action: z.string().optional(),
           blueprint: z.string().optional(),
           entity: z.string().optional(),
+          channel: z.enum(['ui', 'api', 'mcp', 'workflow']).optional(),
+          /** Only runs of this team (the team owning the target entity when the run started). */
+          team: z.string().max(64).optional(),
+          /** Created at or after / before these ISO dates or times (chart drill-downs). */
+          since: z.iso.datetime({ offset: true }).or(z.iso.date()).optional(),
+          until: z.iso.datetime({ offset: true }).or(z.iso.date()).optional(),
           cursor: z.string().max(500).optional(),
           count: z
             .enum(['true', 'false'])
@@ -318,7 +324,16 @@ export async function actionRoutes(app: FastifyInstance) {
         .parse(req.query);
       const status = q.status ? z.array(z.enum(RUN_STATUSES)).parse(q.status.split(',')) : undefined;
       const result = await listRuns(
-        { ...q, status, mine: q.mine === 'true' ? req.principal.id : undefined, teams: q.myTeams === 'true' ? req.principal.teams : undefined },
+        {
+          ...q,
+          status,
+          mine: q.mine === 'true' ? req.principal.id : undefined,
+          teams: q.team
+            ? [q.team].filter((t) => q.myTeams !== 'true' || req.principal.teams.includes(t))
+            : q.myTeams === 'true'
+              ? req.principal.teams
+              : undefined,
+        },
         req.principal,
       );
       nextPageHeaders(req, reply, result.nextCursor);

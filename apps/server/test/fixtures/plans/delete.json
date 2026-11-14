@@ -1,0 +1,44 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.8.3",
+  "configuration": {
+    "provider_config": {
+      "aws": { "name": "aws", "full_name": "registry.terraform.io/hashicorp/aws", "expressions": { "region": { "constant_value": "eu-west-1" } } }
+    }
+  },
+  "resource_changes": [
+    {
+      "address": "aws_db_instance.orders",
+      "mode": "managed",
+      "type": "aws_db_instance",
+      "name": "orders",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["delete"],
+        "before": { "identifier": "orders", "instance_class": "db.t3.medium", "allocated_storage": 100, "engine": "postgres" },
+        "after": null
+      }
+    },
+    {
+      "address": "aws_instance.worker[0]",
+      "mode": "managed",
+      "type": "aws_instance",
+      "name": "worker",
+      "index": 0,
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": {
+        "actions": ["delete"],
+        "before": { "instance_type": "t3.small", "availability_zone": "eu-west-1b", "root_block_device": [{ "volume_size": 20 }] },
+        "after": null
+      }
+    },
+    {
+      "address": "aws_security_group.db",
+      "mode": "managed",
+      "type": "aws_security_group",
+      "name": "db",
+      "provider_name": "registry.terraform.io/hashicorp/aws",
+      "change": { "actions": ["delete"], "before": { "name": "orders-db" }, "after": null }
+    }
+  ]
+}

@@ -67,6 +67,26 @@ export const ipAllowSchema = z
   )
   .max(50);
 
+/** Token `workflows`: the action identifiers the token is restricted to (absent or empty: no restriction). */
+export const tokenWorkflows = z
+  .array(z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/, 'a workflow identifier'))
+  .max(200)
+  .optional()
+  .describe('Restrict the token to these workflows: it lists and starts only them, reads only their runs and cannot approve');
+
+/** Body of POST /tokens: a personal API token and its restrictions. */
+export const tokenInput = z.object({
+  name: z.string().min(1).max(100),
+  expiresInDays: z.number().int().min(1).max(730).nullish(),
+  scopes: z
+    .array(scopeSchema.exclude(['scim']))
+    .max(SCOPES.length)
+    .optional(),
+  blueprints: z.array(z.string().max(64)).max(100).optional(),
+  ipAllow: ipAllowSchema.optional(),
+  workflows: tokenWorkflows,
+});
+
 export function ipAllowed(ip: string, allow: readonly string[]): boolean {
   if (!allow.length) return true;
   const addr = ip.startsWith('::ffff:') ? ip.slice(7) : ip;

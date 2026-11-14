@@ -6,6 +6,8 @@ import pg from 'pg';
 import { config, paths } from './config.js';
 import { baseline } from './schema.js';
 import { approvalsMigration } from './migrations/approvals.js';
+import { channelsMigration } from './migrations/channels.js';
+import { initiativesMigration } from './migrations/initiatives.js';
 import { componentLogger } from './logger.js';
 import { dbSpan } from './tracing.js';
 
@@ -293,6 +295,41 @@ CREATE TABLE fragment_versions (
           PRIMARY KEY (org_id, identifier)
         );
         CREATE INDEX connections_connector ON connections(org_id, connector);
+      `);
+    },
+  },
+  { id: 10, name: 'workflow-restricted API tokens, call channels', up: channelsMigration },
+  { id: 11, name: 'scorecard initiatives', up: initiativesMigration },
+  {
+    id: 12,
+    name: 'plan checks: price catalogs and policy severity',
+    async up(d) {
+      // price_catalogs: prices and power draw used by plan-check steps (plan/pricing.ts), the whole validated document
+      // in `definition`. policies.severity: `target: plan` policies are critical, warning or advisory.
+      await d.exec(`
+        CREATE TABLE price_catalogs (
+          org_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+          identifier TEXT NOT NULL,
+          title TEXT NOT NULL,
+          definition TEXT NOT NULL,
+          managed INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (org_id, identifier)
+        );
+        ALTER TABLE policies ADD COLUMN severity TEXT NOT NULL DEFAULT 'critical';
+      `);
+    },
+  },
+  {
+    id: 13,
+    name: 'entity-page dashboards and chart series index',
+    async up(d) {
+      // dashboards.scope: `catalog` (header of the blueprint's catalog page) or `entity` (overview of its entity pages).
+      // entities_blueprint_created: entity-count charts bucket the entities of one blueprint by creation date.
+      await d.exec(`
+        ALTER TABLE dashboards ADD COLUMN scope TEXT NOT NULL DEFAULT 'catalog';
+        CREATE INDEX entities_blueprint_created ON entities(org_id, blueprint, created_at);
       `);
     },
   },

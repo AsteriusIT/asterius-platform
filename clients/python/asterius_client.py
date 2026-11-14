@@ -344,6 +344,66 @@ class AsteriusClient:
         """GET /api/v1/config/status"""
         return self._request("GET", f"/api/v1/config/status", query)
 
+    def get_connections(self, query: Optional[dict] = None) -> Any:
+        """GET /api/v1/connections"""
+        return self._request("GET", f"/api/v1/connections", query)
+
+    def delete_connections_by_id(self, id: str, query: Optional[dict] = None) -> Any:
+        """DELETE /api/v1/connections/{id}"""
+        return self._request("DELETE", f"/api/v1/connections/{urllib.parse.quote(id, safe='')}", query)
+
+    def get_connections_by_id(self, id: str, query: Optional[dict] = None) -> Any:
+        """GET /api/v1/connections/{id}"""
+        return self._request("GET", f"/api/v1/connections/{urllib.parse.quote(id, safe='')}", query)
+
+    def put_connections_by_id(self, id: str, body: dict, query: Optional[dict] = None) -> Any:
+        """PUT /api/v1/connections/{id}"""
+        return self._request("PUT", f"/api/v1/connections/{urllib.parse.quote(id, safe='')}", query, body)
+
+    def post_connections_test_by_id(self, id: str, query: Optional[dict] = None) -> Any:
+        """POST /api/v1/connections/{id}/test"""
+        return self._request("POST", f"/api/v1/connections/{urllib.parse.quote(id, safe='')}/test", query)
+
+    def get_connections_usage_by_id(self, id: str, query: Optional[dict] = None) -> Any:
+        """GET /api/v1/connections/{id}/usage"""
+        return self._request("GET", f"/api/v1/connections/{urllib.parse.quote(id, safe='')}/usage", query)
+
+    def get_connectors(self, query: Optional[dict] = None) -> Any:
+        """GET /api/v1/connectors"""
+        return self._request("GET", f"/api/v1/connectors", query)
+
+    def delete_connectors_by_id(self, id: str, query: Optional[dict] = None) -> Any:
+        """DELETE /api/v1/connectors/{id}"""
+        return self._request("DELETE", f"/api/v1/connectors/{urllib.parse.quote(id, safe='')}", query)
+
+    def get_connectors_by_id(self, id: str, query: Optional[dict] = None) -> Any:
+        """GET /api/v1/connectors/{id}"""
+        return self._request("GET", f"/api/v1/connectors/{urllib.parse.quote(id, safe='')}", query)
+
+    def put_connectors_by_id(self, id: str, body: dict, query: Optional[dict] = None) -> Any:
+        """PUT /api/v1/connectors/{id}"""
+        return self._request("PUT", f"/api/v1/connectors/{urllib.parse.quote(id, safe='')}", query, body)
+
+    def get_connectors_diff_by_id(self, id: str, query: Optional[dict] = None) -> Any:
+        """GET /api/v1/connectors/{id}/diff"""
+        return self._request("GET", f"/api/v1/connectors/{urllib.parse.quote(id, safe='')}/diff", query)
+
+    def post_connectors_operations_render_by_id_operation(self, id: str, operation: str, query: Optional[dict] = None) -> Any:
+        """POST /api/v1/connectors/{id}/operations/{operation}/render"""
+        return self._request("POST", f"/api/v1/connectors/{urllib.parse.quote(id, safe='')}/operations/{urllib.parse.quote(operation, safe='')}/render", query)
+
+    def post_connectors_rollback_by_id(self, id: str, query: Optional[dict] = None) -> Any:
+        """POST /api/v1/connectors/{id}/rollback"""
+        return self._request("POST", f"/api/v1/connectors/{urllib.parse.quote(id, safe='')}/rollback", query)
+
+    def get_connectors_versions_by_id(self, id: str, query: Optional[dict] = None) -> Any:
+        """GET /api/v1/connectors/{id}/versions"""
+        return self._request("GET", f"/api/v1/connectors/{urllib.parse.quote(id, safe='')}/versions", query)
+
+    def get_connectors_versions_by_id_version(self, id: str, version: str, query: Optional[dict] = None) -> Any:
+        """GET /api/v1/connectors/{id}/versions/{version}"""
+        return self._request("GET", f"/api/v1/connectors/{urllib.parse.quote(id, safe='')}/versions/{urllib.parse.quote(version, safe='')}", query)
+
     def get_dashboards(self, query: Optional[dict] = None) -> Any:
         """GET /api/v1/dashboards"""
         return self._request("GET", f"/api/v1/dashboards", query)
@@ -436,6 +496,14 @@ class AsteriusClient:
         """PUT /api/v1/fragments/{id}"""
         return self._request("PUT", f"/api/v1/fragments/{urllib.parse.quote(id, safe='')}", query, body)
 
+    def get_fragments_diff_by_id(self, id: str, query: Optional[dict] = None) -> Any:
+        """GET /api/v1/fragments/{id}/diff"""
+        return self._request("GET", f"/api/v1/fragments/{urllib.parse.quote(id, safe='')}/diff", query)
+
+    def post_fragments_rollback_by_id(self, id: str, query: Optional[dict] = None) -> Any:
+        """POST /api/v1/fragments/{id}/rollback"""
+        return self._request("POST", f"/api/v1/fragments/{urllib.parse.quote(id, safe='')}/rollback", query)
+
     def get_fragments_usage_by_id(self, id: str, query: Optional[dict] = None) -> Any:
         """GET /api/v1/fragments/{id}/usage"""
         return self._request("GET", f"/api/v1/fragments/{urllib.parse.quote(id, safe='')}/usage", query)
@@ -443,6 +511,10 @@ class AsteriusClient:
     def get_fragments_versions_by_id(self, id: str, query: Optional[dict] = None) -> Any:
         """GET /api/v1/fragments/{id}/versions"""
         return self._request("GET", f"/api/v1/fragments/{urllib.parse.quote(id, safe='')}/versions", query)
+
+    def get_fragments_versions_by_id_version(self, id: str, version: str, query: Optional[dict] = None) -> Any:
+        """GET /api/v1/fragments/{id}/versions/{version}"""
+        return self._request("GET", f"/api/v1/fragments/{urllib.parse.quote(id, safe='')}/versions/{urllib.parse.quote(version, safe='')}", query)
 
     def get_home(self, query: Optional[dict] = None) -> Any:
         """GET /api/v1/home"""
@@ -455,6 +527,38 @@ class AsteriusClient:
     def post_hooks_by_org_id(self, org: str, id: str, query: Optional[dict] = None) -> Any:
         """POST /api/v1/hooks/{org}/{id}"""
         return self._request("POST", f"/api/v1/hooks/{urllib.parse.quote(org, safe='')}/{urllib.parse.quote(id, safe='')}", query)
+
+    def get_initiatives(self, query: Optional[dict] = None) -> Any:
+        """GET /api/v1/initiatives"""
+        return self._request("GET", f"/api/v1/initiatives", query)
+
+    def delete_initiatives_by_id(self, id: str, query: Optional[dict] = None) -> Any:
+        """DELETE /api/v1/initiatives/{id}"""
+        return self._request("DELETE", f"/api/v1/initiatives/{urllib.parse.quote(id, safe='')}", query)
+
+    def get_initiatives_by_id(self, id: str, query: Optional[dict] = None) -> Any:
+        """GET /api/v1/initiatives/{id}"""
+        return self._request("GET", f"/api/v1/initiatives/{urllib.parse.quote(id, safe='')}", query)
+
+    def put_initiatives_by_id(self, id: str, body: dict, query: Optional[dict] = None) -> Any:
+        """PUT /api/v1/initiatives/{id}"""
+        return self._request("PUT", f"/api/v1/initiatives/{urllib.parse.quote(id, safe='')}", query, body)
+
+    def get_initiatives_entities_by_id(self, id: str, query: Optional[dict] = None) -> Any:
+        """GET /api/v1/initiatives/{id}/entities"""
+        return self._request("GET", f"/api/v1/initiatives/{urllib.parse.quote(id, safe='')}/entities", query)
+
+    def get_initiatives_exemptions_by_id(self, id: str, query: Optional[dict] = None) -> Any:
+        """GET /api/v1/initiatives/{id}/exemptions"""
+        return self._request("GET", f"/api/v1/initiatives/{urllib.parse.quote(id, safe='')}/exemptions", query)
+
+    def post_initiatives_exemptions_by_id(self, id: str, body: dict, query: Optional[dict] = None) -> Any:
+        """POST /api/v1/initiatives/{id}/exemptions"""
+        return self._request("POST", f"/api/v1/initiatives/{urllib.parse.quote(id, safe='')}/exemptions", query, body)
+
+    def delete_initiatives_exemptions_by_id_exemption(self, id: str, exemption: str, query: Optional[dict] = None) -> Any:
+        """DELETE /api/v1/initiatives/{id}/exemptions/{exemption}"""
+        return self._request("DELETE", f"/api/v1/initiatives/{urllib.parse.quote(id, safe='')}/exemptions/{urllib.parse.quote(exemption, safe='')}", query)
 
     def get_insights(self, query: Optional[dict] = None) -> Any:
         """GET /api/v1/insights"""
@@ -520,6 +624,10 @@ class AsteriusClient:
         """PUT /api/v1/me/delegation"""
         return self._request("PUT", f"/api/v1/me/delegation", query, body)
 
+    def get_me_initiatives(self, query: Optional[dict] = None) -> Any:
+        """GET /api/v1/me/initiatives"""
+        return self._request("GET", f"/api/v1/me/initiatives", query)
+
     def get_me_notifications(self, query: Optional[dict] = None) -> Any:
         """GET /api/v1/me/notifications"""
         return self._request("GET", f"/api/v1/me/notifications", query)
@@ -527,6 +635,14 @@ class AsteriusClient:
     def put_me_notifications(self, query: Optional[dict] = None) -> Any:
         """PUT /api/v1/me/notifications"""
         return self._request("PUT", f"/api/v1/me/notifications", query)
+
+    def get_me_preferences(self, query: Optional[dict] = None) -> Any:
+        """GET /api/v1/me/preferences"""
+        return self._request("GET", f"/api/v1/me/preferences", query)
+
+    def put_me_preferences(self, query: Optional[dict] = None) -> Any:
+        """PUT /api/v1/me/preferences"""
+        return self._request("PUT", f"/api/v1/me/preferences", query)
 
     def get_notification_settings(self, query: Optional[dict] = None) -> Any:
         """GET /api/v1/notification-settings"""
@@ -636,6 +752,26 @@ class AsteriusClient:
         """PUT /api/v1/policies/{id}"""
         return self._request("PUT", f"/api/v1/policies/{urllib.parse.quote(id, safe='')}", query, body)
 
+    def get_price_catalogs(self, query: Optional[dict] = None) -> Any:
+        """GET /api/v1/price-catalogs"""
+        return self._request("GET", f"/api/v1/price-catalogs", query)
+
+    def delete_price_catalogs_by_id(self, id: str, query: Optional[dict] = None) -> Any:
+        """DELETE /api/v1/price-catalogs/{id}"""
+        return self._request("DELETE", f"/api/v1/price-catalogs/{urllib.parse.quote(id, safe='')}", query)
+
+    def get_price_catalogs_by_id(self, id: str, query: Optional[dict] = None) -> Any:
+        """GET /api/v1/price-catalogs/{id}"""
+        return self._request("GET", f"/api/v1/price-catalogs/{urllib.parse.quote(id, safe='')}", query)
+
+    def put_price_catalogs_by_id(self, id: str, body: dict, query: Optional[dict] = None) -> Any:
+        """PUT /api/v1/price-catalogs/{id}"""
+        return self._request("PUT", f"/api/v1/price-catalogs/{urllib.parse.quote(id, safe='')}", query, body)
+
+    def post_price_catalogs_estimate_by_id(self, id: str, query: Optional[dict] = None) -> Any:
+        """POST /api/v1/price-catalogs/{id}/estimate"""
+        return self._request("POST", f"/api/v1/price-catalogs/{urllib.parse.quote(id, safe='')}/estimate", query)
+
     def get_runs(self, query: Optional[dict] = None) -> Any:
         """GET /api/v1/runs"""
         return self._request("GET", f"/api/v1/runs", query)
@@ -736,6 +872,10 @@ class AsteriusClient:
         """POST /api/v1/runs/{id}/unpause"""
         return self._request("POST", f"/api/v1/runs/{urllib.parse.quote(id, safe='')}/unpause", query)
 
+    def get_runs_waiting(self, query: Optional[dict] = None) -> Any:
+        """GET /api/v1/runs/waiting"""
+        return self._request("GET", f"/api/v1/runs/waiting", query)
+
     def post_scim_token(self, query: Optional[dict] = None) -> Any:
         """POST /api/v1/scim/token"""
         return self._request("POST", f"/api/v1/scim/token", query)
@@ -788,6 +928,10 @@ class AsteriusClient:
         """POST /api/v1/service-accounts"""
         return self._request("POST", f"/api/v1/service-accounts", query)
 
+    def get_step_connections(self, query: Optional[dict] = None) -> Any:
+        """GET /api/v1/step-connections"""
+        return self._request("GET", f"/api/v1/step-connections", query)
+
     def get_teams(self, query: Optional[dict] = None) -> Any:
         """GET /api/v1/teams"""
         return self._request("GET", f"/api/v1/teams", query)
@@ -804,9 +948,9 @@ class AsteriusClient:
         """GET /api/v1/tokens"""
         return self._request("GET", f"/api/v1/tokens", query)
 
-    def post_tokens(self, query: Optional[dict] = None) -> Any:
+    def post_tokens(self, body: dict, query: Optional[dict] = None) -> Any:
         """POST /api/v1/tokens"""
-        return self._request("POST", f"/api/v1/tokens", query)
+        return self._request("POST", f"/api/v1/tokens", query, body)
 
     def delete_tokens_by_id(self, id: str, query: Optional[dict] = None) -> Any:
         """DELETE /api/v1/tokens/{id}"""
@@ -823,6 +967,26 @@ class AsteriusClient:
     def get_users_lookup(self, query: Optional[dict] = None) -> Any:
         """GET /api/v1/users/lookup"""
         return self._request("GET", f"/api/v1/users/lookup", query)
+
+    def get_views(self, query: Optional[dict] = None) -> Any:
+        """GET /api/v1/views"""
+        return self._request("GET", f"/api/v1/views", query)
+
+    def post_views(self, query: Optional[dict] = None) -> Any:
+        """POST /api/v1/views"""
+        return self._request("POST", f"/api/v1/views", query)
+
+    def delete_views_by_id(self, id: str, query: Optional[dict] = None) -> Any:
+        """DELETE /api/v1/views/{id}"""
+        return self._request("DELETE", f"/api/v1/views/{urllib.parse.quote(id, safe='')}", query)
+
+    def get_views_by_id(self, id: str, query: Optional[dict] = None) -> Any:
+        """GET /api/v1/views/{id}"""
+        return self._request("GET", f"/api/v1/views/{urllib.parse.quote(id, safe='')}", query)
+
+    def put_views_by_id(self, id: str, query: Optional[dict] = None) -> Any:
+        """PUT /api/v1/views/{id}"""
+        return self._request("PUT", f"/api/v1/views/{urllib.parse.quote(id, safe='')}", query)
 
     def get_webhooks(self, query: Optional[dict] = None) -> Any:
         """GET /api/v1/webhooks"""

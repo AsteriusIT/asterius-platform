@@ -5,7 +5,7 @@ import { badRequest, conflict, errorMessage, forbidden } from '../lib/errors.js'
 import { evaluate, render } from '../lib/expr.js';
 import { compact, validate } from '../catalog/validation.js';
 import { audit } from '../audit.js';
-import { actorOf, getUser, principalOf, type Principal } from '../auth/users.js';
+import { actorOf, assertUnrestrictedToken, getUser, principalOf, type Principal } from '../auth/users.js';
 import { complete, buildContext, setStep } from './engine.js';
 import { addLog, emitRun, getRunRow, inRunOrg, startAutomatedRun, type RunRow } from './runs.js';
 import { getAction } from './actions.js';
@@ -147,6 +147,7 @@ export async function deliverEvent(runId: string, stepId: string, name: string, 
 }
 
 export async function submitInput(p0: Principal, runId: string, stepId: string, values: Record<string, unknown>) {
+  assertUnrestrictedToken(p0, 'answer input steps');
   const p = await withDelegators(p0);
   const r = await getRunRow(runId);
   const def = stepDefs(r).find((d) => d.id === stepId);

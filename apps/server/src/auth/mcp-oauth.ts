@@ -74,8 +74,8 @@ export const resetMcpOauthCache = () => keySets.clear();
 export const looksLikeJwt = (t: string) => t.split('.').length === 3 && !t.startsWith('ast_');
 
 /** Verify an access token and return the platform principal, or undefined when it is not acceptable. */
-export async function authenticateAccessToken(req: FastifyRequest, token: string, path = MCP_PATHS[0]): Promise<Principal | undefined> {
-  if (!looksLikeJwt(token)) return undefined;
+export async function authenticateAccessToken(req: FastifyRequest, token: string | undefined, path = MCP_PATHS[0]): Promise<Principal | undefined> {
+  if (!token || !looksLikeJwt(token)) return undefined;
   let iss: string | undefined;
   try {
     iss = decodeJwt(token).iss;

@@ -176,7 +176,7 @@ export type Action = {
     };
   } | {
     type: "event";
-    event: "entity.created" | "entity.updated" | "entity.deleted" | "entity.expired" | "scorecard.changed" | "run.finished";
+    event: "entity.created" | "entity.updated" | "entity.deleted" | "entity.expired" | "scorecard.changed" | "run.finished" | "initiative.at_risk" | "initiative.overdue" | "initiative.completed";
     blueprint?: string | null;
     action?: string | null;
     filter?: string;
@@ -322,13 +322,17 @@ export type Action = {
       required?: Array<string>;
       order?: Array<string>;
     };
-    tools?: Array<"catalog" | "upsert_entity" | "trigger_action" | "http">;
+    tools?: Array<"catalog" | "upsert_entity" | "trigger_action" | "http" | "mcp">;
+    mcp?: {
+      connection: string;
+    };
     guardrails?: {
       entityBlueprints?: Array<string>;
       actions?: Array<string>;
       httpHosts?: Array<string>;
       httpMethods?: Array<"GET" | "POST" | "PUT" | "PATCH" | "DELETE">;
       maxWrites?: number;
+      mcpTools?: Array<string>;
     };
     mcpServers?: Array<{
       name: string;
@@ -641,7 +645,8 @@ export type Policy = {
   title: string;
   description?: string;
   enabled?: boolean;
-  target: "run" | "entity";
+  target: "run" | "entity" | "plan";
+  severity?: "critical" | "warning" | "advisory";
   match?: {
     actions?: Array<string>;
     blueprints?: Array<string>;
@@ -649,6 +654,78 @@ export type Policy = {
   };
   expression: string;
   message?: string;
+};
+
+export type Initiative = {
+  identifier: string;
+  title: string;
+  description?: string;
+  scorecard: string;
+  targetLevel?: string | null;
+  rules?: Array<string>;
+  startDate: string;
+  deadline: string;
+  teams?: Array<string>;
+  owner?: string | null;
+  enabled?: boolean;
+  reminderDays?: number;
+};
+
+export type InitiativeExemptionInput = {
+  entity: string;
+  rule?: string | null;
+  reason: string;
+  expiresAt: string;
+};
+
+export type PriceCatalog = {
+  identifier: string;
+  title: string;
+  description?: string;
+  currency?: string;
+  extends?: string;
+  hoursPerMonth?: number;
+  freeProviders?: Array<string>;
+  carbon?: {
+    pue?: {
+      [key: string]: number;
+    };
+    gridIntensity?: {
+      [key: string]: number;
+    };
+    defaultGridIntensity?: number;
+    wattsPerVcpu?: {
+      [key: string]: number;
+    };
+    wattsPerGbMemory?: number;
+  };
+  prices?: Array<{
+    provider: string;
+    type: string;
+    match?: {
+      [key: string]: string | number | boolean | Array<string | number>;
+    };
+    monthly?: number;
+    hourly?: number;
+    perUnit?: Array<{
+      attribute: string;
+      scale?: number;
+      default?: number;
+      monthly?: number;
+      hourly?: number;
+      watts?: number;
+    }>;
+    quantity?: {
+      attribute: string;
+      default?: number;
+    };
+    free?: boolean;
+    usageBased?: boolean;
+    watts?: number;
+    vcpu?: number;
+    memoryGb?: number;
+    note?: string;
+  }>;
 };
 
 export type Fragment = {
@@ -786,13 +863,17 @@ export type Fragment = {
       required?: Array<string>;
       order?: Array<string>;
     };
-    tools?: Array<"catalog" | "upsert_entity" | "trigger_action" | "http">;
+    tools?: Array<"catalog" | "upsert_entity" | "trigger_action" | "http" | "mcp">;
+    mcp?: {
+      connection: string;
+    };
     guardrails?: {
       entityBlueprints?: Array<string>;
       actions?: Array<string>;
       httpHosts?: Array<string>;
       httpMethods?: Array<"GET" | "POST" | "PUT" | "PATCH" | "DELETE">;
       maxWrites?: number;
+      mcpTools?: Array<string>;
     };
     mcpServers?: Array<{
       name: string;
@@ -991,6 +1072,182 @@ export type Fragment = {
   };
 };
 
+export type Connector = {
+  identifier: string;
+  title: string;
+  description?: string;
+  icon?: string | null;
+  category?: "source-control" | "ci-cd" | "cloud" | "incident" | "observability" | "itsm" | "project-management" | "security" | "artifacts" | "identity" | "ai" | "internal" | "other";
+  fields?: {
+    properties?: {
+      [key: string]: Connector_schema0;
+    };
+    required?: Array<string>;
+    order?: Array<string>;
+  };
+  auth?: Array<{
+    type: "basic" | "bearer" | "header" | "oauth2-client-credentials" | "github-app" | "azure-managed-identity" | "azure-workload-identity" | "gcp-service-account" | "aws-sigv4" | "mtls";
+    title?: string;
+    description?: string;
+    set?: {
+      [key: string]: unknown;
+    };
+    headers?: {
+      [key: string]: string;
+    };
+    secrets?: Array<string>;
+  }>;
+  authOptional?: boolean;
+  headers?: {
+    [key: string]: string;
+  };
+  test?: {
+    method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+    path: string;
+    query?: {
+      [key: string]: string;
+    };
+    headers?: {
+      [key: string]: string;
+    };
+    body?: unknown;
+    expect?: {
+      status?: Array<number>;
+      condition?: string;
+    };
+  };
+  kinds?: {
+    [key: string]: {
+      title?: string;
+      description?: string;
+      method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+      path: string;
+      query?: {
+        [key: string]: string;
+      };
+      headers?: {
+        [key: string]: string;
+      };
+      body?: unknown;
+      itemsPath?: string;
+      pagination?: {
+        type?: "none" | "link" | "next" | "offset" | "page" | "cursor";
+        nextUrl?: string;
+        param?: string;
+        pageSize?: number;
+        startAt?: number;
+        totalPath?: string;
+        cursorPath?: string;
+        cursorHeader?: string;
+        in?: "query" | "body";
+      };
+      since?: {
+        param: string;
+      };
+      requires?: Array<string>;
+    };
+  };
+  operations?: {
+    [key: string]: {
+      title: string;
+      description?: string;
+      kind?: string;
+      inputs?: {
+        properties?: {
+          [key: string]: Connector_schema0;
+        };
+        required?: Array<string>;
+        order?: Array<string>;
+      };
+      method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+      path: string;
+      query?: {
+        [key: string]: string;
+      };
+      headers?: {
+        [key: string]: string;
+      };
+      body?: unknown;
+      output?: {
+        [key: string]: string;
+      };
+      poll?: {
+        method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+        path: string;
+        query?: {
+          [key: string]: string;
+        };
+        headers?: {
+          [key: string]: string;
+        };
+        body?: unknown;
+        intervalSeconds?: number;
+        timeoutMinutes?: number;
+        done: string;
+        failed?: string;
+        output?: {
+          [key: string]: string;
+        };
+      };
+      readOnly?: boolean;
+    };
+  };
+  example?: {
+    fields?: {
+      [key: string]: unknown;
+    };
+    auth?: {
+      [key: string]: unknown;
+    };
+    mappings?: Array<{
+      kind?: string;
+      filter?: string;
+      items?: string;
+      delete?: string;
+      merge?: boolean;
+      prune?: {
+        relation: string;
+        value: string;
+      };
+      entity: {
+        blueprint: string;
+        identifier: string;
+        title?: string;
+        team?: string;
+        properties?: {
+          [key: string]: string;
+        };
+        relations?: {
+          [key: string]: string;
+        };
+      };
+    }>;
+  };
+};
+
+export type Connection = {
+  identifier: string;
+  title: string;
+  description?: string;
+  connector: string;
+  fields?: {
+    [key: string]: unknown;
+  };
+  auth?: {
+    type: "basic" | "bearer" | "header" | "oauth2-client-credentials" | "github-app" | "azure-managed-identity" | "azure-workload-identity" | "gcp-service-account" | "aws-sigv4" | "mtls";
+    [key: string]: unknown;
+  } | null;
+  access?: "read" | "read-write";
+  allowed?: {
+    workflows?: Array<string>;
+    teams?: Array<string>;
+  };
+  api?: {
+    methods?: Array<"GET" | "POST" | "PUT" | "PATCH" | "DELETE">;
+    paths: Array<string>;
+  };
+};
+
 export type EntityInput = {
   identifier: string;
   title?: string;
@@ -1007,6 +1264,15 @@ export type DelegationInput = {
   delegate: string;
   startsAt?: string | null;
   endsAt?: string | null;
+};
+
+export type TokenInput = {
+  name: string;
+  expiresInDays?: number | null;
+  scopes?: Array<"catalog:read" | "catalog:write" | "runs:read" | "runs:trigger" | "admin">;
+  blueprints?: Array<string>;
+  ipAllow?: Array<string>;
+  workflows?: Array<string>;
 };
 
 export type ConfigFile = {
@@ -1196,7 +1462,7 @@ export type ConfigFile = {
       };
     } | {
       type: "event";
-      event: "entity.created" | "entity.updated" | "entity.deleted" | "entity.expired" | "scorecard.changed" | "run.finished";
+      event: "entity.created" | "entity.updated" | "entity.deleted" | "entity.expired" | "scorecard.changed" | "run.finished" | "initiative.at_risk" | "initiative.overdue" | "initiative.completed";
       blueprint?: string | null;
       action?: string | null;
       filter?: string;
@@ -1342,13 +1608,17 @@ export type ConfigFile = {
         required?: Array<string>;
         order?: Array<string>;
       };
-      tools?: Array<"catalog" | "upsert_entity" | "trigger_action" | "http">;
+      tools?: Array<"catalog" | "upsert_entity" | "trigger_action" | "http" | "mcp">;
+      mcp?: {
+        connection: string;
+      };
       guardrails?: {
         entityBlueprints?: Array<string>;
         actions?: Array<string>;
         httpHosts?: Array<string>;
         httpMethods?: Array<"GET" | "POST" | "PUT" | "PATCH" | "DELETE">;
         maxWrites?: number;
+        mcpTools?: Array<string>;
       };
       mcpServers?: Array<{
         name: string;
@@ -1668,7 +1938,8 @@ export type ConfigFile = {
     title: string;
     description?: string;
     enabled?: boolean;
-    target: "run" | "entity";
+    target: "run" | "entity" | "plan";
+    severity?: "critical" | "warning" | "advisory";
     match?: {
       actions?: Array<string>;
       blueprints?: Array<string>;
@@ -1677,12 +1948,62 @@ export type ConfigFile = {
     expression: string;
     message?: string;
   }>;
+  priceCatalogs?: Array<{
+    identifier: string;
+    title: string;
+    description?: string;
+    currency?: string;
+    extends?: string;
+    hoursPerMonth?: number;
+    freeProviders?: Array<string>;
+    carbon?: {
+      pue?: {
+        [key: string]: number;
+      };
+      gridIntensity?: {
+        [key: string]: number;
+      };
+      defaultGridIntensity?: number;
+      wattsPerVcpu?: {
+        [key: string]: number;
+      };
+      wattsPerGbMemory?: number;
+    };
+    prices?: Array<{
+      provider: string;
+      type: string;
+      match?: {
+        [key: string]: string | number | boolean | Array<string | number>;
+      };
+      monthly?: number;
+      hourly?: number;
+      perUnit?: Array<{
+        attribute: string;
+        scale?: number;
+        default?: number;
+        monthly?: number;
+        hourly?: number;
+        watts?: number;
+      }>;
+      quantity?: {
+        attribute: string;
+        default?: number;
+      };
+      free?: boolean;
+      usageBased?: boolean;
+      watts?: number;
+      vcpu?: number;
+      memoryGb?: number;
+      note?: string;
+    }>;
+  }>;
   dashboards?: Array<{
     identifier: string;
     title: string;
     description?: string;
     team?: string | null;
     blueprint?: string | null;
+    scope?: "catalog" | "entity";
     default?: boolean;
     widgets?: Array<{
       title?: string;
@@ -1751,7 +2072,79 @@ export type ConfigFile = {
       width?: number;
       type: "markdown";
       content: string;
+    } | {
+      title?: string;
+      width?: number;
+      type: "initiative";
+      initiative: string;
+    } | {
+      title?: string;
+      width?: number;
+      type: "chart";
+      chart?: "line" | "bar" | "area";
+      stacked?: boolean;
+      interval?: "day" | "week" | "month";
+      days?: number;
+      series: {
+        kind: "scorecard";
+        scorecard: string;
+      } | {
+        kind: "runs";
+        metric?: "count" | "duration" | "failureRate";
+        action?: string;
+        team?: string;
+        status?: Array<"PENDING_APPROVAL" | "QUEUED" | "IN_PROGRESS" | "SUCCESS" | "FAILURE" | "REJECTED" | "CANCELLED">;
+      } | {
+        kind: "dora";
+        metric?: "deploymentFrequency" | "leadTime" | "changeFailureRate" | "mttr";
+        team?: string;
+        service?: string;
+        deployments?: {
+          blueprint?: string;
+          timeProperty?: string;
+          statusProperty?: string;
+          successValues?: Array<string>;
+          failureValues?: Array<string>;
+          mergedProperty?: string;
+          serviceRelation?: string;
+        };
+        deploymentActions?: Array<string>;
+        incidents?: {
+          blueprint?: string;
+          createdProperty?: string;
+          resolvedProperty?: string;
+          serviceRelation?: string;
+        };
+      } | {
+        kind: "entities";
+        blueprint: string;
+        mode?: "total" | "created";
+        groupBy?: string;
+        filters?: {
+          [key: string]: string;
+        };
+      };
+    } | {
+      title?: string;
+      width?: number;
+      type: "entity";
+      show: "properties" | "scorecards" | "relations" | "links";
+      properties?: Array<string>;
     }>;
+  }>;
+  initiatives?: Array<{
+    identifier: string;
+    title: string;
+    description?: string;
+    scorecard: string;
+    targetLevel?: string | null;
+    rules?: Array<string>;
+    startDate: string;
+    deadline: string;
+    teams?: Array<string>;
+    owner?: string | null;
+    enabled?: boolean;
+    reminderDays?: number;
   }>;
   fragments?: Array<{
     identifier: string;
@@ -1888,13 +2281,17 @@ export type ConfigFile = {
         required?: Array<string>;
         order?: Array<string>;
       };
-      tools?: Array<"catalog" | "upsert_entity" | "trigger_action" | "http">;
+      tools?: Array<"catalog" | "upsert_entity" | "trigger_action" | "http" | "mcp">;
+      mcp?: {
+        connection: string;
+      };
       guardrails?: {
         entityBlueprints?: Array<string>;
         actions?: Array<string>;
         httpHosts?: Array<string>;
         httpMethods?: Array<"GET" | "POST" | "PUT" | "PATCH" | "DELETE">;
         maxWrites?: number;
+        mcpTools?: Array<string>;
       };
       mcpServers?: Array<{
         name: string;
@@ -2090,6 +2487,180 @@ export type ConfigFile = {
     }>;
     outputs?: {
       [key: string]: string;
+    };
+  }>;
+  connectors?: Array<{
+    identifier: string;
+    title: string;
+    description?: string;
+    icon?: string | null;
+    category?: "source-control" | "ci-cd" | "cloud" | "incident" | "observability" | "itsm" | "project-management" | "security" | "artifacts" | "identity" | "ai" | "internal" | "other";
+    fields?: {
+      properties?: {
+        [key: string]: ConfigFile_schema0;
+      };
+      required?: Array<string>;
+      order?: Array<string>;
+    };
+    auth?: Array<{
+      type: "basic" | "bearer" | "header" | "oauth2-client-credentials" | "github-app" | "azure-managed-identity" | "azure-workload-identity" | "gcp-service-account" | "aws-sigv4" | "mtls";
+      title?: string;
+      description?: string;
+      set?: {
+        [key: string]: unknown;
+      };
+      headers?: {
+        [key: string]: string;
+      };
+      secrets?: Array<string>;
+    }>;
+    authOptional?: boolean;
+    headers?: {
+      [key: string]: string;
+    };
+    test?: {
+      method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+      path: string;
+      query?: {
+        [key: string]: string;
+      };
+      headers?: {
+        [key: string]: string;
+      };
+      body?: unknown;
+      expect?: {
+        status?: Array<number>;
+        condition?: string;
+      };
+    };
+    kinds?: {
+      [key: string]: {
+        title?: string;
+        description?: string;
+        method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+        path: string;
+        query?: {
+          [key: string]: string;
+        };
+        headers?: {
+          [key: string]: string;
+        };
+        body?: unknown;
+        itemsPath?: string;
+        pagination?: {
+          type?: "none" | "link" | "next" | "offset" | "page" | "cursor";
+          nextUrl?: string;
+          param?: string;
+          pageSize?: number;
+          startAt?: number;
+          totalPath?: string;
+          cursorPath?: string;
+          cursorHeader?: string;
+          in?: "query" | "body";
+        };
+        since?: {
+          param: string;
+        };
+        requires?: Array<string>;
+      };
+    };
+    operations?: {
+      [key: string]: {
+        title: string;
+        description?: string;
+        kind?: string;
+        inputs?: {
+          properties?: {
+            [key: string]: ConfigFile_schema0;
+          };
+          required?: Array<string>;
+          order?: Array<string>;
+        };
+        method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+        path: string;
+        query?: {
+          [key: string]: string;
+        };
+        headers?: {
+          [key: string]: string;
+        };
+        body?: unknown;
+        output?: {
+          [key: string]: string;
+        };
+        poll?: {
+          method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+          path: string;
+          query?: {
+            [key: string]: string;
+          };
+          headers?: {
+            [key: string]: string;
+          };
+          body?: unknown;
+          intervalSeconds?: number;
+          timeoutMinutes?: number;
+          done: string;
+          failed?: string;
+          output?: {
+            [key: string]: string;
+          };
+        };
+        readOnly?: boolean;
+      };
+    };
+    example?: {
+      fields?: {
+        [key: string]: unknown;
+      };
+      auth?: {
+        [key: string]: unknown;
+      };
+      mappings?: Array<{
+        kind?: string;
+        filter?: string;
+        items?: string;
+        delete?: string;
+        merge?: boolean;
+        prune?: {
+          relation: string;
+          value: string;
+        };
+        entity: {
+          blueprint: string;
+          identifier: string;
+          title?: string;
+          team?: string;
+          properties?: {
+            [key: string]: string;
+          };
+          relations?: {
+            [key: string]: string;
+          };
+        };
+      }>;
+    };
+  }>;
+  connections?: Array<{
+    identifier: string;
+    title: string;
+    description?: string;
+    connector: string;
+    fields?: {
+      [key: string]: unknown;
+    };
+    auth?: {
+      type: "basic" | "bearer" | "header" | "oauth2-client-credentials" | "github-app" | "azure-managed-identity" | "azure-workload-identity" | "gcp-service-account" | "aws-sigv4" | "mtls";
+      [key: string]: unknown;
+    } | null;
+    access?: "read" | "read-write";
+    allowed?: {
+      workflows?: Array<string>;
+      teams?: Array<string>;
+    };
+    api?: {
+      methods?: Array<"GET" | "POST" | "PUT" | "PATCH" | "DELETE">;
+      paths: Array<string>;
     };
   }>;
   entities?: Array<{
@@ -2351,7 +2922,8 @@ export type PolicyView = {
   title: string;
   description: string;
   enabled: boolean;
-  target: "run" | "entity";
+  target: "run" | "entity" | "plan";
+  severity: "critical" | "warning" | "advisory";
   match: {
     actions?: Array<string>;
     blueprints?: Array<string>;
@@ -2360,6 +2932,86 @@ export type PolicyView = {
   expression: string;
   message: string;
   managed: boolean;
+};
+
+export type InitiativeView = {
+  identifier: string;
+  title: string;
+  description: string;
+  scorecard: string;
+  targetLevel?: string | null;
+  rules: Array<string>;
+  startDate: string;
+  deadline: string;
+  teams: Array<string>;
+  owner?: string | null;
+  enabled: boolean;
+  reminderDays: number;
+  managed: boolean;
+  blueprint: string;
+  scorecardTitle: string;
+  status: "on_track" | "at_risk" | "overdue" | "done";
+  progress: {
+    passing: number;
+    total: number;
+    exempted: number;
+    ratio: number;
+  };
+  expected: number;
+  daysLeft: number;
+  error?: string;
+};
+
+export type PriceCatalogView = {
+  identifier: string;
+  title: string;
+  description: string;
+  currency: string;
+  extends?: string;
+  hoursPerMonth: number;
+  freeProviders?: Array<string>;
+  carbon: {
+    pue?: {
+      [key: string]: number;
+    };
+    gridIntensity?: {
+      [key: string]: number;
+    };
+    defaultGridIntensity?: number;
+    wattsPerVcpu?: {
+      [key: string]: number;
+    };
+    wattsPerGbMemory?: number;
+  };
+  prices: Array<{
+    provider: string;
+    type: string;
+    match: {
+      [key: string]: string | number | boolean | Array<string | number>;
+    };
+    monthly?: number;
+    hourly?: number;
+    perUnit?: Array<{
+      attribute: string;
+      scale: number;
+      default: number;
+      monthly?: number;
+      hourly?: number;
+      watts?: number;
+    }>;
+    quantity?: {
+      attribute: string;
+      default: number;
+    };
+    free?: boolean;
+    usageBased?: boolean;
+    watts?: number;
+    vcpu?: number;
+    memoryGb?: number;
+    note?: string;
+  }>;
+  managed: boolean;
+  builtin?: boolean;
 };
 
 export type FragmentView = {
@@ -2497,13 +3149,17 @@ export type FragmentView = {
       required?: Array<string>;
       order?: Array<string>;
     };
-    tools: Array<"catalog" | "upsert_entity" | "trigger_action" | "http">;
+    tools: Array<"catalog" | "upsert_entity" | "trigger_action" | "http" | "mcp">;
+    mcp?: {
+      connection: string;
+    };
     guardrails: {
       entityBlueprints: Array<string>;
       actions: Array<string>;
       httpHosts: Array<string>;
       httpMethods: Array<"GET" | "POST" | "PUT" | "PATCH" | "DELETE">;
       maxWrites: number;
+      mcpTools: Array<string>;
     };
     mcpServers: Array<{
       name: string;
@@ -2723,6 +3379,204 @@ export type WebhookView = {
   hasSecret: boolean;
 };
 
+export type ConnectorView = {
+  identifier: string;
+  title: string;
+  description: string;
+  icon?: string | null;
+  category: "source-control" | "ci-cd" | "cloud" | "incident" | "observability" | "itsm" | "project-management" | "security" | "artifacts" | "identity" | "ai" | "internal" | "other";
+  fields: {
+    properties: {
+      [key: string]: ConnectorView_schema0;
+    };
+    required?: Array<string>;
+    order?: Array<string>;
+  };
+  auth: Array<{
+    type: "basic" | "bearer" | "header" | "oauth2-client-credentials" | "github-app" | "azure-managed-identity" | "azure-workload-identity" | "gcp-service-account" | "aws-sigv4" | "mtls";
+    title?: string;
+    description?: string;
+    set: {
+      [key: string]: unknown;
+    };
+    headers?: {
+      [key: string]: string;
+    };
+    secrets?: Array<string>;
+  }>;
+  authOptional: boolean;
+  headers: {
+    [key: string]: string;
+  };
+  test?: {
+    method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+    path: string;
+    query: {
+      [key: string]: string;
+    };
+    headers: {
+      [key: string]: string;
+    };
+    body?: unknown;
+    expect: {
+      status?: Array<number>;
+      condition?: string;
+    };
+  };
+  kinds: {
+    [key: string]: {
+      title?: string;
+      description?: string;
+      method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+      path: string;
+      query: {
+        [key: string]: string;
+      };
+      headers: {
+        [key: string]: string;
+      };
+      body?: unknown;
+      itemsPath?: string;
+      pagination?: {
+        type: "none" | "link" | "next" | "offset" | "page" | "cursor";
+        nextUrl?: string;
+        param?: string;
+        pageSize?: number;
+        startAt?: number;
+        totalPath?: string;
+        cursorPath?: string;
+        cursorHeader?: string;
+        in?: "query" | "body";
+      };
+      since?: {
+        param: string;
+      };
+      requires?: Array<string>;
+    };
+  };
+  operations: {
+    [key: string]: {
+      title: string;
+      description: string;
+      kind?: string;
+      inputs: {
+        properties: {
+          [key: string]: ConnectorView_schema0;
+        };
+        required?: Array<string>;
+        order?: Array<string>;
+      };
+      method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+      path: string;
+      query: {
+        [key: string]: string;
+      };
+      headers: {
+        [key: string]: string;
+      };
+      body?: unknown;
+      output?: {
+        [key: string]: string;
+      };
+      poll?: {
+        method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+        path: string;
+        query: {
+          [key: string]: string;
+        };
+        headers: {
+          [key: string]: string;
+        };
+        body?: unknown;
+        intervalSeconds: number;
+        timeoutMinutes: number;
+        done: string;
+        failed?: string;
+        output?: {
+          [key: string]: string;
+        };
+      };
+      readOnly?: boolean;
+    };
+  };
+  example?: {
+    fields?: {
+      [key: string]: unknown;
+    };
+    auth?: {
+      [key: string]: unknown;
+    };
+    mappings?: Array<{
+      kind: string;
+      filter?: string;
+      items?: string;
+      delete?: string;
+      merge: boolean;
+      prune?: {
+        relation: string;
+        value: string;
+      };
+      entity: {
+        blueprint: string;
+        identifier: string;
+        title?: string;
+        team?: string;
+        properties: {
+          [key: string]: string;
+        };
+        relations: {
+          [key: string]: string;
+        };
+      };
+    }>;
+  };
+  builtin: boolean;
+  managed: boolean;
+  version: number;
+  updatedAt: string | null;
+};
+
+export type ConnectionView = {
+  identifier: string;
+  title: string;
+  description: string;
+  connector: string;
+  fields: {
+    [key: string]: unknown;
+  };
+  auth?: {
+    type: "basic" | "bearer" | "header" | "oauth2-client-credentials" | "github-app" | "azure-managed-identity" | "azure-workload-identity" | "gcp-service-account" | "aws-sigv4" | "mtls";
+    [key: string]: unknown;
+  } | null;
+  access: "read" | "read-write";
+  allowed: {
+    workflows?: Array<string>;
+    teams?: Array<string>;
+  };
+  api?: {
+    methods: Array<"GET" | "POST" | "PUT" | "PATCH" | "DELETE">;
+    paths: Array<string>;
+  };
+  version: number;
+  managed: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ConnectionTestResult = {
+  ok: boolean;
+  status: number | null;
+  latencyMs: number | null;
+  error?: string;
+  checkedAt: string;
+};
+
+export type ConnectionUsage = {
+  integrations: Array<string>;
+  actions: Array<string>;
+  fragments: Array<string>;
+};
+
 export type Delivery = {
   id: string;
   webhook: string;
@@ -2800,6 +3654,17 @@ export type Fragment_schema0 = {
   [key: string]: unknown;
 };
 
+export type Connector_schema0 = {
+  type: "string" | "number" | "integer" | "boolean" | "array" | "object";
+  title?: string;
+  description?: string;
+  format?: string;
+  blueprint?: string;
+  enum?: Array<string | number>;
+  items?: Connector_schema0;
+  [key: string]: unknown;
+};
+
 export type ConfigFile_schema0 = {
   type: "string" | "number" | "integer" | "boolean" | "array" | "object";
   title?: string;
@@ -2819,6 +3684,17 @@ export type FragmentView_schema0 = {
   blueprint?: string;
   enum?: Array<string | number>;
   items?: FragmentView_schema0;
+  [key: string]: unknown;
+};
+
+export type ConnectorView_schema0 = {
+  type: "string" | "number" | "integer" | "boolean" | "array" | "object";
+  title?: string;
+  description?: string;
+  format?: string;
+  blueprint?: string;
+  enum?: Array<string | number>;
+  items?: ConnectorView_schema0;
   [key: string]: unknown;
 };
 
@@ -3232,6 +4108,81 @@ export class AsteriusClient {
     return this.request('GET', `/api/v1/config/status`, { query });
   }
 
+  /** GET /api/v1/connections */
+  getConnections(query?: Record<string, string | number | undefined>): Promise<Array<ConnectionView>> {
+    return this.request('GET', `/api/v1/connections`, { query });
+  }
+
+  /** DELETE /api/v1/connections/{id} */
+  deleteConnectionsById(id: string, query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('DELETE', `/api/v1/connections/${encodeURIComponent(id)}`, { query });
+  }
+
+  /** GET /api/v1/connections/{id} */
+  getConnectionsById(id: string, query?: Record<string, string | number | undefined>): Promise<ConnectionView> {
+    return this.request('GET', `/api/v1/connections/${encodeURIComponent(id)}`, { query });
+  }
+
+  /** PUT /api/v1/connections/{id} */
+  putConnectionsById(id: string, body: Connection, query?: Record<string, string | number | undefined>): Promise<ConnectionView> {
+    return this.request('PUT', `/api/v1/connections/${encodeURIComponent(id)}`, { query, body });
+  }
+
+  /** POST /api/v1/connections/{id}/test */
+  postConnectionsTestById(id: string, query?: Record<string, string | number | undefined>): Promise<ConnectionTestResult> {
+    return this.request('POST', `/api/v1/connections/${encodeURIComponent(id)}/test`, { query });
+  }
+
+  /** GET /api/v1/connections/{id}/usage */
+  getConnectionsUsageById(id: string, query?: Record<string, string | number | undefined>): Promise<ConnectionUsage> {
+    return this.request('GET', `/api/v1/connections/${encodeURIComponent(id)}/usage`, { query });
+  }
+
+  /** GET /api/v1/connectors */
+  getConnectors(query?: Record<string, string | number | undefined>): Promise<Array<ConnectorView>> {
+    return this.request('GET', `/api/v1/connectors`, { query });
+  }
+
+  /** DELETE /api/v1/connectors/{id} */
+  deleteConnectorsById(id: string, query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('DELETE', `/api/v1/connectors/${encodeURIComponent(id)}`, { query });
+  }
+
+  /** GET /api/v1/connectors/{id} */
+  getConnectorsById(id: string, query?: Record<string, string | number | undefined>): Promise<ConnectorView> {
+    return this.request('GET', `/api/v1/connectors/${encodeURIComponent(id)}`, { query });
+  }
+
+  /** PUT /api/v1/connectors/{id} */
+  putConnectorsById(id: string, body: Connector, query?: Record<string, string | number | undefined>): Promise<ConnectorView> {
+    return this.request('PUT', `/api/v1/connectors/${encodeURIComponent(id)}`, { query, body });
+  }
+
+  /** GET /api/v1/connectors/{id}/diff */
+  getConnectorsDiffById(id: string, query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('GET', `/api/v1/connectors/${encodeURIComponent(id)}/diff`, { query });
+  }
+
+  /** POST /api/v1/connectors/{id}/operations/{operation}/render */
+  postConnectorsOperationsRenderByIdOperation(id: string, operation: string, query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('POST', `/api/v1/connectors/${encodeURIComponent(id)}/operations/${encodeURIComponent(operation)}/render`, { query });
+  }
+
+  /** POST /api/v1/connectors/{id}/rollback */
+  postConnectorsRollbackById(id: string, query?: Record<string, string | number | undefined>): Promise<ConnectorView> {
+    return this.request('POST', `/api/v1/connectors/${encodeURIComponent(id)}/rollback`, { query });
+  }
+
+  /** GET /api/v1/connectors/{id}/versions */
+  getConnectorsVersionsById(id: string, query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('GET', `/api/v1/connectors/${encodeURIComponent(id)}/versions`, { query });
+  }
+
+  /** GET /api/v1/connectors/{id}/versions/{version} */
+  getConnectorsVersionsByIdVersion(id: string, version: string, query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('GET', `/api/v1/connectors/${encodeURIComponent(id)}/versions/${encodeURIComponent(version)}`, { query });
+  }
+
   /** GET /api/v1/dashboards */
   getDashboards(query?: Record<string, string | number | undefined>): Promise<unknown> {
     return this.request('GET', `/api/v1/dashboards`, { query });
@@ -3347,6 +4298,16 @@ export class AsteriusClient {
     return this.request('PUT', `/api/v1/fragments/${encodeURIComponent(id)}`, { query, body });
   }
 
+  /** GET /api/v1/fragments/{id}/diff */
+  getFragmentsDiffById(id: string, query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('GET', `/api/v1/fragments/${encodeURIComponent(id)}/diff`, { query });
+  }
+
+  /** POST /api/v1/fragments/{id}/rollback */
+  postFragmentsRollbackById(id: string, query?: Record<string, string | number | undefined>): Promise<FragmentView> {
+    return this.request('POST', `/api/v1/fragments/${encodeURIComponent(id)}/rollback`, { query });
+  }
+
   /** GET /api/v1/fragments/{id}/usage */
   getFragmentsUsageById(id: string, query?: Record<string, string | number | undefined>): Promise<unknown> {
     return this.request('GET', `/api/v1/fragments/${encodeURIComponent(id)}/usage`, { query });
@@ -3355,6 +4316,11 @@ export class AsteriusClient {
   /** GET /api/v1/fragments/{id}/versions */
   getFragmentsVersionsById(id: string, query?: Record<string, string | number | undefined>): Promise<unknown> {
     return this.request('GET', `/api/v1/fragments/${encodeURIComponent(id)}/versions`, { query });
+  }
+
+  /** GET /api/v1/fragments/{id}/versions/{version} */
+  getFragmentsVersionsByIdVersion(id: string, version: string, query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('GET', `/api/v1/fragments/${encodeURIComponent(id)}/versions/${encodeURIComponent(version)}`, { query });
   }
 
   /** GET /api/v1/home */
@@ -3370,6 +4336,46 @@ export class AsteriusClient {
   /** POST /api/v1/hooks/{org}/{id} */
   postHooksByOrgId(org: string, id: string, query?: Record<string, string | number | undefined>): Promise<unknown> {
     return this.request('POST', `/api/v1/hooks/${encodeURIComponent(org)}/${encodeURIComponent(id)}`, { query });
+  }
+
+  /** GET /api/v1/initiatives */
+  getInitiatives(query?: Record<string, string | number | undefined>): Promise<Array<InitiativeView>> {
+    return this.request('GET', `/api/v1/initiatives`, { query });
+  }
+
+  /** DELETE /api/v1/initiatives/{id} */
+  deleteInitiativesById(id: string, query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('DELETE', `/api/v1/initiatives/${encodeURIComponent(id)}`, { query });
+  }
+
+  /** GET /api/v1/initiatives/{id} */
+  getInitiativesById(id: string, query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('GET', `/api/v1/initiatives/${encodeURIComponent(id)}`, { query });
+  }
+
+  /** PUT /api/v1/initiatives/{id} */
+  putInitiativesById(id: string, body: Initiative, query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('PUT', `/api/v1/initiatives/${encodeURIComponent(id)}`, { query, body });
+  }
+
+  /** GET /api/v1/initiatives/{id}/entities */
+  getInitiativesEntitiesById(id: string, query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('GET', `/api/v1/initiatives/${encodeURIComponent(id)}/entities`, { query });
+  }
+
+  /** GET /api/v1/initiatives/{id}/exemptions */
+  getInitiativesExemptionsById(id: string, query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('GET', `/api/v1/initiatives/${encodeURIComponent(id)}/exemptions`, { query });
+  }
+
+  /** POST /api/v1/initiatives/{id}/exemptions */
+  postInitiativesExemptionsById(id: string, body: InitiativeExemptionInput, query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('POST', `/api/v1/initiatives/${encodeURIComponent(id)}/exemptions`, { query, body });
+  }
+
+  /** DELETE /api/v1/initiatives/{id}/exemptions/{exemption} */
+  deleteInitiativesExemptionsByIdExemption(id: string, exemption: string, query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('DELETE', `/api/v1/initiatives/${encodeURIComponent(id)}/exemptions/${encodeURIComponent(exemption)}`, { query });
   }
 
   /** GET /api/v1/insights */
@@ -3452,6 +4458,11 @@ export class AsteriusClient {
     return this.request('PUT', `/api/v1/me/delegation`, { query, body });
   }
 
+  /** GET /api/v1/me/initiatives */
+  getMeInitiatives(query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('GET', `/api/v1/me/initiatives`, { query });
+  }
+
   /** GET /api/v1/me/notifications */
   getMeNotifications(query?: Record<string, string | number | undefined>): Promise<unknown> {
     return this.request('GET', `/api/v1/me/notifications`, { query });
@@ -3460,6 +4471,16 @@ export class AsteriusClient {
   /** PUT /api/v1/me/notifications */
   putMeNotifications(query?: Record<string, string | number | undefined>): Promise<unknown> {
     return this.request('PUT', `/api/v1/me/notifications`, { query });
+  }
+
+  /** GET /api/v1/me/preferences */
+  getMePreferences(query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('GET', `/api/v1/me/preferences`, { query });
+  }
+
+  /** PUT /api/v1/me/preferences */
+  putMePreferences(query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('PUT', `/api/v1/me/preferences`, { query });
   }
 
   /** GET /api/v1/notification-settings */
@@ -3597,6 +4618,31 @@ export class AsteriusClient {
     return this.request('PUT', `/api/v1/policies/${encodeURIComponent(id)}`, { query, body });
   }
 
+  /** GET /api/v1/price-catalogs */
+  getPriceCatalogs(query?: Record<string, string | number | undefined>): Promise<Array<PriceCatalogView>> {
+    return this.request('GET', `/api/v1/price-catalogs`, { query });
+  }
+
+  /** DELETE /api/v1/price-catalogs/{id} */
+  deletePriceCatalogsById(id: string, query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('DELETE', `/api/v1/price-catalogs/${encodeURIComponent(id)}`, { query });
+  }
+
+  /** GET /api/v1/price-catalogs/{id} */
+  getPriceCatalogsById(id: string, query?: Record<string, string | number | undefined>): Promise<PriceCatalogView> {
+    return this.request('GET', `/api/v1/price-catalogs/${encodeURIComponent(id)}`, { query });
+  }
+
+  /** PUT /api/v1/price-catalogs/{id} */
+  putPriceCatalogsById(id: string, body: PriceCatalog, query?: Record<string, string | number | undefined>): Promise<PriceCatalogView> {
+    return this.request('PUT', `/api/v1/price-catalogs/${encodeURIComponent(id)}`, { query, body });
+  }
+
+  /** POST /api/v1/price-catalogs/{id}/estimate */
+  postPriceCatalogsEstimateById(id: string, query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('POST', `/api/v1/price-catalogs/${encodeURIComponent(id)}/estimate`, { query });
+  }
+
   /** GET /api/v1/runs */
   getRuns(query?: Record<string, string | number | undefined>): Promise<RunPage> {
     return this.request('GET', `/api/v1/runs`, { query });
@@ -3722,6 +4768,11 @@ export class AsteriusClient {
     return this.request('POST', `/api/v1/runs/${encodeURIComponent(id)}/unpause`, { query });
   }
 
+  /** GET /api/v1/runs/waiting */
+  getRunsWaiting(query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('GET', `/api/v1/runs/waiting`, { query });
+  }
+
   /** POST /api/v1/scim/token */
   postScimToken(query?: Record<string, string | number | undefined>): Promise<unknown> {
     return this.request('POST', `/api/v1/scim/token`, { query });
@@ -3787,6 +4838,11 @@ export class AsteriusClient {
     return this.request('POST', `/api/v1/service-accounts`, { query });
   }
 
+  /** GET /api/v1/step-connections */
+  getStepConnections(query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('GET', `/api/v1/step-connections`, { query });
+  }
+
   /** GET /api/v1/teams */
   getTeams(query?: Record<string, string | number | undefined>): Promise<Array<Team>> {
     return this.request('GET', `/api/v1/teams`, { query });
@@ -3808,8 +4864,8 @@ export class AsteriusClient {
   }
 
   /** POST /api/v1/tokens */
-  postTokens(query?: Record<string, string | number | undefined>): Promise<unknown> {
-    return this.request('POST', `/api/v1/tokens`, { query });
+  postTokens(body: TokenInput, query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('POST', `/api/v1/tokens`, { query, body });
   }
 
   /** DELETE /api/v1/tokens/{id} */
@@ -3830,6 +4886,31 @@ export class AsteriusClient {
   /** GET /api/v1/users/lookup */
   getUsersLookup(query?: Record<string, string | number | undefined>): Promise<unknown> {
     return this.request('GET', `/api/v1/users/lookup`, { query });
+  }
+
+  /** GET /api/v1/views */
+  getViews(query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('GET', `/api/v1/views`, { query });
+  }
+
+  /** POST /api/v1/views */
+  postViews(query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('POST', `/api/v1/views`, { query });
+  }
+
+  /** DELETE /api/v1/views/{id} */
+  deleteViewsById(id: string, query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('DELETE', `/api/v1/views/${encodeURIComponent(id)}`, { query });
+  }
+
+  /** GET /api/v1/views/{id} */
+  getViewsById(id: string, query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('GET', `/api/v1/views/${encodeURIComponent(id)}`, { query });
+  }
+
+  /** PUT /api/v1/views/{id} */
+  putViewsById(id: string, query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('PUT', `/api/v1/views/${encodeURIComponent(id)}`, { query });
   }
 
   /** GET /api/v1/webhooks */

@@ -1,21 +1,34 @@
 import { Anchor, Badge, Card, Grid, Group, Progress, SimpleGrid, Stack, Text, Title } from '@mantine/core';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router';
-import type { Dashboard, DashboardWidget, DoraBand, WidgetData } from '@asterius/shared';
+import type { Blueprint, Dashboard, DashboardWidget, DoraBand, Entity, WidgetData } from '@asterius/shared';
 import { api } from '../lib/api';
+import { ChartWidget } from './ChartWidget';
 import { DataTable } from './DataTable';
+import { EntityProperties, entityLinks, EntityRelations, EntityScorecards, LinkList } from './EntitySections';
 import { PropertyValue } from './PropertyValue';
 import { Empty, ErrorAlert, Loading, Markdown, StatusBadge, StatValue, TimeAgo } from './ui';
+import { deadlineLabel, pct, STATUS_LOOK, teamLabel } from '../lib/initiatives';
 
 type Data<T extends string> = Extract<WidgetData, { type: T }>;
 
 const LEVEL_COLORS = ['orange', 'gray', 'yellow', 'teal', 'blue', 'grape', 'pink', 'cyan'];
 
-/** Renders a dashboard: its widgets in a 12-column grid, data computed by the server for the viewer. */
-export function DashboardView({ dashboard }: { dashboard: Dashboard }) {
+/** The entity an entity-page dashboard is shown for, with its blueprint (`entity` widgets render its sections). */
+interface EntityCtx {
+  entity: Entity;
+  blueprint: Blueprint;
+}
+
+/**
+ * Renders a dashboard: its widgets in a 12-column grid, data computed by the server for the viewer. On an entity page
+ * (`scope: entity`) pass the entity: the server filters the widgets to it.
+ */
+export function DashboardView({ dashboard, entity, blueprint }: { dashboard: Dashboard; entity?: Entity; blueprint?: Blueprint }) {
+  const ctx = entity && blueprint ? { entity, blueprint } : undefined;
   const data = useQuery({
-    queryKey: ['dashboard-data', dashboard.identifier],
-    queryFn: () => api.dashboardData(dashboard.identifier),
+    queryKey: ['dashboard-data', dashboard.identifier, entity?.identifier ?? null],
+    queryFn: () => api.dashboardData(dashboard.identifier, entity?.identifier),
     refetchInterval: 60_000,
   });
   if (data.isPending) return <Loading />;
@@ -24,15 +37,24 @@ export function DashboardView({ dashboard }: { dashboard: Dashboard }) {
     <Grid>
       {dashboard.widgets.map((w, i) => (
         <Grid.Col key={i} span={{ base: 12, md: w.width }}>
-          <Widget widget={w} data={data.data[i]} />
+          <Widget widget={w} data={data.data[i]} ctx={ctx} />
         </Grid.Col>
       ))}
     </Grid>
   );
 }
 
-function Widget({ widget, data }: { widget: DashboardWidget; data: WidgetData | undefined }) {
-  const title = widget.title ?? (widget.type === 'runs' ? 'Runs' : widget.type === 'approvals' ? 'Waiting for approval' : undefined);
+const DEFAULT_TITLES: Partial<Record<string, string>> = {
+  runs: 'Runs',
+  approvals: 'Waiting for approval',
+  chart: 'Trend',
+};
+const ENTITY_TITLES = { properties: 'Properties', scorecards: 'Scorecards', relations: 'Relations', links: 'Links' } as const;
+
+function Widget({ widget, data, ctx }: { widget: DashboardWidget; data: WidgetData | undefined; ctx?: EntityCtx }) {
+  const title = widget.title ?? (widget.type === 'entity' ? ENTITY_TITLES[widget.show] : DEFAULT_TITLES[widget.type]);
+  // Markdown of an entity-page dashboard comes back rendered (its `{{ }}` templates evaluated over the entity).
+  const markdown = widget.type === 'markdown' ? (data && 'type' in data && data.type === 'markdown' && data.content) || widget.content : null;
   return (
     <Card h="100%">
       {title && (
@@ -40,15 +62,19 @@ function Widget({ widget, data }: { widget: DashboardWidget; data: WidgetData | 
           {title}
         </Title>
       )}
-      {widget.type === 'markdown' ? <Markdown>{widget.content}</Markdown> : <WidgetBody widget={widget} data={data} />}
+      {markdown !== null ? <Markdown>{markdown}</Markdown> : <WidgetBody widget={widget} data={data} title={title ?? ''} ctx={ctx} />}
     </Card>
   );
 }
 
-function WidgetBody({ widget, data }: { widget: DashboardWidget; data: WidgetData | undefined }) {
+function WidgetBody({ widget, data, title, ctx }: { widget: DashboardWidget; data: WidgetData | undefined; title: string; ctx?: EntityCtx }) {
   if (!data) return <Loading />;
   if ('error' in data) return <ErrorAlert error={data.error} />;
   switch (data.type) {
+    case 'chart':
+      return widget.type === 'chart' ? <ChartWidget widget={widget} data={data} title={title} /> : null;
+    case 'entity':
+      return widget.type === 'entity' ? <EntityWidget widget={widget} ctx={ctx} /> : null;
     case 'count':
       return <Count data={data} />;
     case 'scorecard':
@@ -58,6 +84,8 @@ function WidgetBody({ widget, data }: { widget: DashboardWidget; data: WidgetDat
       return <RunsList data={data} />;
     case 'insights':
       return <Insights data={data} />;
+    case 'initiative':
+      return <InitiativeCard data={data} />;
     case 'table':
       return <EntityTable widget={widget as Extract<DashboardWidget, { type: 'table' }>} data={data} />;
     default:
@@ -181,6 +209,60 @@ function EntityTable({ widget, data }: { widget: Extract<DashboardWidget, { type
       )}
     </>
   );
+}
+
+function InitiativeCard({ data }: { data: Data<'initiative'> }) {
+  const s = STATUS_LOOK[data.status];
+  return (
+    <Stack gap="xs">
+      <Group justify="space-between" gap="xs">
+        <Anchor component={Link} to={`/initiatives/${data.initiative}`} fz="sm" fw={500}>
+          {data.title}
+        </Anchor>
+        <Badge color={s.color} variant="light">
+          {s.label}
+        </Badge>
+      </Group>
+      <Group justify="space-between" align="flex-end">
+        <StatValue size="lg">{pct(data.progress.ratio)}</StatValue>
+        <Text fz="xs" c="dimmed">
+          {data.progress.passing} of {data.progress.total} · {data.status === 'done' ? 'complete' : deadlineLabel(data.daysLeft)}
+        </Text>
+      </Group>
+      <Progress value={data.progress.ratio * 100} size="sm" color={data.progress.ratio >= 1 ? 'teal' : 'blue'} />
+      {data.teams.length > 1 && (
+        <Stack gap="3xs">
+          <Text fz="xs" c="dimmed">
+            Furthest behind
+          </Text>
+          {data.teams.slice(0, 3).map((t) => (
+            <Group key={t.team ?? '-'} justify="space-between" gap="xs">
+              <Text fz="xs">{teamLabel(t.team)}</Text>
+              <Text fz="xs" fw={500}>
+                {t.passing} / {t.total}
+              </Text>
+            </Group>
+          ))}
+        </Stack>
+      )}
+    </Stack>
+  );
+}
+
+/** A section of the current entity; outside an entity page there is none to show. */
+function EntityWidget({ widget, ctx }: { widget: Extract<DashboardWidget, { type: 'entity' }>; ctx?: EntityCtx }) {
+  if (!ctx) return <Empty title="Shown on the entity pages of the blueprint" />;
+  const { entity: e, blueprint: bp } = ctx;
+  switch (widget.show) {
+    case 'properties':
+      return <EntityProperties bp={bp} e={e} only={widget.properties} />;
+    case 'scorecards':
+      return <EntityScorecards e={e} />;
+    case 'relations':
+      return <EntityRelations bp={bp} e={e} />;
+    case 'links':
+      return <LinkList links={entityLinks(bp, e)} />;
+  }
 }
 
 const BAND_COLORS: Record<DoraBand, string> = { elite: 'teal', high: 'green', medium: 'yellow', low: 'red' };

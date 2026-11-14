@@ -31,6 +31,7 @@ import { DataTable } from '../../components/DataTable';
 import { initials } from '../../components/UserChip';
 import { Mono, PageHeader, TimeAgo } from '../../components/ui';
 import { NewTokenAlert, TokenTable } from '../Profile';
+import { TokenWorkflows } from '../../components/TokenWorkflows';
 import { ResourceAdmin, strip } from './ResourceAdmin';
 import { TeamBuilder } from '../../components/builder/SimpleBuilders';
 import { DelegationsTable } from '../../components/DelegationCard';
@@ -197,13 +198,15 @@ function ServiceAccountModal({
   const [name, setName] = useState('');
   const [role, setRole] = useState('member');
   const [selected, setSelected] = useState<string[]>([]);
+  const [workflows, setWorkflows] = useState<string[]>([]);
   const create = useMutation({
-    mutationFn: () => api.createServiceAccount({ name, role, teams: selected }),
+    mutationFn: () => api.createServiceAccount({ name, role, teams: selected, ...(workflows.length ? { workflows } : {}) }),
     onSuccess: (r) => {
       onCreated(r.token);
       void qc.invalidateQueries({ queryKey: ['users'] });
       void qc.invalidateQueries({ queryKey: ['tokens'] });
       setName('');
+      setWorkflows([]);
       onClose();
     },
   });
@@ -211,11 +214,12 @@ function ServiceAccountModal({
     <Modal opened={opened} onClose={onClose} title={<Text fw={600}>New service account</Text>}>
       <Stack>
         <Text fz="sm" c="dimmed">
-          For CI pipelines and scripts that push entities or trigger actions. Members write entities of their teams; admins everything.
+          For CI pipelines, scripts and AI agents that push entities or trigger actions. Members write entities of their teams; admins everything.
         </Text>
         <TextInput label="Name" placeholder="github-actions" value={name} onChange={(e) => setName(e.currentTarget.value)} required />
         <Select label="Role" data={['member', 'admin']} value={role} onChange={(v) => setRole(v ?? 'member')} allowDeselect={false} />
         <MultiSelect label="Teams" data={teams} value={selected} onChange={setSelected} />
+        <TokenWorkflows value={workflows} onChange={setWorkflows} />
         {create.error && (
           <Alert color="red" variant="light">
             {errorText(create.error)}

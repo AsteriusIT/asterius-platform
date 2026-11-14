@@ -90,6 +90,8 @@ export async function renderRequest(
   if (path.length > 1 && path.endsWith('/') && !spec.path.endsWith('/')) path = path.slice(0, -1);
   if (!path.startsWith('/')) path = `/${path}`;
   const basePath = base.pathname.replace(/\/$/, '');
+  // `/` alone is the base URL as the connection gives it (no trailing slash added): endpoints that are a single URL (MCP).
+  if (spec.path === '/' && !base.pathname.endsWith('/')) path = '';
   const url = new URL(`${base.origin}${basePath}${path}`);
   // Encoded values cannot change the origin or climb above the base path; checked anyway.
   if (url.origin !== base.origin || !url.pathname.startsWith(basePath)) throw badRequest('The request would leave the connection base URL');

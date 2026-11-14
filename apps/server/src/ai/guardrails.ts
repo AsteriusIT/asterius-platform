@@ -9,13 +9,17 @@ export interface AgentStepGuardrails {
   httpHosts: string[];
   httpMethods: ('GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE')[];
   maxWrites: number;
+  /** Tool names callable through the step's `mcp.connection` (ai/mcp-tools.ts). */
+  mcpTools: string[];
 }
 
 /** A write tool without its allow-list is a configuration error, never an open door. */
-export function checkGuardrails(s: Pick<AgentStepDef, 'tools' | 'guardrails'>) {
+export function checkGuardrails(s: Pick<AgentStepDef, 'tools' | 'guardrails' | 'mcp'>) {
   const g = s.guardrails;
   if (s.tools.includes('upsert_entity') && !g.entityBlueprints.length)
     throw badRequest('upsert_entity needs guardrails.entityBlueprints (the blueprints the agent may write)');
   if (s.tools.includes('trigger_action') && !g.actions.length) throw badRequest('trigger_action needs guardrails.actions (the actions the agent may start)');
   if (s.tools.includes('http') && !g.httpHosts.length) throw badRequest('http needs guardrails.httpHosts (the hosts the agent may call)');
+  if (s.tools.includes('mcp') && !s.mcp?.connection) throw badRequest('mcp needs mcp.connection (a connection to your MCP gateway or server)');
+  if (s.tools.includes('mcp') && !g.mcpTools?.length) throw badRequest('mcp needs guardrails.mcpTools (the names of the MCP tools the agent may call)');
 }

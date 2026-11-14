@@ -895,7 +895,10 @@
                           "entity.deleted",
                           "entity.expired",
                           "scorecard.changed",
-                          "run.finished"
+                          "run.finished",
+                          "initiative.at_risk",
+                          "initiative.overdue",
+                          "initiative.completed"
                         ]
                       },
                       "blueprint": {
@@ -1668,9 +1671,22 @@
                           "catalog",
                           "upsert_entity",
                           "trigger_action",
-                          "http"
+                          "http",
+                          "mcp"
                         ]
                       }
+                    },
+                    "mcp": {
+                      "type": "object",
+                      "properties": {
+                        "connection": {
+                          "type": "string",
+                          "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                        }
+                      },
+                      "required": [
+                        "connection"
+                      ]
                     },
                     "guardrails": {
                       "default": {
@@ -1680,7 +1696,8 @@
                         "httpMethods": [
                           "GET"
                         ],
-                        "maxWrites": 5
+                        "maxWrites": 5,
+                        "mcpTools": []
                       },
                       "type": "object",
                       "properties": {
@@ -1733,6 +1750,15 @@
                           "type": "integer",
                           "minimum": 1,
                           "maximum": 50
+                        },
+                        "mcpTools": {
+                          "default": [],
+                          "maxItems": 100,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "pattern": "^[A-Za-z0-9_.:/-]{1,128}$"
+                          }
                         }
                       }
                     },
@@ -3168,7 +3194,7 @@
             "type": "array",
             "items": {
               "type": "string",
-              "pattern": "^(\\*|(entity|run|approval|sync|step|team|user|scorecard)\\.\\*|entity\\.(created|updated|deleted)|run\\.(created|updated|sla_breached)|approval\\.(requested|decided)|sync\\.(finished|failed)|step\\.(started|finished|sla_breached)|team\\.(created|updated|deleted)|user\\.(created|updated)|scorecard\\.changed)$"
+              "pattern": "^(\\*|(entity|run|approval|sync|step|team|user|scorecard|initiative)\\.\\*|entity\\.(created|updated|deleted)|run\\.(created|updated|sla_breached)|approval\\.(requested|decided)|sync\\.(finished|failed)|step\\.(started|finished|sla_breached)|team\\.(created|updated|deleted)|user\\.(created|updated)|scorecard\\.changed|initiative\\.(at_risk|overdue|completed))$"
             }
           },
           "blueprints": {
@@ -3301,7 +3327,17 @@
             "type": "string",
             "enum": [
               "run",
-              "entity"
+              "entity",
+              "plan"
+            ]
+          },
+          "severity": {
+            "default": "critical",
+            "type": "string",
+            "enum": [
+              "critical",
+              "warning",
+              "advisory"
             ]
           },
           "match": {
@@ -3354,6 +3390,377 @@
           "title",
           "target",
           "expression"
+        ]
+      },
+      "Initiative": {
+        "type": "object",
+        "properties": {
+          "identifier": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "description": {
+            "default": "",
+            "type": "string",
+            "maxLength": 4000
+          },
+          "scorecard": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+          },
+          "targetLevel": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 40
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rules": {
+            "default": [],
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+            }
+          },
+          "startDate": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+          },
+          "deadline": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+          },
+          "teams": {
+            "default": [],
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+            }
+          },
+          "owner": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "email",
+                "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "enabled": {
+            "default": true,
+            "type": "boolean"
+          },
+          "reminderDays": {
+            "default": 7,
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 90
+          }
+        },
+        "required": [
+          "identifier",
+          "title",
+          "scorecard",
+          "startDate",
+          "deadline"
+        ]
+      },
+      "InitiativeExemptionInput": {
+        "type": "object",
+        "properties": {
+          "entity": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/@+=-]{0,199}$"
+          },
+          "rule": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 1000
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+          }
+        },
+        "required": [
+          "entity",
+          "reason",
+          "expiresAt"
+        ]
+      },
+      "PriceCatalog": {
+        "type": "object",
+        "properties": {
+          "identifier": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "description": {
+            "default": "",
+            "type": "string",
+            "maxLength": 2000
+          },
+          "currency": {
+            "default": "USD",
+            "type": "string",
+            "pattern": "^[A-Z]{3}$"
+          },
+          "extends": {
+            "type": "string",
+            "maxLength": 64
+          },
+          "hoursPerMonth": {
+            "default": 730,
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 744
+          },
+          "freeProviders": {
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 64
+            }
+          },
+          "carbon": {
+            "default": {},
+            "type": "object",
+            "properties": {
+              "pue": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string",
+                  "maxLength": 64
+                },
+                "additionalProperties": {
+                  "type": "number",
+                  "minimum": 1,
+                  "maximum": 3
+                }
+              },
+              "gridIntensity": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string",
+                  "maxLength": 64
+                },
+                "additionalProperties": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 2
+                }
+              },
+              "defaultGridIntensity": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 2
+              },
+              "wattsPerVcpu": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string",
+                  "maxLength": 64
+                },
+                "additionalProperties": {
+                  "type": "number",
+                  "minimum": 0
+                }
+              },
+              "wattsPerGbMemory": {
+                "type": "number",
+                "minimum": 0
+              }
+            }
+          },
+          "prices": {
+            "default": [],
+            "maxItems": 5000,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "provider": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "type": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "match": {
+                  "default": {},
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string",
+                    "maxLength": 200
+                  },
+                  "additionalProperties": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 200
+                      },
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "maxItems": 50,
+                        "type": "array",
+                        "items": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "maxLength": 200
+                            },
+                            {
+                              "type": "number"
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                },
+                "monthly": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "hourly": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "perUnit": {
+                  "maxItems": 10,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "attribute": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200
+                      },
+                      "scale": {
+                        "default": 1,
+                        "type": "number",
+                        "exclusiveMinimum": 0
+                      },
+                      "default": {
+                        "default": 0,
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "monthly": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "hourly": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "watts": {
+                        "type": "number",
+                        "minimum": 0
+                      }
+                    },
+                    "required": [
+                      "attribute"
+                    ]
+                  }
+                },
+                "quantity": {
+                  "type": "object",
+                  "properties": {
+                    "attribute": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "default": {
+                      "default": 1,
+                      "type": "number",
+                      "minimum": 0
+                    }
+                  },
+                  "required": [
+                    "attribute"
+                  ]
+                },
+                "free": {
+                  "type": "boolean"
+                },
+                "usageBased": {
+                  "type": "boolean"
+                },
+                "watts": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "vcpu": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "memoryGb": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "note": {
+                  "type": "string",
+                  "maxLength": 300
+                }
+              },
+              "required": [
+                "provider",
+                "type"
+              ]
+            }
+          }
+        },
+        "required": [
+          "identifier",
+          "title"
         ]
       },
       "Fragment": {
@@ -4063,9 +4470,22 @@
                           "catalog",
                           "upsert_entity",
                           "trigger_action",
-                          "http"
+                          "http",
+                          "mcp"
                         ]
                       }
+                    },
+                    "mcp": {
+                      "type": "object",
+                      "properties": {
+                        "connection": {
+                          "type": "string",
+                          "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                        }
+                      },
+                      "required": [
+                        "connection"
+                      ]
                     },
                     "guardrails": {
                       "default": {
@@ -4075,7 +4495,8 @@
                         "httpMethods": [
                           "GET"
                         ],
-                        "maxWrites": 5
+                        "maxWrites": 5,
+                        "mcpTools": []
                       },
                       "type": "object",
                       "properties": {
@@ -4128,6 +4549,15 @@
                           "type": "integer",
                           "minimum": 1,
                           "maximum": 50
+                        },
+                        "mcpTools": {
+                          "default": [],
+                          "maxItems": 100,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "pattern": "^[A-Za-z0-9_.:/-]{1,128}$"
+                          }
                         }
                       }
                     },
@@ -5230,6 +5660,7 @@
               "security",
               "artifacts",
               "identity",
+              "ai",
               "internal",
               "other"
             ]
@@ -6103,6 +6534,69 @@
         },
         "required": [
           "delegate"
+        ]
+      },
+      "TokenInput": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "expiresInDays": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 730
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "scopes": {
+            "maxItems": 6,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "catalog:read",
+                "catalog:write",
+                "runs:read",
+                "runs:trigger",
+                "admin"
+              ]
+            }
+          },
+          "blueprints": {
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 64
+            }
+          },
+          "ipAllow": {
+            "maxItems": 50,
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "workflows": {
+            "description": "Restrict the token to these workflows: it lists and starts only them, reads only their runs and cannot approve",
+            "maxItems": 200,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+            }
+          }
+        },
+        "required": [
+          "name"
         ]
       },
       "ConfigFile": {
@@ -7056,7 +7550,10 @@
                                 "entity.deleted",
                                 "entity.expired",
                                 "scorecard.changed",
-                                "run.finished"
+                                "run.finished",
+                                "initiative.at_risk",
+                                "initiative.overdue",
+                                "initiative.completed"
                               ]
                             },
                             "blueprint": {
@@ -7829,9 +8326,22 @@
                                 "catalog",
                                 "upsert_entity",
                                 "trigger_action",
-                                "http"
+                                "http",
+                                "mcp"
                               ]
                             }
+                          },
+                          "mcp": {
+                            "type": "object",
+                            "properties": {
+                              "connection": {
+                                "type": "string",
+                                "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                              }
+                            },
+                            "required": [
+                              "connection"
+                            ]
                           },
                           "guardrails": {
                             "default": {
@@ -7841,7 +8351,8 @@
                               "httpMethods": [
                                 "GET"
                               ],
-                              "maxWrites": 5
+                              "maxWrites": 5,
+                              "mcpTools": []
                             },
                             "type": "object",
                             "properties": {
@@ -7894,6 +8405,15 @@
                                 "type": "integer",
                                 "minimum": 1,
                                 "maximum": 50
+                              },
+                              "mcpTools": {
+                                "default": [],
+                                "maxItems": 100,
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "pattern": "^[A-Za-z0-9_.:/-]{1,128}$"
+                                }
                               }
                             }
                           },
@@ -9337,7 +9857,7 @@
                   "type": "array",
                   "items": {
                     "type": "string",
-                    "pattern": "^(\\*|(entity|run|approval|sync|step|team|user|scorecard)\\.\\*|entity\\.(created|updated|deleted)|run\\.(created|updated|sla_breached)|approval\\.(requested|decided)|sync\\.(finished|failed)|step\\.(started|finished|sla_breached)|team\\.(created|updated|deleted)|user\\.(created|updated)|scorecard\\.changed)$"
+                    "pattern": "^(\\*|(entity|run|approval|sync|step|team|user|scorecard|initiative)\\.\\*|entity\\.(created|updated|deleted)|run\\.(created|updated|sla_breached)|approval\\.(requested|decided)|sync\\.(finished|failed)|step\\.(started|finished|sla_breached)|team\\.(created|updated|deleted)|user\\.(created|updated)|scorecard\\.changed|initiative\\.(at_risk|overdue|completed))$"
                   }
                 },
                 "blueprints": {
@@ -9539,7 +10059,17 @@
                   "type": "string",
                   "enum": [
                     "run",
-                    "entity"
+                    "entity",
+                    "plan"
+                  ]
+                },
+                "severity": {
+                  "default": "critical",
+                  "type": "string",
+                  "enum": [
+                    "critical",
+                    "warning",
+                    "advisory"
                   ]
                 },
                 "match": {
@@ -9595,6 +10125,254 @@
               ]
             }
           },
+          "priceCatalogs": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "identifier": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                },
+                "title": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100
+                },
+                "description": {
+                  "default": "",
+                  "type": "string",
+                  "maxLength": 2000
+                },
+                "currency": {
+                  "default": "USD",
+                  "type": "string",
+                  "pattern": "^[A-Z]{3}$"
+                },
+                "extends": {
+                  "type": "string",
+                  "maxLength": 64
+                },
+                "hoursPerMonth": {
+                  "default": 730,
+                  "type": "number",
+                  "exclusiveMinimum": 0,
+                  "maximum": 744
+                },
+                "freeProviders": {
+                  "maxItems": 100,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "maxLength": 64
+                  }
+                },
+                "carbon": {
+                  "default": {},
+                  "type": "object",
+                  "properties": {
+                    "pue": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string",
+                        "maxLength": 64
+                      },
+                      "additionalProperties": {
+                        "type": "number",
+                        "minimum": 1,
+                        "maximum": 3
+                      }
+                    },
+                    "gridIntensity": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string",
+                        "maxLength": 64
+                      },
+                      "additionalProperties": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 2
+                      }
+                    },
+                    "defaultGridIntensity": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 2
+                    },
+                    "wattsPerVcpu": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string",
+                        "maxLength": 64
+                      },
+                      "additionalProperties": {
+                        "type": "number",
+                        "minimum": 0
+                      }
+                    },
+                    "wattsPerGbMemory": {
+                      "type": "number",
+                      "minimum": 0
+                    }
+                  }
+                },
+                "prices": {
+                  "default": [],
+                  "maxItems": 5000,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "provider": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200
+                      },
+                      "type": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200
+                      },
+                      "match": {
+                        "default": {},
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string",
+                          "maxLength": 200
+                        },
+                        "additionalProperties": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "maxLength": 200
+                            },
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "maxItems": 50,
+                              "type": "array",
+                              "items": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "maxLength": 200
+                                  },
+                                  {
+                                    "type": "number"
+                                  }
+                                ]
+                              }
+                            }
+                          ]
+                        }
+                      },
+                      "monthly": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "hourly": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "perUnit": {
+                        "maxItems": 10,
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "attribute": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "scale": {
+                              "default": 1,
+                              "type": "number",
+                              "exclusiveMinimum": 0
+                            },
+                            "default": {
+                              "default": 0,
+                              "type": "number",
+                              "minimum": 0
+                            },
+                            "monthly": {
+                              "type": "number",
+                              "minimum": 0
+                            },
+                            "hourly": {
+                              "type": "number",
+                              "minimum": 0
+                            },
+                            "watts": {
+                              "type": "number",
+                              "minimum": 0
+                            }
+                          },
+                          "required": [
+                            "attribute"
+                          ]
+                        }
+                      },
+                      "quantity": {
+                        "type": "object",
+                        "properties": {
+                          "attribute": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 200
+                          },
+                          "default": {
+                            "default": 1,
+                            "type": "number",
+                            "minimum": 0
+                          }
+                        },
+                        "required": [
+                          "attribute"
+                        ]
+                      },
+                      "free": {
+                        "type": "boolean"
+                      },
+                      "usageBased": {
+                        "type": "boolean"
+                      },
+                      "watts": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "vcpu": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "memoryGb": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "note": {
+                        "type": "string",
+                        "maxLength": 300
+                      }
+                    },
+                    "required": [
+                      "provider",
+                      "type"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "identifier",
+                "title"
+              ]
+            }
+          },
           "dashboards": {
             "default": [],
             "type": "array",
@@ -9635,6 +10413,14 @@
                     {
                       "type": "null"
                     }
+                  ]
+                },
+                "scope": {
+                  "default": "catalog",
+                  "type": "string",
+                  "enum": [
+                    "catalog",
+                    "entity"
                   ]
                 },
                 "default": {
@@ -10012,6 +10798,349 @@
                           "type",
                           "content"
                         ]
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "title": {
+                            "type": "string",
+                            "maxLength": 100
+                          },
+                          "width": {
+                            "default": 6,
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 12
+                          },
+                          "type": {
+                            "type": "string",
+                            "const": "initiative"
+                          },
+                          "initiative": {
+                            "type": "string",
+                            "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "initiative"
+                        ]
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "title": {
+                            "type": "string",
+                            "maxLength": 100
+                          },
+                          "width": {
+                            "default": 6,
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 12
+                          },
+                          "type": {
+                            "type": "string",
+                            "const": "chart"
+                          },
+                          "chart": {
+                            "default": "line",
+                            "type": "string",
+                            "enum": [
+                              "line",
+                              "bar",
+                              "area"
+                            ]
+                          },
+                          "stacked": {
+                            "default": false,
+                            "type": "boolean"
+                          },
+                          "interval": {
+                            "default": "week",
+                            "type": "string",
+                            "enum": [
+                              "day",
+                              "week",
+                              "month"
+                            ]
+                          },
+                          "days": {
+                            "default": 90,
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 365
+                          },
+                          "series": {
+                            "oneOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "const": "scorecard"
+                                  },
+                                  "scorecard": {
+                                    "type": "string",
+                                    "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "scorecard"
+                                ]
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "const": "runs"
+                                  },
+                                  "metric": {
+                                    "default": "count",
+                                    "type": "string",
+                                    "enum": [
+                                      "count",
+                                      "duration",
+                                      "failureRate"
+                                    ]
+                                  },
+                                  "action": {
+                                    "type": "string",
+                                    "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                                  },
+                                  "team": {
+                                    "type": "string",
+                                    "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                                  },
+                                  "status": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string",
+                                      "enum": [
+                                        "PENDING_APPROVAL",
+                                        "QUEUED",
+                                        "IN_PROGRESS",
+                                        "SUCCESS",
+                                        "FAILURE",
+                                        "REJECTED",
+                                        "CANCELLED"
+                                      ]
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "kind"
+                                ]
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "const": "dora"
+                                  },
+                                  "metric": {
+                                    "default": "deploymentFrequency",
+                                    "type": "string",
+                                    "enum": [
+                                      "deploymentFrequency",
+                                      "leadTime",
+                                      "changeFailureRate",
+                                      "mttr"
+                                    ]
+                                  },
+                                  "team": {
+                                    "type": "string",
+                                    "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                                  },
+                                  "service": {
+                                    "type": "string",
+                                    "maxLength": 200
+                                  },
+                                  "deployments": {
+                                    "default": {},
+                                    "type": "object",
+                                    "properties": {
+                                      "blueprint": {
+                                        "default": "deployment",
+                                        "type": "string",
+                                        "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                                      },
+                                      "timeProperty": {
+                                        "default": "deployedAt",
+                                        "type": "string",
+                                        "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+                                      },
+                                      "statusProperty": {
+                                        "default": "status",
+                                        "type": "string",
+                                        "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+                                      },
+                                      "successValues": {
+                                        "default": [
+                                          "success",
+                                          "succeeded",
+                                          "healthy",
+                                          "synced"
+                                        ],
+                                        "type": "array",
+                                        "items": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "failureValues": {
+                                        "default": [
+                                          "failure",
+                                          "failed",
+                                          "error",
+                                          "degraded"
+                                        ],
+                                        "type": "array",
+                                        "items": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "mergedProperty": {
+                                        "default": "mergedAt",
+                                        "type": "string",
+                                        "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+                                      },
+                                      "serviceRelation": {
+                                        "default": "service",
+                                        "type": "string",
+                                        "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+                                      }
+                                    }
+                                  },
+                                  "deploymentActions": {
+                                    "default": [],
+                                    "maxItems": 20,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string",
+                                      "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                                    }
+                                  },
+                                  "incidents": {
+                                    "default": {},
+                                    "type": "object",
+                                    "properties": {
+                                      "blueprint": {
+                                        "default": "incident",
+                                        "type": "string",
+                                        "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                                      },
+                                      "createdProperty": {
+                                        "default": "createdAt",
+                                        "type": "string",
+                                        "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+                                      },
+                                      "resolvedProperty": {
+                                        "default": "resolvedAt",
+                                        "type": "string",
+                                        "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+                                      },
+                                      "serviceRelation": {
+                                        "default": "service",
+                                        "type": "string",
+                                        "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+                                      }
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "kind"
+                                ]
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "const": "entities"
+                                  },
+                                  "blueprint": {
+                                    "type": "string",
+                                    "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                                  },
+                                  "mode": {
+                                    "default": "total",
+                                    "type": "string",
+                                    "enum": [
+                                      "total",
+                                      "created"
+                                    ]
+                                  },
+                                  "groupBy": {
+                                    "type": "string",
+                                    "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+                                  },
+                                  "filters": {
+                                    "default": {},
+                                    "type": "object",
+                                    "propertyNames": {
+                                      "type": "string",
+                                      "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+                                    },
+                                    "additionalProperties": {
+                                      "type": "string"
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "blueprint"
+                                ]
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "series"
+                        ]
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "title": {
+                            "type": "string",
+                            "maxLength": 100
+                          },
+                          "width": {
+                            "default": 6,
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 12
+                          },
+                          "type": {
+                            "type": "string",
+                            "const": "entity"
+                          },
+                          "show": {
+                            "type": "string",
+                            "enum": [
+                              "properties",
+                              "scorecards",
+                              "relations",
+                              "links"
+                            ]
+                          },
+                          "properties": {
+                            "maxItems": 50,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+                            }
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "show"
+                        ]
                       }
                     ]
                   }
@@ -10020,6 +11149,102 @@
               "required": [
                 "identifier",
                 "title"
+              ]
+            }
+          },
+          "initiatives": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "identifier": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                },
+                "title": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100
+                },
+                "description": {
+                  "default": "",
+                  "type": "string",
+                  "maxLength": 4000
+                },
+                "scorecard": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                },
+                "targetLevel": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 40
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "rules": {
+                  "default": [],
+                  "maxItems": 100,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+                  }
+                },
+                "startDate": {
+                  "type": "string",
+                  "format": "date",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                },
+                "deadline": {
+                  "type": "string",
+                  "format": "date",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                },
+                "teams": {
+                  "default": [],
+                  "maxItems": 100,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                  }
+                },
+                "owner": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "email",
+                      "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "enabled": {
+                  "default": true,
+                  "type": "boolean"
+                },
+                "reminderDays": {
+                  "default": 7,
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 90
+                }
+              },
+              "required": [
+                "identifier",
+                "title",
+                "scorecard",
+                "startDate",
+                "deadline"
               ]
             }
           },
@@ -10733,9 +11958,22 @@
                                 "catalog",
                                 "upsert_entity",
                                 "trigger_action",
-                                "http"
+                                "http",
+                                "mcp"
                               ]
                             }
+                          },
+                          "mcp": {
+                            "type": "object",
+                            "properties": {
+                              "connection": {
+                                "type": "string",
+                                "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                              }
+                            },
+                            "required": [
+                              "connection"
+                            ]
                           },
                           "guardrails": {
                             "default": {
@@ -10745,7 +11983,8 @@
                               "httpMethods": [
                                 "GET"
                               ],
-                              "maxWrites": 5
+                              "maxWrites": 5,
+                              "mcpTools": []
                             },
                             "type": "object",
                             "properties": {
@@ -10798,6 +12037,15 @@
                                 "type": "integer",
                                 "minimum": 1,
                                 "maximum": 50
+                              },
+                              "mcpTools": {
+                                "default": [],
+                                "maxItems": 100,
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "pattern": "^[A-Za-z0-9_.:/-]{1,128}$"
+                                }
                               }
                             }
                           },
@@ -11904,6 +13152,7 @@
                     "security",
                     "artifacts",
                     "identity",
+                    "ai",
                     "internal",
                     "other"
                   ]
@@ -13938,7 +15187,17 @@
             "type": "string",
             "enum": [
               "run",
-              "entity"
+              "entity",
+              "plan"
+            ]
+          },
+          "severity": {
+            "default": "critical",
+            "type": "string",
+            "enum": [
+              "critical",
+              "warning",
+              "advisory"
             ]
           },
           "match": {
@@ -13996,9 +15255,433 @@
           "description",
           "enabled",
           "target",
+          "severity",
           "match",
           "expression",
           "message",
+          "managed"
+        ],
+        "additionalProperties": false
+      },
+      "InitiativeView": {
+        "type": "object",
+        "properties": {
+          "identifier": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "description": {
+            "default": "",
+            "type": "string",
+            "maxLength": 4000
+          },
+          "scorecard": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+          },
+          "targetLevel": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 40
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rules": {
+            "default": [],
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+            }
+          },
+          "startDate": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+          },
+          "deadline": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+          },
+          "teams": {
+            "default": [],
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+            }
+          },
+          "owner": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "email",
+                "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "enabled": {
+            "default": true,
+            "type": "boolean"
+          },
+          "reminderDays": {
+            "default": 7,
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 90
+          },
+          "managed": {
+            "type": "boolean"
+          },
+          "blueprint": {
+            "type": "string"
+          },
+          "scorecardTitle": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "on_track",
+              "at_risk",
+              "overdue",
+              "done"
+            ]
+          },
+          "progress": {
+            "type": "object",
+            "properties": {
+              "passing": {
+                "type": "number"
+              },
+              "total": {
+                "type": "number"
+              },
+              "exempted": {
+                "type": "number"
+              },
+              "ratio": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "passing",
+              "total",
+              "exempted",
+              "ratio"
+            ],
+            "additionalProperties": false
+          },
+          "expected": {
+            "type": "number",
+            "description": "Where progress should be today on a straight line from the start (0 to 1)"
+          },
+          "daysLeft": {
+            "type": "number"
+          },
+          "error": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "identifier",
+          "title",
+          "description",
+          "scorecard",
+          "rules",
+          "startDate",
+          "deadline",
+          "teams",
+          "enabled",
+          "reminderDays",
+          "managed",
+          "blueprint",
+          "scorecardTitle",
+          "status",
+          "progress",
+          "expected",
+          "daysLeft"
+        ],
+        "additionalProperties": false,
+        "description": "An initiative with its progress (entities at the target / in scope, exempted ones excluded)"
+      },
+      "PriceCatalogView": {
+        "type": "object",
+        "properties": {
+          "identifier": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "description": {
+            "default": "",
+            "type": "string",
+            "maxLength": 2000
+          },
+          "currency": {
+            "default": "USD",
+            "type": "string",
+            "pattern": "^[A-Z]{3}$"
+          },
+          "extends": {
+            "type": "string",
+            "maxLength": 64
+          },
+          "hoursPerMonth": {
+            "default": 730,
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 744
+          },
+          "freeProviders": {
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 64
+            }
+          },
+          "carbon": {
+            "default": {},
+            "type": "object",
+            "properties": {
+              "pue": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string",
+                  "maxLength": 64
+                },
+                "additionalProperties": {
+                  "type": "number",
+                  "minimum": 1,
+                  "maximum": 3
+                }
+              },
+              "gridIntensity": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string",
+                  "maxLength": 64
+                },
+                "additionalProperties": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 2
+                }
+              },
+              "defaultGridIntensity": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 2
+              },
+              "wattsPerVcpu": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string",
+                  "maxLength": 64
+                },
+                "additionalProperties": {
+                  "type": "number",
+                  "minimum": 0
+                }
+              },
+              "wattsPerGbMemory": {
+                "type": "number",
+                "minimum": 0
+              }
+            },
+            "additionalProperties": false
+          },
+          "prices": {
+            "default": [],
+            "maxItems": 5000,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "provider": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "type": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "match": {
+                  "default": {},
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string",
+                    "maxLength": 200
+                  },
+                  "additionalProperties": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 200
+                      },
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "maxItems": 50,
+                        "type": "array",
+                        "items": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "maxLength": 200
+                            },
+                            {
+                              "type": "number"
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                },
+                "monthly": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "hourly": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "perUnit": {
+                  "maxItems": 10,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "attribute": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200
+                      },
+                      "scale": {
+                        "default": 1,
+                        "type": "number",
+                        "exclusiveMinimum": 0
+                      },
+                      "default": {
+                        "default": 0,
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "monthly": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "hourly": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "watts": {
+                        "type": "number",
+                        "minimum": 0
+                      }
+                    },
+                    "required": [
+                      "attribute",
+                      "scale",
+                      "default"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "quantity": {
+                  "type": "object",
+                  "properties": {
+                    "attribute": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "default": {
+                      "default": 1,
+                      "type": "number",
+                      "minimum": 0
+                    }
+                  },
+                  "required": [
+                    "attribute",
+                    "default"
+                  ],
+                  "additionalProperties": false
+                },
+                "free": {
+                  "type": "boolean"
+                },
+                "usageBased": {
+                  "type": "boolean"
+                },
+                "watts": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "vcpu": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "memoryGb": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "note": {
+                  "type": "string",
+                  "maxLength": 300
+                }
+              },
+              "required": [
+                "provider",
+                "type",
+                "match"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "managed": {
+            "type": "boolean"
+          },
+          "builtin": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "identifier",
+          "title",
+          "description",
+          "currency",
+          "hoursPerMonth",
+          "carbon",
+          "prices",
           "managed"
         ],
         "additionalProperties": false
@@ -14750,9 +16433,23 @@
                           "catalog",
                           "upsert_entity",
                           "trigger_action",
-                          "http"
+                          "http",
+                          "mcp"
                         ]
                       }
+                    },
+                    "mcp": {
+                      "type": "object",
+                      "properties": {
+                        "connection": {
+                          "type": "string",
+                          "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                        }
+                      },
+                      "required": [
+                        "connection"
+                      ],
+                      "additionalProperties": false
                     },
                     "guardrails": {
                       "default": {
@@ -14762,7 +16459,8 @@
                         "httpMethods": [
                           "GET"
                         ],
-                        "maxWrites": 5
+                        "maxWrites": 5,
+                        "mcpTools": []
                       },
                       "type": "object",
                       "properties": {
@@ -14815,6 +16513,15 @@
                           "type": "integer",
                           "minimum": 1,
                           "maximum": 50
+                        },
+                        "mcpTools": {
+                          "default": [],
+                          "maxItems": 100,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "pattern": "^[A-Za-z0-9_.:/-]{1,128}$"
+                          }
                         }
                       },
                       "required": [
@@ -14822,7 +16529,8 @@
                         "actions",
                         "httpHosts",
                         "httpMethods",
-                        "maxWrites"
+                        "maxWrites",
+                        "mcpTools"
                       ],
                       "additionalProperties": false
                     },
@@ -15999,7 +17707,7 @@
             "type": "array",
             "items": {
               "type": "string",
-              "pattern": "^(\\*|(entity|run|approval|sync|step|team|user|scorecard)\\.\\*|entity\\.(created|updated|deleted)|run\\.(created|updated|sla_breached)|approval\\.(requested|decided)|sync\\.(finished|failed)|step\\.(started|finished|sla_breached)|team\\.(created|updated|deleted)|user\\.(created|updated)|scorecard\\.changed)$"
+              "pattern": "^(\\*|(entity|run|approval|sync|step|team|user|scorecard|initiative)\\.\\*|entity\\.(created|updated|deleted)|run\\.(created|updated|sla_breached)|approval\\.(requested|decided)|sync\\.(finished|failed)|step\\.(started|finished|sla_breached)|team\\.(created|updated|deleted)|user\\.(created|updated)|scorecard\\.changed|initiative\\.(at_risk|overdue|completed))$"
             }
           },
           "blueprints": {
@@ -16133,6 +17841,7 @@
               "security",
               "artifacts",
               "identity",
+              "ai",
               "internal",
               "other"
             ]
@@ -19083,7 +20792,23 @@
           "audit"
         ],
         "summary": "GET /api/v1/audit",
-        "parameters": [],
+        "parameters": [
+          {
+            "name": "channel",
+            "in": "query",
+            "required": false,
+            "description": "How the call came in",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "ui",
+                "api",
+                "mcp",
+                "workflow"
+              ]
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Success"
@@ -22861,6 +24586,373 @@
         }
       }
     },
+    "/api/v1/initiatives": {
+      "get": {
+        "operationId": "getInitiatives",
+        "tags": [
+          "initiatives"
+        ],
+        "summary": "GET /api/v1/initiatives",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/InitiativeView"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/api/v1/initiatives/{id}": {
+      "delete": {
+        "operationId": "deleteInitiativesById",
+        "tags": [
+          "initiatives"
+        ],
+        "summary": "DELETE /api/v1/initiatives/{id}",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      },
+      "get": {
+        "operationId": "getInitiativesById",
+        "tags": [
+          "initiatives"
+        ],
+        "summary": "GET /api/v1/initiatives/{id}",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      },
+      "put": {
+        "operationId": "putInitiativesById",
+        "tags": [
+          "initiatives"
+        ],
+        "summary": "PUT /api/v1/initiatives/{id}",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Initiative"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/api/v1/initiatives/{id}/entities": {
+      "get": {
+        "operationId": "getInitiativesEntitiesById",
+        "tags": [
+          "initiatives"
+        ],
+        "summary": "GET /api/v1/initiatives/{id}/entities",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/api/v1/initiatives/{id}/exemptions": {
+      "get": {
+        "operationId": "getInitiativesExemptionsById",
+        "tags": [
+          "initiatives"
+        ],
+        "summary": "GET /api/v1/initiatives/{id}/exemptions",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      },
+      "post": {
+        "operationId": "postInitiativesExemptionsById",
+        "tags": [
+          "initiatives"
+        ],
+        "summary": "POST /api/v1/initiatives/{id}/exemptions",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InitiativeExemptionInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/api/v1/initiatives/{id}/exemptions/{exemption}": {
+      "delete": {
+        "operationId": "deleteInitiativesExemptionsByIdExemption",
+        "tags": [
+          "initiatives"
+        ],
+        "summary": "DELETE /api/v1/initiatives/{id}/exemptions/{exemption}",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "exemption",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
     "/api/v1/insights": {
       "get": {
         "operationId": "getInsights",
@@ -23556,6 +25648,40 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/api/v1/me/initiatives": {
+      "get": {
+        "operationId": "getMeInitiatives",
+        "tags": [
+          "me"
+        ],
+        "summary": "GET /api/v1/me/initiatives",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success"
           },
           "400": {
             "description": "Validation error",
@@ -24701,6 +26827,242 @@
         }
       }
     },
+    "/api/v1/price-catalogs": {
+      "get": {
+        "operationId": "getPriceCatalogs",
+        "tags": [
+          "price-catalogs"
+        ],
+        "summary": "GET /api/v1/price-catalogs",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PriceCatalogView"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/api/v1/price-catalogs/{id}": {
+      "delete": {
+        "operationId": "deletePriceCatalogsById",
+        "tags": [
+          "price-catalogs"
+        ],
+        "summary": "DELETE /api/v1/price-catalogs/{id}",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      },
+      "get": {
+        "operationId": "getPriceCatalogsById",
+        "tags": [
+          "price-catalogs"
+        ],
+        "summary": "GET /api/v1/price-catalogs/{id}",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PriceCatalogView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      },
+      "put": {
+        "operationId": "putPriceCatalogsById",
+        "tags": [
+          "price-catalogs"
+        ],
+        "summary": "PUT /api/v1/price-catalogs/{id}",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PriceCatalog"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PriceCatalogView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/api/v1/price-catalogs/{id}/estimate": {
+      "post": {
+        "operationId": "postPriceCatalogsEstimateById",
+        "tags": [
+          "price-catalogs"
+        ],
+        "summary": "POST /api/v1/price-catalogs/{id}/estimate",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
     "/api/v1/runs": {
       "get": {
         "operationId": "getRuns",
@@ -24708,7 +27070,23 @@
           "runs"
         ],
         "summary": "GET /api/v1/runs",
-        "parameters": [],
+        "parameters": [
+          {
+            "name": "channel",
+            "in": "query",
+            "required": false,
+            "description": "How the run was requested",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "ui",
+                "api",
+                "mcp",
+                "workflow"
+              ]
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Success",
@@ -26617,6 +28995,16 @@
         ],
         "summary": "POST /api/v1/tokens",
         "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TokenInput"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Success"

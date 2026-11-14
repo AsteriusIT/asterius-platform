@@ -137,6 +137,8 @@ export function stepProblems(steps: WorkflowStep[], invokers: PluginInfo[]): str
       if (s.tools?.includes('upsert_entity') && !s.guardrails?.entityBlueprints?.length) out.push(`${where}: list the blueprints the agent may write`);
       if (s.tools?.includes('trigger_action') && !s.guardrails?.actions?.length) out.push(`${where}: list the actions the agent may start`);
       if (s.tools?.includes('http') && !s.guardrails?.httpHosts?.length) out.push(`${where}: list the hosts the agent may call`);
+      if (s.tools?.includes('mcp') && !s.mcp?.connection) out.push(`${where}: choose the MCP connection`);
+      if (s.tools?.includes('mcp') && !s.guardrails?.mcpTools?.length) out.push(`${where}: list the MCP tools the agent may call`);
       for (const m of s.mcpServers ?? []) if (!m.name || !m.url.startsWith('https://')) out.push(`${where}: MCP servers need a name and an https:// URL`);
     }
     if (s.type === 'wait' && [s.duration, s.until, s.event].filter(Boolean).length !== 1) out.push(`${where}: set exactly one of duration, until or event`);
@@ -711,6 +713,12 @@ function FragmentStepEditor({ step, onChange }: { step: FragmentStep; onChange: 
 
 function AgentEditor({ step, onChange }: { step: AgentStep; onChange: (p: Partial<AgentStep>) => void }) {
   const meta = useQuery({ queryKey: ['meta'], queryFn: api.meta, staleTime: Infinity });
+  const connections = useQuery({
+    queryKey: ['step-connections'],
+    queryFn: api.connectionsForSteps,
+    staleTime: 30_000,
+    enabled: (step.tools ?? []).includes('mcp'),
+  });
   const models: { value: string; label: string; description: string; inputPrice?: number; outputPrice?: number }[] = meta.data?.models ?? AGENT_MODELS;
   const [fields, setFields] = useState<FieldDraft[]>(() => schemaToFields(step.output));
   const mode: FieldsMode = {
@@ -805,6 +813,25 @@ function AgentEditor({ step, onChange }: { step: AgentStep; onChange: (p: Partia
           />
         </SimpleGrid>
       )}
+      {(step.tools ?? []).includes('mcp') && (
+        <SimpleGrid cols={{ base: 1, sm: 2 }}>
+          <Select
+            label="MCP connection"
+            withAsterisk
+            description="Your MCP gateway or server (Admin → Connections, connector “MCP gateway or server”, read and write)"
+            data={(connections.data ?? []).filter((c) => c.connector.identifier === 'mcp').map((c) => ({ value: c.identifier, label: c.title }))}
+            value={step.mcp?.connection ?? null}
+            onChange={(v) => onChange({ mcp: v ? { connection: v } : undefined })}
+          />
+          <TagsInput
+            label="MCP tools the agent may call"
+            withAsterisk
+            description="Tool names as the server lists them; nothing else is offered to the model"
+            value={step.guardrails?.mcpTools ?? []}
+            onChange={(v) => onChange({ guardrails: { ...step.guardrails, mcpTools: v } })}
+          />
+        </SimpleGrid>
+      )}
       <McpServersEditor value={step.mcpServers ?? []} onChange={(mcpServers) => onChange({ mcpServers })} />
       <Switch
         label="Structured output"
@@ -884,6 +911,7 @@ const AGENT_TOOL_OPTIONS = [
   { value: 'upsert_entity', label: 'Create or update catalog entities' },
   { value: 'trigger_action', label: 'Start self-service actions' },
   { value: 'http', label: 'Call HTTP APIs (allow-listed hosts)' },
+  { value: 'mcp', label: 'Call MCP tools through a connection (allow-listed tools)' },
 ];
 
 /** Remote MCP servers the model may use (the Claude API connects to them, so they must be public HTTPS endpoints). */

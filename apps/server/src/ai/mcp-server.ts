@@ -4,13 +4,21 @@ import { blueprintOf, canTrigger, forViewer, getAction, isRunnable, listActions 
 import { getRun, listRuns, pendingApprovals, triggerRun } from '../actions/runs.js';
 import { runCatalogTool } from './tools.js';
 import { truncate } from './model.js';
-import { errorMessage } from '../lib/errors.js';
+import { errorMessage, notFound } from '../lib/errors.js';
 import { appUrl } from '../orgs/orgs.js';
+import { canRead, getEntity } from '../catalog/entities.js';
+import { getBlueprintCached } from '../catalog/blueprints.js';
+import { resultsForEntity } from '../catalog/scorecards.js';
+import { docsUrlOf, fetchDocs } from '../catalog/docs.js';
+import { computeInsights } from '../catalog/insights.js';
+import { insightsConfig } from '../schemas.js';
+import { initiativeViews } from '../catalog/initiatives.js';
 
 /**
  * The platform as a Model Context Protocol server (Streamable HTTP transport, stateless JSON responses).
  * Callers authenticate with an API token and act with that user's permissions in the token's organization: the
  * catalog is readable, actions are started (and runs read) exactly as through the API. Approving is not exposed.
+ * A token restricted to workflows (auth/users.ts) lists, starts and reads only those.
  */
 
 const PROTOCOL_VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05'];
@@ -23,6 +31,15 @@ interface ToolDef {
   run: (input: Record<string, unknown>, p: Principal) => Promise<unknown>;
 }
 
+/** An entity the caller may read (404 otherwise, as through the API). */
+async function readableEntity(i: Record<string, unknown>, p: Principal) {
+  const blueprint = typeof i.blueprint === 'string' ? i.blueprint : '';
+  const identifier = typeof i.identifier === 'string' ? i.identifier : '';
+  const e = await getEntity(blueprint, identifier).catch(() => undefined);
+  if (!e || !(await canRead(p, e))) throw notFound(`Entity ${blueprint}/${identifier}`);
+  return e;
+}
+
 const obj = (properties: Record<string, unknown>, required: string[] = []) => ({ type: 'object', properties, required, additionalProperties: false });
 
 const TOOLS: ToolDef[] = [
@@ -31,7 +48,15 @@ const TOOLS: ToolDef[] = [
     description: 'The signed-in user, the organization the token works in, the role and the teams in it.',
     inputSchema: obj({}),
     annotations: { readOnlyHint: true },
-    run: async (_i, p) => ({ user: { name: p.name, email: p.email }, organization: p.org, role: p.role, roles: p.roles, teams: p.teams }),
+    run: async (_i, p) => ({
+      user: { name: p.name, email: p.email },
+      organization: p.org,
+      role: p.role,
+      roles: p.roles,
+      teams: p.teams,
+      // Restrictions of the API token of the call, when it has some.
+      ...(p.token ? { token: { scopes: p.token.scopes, blueprints: p.token.blueprints, workflows: p.token.workflows ?? null } } : {}),
+    }),
   },
   {
     name: 'list_blueprints',
@@ -53,6 +78,50 @@ const TOOLS: ToolDef[] = [
     inputSchema: obj({ blueprint: { type: 'string' }, identifier: { type: 'string' } }, ['blueprint', 'identifier']),
     annotations: { readOnlyHint: true },
     run: (i, p) => runCatalogTool('get_entity', i, p), // as the caller: blueprint read rules apply
+  },
+  {
+    name: 'get_scorecards',
+    description: 'Scorecard results of one catalog entity: level reached and the pass / fail of each rule.',
+    inputSchema: obj({ blueprint: { type: 'string' }, identifier: { type: 'string' } }, ['blueprint', 'identifier']),
+    annotations: { readOnlyHint: true },
+    run: async (i, p) => {
+      const e = await readableEntity(i, p);
+      return resultsForEntity(e.blueprint, e.identifier);
+    },
+  },
+  {
+    name: 'get_entity_docs',
+    description: 'The Markdown documentation of a catalog entity (its docs property, e.g. a README), fetched by the platform.',
+    inputSchema: obj(
+      { blueprint: { type: 'string' }, identifier: { type: 'string' }, property: { type: 'string', description: 'docs property, when there are several' } },
+      ['blueprint', 'identifier'],
+    ),
+    annotations: { readOnlyHint: true },
+    run: async (i, p) => {
+      const e = await readableEntity(i, p);
+      const doc = docsUrlOf(await getBlueprintCached(e.blueprint), e, typeof i.property === 'string' ? i.property : undefined);
+      return { property: doc.property, ...(await fetchDocs(doc.url)) };
+    },
+  },
+  {
+    name: 'get_dora_insights',
+    description:
+      'DORA metrics (deployment frequency, lead time, change failure rate, time to restore) over a window, from the deployments and incidents you may read.',
+    inputSchema: obj({
+      days: { type: 'number', description: 'Window in days (default 30, at most 365)' },
+      team: { type: 'string', description: 'Only this owner team' },
+      service: { type: 'string', description: 'Only this service (entity identifier)' },
+    }),
+    annotations: { readOnlyHint: true },
+    run: async (i, p) =>
+      computeInsights(
+        insightsConfig.parse({
+          days: i.days === undefined ? undefined : Math.min(Math.max(Math.round(Number(i.days)) || 30, 1), 365),
+          team: typeof i.team === 'string' && i.team ? i.team : undefined,
+          service: typeof i.service === 'string' && i.service ? i.service : undefined,
+        }),
+        p,
+      ),
   },
   {
     name: 'list_actions',
@@ -125,6 +194,24 @@ const TOOLS: ToolDef[] = [
     },
   },
   {
+    name: 'list_initiatives',
+    description: 'Scorecard initiatives (target level and deadline) with their status and progress: entities at the target / in scope.',
+    inputSchema: obj({}),
+    annotations: { readOnlyHint: true },
+    run: async (_i, p) =>
+      (await initiativeViews(p)).map((i) => ({
+        identifier: i.identifier,
+        title: i.title,
+        scorecard: i.scorecard,
+        targetLevel: i.targetLevel,
+        deadline: i.deadline,
+        status: i.status,
+        passing: i.progress.passing,
+        total: i.progress.total,
+        url: `/initiatives/${i.identifier}`,
+      })),
+  },
+  {
     name: 'get_run',
     description: 'Get a run with its steps, outputs and logs.',
     inputSchema: obj({ id: { type: 'string' } }, ['id']),
@@ -172,7 +259,8 @@ async function handleOne(raw: unknown, p: Principal): Promise<RpcResult | undefi
           protocolVersion: PROTOCOL_VERSIONS.includes(asked) ? asked : PROTOCOL_VERSIONS[0],
           capabilities: { tools: { listChanged: false } },
           serverInfo: { name: 'asterius-platform', version: '1' },
-          instructions: 'Search the software catalog, list and start self-service actions, and follow runs. Calls use your permissions.',
+          instructions:
+            'Search the software catalog, read entity docs, scorecards and DORA insights, list and start self-service actions, and follow runs. Calls use your permissions.',
         },
       };
     }

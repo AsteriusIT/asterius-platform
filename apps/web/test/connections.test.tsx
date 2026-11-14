@@ -274,10 +274,11 @@ describe('connectors admin', () => {
     expect(screen.getByText('/services', { exact: false })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull(); // built-ins are read-only
     fireEvent.click(screen.getByRole('button', { name: /Duplicate/ }));
+    fireEvent.click(await screen.findByRole('tab', { name: 'YAML' }));
     const yaml = (await screen.findByLabelText('YAML document')) as HTMLTextAreaElement;
     expect(yaml.value).toContain('identifier: pagerduty-custom');
     expect(yaml.value).not.toContain('builtin');
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create connector' }));
     await waitFor(() => expect(save).toHaveBeenCalledWith('pagerduty-custom', expect.objectContaining({ title: 'PagerDuty (custom)' }), undefined));
   });
 

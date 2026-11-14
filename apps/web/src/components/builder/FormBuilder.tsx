@@ -75,6 +75,8 @@ export function FormBuilder<D extends Doc>(
     tabs: FormTab<D>[];
     size?: string;
     header?: ReactNode;
+    /** Shown instead of ManagedNotice when read-only for another reason (built-in, permissions). */
+    readOnlyNotice?: ReactNode;
     versioned?: Versioned;
   },
 ) {
@@ -132,7 +134,7 @@ function Body<D extends Doc>(props: Parameters<typeof FormBuilder<D>>[0] & { val
 
   return (
     <Stack>
-      {readOnly && <ManagedNotice />}
+      {readOnly && (props.readOnlyNotice ?? <ManagedNotice />)}
       {props.header}
       <Tabs
         value={tab}

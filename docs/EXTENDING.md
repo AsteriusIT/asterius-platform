@@ -107,6 +107,8 @@ steps:
     output: { url: "steps.provision.link" }
 ```
 
+Agent steps can also call the tools of your MCP gateway (or of one MCP server) through a connection: `tools: [mcp]`, `mcp: { connection: mcp-gateway }` (a read-write connection of the built-in `mcp` connector that allows the workflow) and `guardrails: { mcpTools: [search_issues] }` (the only tools offered to the model; required). See docs/MCP.md.
+
 Step outputs: invoke → the invoker result (webhook response, callback `result`); approval → `{ approved, by, comments }` (plus `tiers: [{ name, approved, by, comments }]` for tiered steps, `delegated: [{ by, for }]` when a delegate decided, `expired: true` after an `onExpiry` outcome); agent → the structured fields or `{ text }`; transform → its keys. Every step also exposes `steps.<id>.status` and `steps.<id>.link`. The run result is the outputs by step id.
 
 ### Other triggers
@@ -120,7 +122,7 @@ trigger:                                           # cron (5 fields) in an IANA 
   inputs: { day: "{{ schedule.at }}" }
 trigger:                                           # catalog events and finished runs; JSONata filter over { event }
   type: event
-  event: entity.created                            # entity.created | entity.updated | entity.deleted | entity.expired | scorecard.changed | run.finished
+  event: entity.created                            # entity.created | entity.updated | entity.deleted | entity.expired | scorecard.changed | run.finished | initiative.at_risk | initiative.overdue | initiative.completed
   blueprint: service
   filter: 'event.entity.properties.tier = "gold"'
   inputs: { name: "{{ event.entity.identifier }}" }   # the entity of the event is the run's entity
@@ -281,6 +283,151 @@ files are stored (rejected ones are logged) and removed from the step output. Li
 an attachment (`Content-Disposition: attachment`, `X-Content-Type-Options: nosniff`, sandbox CSP). Later steps read
 `steps.<id>.artifacts` (`[{ id, name, contentType, size, sha256, url }]`). Artifacts are deleted with their run.
 
+### Plan checks (cost, carbon, policies)
+
+A `plan-check` step (an invoke step) reads a Terraform / OpenTofu plan in the format of `terraform show -json` /
+`tofu show -json`, estimates its **monthly cost** and **carbon**, and evaluates **plan policies**, before anything is
+applied. Put it between the plan stage of the pipeline and the approval:
+
+```yaml
+steps:
+  - id: tfplan                     # tofu plan; publishes plan.json (examples/plan-check/azure-pipelines)
+    type: invoke
+    invoker: { type: azure-pipeline, …, templateParameters: { service: "{{ inputs.name }}", operation: plan } }
+  - id: plan
+    type: invoke
+    invoker:
+      type: plan-check
+      ado: { organization: https://dev.azure.com/acme, project: Platform, token: "${env:ADO_PAT}", buildId: "{{ steps.tfplan.output.runId }}", artifact: plan, file: plan.json }
+      priceCatalog: default        # optional: default = the catalog "default", else the built-in sample
+      budget: { maxDelta: 500, severity: warning }
+      policies:                    # step rules, in addition to the organization's plan policies
+        - { id: no-public-ip, severity: critical, expression: '[changes[type = "azurerm_public_ip"].address]', message: No public IPs }
+      opa: { url: "${env:OPA_URL}", path: terraform/analysis }   # optional
+      onWarning: override          # override (default) | fail | ignore
+  - id: approval
+    type: approval
+    if: steps.plan.output.requiresOverride or inputs.environment = "prod"
+    approvers: { teams: [platform] }
+    message: "{{ steps.plan.output.summary }}"          # or {{ steps.plan.output.cost.monthly }} {{ steps.plan.output.cost.currency }}
+  - id: apply
+    type: invoke
+    invoker: { type: azure-pipeline, … }
+  - id: register                   # the estimate on the resulting entity
+    type: invoke
+    invoker:
+      type: catalog
+      operation: upsert
+      blueprint: environment
+      identifier: "{{ inputs.name }}"
+      merge: true
+      properties: { estimatedMonthlyCost: "{{ steps.plan.output.cost.monthly }}", estimatedCo2eKgMonth: "{{ steps.plan.output.carbon.monthlyKg }}" }
+```
+
+**Where the plan comes from** (exactly one): `plan` (an object or JSON text, e.g. `{{ steps.tfplan.output.plan }}`;
+limited by STEP_OUTPUT_MAX_BYTES of the step that produced it), `planArtifact: { step, name }` (a run artifact: uploaded
+by the pipeline through the callback API, or answered by a sync webhook; `name` defaults to `plan.json`), `planUrl`
+(+ `headers`, through the SSRF guard), or `ado: { organization, project, token, buildId, artifact, file }` (a build
+artifact of an Azure Pipelines run, read like the V2 `outputs.json`; PAT scope Build: Read). Plans are capped at 25 MB.
+Data sources (`mode: data`) are ignored; `after_unknown` values are simply unknown.
+
+**Cost.** Each resource is priced twice: with its current attributes (`change.before`) and its planned ones
+(`change.after`); the delta is after − before, so creates add, deletes subtract and updates and replacements
+(`["delete","create"]`, `["create","delete"]`) count the difference; `no-op` resources count in the total, not in the
+delta. The price of a resource comes from the most specific matching entry (most `match` keys) of the first catalog
+of the chain that has one: `(monthly + hourly × hoursPerMonth + Σ perUnit) × quantity`. A resource without a price
+is **never silently ignored**: it is listed in `cost.unmatched`, marked "no price" in the tables, `cost.complete` is
+false and the step reports a finding (`unpriced: advisory` by default; `warning`, `critical` or `ignore`). Entries with
+`usageBased: true` (storage accounts, buckets, functions…) count 0 and are listed in `cost.usageBased`; `free: true`
+entries and `freeProviders` (random, null, tls…) are known to cost nothing.
+
+**Price catalogs** (`priceCatalogs:` in configuration files, Admin → Governance → Price catalogs,
+`GET|PUT|DELETE /api/v1/price-catalogs/:id`; `POST /api/v1/price-catalogs/:id/estimate { plan, action? }` tries a
+catalog and the plan policies on a plan without a run). The read-only `builtin` catalog is a **sample** of approximate
+public pay-as-you-go list prices (USD, Linux, no discounts) for common Azure, AWS and Google Cloud resources
+(`apps/server/src/plan/builtin-prices.ts`): declare your own catalog with your prices and currency, and `extends:
+builtin` (or another catalog, same currency) for the rest.
+
+```yaml
+priceCatalogs:
+  - identifier: default
+    title: Acme prices
+    currency: USD                  # a catalog extends only catalogs of the same currency
+    extends: builtin               # what this one does not price comes from the sample
+    hoursPerMonth: 730
+    prices:
+      - { provider: azurerm, type: azurerm_linux_virtual_machine, match: { size: Standard_D2s_v5, region: westeurope }, hourly: 0.081, vcpu: 2, memoryGb: 8 }
+      - { provider: azurerm, type: azurerm_managed_disk, match: { storage_account_type: Premium_LRS }, perUnit: [{ attribute: disk_size_gb, monthly: 0.14, watts: 0.0012 }] }
+      - { provider: azurerm, type: azurerm_kubernetes_cluster_node_pool, match: { vm_size: "Standard_D4*" }, hourly: 0.17, quantity: { attribute: node_count, default: 3 } }
+      - { provider: aws, type: "aws_iam_*", free: true }
+      - { provider: azurerm, type: azurerm_storage_account, usageBased: true, note: Capacity and operations are not in the plan }
+```
+
+`provider` is the provider's short name (`azurerm`, `aws`, `google`), `type` the resource type; both, and string
+values of `match`, accept `*` globs; a `match` value may be a list (any of). `match` keys are attribute paths of the
+planned values (`size`, `default_node_pool.0.vm_size`: nested blocks are lists) and `region` (the resource's `location`
+/ `region` / zone, else the provider's `region`; Azure locations are normalised, `West Europe` = `westeurope`).
+`perUnit[]`: `{ attribute, scale (e.g. 1/1024 for MB), default (when unknown), monthly | hourly, watts }`.
+
+**Carbon** (an **estimate**, labelled as such everywhere, Cloud Carbon Footprint method): average power (`watts`, or
+`vcpu` × `carbon.wattsPerVcpu[provider]` + `memoryGb` × `carbon.wattsPerGbMemory`, plus per-unit watts) × hours ×
+`carbon.pue[provider]` × `carbon.gridIntensity[region]` (kgCO2e per kWh, `defaultGridIntensity` for unknown regions).
+The built-in coefficients (CCF averages: 2.12–2.49 W per vCPU at 50 % utilisation, 0.392 W per GB of memory, 1.2 W per
+TB of SSD, PUE 1.1–1.185, regional grid factors) are approximations to compare requests and regions; operational
+emissions only (embodied emissions and networking are not included). Override them in your catalog's `carbon:`.
+
+**Plan policies.** Three sources, one list of findings with a severity:
+
+- the organization's **policies with `target: plan`** (`severity: critical | warning | advisory`, `match.actions` to
+  restrict them): guard rails that workflow authors cannot remove, managed like the other policies;
+- the step's own `policies: [{ id, title, severity, expression, message }]` (messages are plain text: the step
+  configuration is rendered with the run context before the check);
+- **OPA**: `opa: { url, path, headers, severity, input }` → `POST <url>/v1/data/<path>` with `{ "input": <plan> }`
+  (`input: context` sends the rule context below instead). The decision is a list of messages (strings or
+  `{ msg | message, severity?, address? }`; default severity `critical`), or an object with `deny` / `violation`
+  (critical), `warn` (warning) and `info` / `advisory` (advisory) lists, as in conftest and the OPA Terraform tutorial.
+  OPA unreachable, or no decision at `path`, is a critical finding (fail closed).
+- `budget: { maxMonthly, maxDelta, severity (default warning) }`.
+
+JSONata rules see `{ resources, changes, cost, carbon, plan, inputs, action, principal, entity }`: `resources[]` are
+the managed resources (`address`, `type`, `provider`, `action`: create | update | replace | delete | no-op | forget,
+`region`, `before`, `after`, `cost: { monthly, before, delta, pricing }`), `changes` the same without `no-op`, `cost`
+the totals (`monthly`, `before`, `delta`, `currency`, `unmatched`), `plan` the raw plan. As with every policy, `true`
+complies and anything else (and an evaluation error) is a finding; in addition a **list** complies when empty and
+gives one finding per item, so `[changes[<condition>].address]` names the offending resources (wrap the path in
+`[ ]`: JSONata returns nothing, not an empty list, when nothing matches). Policy messages may embed `{{ }}` over that
+context (`item` is the current list item).
+
+**Outcomes.** `critical` → the step fails (`Blocked: …`), the run stops before the apply, the output (with the
+findings) stays on the run. `warning` → `onWarning: override` (default): the step succeeds with
+`output.requiresOverride: true` and `gate: override`, and an approval step with
+`if: steps.plan.output.requiresOverride` is the override (the approvers see the summary); `onWarning: fail` treats
+warnings as blocking, `ignore` only reports them. `advisory` → logged on the run and sent to the requester as an in-app
+notification (`notify: false` to turn off).
+
+**Output** (`steps.<id>.output`, typed `PlanCheckOutput` in packages/shared): `{ kind: "plan-check", gate: pass |
+override | blocked, requiresOverride, changes: { create, update, replace, delete, no-op, forget }, cost: { currency,
+monthly, before, delta, complete, unmatched, usageBased, catalog }, carbon: { monthlyKg, beforeKg, deltaKg, method },
+violations: [{ policy, title, severity, message, source, address? }], counts: { critical, warning, advisory },
+resources: [{ address, type, provider, action, region, pricing, monthly, before, delta, co2eKg, co2eDeltaKg, note? }],
+truncated, summary }`. `resources` keeps the `maxResources` (default 50) biggest changes; the full report is attached
+to the step as the artifact `plan-check.json` (`report: false` to skip it). `summary` is Markdown (totals, the biggest
+changes as a table, the findings) for approval messages and notifications. The run page shows the output as a cost
+table with the findings.
+
+**Storing the estimate.** A `catalog` step after the apply writes `{{ steps.plan.output.cost.monthly }}` (a number),
+`cost.currency`, `carbon.monthlyKg` and `cost.complete` onto the entity (declare them in the blueprint): FinOps
+tables, dashboards and scorecards then read them. It is the estimate at request time; actual costs from billing
+exports are not ingested.
+
+The complete workflow, with a price catalog, plan policies of each severity, the ADO plan pipeline and how to wire it
+into the V2 lean setup, is [examples/plan-check](../examples/plan-check/README.md).
+
+**Manual verification.** Tested with fixture plans (create, update, delete, replace), a fake Azure DevOps artifact
+API and a real `opa run --server` when the binary is installed (`OPA_BIN`). Not verified live: the plan pipeline
+against a real organization and subscription, reading a large `plan.json` through the Azure DevOps artifact API,
+and the built-in prices against current price lists (they are a sample).
+
 ### Workflow tests
 
 An action may declare tests, run with mocks by `POST /actions/:id/tests/run { name?, definition? }` (admin; `definition`
@@ -439,6 +586,7 @@ action, custom request signing, binary or multipart payloads, streaming, or a pr
 | `connector-api` | `connection`, `method`, `path`, `query`, `headers`, `body` | a raw call within the connection's `api` allow-list; output `{ status, body, headers }` |
 | `catalog` | `operation: upsert\|delete`, `blueprint`, `identifier`, `title`, `team`, `properties`, `relations`, `merge`, `cascade` (delete: also the entities that point to it) | immediate |
 | `tekton` | `pipeline`, `namespace`, `params`, `serviceAccountName`, `context` | creates a `PipelineRun` of an existing Pipeline and follows its `Succeeded` condition (the platform's service account needs create/get/patch on `pipelineruns.tekton.dev`) |
+| `plan-check` | `plan` \| `planArtifact` \| `planUrl` \| `ado`, `priceCatalog`, `budget`, `policies`, `opa`, `onWarning`, `unpriced`, `notify`, `maxResources`, `report` | cost, carbon and policy checks of a Terraform / OpenTofu plan ([Plan checks](#plan-checks-cost-carbon-policies)). Immediate; critical findings fail the step |
 | `scaffolder` | `provider: github\|gitlab\|azure-devops`, `mode: pull-request\|new-repository`, `templateRepo`, `templatePath`, `templateRef`, `repo`, `baseBranch`, `targetPath`, `variables`, `title`, `branch`, `token`, `apiUrl`/`baseUrl`, `organization`/`project` (azure-devops); new-repository: `description`, `visibility`, `defaultBranch`, `topics`, `team`, `teamPermission`, `ownerType`, `reuseExisting`, `namespace` (gitlab); `reviewers` (azure-devops) | renders a template repository (`{{ variable }}` placeholders in paths and text files; unknown variables fail) and publishes it. Immediate; output below |
 
 ### Scaffolder output and modes
@@ -543,7 +691,7 @@ All endpoints take `Authorization: Bearer <token>`. Personal tokens come from th
 | Method & path | |
 |---|---|
 | `GET /api/v1/blueprints` · `PUT/DELETE /api/v1/blueprints/:bp` | blueprints (PUT/DELETE: admin) |
-| `GET /api/v1/blueprints/:bp/entities?search=&team=&sort=title\|updated&limit=&offset=&filter.<prop>=<value>` | list and search |
+| `GET /api/v1/blueprints/:bp/entities?search=&team=&sort=title\|updated&limit=&offset=&filter.<prop>=<value>&scorecard.<id>=<level>` | list and search (`scorecard.<id>=none`: below the first level) |
 | `GET /api/v1/entities?search=` | search across blueprints |
 | `GET /api/v1/blueprints/:bp/entities/:id` · `…/related` · `…/actions` | entity, relations both ways, available day-2 actions |
 | `PUT /api/v1/blueprints/:bp/entities/:id` | create or replace (idempotent) |
@@ -556,9 +704,11 @@ All endpoints take `Authorization: Bearer <token>`. Personal tokens come from th
 | `POST /api/v1/blueprints/:bp/impact` · `…/migrate` · `GET …/validation` | check a proposed blueprint against its entities, migrate (rename / default / remove), last background report (admin) |
 | `GET /api/v1/insights?days=&team=&service=` | the DORA metrics of the organization, as the caller may read them |
 | `GET /api/v1/policies` · `PUT\|DELETE /api/v1/policies/:id` | policy gate definitions (admin) |
-| `GET /api/v1/dashboards/resolve?blueprint=` · `GET …/dashboards/:id/data` | the dashboard to show and its widget data |
+| `GET /api/v1/initiatives` · `GET …/initiatives/:id` · `GET …/:id/entities?status=failing\|passing\|exempt&team=` · `PUT\|DELETE …/initiatives/:id` | scorecard initiatives with progress, per-team breakdown and trend (PUT/DELETE: admin) |
+| `GET\|POST /api/v1/initiatives/:id/exemptions` · `DELETE …/exemptions/:exemption` · `GET /api/v1/me/initiatives` | exemptions (POST/DELETE: admins and the owner), the caller's teams' failing entities |
+| `GET /api/v1/dashboards/resolve?blueprint=&scope=` · `GET …/dashboards/:id/data?entity=` | the dashboard to show (`scope=entity`: of an entity page) and its widget data |
 | `GET /api/v1/actions` · `POST /api/v1/actions/:id/runs` `{ entity?, inputs }` | trigger actions from scripts |
-| `GET /api/v1/runs?mine=true&status=…` · `GET /api/v1/runs/:id` | runs with logs and approvals |
+| `GET /api/v1/runs?mine=true&status=…&action=&team=&since=&until=` · `GET /api/v1/runs/:id` | runs with logs and approvals (`since` / `until`: creation time) |
 | `POST /api/v1/runs/:id/approve\|reject\|cancel` | `{ comment }` |
 | `POST /api/v1/ingest/:integration` | inbound webhook (integration secret, not a user token) |
 
@@ -566,7 +716,7 @@ Entity identifiers may contain `/`, `:` and `@` (third-party ids); URL-encode th
 
 ## Catalog governance
 
-All of these are declared in the configuration files like the other resources (`scorecards:`, `policies:`, `dashboards:`), or in the admin UI.
+All of these are declared in the configuration files like the other resources (`scorecards:`, `initiatives:`, `policies:`, `dashboards:`), or in the admin UI.
 
 **Scorecards.** Rules are JSONata over the entity (`properties`, `relations`, `computed`, `team`, `related.<relation>[]` for the entities it points to, `incoming.<blueprint.relation>[]` for those pointing to it). Levels are ordered; an entity reaches a level when it passes the rules of that level and the levels below. Results are recomputed on every entity write and hourly, level changes emit `scorecard.changed`, and workflows can read `entity.scorecards.<id>.level` / `.rank` in `if` conditions and templates.
 
@@ -581,7 +731,22 @@ scorecards:
       - { identifier: has_docs, title: Has docs, level: Silver, expression: properties.docs != null }
 ```
 
-**Policies** (`policies:`, admin UI *Policies*). A policy is a JSONata guard evaluated before a run is queued (`target: run`, filter with `match.actions`) or before an entity is created, updated or deleted through the API or the catalog invoker (`target: entity`, filter with `match.blueprints` and `match.operations`). The context is `{ inputs, entity, previous, principal, action, blueprint, operation }` (`entity` is what would be stored, `previous` the stored entity; `principal` has `id`, `email`, `name`, `role`, `roles`, `teams`). The expression must evaluate to exactly `true` to allow; any other result, and any evaluation error, denies (fail closed) with `403` `{ error, policy, message }` and a `policy.denied` audit entry. `message` may embed `{{ expression }}` over the same context. Disabled policies are ignored. Integration syncs, configuration seeding and cascading deletes of referrers are not gated. Policies are per organization; those declared in configuration files are managed (read-only through the API).
+**Initiatives** (`initiatives:`, admin UI *Governance → Initiatives*, everyone: *Initiatives* in the sidebar). An initiative turns a scorecard into tracked work: the entities of the scorecard's blueprint (only those of `teams`, when set) must reach `targetLevel` and/or pass the listed `rules` between `startDate` and `deadline` (`YYYY-MM-DD`). An entity is done when every rule of the levels up to the target and every listed rule passes; progress is done / in scope, overall and per owner team. The status is `done` (everything in scope at the target), `overdue` (past the deadline), `at_risk` (more than 10 points behind the straight line from the start to the deadline) or `on_track`. Once a day a snapshot of the progress (overall and per team) is written, giving the trend; status changes emit `initiative.at_risk`, `initiative.overdue` and `initiative.completed` (`data: { initiative, from, status, progress, teams }`) for webhooks and workflow event triggers. Failing entities appear in the *To do* of the members of their owner team, with the rules to fix. Every `reminderDays` (default 7, `0`: never) until the deadline, the members of the teams with failing entities and the `owner` get an in-app notification and a message on the channels of their *approvals* preference. Snapshots, events and reminders run with the hourly housekeeping and are each claimed by a conditional UPDATE, so several replicas never send twice. **Exemptions**: admins and the `owner` exempt an entity (it leaves the counts) or one rule of it (that rule counts as passing) with a reason and an expiry (at most a year), audited as `initiative.exemption.granted` / `revoked`; expired exemptions stop applying by themselves. The `initiative` dashboard widget shows status, progress and the teams furthest behind; the MCP server lists initiatives with `list_initiatives`.
+
+```yaml
+initiatives:
+  - identifier: silver-by-march
+    title: Every service at Silver
+    scorecard: production-readiness
+    targetLevel: Silver            # and/or rules: [has_docs]
+    startDate: '2026-11-01'
+    deadline: '2027-03-31'
+    teams: [payments, checkout]    # optional; empty: every entity of the blueprint
+    owner: lead@example.com        # optional: grants exemptions, gets the reminders
+    reminderDays: 7
+```
+
+**Policies** (`policies:`, admin UI *Policies*). A policy is a JSONata guard evaluated before a run is queued (`target: run`, filter with `match.actions`) or before an entity is created, updated or deleted through the API or the catalog invoker (`target: entity`, filter with `match.blueprints` and `match.operations`). `target: plan` policies (with a `severity`) are evaluated by `plan-check` steps on infrastructure plans instead ([Plan checks](#plan-checks-cost-carbon-policies)). The context is `{ inputs, entity, previous, principal, action, blueprint, operation }` (`entity` is what would be stored, `previous` the stored entity; `principal` has `id`, `email`, `name`, `role`, `roles`, `teams`). The expression must evaluate to exactly `true` to allow; any other result, and any evaluation error, denies (fail closed) with `403` `{ error, policy, message }` and a `policy.denied` audit entry. `message` may embed `{{ expression }}` over the same context. Disabled policies are ignored. Integration syncs, configuration seeding and cascading deletes of referrers are not gated. Policies are per organization; those declared in configuration files are managed (read-only through the API).
 
 ```yaml
 policies:
@@ -599,7 +764,27 @@ policies:
 
 **Supply chain.** Vulnerability and SBOM blueprints, Snyk and CycloneDX mappings and a security scorecard are described in [SUPPLY-CHAIN.md](SUPPLY-CHAIN.md).
 
-**Dashboards.** Widgets: `count` (optionally `groupBy` a property, `team` or `source`), `scorecard`, `runs`, `approvals`, `table` (a saved view), `insights` (DORA metrics, below), `markdown`. A dashboard with `default: true` is the home page; with `team:` it is the home page of that team; with `blueprint:` it appears on that blueprint's catalog page.
+**Dashboards.** Widgets: `count` (optionally `groupBy` a property, `team` or `source`), `scorecard`, `runs`, `approvals`, `table` (a saved view), `insights` (DORA metrics, below), `initiative` (`initiative: <id>`), `markdown`, `chart` (trends, below) and `entity` (entity pages, below). A dashboard with `default: true` is the home page; with `team:` it is the home page of that team; with `blueprint:` it appears on that blueprint's catalog page; with `blueprint:` and `scope: entity` it is the overview of that blueprint's entity pages.
+
+**Trend charts.** A `chart` widget plots one `series`, computed on the server for the viewer (the blueprints, runs and scorecards they may read) and bucketed by `interval` (`day`, `week` starting Monday, `month`; UTC) over `days` (default 90) ending now; `chart` is `line` (default), `bar` or `area`, `stacked: true` stacks bars and areas. Series:
+- `kind: scorecard`, `scorecard`: entities per level at the end of each bucket, replayed from the scorecard history (`Below first level` included; levels keep their colour).
+- `kind: runs`, `metric`: `count` (runs started per bucket, one series per status), `duration` (p50 and p90 of finished runs, in minutes) or `failureRate` (failed / (succeeded + failed)); optional `action`, `team`, `status`.
+- `kind: dora`, `metric`: `deploymentFrequency`, `leadTime`, `changeFailureRate` or `mttr`, with the sources of the `insights` widget (`deployments`, `deploymentActions`, `incidents`, `team`, `service`).
+- `kind: entities`, `blueprint`: entities by creation date, `mode: total` (running total, default) or `created` (new ones per bucket), optionally per `groupBy` value (eight series at most, the rest folds into "Other") and `filters`. Deleted entities are not counted.
+
+Clicking a bar or a point opens the list behind it: the runs list filtered by the series (status, action, team) and the bucket's dates (`/runs?status=FAILURE&since=…&until=…`), or the catalog list of the blueprint with the series' filters (`f=language:go`, `level=<scorecard>:<level>` for a scorecard level; the catalog shows the entities as they are now, not as they were then). Legend items link to the same lists without the dates. Each chart has a table view of every value (the toggle at its top right), and the chart library (`@mantine/charts`, Recharts) is loaded on the first chart only. Colours come from the brand's categorical chart palette (`--chart-1`…`--chart-8` in `@asterius/brand`, validated for colour-vision deficiencies in both schemes): in that fixed order, a run status always in the same colour.
+
+```yaml
+- type: chart
+  title: Deploy runs by status
+  chart: bar
+  stacked: true
+  interval: week
+  days: 60
+  series: { kind: runs, metric: count, action: deploy-service }
+```
+
+**Entity pages.** A dashboard with `blueprint: <id>` and `scope: entity` replaces the *Overview* tab of every entity of that blueprint (the other tabs stay; the viewer's team dashboard wins, like on catalog pages). Its widgets take the entity as context: `entity` widgets show one of its sections (`show: properties`, optionally only `properties: [a, b]`, `scorecards`, `relations`, `links`); `runs` widgets and `runs` charts list its runs; `insights` and `dora` charts take it as the `service`; `scorecard` charts follow its level; `markdown` may embed `{{ expression }}` (JSONata over `{ entity }`, values escaped, no secret references). Other widgets behave as anywhere else. The data comes from `GET /api/v1/dashboards/:id/data?entity=<identifier>` (404 when the viewer cannot read the entity). Without such a dashboard the built-in overview is shown. See `service-page` in `examples/demo-config/dashboards.yaml`.
 
 **Delivery insights (DORA).** The `insights` widget shows the four DORA metrics over `days` (default 30) as stat tiles with their band (elite / high / medium / low); the same numbers are served by `GET /api/v1/insights`, scoped to the organization and to the blueprints the caller may read. Optional `team` / `service` filters. Sources, all configurable:
 - *Deployment frequency* and *change failure rate*: entities of `deployments.blueprint` (default `deployment`, e.g. the Argo CD preset, whose example mapping sets `deployedAt` and `status` from the last sync operation) with `timeProperty` (default `deployedAt`) in the window and a `statusProperty` (default `status`) matching `successValues` (`success`, `succeeded`, `healthy`, `synced`) or `failureValues` (`failure`, `failed`, `error`, `degraded`); other states are ignored. `deploymentActions` adds the runs of those actions (SUCCESS = deployment, FAILURE = failed deployment).
@@ -620,7 +805,7 @@ blueprints:
 
 ## Outbound webhooks
 
-The payload has the form `{ id, type, at, blueprint, actor, data }`. Event types are `entity.created`, `entity.updated` (with `data.before`), `entity.deleted`, `entity.expired` (`data: { entity, property, expiresAt }`), `run.created`, `run.updated`, `run.sla_breached` (`data: { runId, action, status, createdAt, breachedAt }`), `step.started`, `step.finished`, `step.sla_breached` (`data: { runId, action, stepId, name, status, slaMinutes, startedAt, breachedAt }`) and `scorecard.changed` (`data: { scorecard, entity, from, to, passed, total }`). Requests carry the headers `X-Asterius-Event`, `X-Asterius-Delivery` and `X-Asterius-Signature: t=<unix seconds>,v1=<hex>`, where `v1 = HMAC-SHA256(secret, "<t>.<body>")`. Receivers must recompute it over the raw body, compare in constant time, and reject timestamps more than **5 minutes** from their clock (replay protection); the timestamp is refreshed on every retry. `secret` and `secondarySecret` must be references (`${secret:NAME}` / `${env:NAME}`); literal values are rejected.
+The payload has the form `{ id, type, at, blueprint, actor, data }`. Event types are `entity.created`, `entity.updated` (with `data.before`), `entity.deleted`, `entity.expired` (`data: { entity, property, expiresAt }`), `run.created`, `run.updated`, `run.sla_breached` (`data: { runId, action, status, createdAt, breachedAt }`), `step.started`, `step.finished`, `step.sla_breached` (`data: { runId, action, stepId, name, status, slaMinutes, startedAt, breachedAt }`) `scorecard.changed` (`data: { scorecard, entity, from, to, passed, total }`) and `initiative.at_risk` / `initiative.overdue` / `initiative.completed` (`data: { initiative, from, status, progress, teams }`). Requests carry the headers `X-Asterius-Event`, `X-Asterius-Delivery` and `X-Asterius-Signature: t=<unix seconds>,v1=<hex>`, where `v1 = HMAC-SHA256(secret, "<t>.<body>")`. Receivers must recompute it over the raw body, compare in constant time, and reject timestamps more than **5 minutes** from their clock (replay protection); the timestamp is refreshed on every retry. `secret` and `secondarySecret` must be references (`${secret:NAME}` / `${env:NAME}`); literal values are rejected.
 
 **Rotating a signing secret without downtime:** (1) create the new secret and set it as `secondarySecret`: deliveries now carry two `v1=` entries, one per secret; (2) make receivers accept either (any matching `v1`) and switch them to the new secret; (3) move the new secret to `secret` and remove `secondarySecret`.
 

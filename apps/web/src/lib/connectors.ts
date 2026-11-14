@@ -18,6 +18,7 @@ export const CATEGORY_LABELS: Record<ConnectorCategory, string> = {
   security: 'Security & quality',
   artifacts: 'Artifacts',
   identity: 'Identity',
+  ai: 'AI',
   internal: 'Internal',
   other: 'Other',
 };

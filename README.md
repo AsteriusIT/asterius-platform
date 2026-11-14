@@ -89,7 +89,7 @@ To plug in a **custom service**, use one of these paths:
 3. **HTTP source / inbound webhook / bulk API.** Use these to bring your service's data into the catalog without writing code.
 4. **Code plugin.** Implement the `Invoker` or `Source` interface (~50 lines) and register it, for what a connector cannot describe (several dependent calls, custom signing, non-HTTP protocols).
 
-Workflows can declare SLAs (`slaMinutes`: notification and `*.sla_breached` events when exceeded), attach files to runs (artifacts, uploaded through the step callback) and carry tests run with mocks (`POST /actions/:id/tests/run`, `node dist/cli.js actions test`).
+Workflows can declare SLAs (`slaMinutes`: notification and `*.sla_breached` events when exceeded), attach files to runs (artifacts, uploaded through the step callback) and carry tests run with mocks (`POST /actions/:id/tests/run`, `node dist/cli.js actions test`). A `plan-check` step estimates the monthly cost and carbon of a Terraform / OpenTofu plan from a price catalog and evaluates plan policies (JSONata, OPA) before the approval: critical findings stop the run ([docs/EXTENDING.md](docs/EXTENDING.md#plan-checks-cost-carbon-policies), [examples/plan-check](examples/plan-check)).
 
 See [docs/EXTENDING.md](docs/EXTENDING.md) for the API, the callback contract and the plugin interfaces.
 
@@ -101,6 +101,8 @@ See [docs/EXTENDING.md](docs/EXTENDING.md) for the API, the callback contract an
 
 **Configuration as code per organization.** The default organization reads `CONFIG_DIR`; another organization reads `CONFIG_DIR/orgs/<slug>/` (mounted by the operators) or **its own Git repository** (https, read-only token kept as an organization secret, pulled every 2 minutes). Organizations can also be declared in the platform files (`organizations: [{ slug, name, domains, admins }]`).
 
+**Terraform / OpenTofu provider.** [terraform-provider-asterius/](terraform-provider-asterius/) manages blueprints, entities, actions, integrations, webhooks, teams, secrets (write-only), scorecards, policies, dashboards, connectors and connections through the API, with import by identifier and data sources; resources declared in `CONFIG_DIR` stay read-only. See [docs/TERRAFORM.md](docs/TERRAFORM.md).
+
 **MCP server.** `POST /api/mcp` (also `/api/v1/mcp`, Streamable HTTP) lets AI assistants search the catalog, read entities, start self-service actions and follow runs, with the permissions of the token's owner in the token's organization:
 
 ```bash
@@ -109,7 +111,9 @@ claude mcp add --transport http acme https://platform.example.com/api/mcp --head
 
 Remote clients (Claude.ai, ChatGPT connectors) sign in with OAuth 2.1 against the Keycloak realm: the server publishes RFC 9728 metadata at `/.well-known/oauth-protected-resource` and accepts the realm's access tokens; see [docs/MCP.md](docs/MCP.md).
 
-`whoami` and `list_approvals` show the token's organization and what waits for a decision; approving requests is deliberately not exposed to assistants.
+`whoami` and `list_approvals` show the token's organization and what waits for a decision; approving requests is deliberately not exposed to assistants. `get_scorecards`, `get_entity_docs` and `get_dora_insights` read scorecard results, entity docs and DORA metrics.
+
+**AI agents.** An agent is a service account (or a person) with an API token: give the token a `workflows` allow-list and it only lists and starts those workflows, only reads their runs and never approves. Audit entries and runs record the channel of each call (`ui`, `api`, `mcp`, `workflow`), filterable in the audit log and the runs list. AI agent steps reach external MCP tools through an ordinary connection to your MCP gateway (connector `mcp`), with an allow-list of tools per step. See [docs/MCP.md](docs/MCP.md#agents).
 
 ## Deploying on Kubernetes
 

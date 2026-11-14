@@ -31,8 +31,15 @@ import type {
   Run,
   RunPage,
   Policy,
+  PriceCatalog,
   Fragment,
   FragmentVersion,
+  Initiative,
+  InitiativeDetail,
+  InitiativeEntity,
+  InitiativeExemption,
+  InitiativeTodo,
+  InitiativeView,
   Scorecard,
   ScorecardResult,
   ScorecardSummary,
@@ -63,6 +70,17 @@ import type {
   RenderedConnectorRequest,
 } from '@asterius/shared';
 import { urlOrg } from './orgUrl';
+
+/** Filters of the audit log (GET /audit, /audit/export). */
+export type AuditFilters = {
+  search?: string;
+  actor?: string;
+  action?: string;
+  target?: string;
+  from?: string;
+  to?: string;
+  channel?: string;
+};
 
 export interface SimulationResult {
   steps: { id: string; type: string; skipped: boolean; error?: string; preview?: unknown }[];
@@ -288,9 +306,14 @@ export const api = {
     limit?: number;
     offset?: number;
     filters?: Record<string, string>;
+    /** Scorecard → level (`none`: below the first level). */
+    levels?: Record<string, string>;
   }) => {
-    const { blueprint, filters, ...rest } = q;
-    const f = Object.fromEntries(Object.entries(filters ?? {}).map(([k, v]) => [`filter.${k}`, v]));
+    const { blueprint, filters, levels, ...rest } = q;
+    const f = Object.fromEntries([
+      ...Object.entries(filters ?? {}).map(([k, v]) => [`filter.${k}`, v]),
+      ...Object.entries(levels ?? {}).map(([k, v]) => [`scorecard.${k}`, v]),
+    ]);
     return request<EntityPage>('GET', v1(`${blueprint ? `/blueprints/${enc(blueprint)}` : ''}/entities${qs({ ...rest, ...f })}`));
   },
   entityGraph: async (bp: string, id: string, depth = 2): Promise<EntityGraph> => {
@@ -346,8 +369,22 @@ export const api = {
   trigger: (id: string, body: { entity?: string | null; inputs: Record<string, unknown>; overrideBlackout?: boolean; priority?: number }) =>
     request<Run>('POST', v1(`/actions/${enc(id)}/runs`), body),
 
-  runs: (q: { mine?: boolean; myTeams?: boolean; status?: string; action?: string; blueprint?: string; entity?: string; limit?: number; offset?: number }) =>
-    request<RunPage>('GET', v1(`/runs${qs(q)}`)),
+  runs: (q: {
+    mine?: boolean;
+    myTeams?: boolean;
+    status?: string;
+    action?: string;
+    blueprint?: string;
+    entity?: string;
+    /** ui, api, mcp or workflow. */
+    channel?: string;
+    team?: string;
+    /** Created at or after / before (ISO date or time). */
+    since?: string;
+    until?: string;
+    limit?: number;
+    offset?: number;
+  }) => request<RunPage>('GET', v1(`/runs${qs(q)}`)),
   /** `after`: only log lines past this sequence number (incremental polling). */
   run: (id: string, after?: number) => request<Run>('GET', v1(`/runs/${enc(id)}${after !== undefined ? `?after=${after}` : ''}`)),
   approvals: () => request<Run[]>('GET', v1('/approvals')),
@@ -390,6 +427,9 @@ export const api = {
   policies: () => request<Policy[]>('GET', v1('/policies')),
   savePolicy: (id: string, body: unknown) => request<Policy>('PUT', v1(`/policies/${enc(id)}`), body),
   deletePolicy: (id: string) => request('DELETE', v1(`/policies/${enc(id)}`)),
+  priceCatalogs: () => request<PriceCatalog[]>('GET', v1('/price-catalogs')),
+  savePriceCatalog: (id: string, body: unknown) => request<PriceCatalog>('PUT', v1(`/price-catalogs/${enc(id)}`), body),
+  deletePriceCatalog: (id: string) => request('DELETE', v1(`/price-catalogs/${enc(id)}`)),
   fragments: () => request<Fragment[]>('GET', v1('/fragments')),
   saveFragment: (id: string, body: unknown) => request<Fragment>('PUT', v1(`/fragments/${enc(id)}`), body),
   deleteFragment: (id: string) => request('DELETE', v1(`/fragments/${enc(id)}`)),
@@ -397,6 +437,17 @@ export const api = {
   fragmentDiff: (id: string, from: number, to: number) =>
     request<ActionVersionDiff>('GET', v1(`/fragments/${enc(id)}/diff${qs({ from: String(from), to: String(to) })}`)),
   rollbackFragment: (id: string, version: number) => request<Fragment>('POST', v1(`/fragments/${enc(id)}/rollback`), { version }),
+  initiatives: () => request<InitiativeView[]>('GET', v1('/initiatives')),
+  initiative: (id: string) => request<InitiativeDetail>('GET', v1(`/initiatives/${enc(id)}`)),
+  initiativeEntities: (id: string, q: { status?: 'failing' | 'passing' | 'exempt' | 'all'; team?: string } = {}) =>
+    request<{ blueprint: string; items: InitiativeEntity[] }>('GET', v1(`/initiatives/${enc(id)}/entities${qs(q)}`)),
+  saveInitiative: (id: string, body: unknown) => request<Initiative>('PUT', v1(`/initiatives/${enc(id)}`), body),
+  deleteInitiative: (id: string) => request('DELETE', v1(`/initiatives/${enc(id)}`)),
+  initiativeExemptions: (id: string) => request<InitiativeExemption[]>('GET', v1(`/initiatives/${enc(id)}/exemptions`)),
+  grantExemption: (id: string, body: { entity: string; rule?: string | null; reason: string; expiresAt: string }) =>
+    request<InitiativeExemption>('POST', v1(`/initiatives/${enc(id)}/exemptions`), body),
+  revokeExemption: (id: string, exemption: string) => request('DELETE', v1(`/initiatives/${enc(id)}/exemptions/${enc(exemption)}`)),
+  myInitiatives: () => request<InitiativeTodo[]>('GET', v1('/me/initiatives')),
   scorecards: (blueprint?: string) => request<Scorecard[]>('GET', v1(`/scorecards${qs({ blueprint })}`)),
   saveScorecard: (id: string, body: unknown) => request<Scorecard>('PUT', v1(`/scorecards/${enc(id)}`), body),
   deleteScorecard: (id: string) => request('DELETE', v1(`/scorecards/${enc(id)}`)),
@@ -406,8 +457,11 @@ export const api = {
     request<Record<string, Record<string, string | null>>>('GET', v1(`/blueprints/${enc(bp)}/scorecard-levels${qs({ ids: ids.join(',') })}`)),
 
   dashboards: () => request<Dashboard[]>('GET', v1('/dashboards')),
-  resolveDashboard: (blueprint?: string) => request<Dashboard | null>('GET', v1(`/dashboards/resolve${qs({ blueprint })}`)),
-  dashboardData: (id: string) => request<WidgetData[]>('GET', v1(`/dashboards/${enc(id)}/data`)),
+  /** `scope: 'entity'`: the dashboard that replaces the overview of the blueprint's entity pages. */
+  resolveDashboard: (blueprint?: string, scope?: 'catalog' | 'entity') =>
+    request<Dashboard | null>('GET', v1(`/dashboards/resolve${qs({ blueprint, scope })}`)),
+  /** `entity`: the entity an entity-page dashboard is shown for. */
+  dashboardData: (id: string, entity?: string) => request<WidgetData[]>('GET', v1(`/dashboards/${enc(id)}/data${qs({ entity })}`)),
   saveDashboard: (id: string, body: unknown) => request<Dashboard>('PUT', v1(`/dashboards/${enc(id)}`), body),
   deleteDashboard: (id: string) => request('DELETE', v1(`/dashboards/${enc(id)}`)),
 
@@ -424,11 +478,13 @@ export const api = {
   users: () => request<PublicUser[]>('GET', v1('/users')),
   userLookup: () => request<{ id: string; name: string; email: string }[]>('GET', v1('/users/lookup')),
   updateUser: (id: string, body: { role?: string; active?: boolean; teams?: string[] }) => request<PublicUser>('PATCH', v1(`/users/${enc(id)}`), body),
-  createServiceAccount: (body: { name: string; role: string; teams: string[] }) =>
+  createServiceAccount: (body: { name: string; role: string; teams: string[]; workflows?: string[] }) =>
     request<{ user: PublicUser; token: string }>('POST', v1('/service-accounts'), body),
 
   tokens: (all = false) => request<ApiToken[]>('GET', v1(`/tokens${qs({ all: all || undefined })}`)),
-  createToken: (name: string, expiresInDays: number | null) => request<{ id: string; token: string }>('POST', v1('/tokens'), { name, expiresInDays }),
+  /** `workflows`: restrict the token to these workflows (it cannot approve either); empty: no restriction. */
+  createToken: (name: string, expiresInDays: number | null, workflows: string[] = []) =>
+    request<{ id: string; token: string }>('POST', v1('/tokens'), { name, expiresInDays, ...(workflows.length ? { workflows } : {}) }),
   deleteToken: (id: string) => request('DELETE', v1(`/tokens/${enc(id)}`)),
 
   secrets: () => request<SecretInfo[]>('GET', v1('/secrets')),
@@ -436,10 +492,8 @@ export const api = {
   setSecret: (name: string, value: string, description: string) => request('PUT', v1(`/secrets/${enc(name)}`), { value, description }),
   deleteSecret: (name: string) => request('DELETE', v1(`/secrets/${enc(name)}`)),
 
-  audit: (q: { search?: string; actor?: string; action?: string; target?: string; from?: string; to?: string; limit?: number; offset?: number }) =>
-    request<AuditEntry[]>('GET', v1(`/audit${qs(q)}`)),
-  auditExport: (q: { search?: string; action?: string; actor?: string; target?: string; from?: string; to?: string }, format: 'csv' | 'json') =>
-    request<string>('GET', v1(`/audit/export${qs({ ...q, format })}`)),
+  audit: (q: AuditFilters & { limit?: number; offset?: number }) => request<AuditEntry[]>('GET', v1(`/audit${qs(q)}`)),
+  auditExport: (q: AuditFilters, format: 'csv' | 'json') => request<string>('GET', v1(`/audit/export${qs({ ...q, format })}`)),
   auditFacets: () =>
     request<{ actions: { value: string; count: number }[]; actors: { value: string; count: number }[] }>('GET', v1('/audit/facets')).then((f) => ({
       actions: f.actions.map((x) => x.value),

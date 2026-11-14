@@ -8,6 +8,7 @@ import { http } from '../lib/http.js';
 import { triggerRun } from '../actions/runs.js';
 import type { AgentStepGuardrails } from './guardrails.js';
 import type { ToolSet } from './model.js';
+import type { McpBinding } from './mcp-tools.js';
 
 /** Tools offered to models: read-only catalog lookups, and write tools that act as the run's user inside allow-lists. */
 
@@ -66,7 +67,7 @@ export async function runCatalogTool(name: string, input: Record<string, unknown
       blueprint: str(input.blueprint) || undefined,
       limit: SEARCH_LIMIT,
       offset: 0,
-      viewer: ANONYMOUS,
+      viewer,
     });
     return JSON.stringify({ total: page.total, items: page.items.map(({ createdAt: _c, ...e }) => e) });
   }
@@ -146,14 +147,18 @@ export function httpAllowed(url: string, hosts: string[]): URL {
   return u;
 }
 
-/** Tools of an agent step. Every write is checked against the step's guardrails and the run user's permissions, counted and audited. */
-export function agentToolSet(tools: string[], g: AgentStepGuardrails, ctx: AgentToolContext): ToolSet | undefined {
+/**
+ * Tools of an agent step. Every write is checked against the step's guardrails and the run user's permissions, counted and
+ * audited (channel `workflow`). `mcp`: the allow-listed tools of the step's MCP connection (mcp-tools.ts); each call counts as a write.
+ */
+export function agentToolSet(tools: string[], g: AgentStepGuardrails, ctx: AgentToolContext, mcp?: McpBinding): ToolSet | undefined {
   const defs: Tool[] = [];
   if (tools.includes('catalog')) defs.push(...CATALOG_TOOLS);
   for (const t of tools) if (WRITE_TOOLS[t]) defs.push(WRITE_TOOLS[t]);
+  if (mcp && tools.includes('mcp')) defs.push(...mcp.defs);
   if (!defs.length) return undefined;
   let writes = 0;
-  const actor = actorOf(ctx.principal);
+  const actor = { ...actorOf(ctx.principal), channel: 'workflow' as const };
   const write = async (kind: string, target: string, detail: Record<string, unknown>, fn: () => Promise<unknown>) => {
     if (++writes > g.maxWrites) throw new Error(`Write limit reached (${g.maxWrites} per step)`);
     await audit(actor, `agent.${kind}`, target, { runId: ctx.runId, stepId: ctx.stepId, ...detail });
@@ -164,6 +169,12 @@ export function agentToolSet(tools: string[], g: AgentStepGuardrails, ctx: Agent
     defs,
     async run(name, input) {
       if (CATALOG_TOOLS.some((t) => t.name === name) && tools.includes('catalog')) return runCatalogTool(name, input);
+      const mcpTarget = tools.includes('mcp') ? mcp?.target(name) : undefined;
+      if (mcp && mcpTarget) {
+        if (++writes > g.maxWrites) throw new Error(`Write limit reached (${g.maxWrites} per step)`);
+        await audit(actor, 'agent.mcp_call', mcpTarget, { runId: ctx.runId, stepId: ctx.stepId });
+        return mcp.call(name, input);
+      }
       if (name === 'upsert_entity' && tools.includes(name)) {
         const blueprint = str(input.blueprint);
         if (!g.entityBlueprints.includes(blueprint)) throw new Error(`Blueprint "${blueprint}" is not allowed (allowed: ${g.entityBlueprints.join(', ')})`);
@@ -182,7 +193,7 @@ export function agentToolSet(tools: string[], g: AgentStepGuardrails, ctx: Agent
         if (!g.actions.includes(action)) throw new Error(`Action "${action}" is not allowed (allowed: ${g.actions.join(', ')})`);
         if (action === ctx.actionId) throw new Error('An agent cannot start the action it belongs to');
         return write('trigger_action', action, {}, async () => {
-          const r = await triggerRun(ctx.principal, action, {
+          const r = await triggerRun({ ...ctx.principal, channel: 'workflow' }, action, {
             entity: str(input.entity) || null,
             inputs: input.inputs && typeof input.inputs === 'object' ? (input.inputs as Record<string, unknown>) : {},
           });

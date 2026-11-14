@@ -43,11 +43,13 @@ describe('built-in connector definitions as integration types (the former preset
         'azure-devops',
         'github',
         'gitlab',
+        'mcp',
       ]),
     );
     for (const d of defs) {
       for (const m of d.example?.mappings ?? []) expect(Object.keys(d.kinds), d.identifier).toContain(m.kind);
       if (['azure-devops', 'github', 'gitlab'].includes(d.identifier)) continue; // code sources keep these types
+      if (!Object.keys(d.kinds).length) continue; // nothing to ingest (mcp): not an integration type
       const src = getSource(d.identifier);
       expect(src.info.kinds).toEqual(Object.keys(d.kinds));
       expect(() => src.validate({ connection: 'x' }), d.identifier).not.toThrow();

@@ -10,6 +10,7 @@ import {
   Modal,
   MultiSelect,
   NativeSelect,
+  Pill,
   SegmentedControl,
   Select,
   SimpleGrid,
@@ -55,7 +56,10 @@ import { controlBadges, splitJobLog, STEP_STATUS_COLORS, STEP_STATUS_LABELS, STE
 import { PropertyValue } from '../components/PropertyValue';
 import { initialValues, SchemaForm, validateValues, type FormValues } from '../components/SchemaForm';
 import { UserChip } from '../components/UserChip';
+import { ViaBadge } from '../components/ViaBadge';
+import { CHANNEL_OPTIONS } from '../lib/channels';
 import { appHref } from '../lib/orgUrl';
+import { isPlanCheck, PlanCheckSummary } from '../components/PlanCheckSummary';
 
 const PAGE = 30;
 const onError = (e: unknown) => notifications.show({ color: 'red', message: errorText(e) });
@@ -79,7 +83,20 @@ export const runColumns = [
     ),
   },
   { key: 's', label: 'Status', render: (r: Run) => <StatusBadge status={r.status} label={r.paused ? 'Paused' : r.statusLabel} /> },
-  { key: 'u', label: 'Requested by', render: (r: Run) => <UserChip user={r.triggeredBy} /> },
+  {
+    key: 'u',
+    label: 'Requested by',
+    // The channel is shown when the request did not come from the web UI (API token, MCP, AI agent step).
+    render: (r: Run) =>
+      r.channel && r.channel !== 'ui' ? (
+        <Group gap="xs" wrap="nowrap">
+          <UserChip user={r.triggeredBy} />
+          <ViaBadge channel={r.channel} />
+        </Group>
+      ) : (
+        <UserChip user={r.triggeredBy} />
+      ),
+  },
   { key: 't', label: 'When', render: (r: Run) => <TimeAgo at={r.createdAt} /> },
   { key: 'd', label: 'Duration', render: (r: Run) => <Text fz="sm">{r.startedAt ? duration(r.startedAt, r.endedAt) : '—'}</Text> },
 ];
@@ -87,8 +104,14 @@ export const runColumns = [
 /** The filters grow in the row of the scope switch and go to their own row under this width (px). */
 const FILTERS_FLEX = '1 1 640px';
 
+const withoutKeys = (prev: URLSearchParams, keys: string[]) => {
+  const out = new URLSearchParams(prev);
+  for (const k of keys) out.delete(k);
+  return out;
+};
+
 export function Runs() {
-  const [params, set] = useUrlParams();
+  const [params, set, setParams] = useUrlParams();
   const navigate = useNavigate();
   const scope = params.get('scope') ?? 'mine';
   const status = params.get('status')?.split(',').filter(Boolean) ?? [];
@@ -96,10 +119,15 @@ export function Runs() {
   const action = params.get('action');
   const blueprint = params.get('blueprint');
   const entity = params.get('entity');
+  // Set by chart drill-downs: a creation-time range and an owner team.
+  const since = params.get('since');
+  const until = params.get('until');
+  const team = params.get('team');
+  const channel = params.get('channel');
   const blueprints = useQuery({ queryKey: ['blueprints'], queryFn: api.blueprints, staleTime: 30_000 });
   const actions = useQuery({ queryKey: ['actions', 'all'], queryFn: () => api.actions(), staleTime: 60_000 });
   const q = useQuery({
-    queryKey: ['runs', scope, status.join(','), action, blueprint, entity, page],
+    queryKey: ['runs', scope, status.join(','), action, blueprint, entity, channel, since, until, team, page],
     queryFn: () =>
       api.runs({
         mine: scope === 'mine',
@@ -108,6 +136,10 @@ export function Runs() {
         action: action ?? undefined,
         blueprint: blueprint ?? undefined,
         entity: entity ?? undefined,
+        channel: channel ?? undefined,
+        since: since ?? undefined,
+        until: until ?? undefined,
+        team: team ?? undefined,
         limit: PAGE,
         offset: (page - 1) * PAGE,
       }),
@@ -117,7 +149,7 @@ export function Runs() {
   return (
     <Stack>
       <PageHeader title="Runs" description="Every self-service request and its execution." refresh={q} />
-      {/* The four filters share the row left by the scope switch, in equal widths; short of room they wrap together under it. */}
+      {/* The filters share the row left by the scope switch, in equal widths; short of room they wrap together under it. */}
       <Group align="flex-start">
         <SegmentedControl
           value={scope}
@@ -128,7 +160,7 @@ export function Runs() {
             { value: 'all', label: 'Everyone' },
           ]}
         />
-        <SimpleGrid cols={{ base: 1, xs: 2, md: 4 }} spacing="sm" flex={FILTERS_FLEX} miw={0}>
+        <SimpleGrid cols={{ base: 1, xs: 2, md: 5 }} spacing="sm" flex={FILTERS_FLEX} miw={0}>
           <MultiSelect
             placeholder={status.length ? undefined : 'Any status'}
             aria-label="Filter by status"
@@ -160,8 +192,34 @@ export function Runs() {
             value={action}
             onChange={(v) => set('action', v ?? '')}
           />
+          <Select
+            placeholder="Any channel"
+            aria-label="Filter by channel"
+            clearable
+            data={CHANNEL_OPTIONS}
+            value={channel}
+            onChange={(v) => set('channel', v ?? '')}
+          />
         </SimpleGrid>
       </Group>
+      {(since || until || team) && (
+        <Group gap="2xs" aria-label="Other filters">
+          {(since || until) && (
+            <Pill
+              withRemoveButton
+              removeButtonProps={{ 'aria-label': 'Remove the date filter' }}
+              onRemove={() => setParams((prev) => withoutKeys(prev, ['since', 'until', 'page']), { replace: true })}
+            >
+              Created {since ? `from ${since.slice(0, 10)}` : ''} {until ? `before ${until.slice(0, 10)}` : ''}
+            </Pill>
+          )}
+          {team && (
+            <Pill withRemoveButton removeButtonProps={{ 'aria-label': 'Remove the team filter' }} onRemove={() => set('team', null)}>
+              Team {team}
+            </Pill>
+          )}
+        </Group>
+      )}
       <DataTable
         rows={q.data?.items}
         loading={q.isPending}
@@ -787,7 +845,9 @@ function StepPanel({ run, step, onDone }: { run: Run; step: RunStep; onDone: (r:
           <Text fz="sm" fw={500} mb="3xs">
             Output
           </Text>
-          {textOnly ? (
+          {isPlanCheck(output) ? (
+            <PlanCheckSummary output={output} />
+          ) : textOnly ? (
             <SurfaceBox>
               <Markdown>{String(output.text)}</Markdown>
             </SurfaceBox>

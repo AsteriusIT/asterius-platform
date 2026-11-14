@@ -184,20 +184,61 @@ export const scorecardDef = z
 export type ScorecardDef = z.infer<typeof scorecardDef>;
 
 /**
+ * Initiative: a scorecard target with a deadline (e.g. every service at Silver by June 30). The scope is the
+ * scorecard's blueprint, optionally only the entities of some teams. An entity is done when it reaches `targetLevel`
+ * and passes every rule listed in `rules` (either may be omitted, not both).
+ */
+export const initiativeDef = z
+  .object({
+    identifier: slug,
+    title: z.string().min(1).max(100),
+    description: z.string().max(4000).default(''),
+    scorecard: slug,
+    /** A level of the scorecard: entities at or above it are done. */
+    targetLevel: z.string().min(1).max(40).nullish(),
+    /** Rule identifiers of the scorecard that must pass (in addition to the target level, if any). */
+    rules: z.array(fieldName).max(100).default([]),
+    /** YYYY-MM-DD. */
+    startDate: z.iso.date(),
+    deadline: z.iso.date(),
+    /** Only entities owned by these teams; empty: every entity of the blueprint. */
+    teams: z.array(slug).max(100).default([]),
+    /** Email of the person accountable for the initiative (may grant exemptions). */
+    owner: z.string().email().toLowerCase().nullish(),
+    enabled: z.boolean().default(true),
+    /** Remind the teams with failing entities every N days until the deadline; 0: never. */
+    reminderDays: z.number().int().min(0).max(90).default(7),
+  })
+  .refine((i) => !!i.targetLevel || i.rules.length > 0, { message: 'Set a targetLevel, rules, or both', path: ['targetLevel'] })
+  .refine((i) => i.startDate <= i.deadline, { message: 'The deadline must not be before the start date', path: ['deadline'] });
+export type InitiativeDef = z.infer<typeof initiativeDef>;
+
+export const initiativeExemptionInput = z.object({
+  entity: entityId,
+  /** A rule identifier: only that rule counts as passing; omitted: the entity leaves the counts. */
+  rule: fieldName.nullish(),
+  reason: z.string().min(3).max(1000),
+  expiresAt: z.iso.datetime({ offset: true }),
+});
+
+/**
  * Policy gate: a JSONata expression evaluated before a run is queued (`target: run`) or an entity is created, updated
  * or deleted through the API or the catalog invoker (`target: entity`). The expression must evaluate to `true` to allow;
  * anything else, and any evaluation error, denies. The context is `{ inputs, entity, previous, principal, action, blueprint, operation }`.
+ * `target: plan`: evaluated by `plan-check` steps over a Terraform / OpenTofu plan (plan/checks.ts), with a `severity`.
  */
 export const policyDef = z.object({
   identifier: slug,
   title: z.string().min(1).max(100),
   description: z.string().max(2000).default(''),
   enabled: z.boolean().default(true),
-  target: z.enum(['run', 'entity']),
+  target: z.enum(['run', 'entity', 'plan']),
+  /** `target: plan`: critical fails the step, warning requires an override (approval), advisory is logged and notified. */
+  severity: z.enum(['critical', 'warning', 'advisory']).default('critical'),
   /** Optional filters; an empty/missing filter matches everything. */
   match: z
     .object({
-      /** `target: run`: action identifiers. */
+      /** `target: run` / `plan`: action identifiers. */
       actions: z.array(slug).max(100).optional(),
       /** `target: entity`: blueprint identifiers. */
       blueprints: z.array(slug).max(100).optional(),
@@ -214,6 +255,77 @@ export const policyDef = z.object({
   message: z.string().max(1000).default('Denied by policy'),
 });
 export type PolicyDef = z.infer<typeof policyDef>;
+
+/**
+ * Price catalog of `plan-check` steps (plan/pricing.ts): monthly prices and power draw by provider, resource type and
+ * attributes of a Terraform / OpenTofu plan. `extends` layers it on another catalog (`builtin`: the sample table).
+ */
+const glob = z.string().min(1).max(200);
+const priceUnit = z.object({
+  /** Attribute path in the planned values (`disk_size_gb`, `default_node_pool.0.node_count`). */
+  attribute: z.string().min(1).max(200),
+  /** Multiplier applied to the attribute (e.g. 1/1024 for MB → GB). */
+  scale: z.number().positive().default(1),
+  /** Units when the attribute is unknown (computed after apply) or missing. */
+  default: z.number().min(0).default(0),
+  monthly: z.number().min(0).optional(),
+  hourly: z.number().min(0).optional(),
+  /** Average power draw per unit (carbon estimate). */
+  watts: z.number().min(0).optional(),
+});
+export const priceEntry = z.object({
+  /** Provider short name (`azurerm`, `aws`, `google`); `*` globs. */
+  provider: glob,
+  /** Resource type (`azurerm_linux_virtual_machine`, `aws_iam_*`). */
+  type: glob,
+  /** Attribute path → expected value (string globs, one of a list); `region` is the resource's region. */
+  match: z
+    .record(z.string().max(200), z.union([z.string().max(200), z.number(), z.boolean(), z.array(z.union([z.string().max(200), z.number()])).max(50)]))
+    .default({}),
+  monthly: z.number().min(0).optional(),
+  hourly: z.number().min(0).optional(),
+  perUnit: z.array(priceUnit).max(10).optional(),
+  /** Multiplies the whole entry (node count, capacity…). */
+  quantity: z.object({ attribute: z.string().min(1).max(200), default: z.number().min(0).default(1) }).optional(),
+  /** Not billed by itself (networking glue, IAM, a web app billed through its plan). */
+  free: z.boolean().optional(),
+  /** Billed on usage the plan does not show (storage capacity, requests): counted as 0 and listed as usage-based. */
+  usageBased: z.boolean().optional(),
+  /** Carbon: average power draw, or vCPUs and memory (converted with the catalog's coefficients). */
+  watts: z.number().min(0).optional(),
+  vcpu: z.number().min(0).optional(),
+  memoryGb: z.number().min(0).optional(),
+  note: z.string().max(300).optional(),
+});
+export type PriceEntry = z.infer<typeof priceEntry>;
+export const priceCatalogDef = z.object({
+  identifier: slug,
+  title: z.string().min(1).max(100),
+  description: z.string().max(2000).default(''),
+  currency: z
+    .string()
+    .regex(/^[A-Z]{3}$/, 'ISO 4217 code, e.g. EUR')
+    .default('USD'),
+  /** Catalog used for what this one does not price (`builtin`, or another catalog of the organization). */
+  extends: z.string().max(64).optional(),
+  hoursPerMonth: z.number().positive().max(744).default(730),
+  /** Providers whose resources are never billed (random, null, tls…): neither priced nor reported as unmatched. */
+  freeProviders: z.array(z.string().max(64)).max(100).optional(),
+  carbon: z
+    .object({
+      /** Power usage effectiveness per provider. */
+      pue: z.record(z.string().max(64), z.number().min(1).max(3)).optional(),
+      /** Grid emission factor per region, kgCO2e per kWh. */
+      gridIntensity: z.record(z.string().max(64), z.number().min(0).max(2)).optional(),
+      defaultGridIntensity: z.number().min(0).max(2).optional(),
+      /** Average watts per vCPU (per provider) and per GB of memory. */
+      wattsPerVcpu: z.record(z.string().max(64), z.number().min(0)).optional(),
+      wattsPerGbMemory: z.number().min(0).optional(),
+    })
+    .default({}),
+  prices: z.array(priceEntry).max(5000).default([]),
+});
+export type PriceCatalogDef = z.infer<typeof priceCatalogDef>;
 
 /** Data migrations offered when a blueprint changes: applied to the properties of its existing entities. */
 export const entityMigration = z.discriminatedUnion('type', [
@@ -264,6 +376,38 @@ export type InsightsConfig = z.infer<typeof insightsConfig>;
 const widgetBase = { title: z.string().max(100).optional(), width: z.number().int().min(1).max(12).default(6) };
 const filterMap = z.record(fieldName, z.string()).prefault({});
 
+/**
+ * What a `chart` widget plots: a series bucketed by day, week or month over a window ending now, computed for the viewer
+ * (catalog/charts.ts). On an entity page the series is filtered to the entity.
+ */
+export const chartSeries = z.discriminatedUnion('kind', [
+  /** Entities per level of a scorecard (replayed from scorecard_history). */
+  z.object({ kind: z.literal('scorecard'), scorecard: slug }),
+  /** Runs started per bucket by status, their duration (p50 / p90, minutes) or their failure rate. */
+  z.object({
+    kind: z.literal('runs'),
+    metric: z.enum(['count', 'duration', 'failureRate']).default('count'),
+    action: slug.optional(),
+    team: slug.optional(),
+    status: z.array(z.enum(['PENDING_APPROVAL', 'QUEUED', 'IN_PROGRESS', 'SUCCESS', 'FAILURE', 'REJECTED', 'CANCELLED'])).optional(),
+  }),
+  /** One DORA metric per bucket, from the same sources as the `insights` widget. */
+  z.object({
+    kind: z.literal('dora'),
+    metric: z.enum(['deploymentFrequency', 'leadTime', 'changeFailureRate', 'mttr']).default('deploymentFrequency'),
+    ...insightsConfig.omit({ days: true }).shape,
+  }),
+  /** Entities of a blueprint by creation date: running total (`total`) or new ones per bucket (`created`), optionally per property value. */
+  z.object({
+    kind: z.literal('entities'),
+    blueprint: slug,
+    mode: z.enum(['total', 'created']).default('total'),
+    groupBy: propName.optional(),
+    filters: z.record(propName, z.string()).prefault({}),
+  }),
+]);
+export type ChartSeriesDef = z.infer<typeof chartSeries>;
+
 /** Widgets of a dashboard; the server computes their data for the viewer. */
 export const dashboardWidget = z.discriminatedUnion('type', [
   /** Number of entities, or their distribution by a property (`team`, `source` or any top-level property). */
@@ -300,21 +444,43 @@ export const dashboardWidget = z.discriminatedUnion('type', [
   }),
   z.object({ ...widgetBase, type: z.literal('insights'), ...insightsConfig.shape }),
   z.object({ ...widgetBase, type: z.literal('markdown'), content: z.string().max(10_000) }),
+  /** Progress of a scorecard initiative (status, done / in scope, the teams furthest behind). */
+  z.object({ ...widgetBase, type: z.literal('initiative'), initiative: slug }),
+  z.object({
+    ...widgetBase,
+    type: z.literal('chart'),
+    chart: z.enum(['line', 'bar', 'area']).default('line'),
+    stacked: z.boolean().default(false),
+    interval: z.enum(['day', 'week', 'month']).default('week'),
+    days: z.number().int().min(1).max(365).default(90),
+    series: chartSeries,
+  }),
+  /** A section of the current entity (dashboards with `scope: entity`): its properties, scorecards, relations or links. */
+  z.object({
+    ...widgetBase,
+    type: z.literal('entity'),
+    show: z.enum(['properties', 'scorecards', 'relations', 'links']),
+    /** `show: properties`: only these, in this order. */
+    properties: z.array(propName).max(50).optional(),
+  }),
 ]);
 export type DashboardWidgetDef = z.infer<typeof dashboardWidget>;
 
-export const dashboardDef = z.object({
-  identifier: slug,
-  title: z.string().min(1).max(100),
-  description: z.string().max(2000).default(''),
-  /** Default dashboard of the home page for members of this team. */
-  team: slug.nullish(),
-  /** Shown on the catalog page of this blueprint. */
-  blueprint: slug.nullish(),
-  /** Home page for everyone (when no team dashboard applies). */
-  default: z.boolean().default(false),
-  widgets: z.array(dashboardWidget).max(30).default([]),
-});
+export const dashboardDef = z
+  .object({
+    identifier: slug,
+    title: z.string().min(1).max(100),
+    description: z.string().max(2000).default(''),
+    /** Default dashboard of the home page for members of this team. */
+    team: slug.nullish(),
+    /** Shown on the catalog page of this blueprint (`scope: catalog`) or as the overview of its entity pages (`scope: entity`). */
+    blueprint: slug.nullish(),
+    scope: z.enum(['catalog', 'entity']).default('catalog'),
+    /** Home page for everyone (when no team dashboard applies). */
+    default: z.boolean().default(false),
+    widgets: z.array(dashboardWidget).max(30).default([]),
+  })
+  .refine((d) => d.scope !== 'entity' || !!d.blueprint, { message: 'scope: entity needs a blueprint', path: ['scope'] });
 export type DashboardDef = z.infer<typeof dashboardDef>;
 
 export const invokerConfig = z.object({ type: z.string().min(1) }).passthrough();
@@ -372,7 +538,7 @@ const inlineForEach = z
 
 export const AGENT_MODELS = ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-fable-5-1'] as const;
 
-export const AGENT_TOOLS = ['catalog', 'upsert_entity', 'trigger_action', 'http'] as const;
+export const AGENT_TOOLS = ['catalog', 'upsert_entity', 'trigger_action', 'http', 'mcp'] as const;
 export const agentGuardrails = z.object({
   /** upsert_entity: blueprints the agent may write to. */
   entityBlueprints: z.array(slug).max(50).default([]),
@@ -389,6 +555,11 @@ export const agentGuardrails = z.object({
     .default(['GET']),
   /** Write operations (upserts, triggers, non-GET calls) per step execution. */
   maxWrites: z.number().int().min(1).max(50).default(5),
+  /** mcp: names of the tools the agent may call through the step's `mcp.connection`; each call counts as a write. */
+  mcpTools: z
+    .array(z.string().regex(/^[A-Za-z0-9_.:/-]{1,128}$/, 'tool name'))
+    .max(100)
+    .default([]),
 });
 export const mcpServer = z.object({
   name: z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,39}$/),
@@ -457,10 +628,15 @@ export const workflowStep = z.discriminatedUnion('type', [
         order: z.array(z.string()).optional(),
       })
       .optional(),
-    /** catalog: read-only lookups · upsert_entity / trigger_action / http: governed write tools (need `guardrails`). */
+    /** catalog: read-only lookups · upsert_entity / trigger_action / http / mcp: governed write tools (need `guardrails`). */
     tools: z.array(z.enum(AGENT_TOOLS)).default([]),
+    /**
+     * `mcp` tool: the connection (connector `mcp`: the organization's MCP gateway or one MCP server) whose tools named in
+     * `guardrails.mcpTools` the agent may call. The platform is the MCP client: credentials stay in the connection.
+     */
+    mcp: z.object({ connection: slug }).optional(),
     /** Allow-lists and limits of the write tools; a write tool without its allow-list is rejected. */
-    guardrails: agentGuardrails.default({ entityBlueprints: [], actions: [], httpHosts: [], httpMethods: ['GET'], maxWrites: 5 }),
+    guardrails: agentGuardrails.default({ entityBlueprints: [], actions: [], httpHosts: [], httpMethods: ['GET'], maxWrites: 5, mcpTools: [] }),
     /** Remote MCP servers the model may use (called by the Claude API, so they must be reachable from the internet over HTTPS). */
     mcpServers: z.array(mcpServer).max(5).default([]),
     maxTurns: z.number().int().min(1).max(20).default(6),
@@ -645,7 +821,17 @@ export const scheduleTrigger = z.object({
     })
     .optional(),
 });
-export const EVENT_TRIGGERS = ['entity.created', 'entity.updated', 'entity.deleted', 'entity.expired', 'scorecard.changed', 'run.finished'] as const;
+export const EVENT_TRIGGERS = [
+  'entity.created',
+  'entity.updated',
+  'entity.deleted',
+  'entity.expired',
+  'scorecard.changed',
+  'run.finished',
+  'initiative.at_risk',
+  'initiative.overdue',
+  'initiative.completed',
+] as const;
 export const eventTrigger = z.object({
   type: z.literal('event'),
   event: z.enum(EVENT_TRIGGERS),
@@ -1053,6 +1239,7 @@ export const CONNECTOR_CATEGORIES = [
   'security',
   'artifacts',
   'identity',
+  'ai',
   'internal',
   'other',
 ] as const;
@@ -1160,6 +1347,9 @@ export const WEBHOOK_EVENTS = [
   'user.created',
   'user.updated',
   'scorecard.changed',
+  'initiative.at_risk',
+  'initiative.overdue',
+  'initiative.completed',
 ] as const;
 
 const RESERVED_HEADERS = /^(host|content-length|content-type|transfer-encoding|connection|x-asterius-.*)$/i;
@@ -1176,7 +1366,7 @@ export const webhookDef = z.object({
       z
         .string()
         .regex(
-          /^(\*|(entity|run|approval|sync|step|team|user|scorecard)\.\*|entity\.(created|updated|deleted)|run\.(created|updated|sla_breached)|approval\.(requested|decided)|sync\.(finished|failed)|step\.(started|finished|sla_breached)|team\.(created|updated|deleted)|user\.(created|updated)|scorecard\.changed)$/,
+          /^(\*|(entity|run|approval|sync|step|team|user|scorecard|initiative)\.\*|entity\.(created|updated|deleted)|run\.(created|updated|sla_breached)|approval\.(requested|decided)|sync\.(finished|failed)|step\.(started|finished|sla_breached)|team\.(created|updated|deleted)|user\.(created|updated)|scorecard\.changed|initiative\.(at_risk|overdue|completed))$/,
         ),
     )
     .min(1),
@@ -1246,7 +1436,10 @@ export const configFile = z.object({
   webhooks: z.array(webhookDef).default([]),
   scorecards: z.array(scorecardDef).default([]),
   policies: z.array(policyDef).default([]),
+  /** Price catalogs of plan-check steps. */
+  priceCatalogs: z.array(priceCatalogDef).default([]),
   dashboards: z.array(dashboardDef).default([]),
+  initiatives: z.array(initiativeDef).default([]),
   fragments: z.array(fragmentDef).default([]),
   /** Connector definitions of the organization (the built-in ones ship with the platform). */
   connectors: z.array(connectorDef).default([]),
@@ -1277,6 +1470,11 @@ export const entityQueryBody = z.object({
   relations: z
     .array(z.object({ relation: z.string().max(64), target: z.union([z.string().max(200), z.array(z.string().max(200)).max(100)]) }))
     .max(10)
+    .optional(),
+  /** Entities at this level of a scorecard (`none`: below the first level). */
+  scorecards: z
+    .array(z.object({ scorecard: slug, level: z.string().min(1).max(100) }))
+    .max(5)
     .optional(),
   sort: z.string().regex(SORT_RE, 'title | updated | identifier | relevance | prop:<name>').optional(),
   dir: z.enum(['asc', 'desc']).optional(),

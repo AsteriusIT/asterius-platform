@@ -36,7 +36,7 @@ import { configDiff, configStatus, exportConfig, importConfig, managedCounts, pl
 import { config } from '../config.js';
 import { idParam, page } from './util.js';
 import { badRequest, errorMessage, forbidden } from '../lib/errors.js';
-import { grants, ipAllowSchema, scopeSchema, SCOPES } from '../auth/scopes.js';
+import { grants, scopeSchema, SCOPES, tokenInput, tokenWorkflows } from '../auth/scopes.js';
 import { roleName } from '../schemas.js';
 import { exportArchive, importArchive } from '../archive.js';
 import { DEFAULT_ORG, orgId } from '../orgs/context.js';
@@ -59,20 +59,9 @@ export async function adminRoutes(app: FastifyInstance, opts: { reloadConfig: (o
       return listApiTokens(all ? undefined : req.principal.id);
     });
     user.post('/tokens', async (req, reply) => {
-      const body = z
-        .object({
-          name: z.string().min(1).max(100),
-          expiresInDays: z.number().int().min(1).max(730).nullish(),
-          scopes: z
-            .array(scopeSchema.exclude(['scim']))
-            .max(SCOPES.length)
-            .optional(),
-          blueprints: z.array(z.string().max(64)).max(100).optional(),
-          ipAllow: ipAllowSchema.optional(),
-        })
-        .parse(req.body);
+      const body = tokenInput.parse(req.body);
       // A restricted token cannot mint tokens (it would escape its own restrictions): only unrestricted callers or `admin` scope.
-      if (req.principal.token && (req.principal.token.blueprints || !req.principal.token.scopes?.includes('admin')))
+      if (req.principal.token && (req.principal.token.blueprints || req.principal.token.workflows || !req.principal.token.scopes?.includes('admin')))
         throw forbidden('This API token cannot create tokens');
       if (req.principal.token?.scopes && body.scopes?.some((s) => !grants(req.principal.token!.scopes!, s)))
         throw forbidden('A token cannot grant scopes it lacks');
@@ -85,12 +74,14 @@ export async function adminRoutes(app: FastifyInstance, opts: { reloadConfig: (o
         scopes: body.scopes,
         blueprints: body.blueprints,
         ipAllow: body.ipAllow,
+        workflows: body.workflows,
       });
       await audit(actorOf(req.principal), 'token.created', body.name, {
         tokenId: t.id,
         scopes: body.scopes ?? null,
         blueprints: body.blueprints ?? null,
         ipAllow: body.ipAllow ?? null,
+        workflows: body.workflows?.length ? body.workflows : null,
       });
       return reply.code(201).send(t);
     });
@@ -144,6 +135,12 @@ export async function adminRoutes(app: FastifyInstance, opts: { reloadConfig: (o
           role: z.enum(['admin', 'member']).default('member'),
           teams: z.array(z.string()).default([]),
           expiresInDays: z.number().int().min(1).max(730).nullish(),
+          /** Restrictions of the account's token (an AI agent: `scopes: [runs:trigger]` and its `workflows`). */
+          scopes: z
+            .array(scopeSchema.exclude(['scim']))
+            .max(SCOPES.length)
+            .optional(),
+          workflows: tokenWorkflows,
         })
         .parse(req.body);
       const sa = await createServiceAccount(body.name, body.role);
@@ -153,8 +150,14 @@ export async function adminRoutes(app: FastifyInstance, opts: { reloadConfig: (o
         userId: sa.id,
         createdBy: req.principal.id,
         expiresInDays: tokenLifetime(body.expiresInDays, null),
+        scopes: body.scopes,
+        workflows: body.workflows,
       });
-      await audit(actorOf(req.principal), 'service_account.created', body.name, { role: body.role });
+      await audit(actorOf(req.principal), 'service_account.created', body.name, {
+        role: body.role,
+        scopes: body.scopes ?? null,
+        workflows: body.workflows?.length ? body.workflows : null,
+      });
       return reply.code(201).send({ user: await publicUser(sa, req.principal.org), token: t.token });
     });
 
@@ -273,6 +276,7 @@ export async function adminRoutes(app: FastifyInstance, opts: { reloadConfig: (o
       target: z.string().max(200).optional(),
       from: date,
       to: date,
+      channel: z.enum(['ui', 'api', 'mcp', 'workflow']).optional(),
     });
     admin.get('/audit', async (req, reply) => {
       const q = page

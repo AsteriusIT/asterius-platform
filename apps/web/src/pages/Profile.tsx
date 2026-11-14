@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Alert, Badge, Button, Card, Checkbox, Code, CopyButton, Group, NumberInput, Stack, Text, TextInput, Title } from '@mantine/core';
+import { Alert, Badge, Box, Button, Card, Checkbox, Code, CopyButton, Group, NumberInput, Stack, Text, TextInput, Title } from '@mantine/core';
 import { modals } from '@mantine/modals';
 import { notifications } from '@mantine/notifications';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -13,6 +13,7 @@ import { PageHeader, TimeAgo } from '../components/ui';
 import { UserChip } from '../components/UserChip';
 import { DelegationCard } from '../components/DelegationCard';
 import { RoleBadges } from '../components/RoleBadges';
+import { TokenWorkflows } from '../components/TokenWorkflows';
 
 /** Shows a freshly created token once. */
 export function NewTokenAlert({ token, onClose }: { token: string | null; onClose: () => void }) {
@@ -67,6 +68,24 @@ export function TokenTable({ all }: { all?: boolean }) {
         },
         { key: 'p', label: 'Token', render: (t) => <Code>{t.prefix}…</Code> },
         ...(all ? [{ key: 'u', label: 'Owner', render: (t: ApiToken) => <UserChip user={{ id: t.userId, name: t.userName }} /> }] : []),
+        {
+          key: 'w',
+          label: 'Workflows',
+          render: (t: ApiToken) =>
+            t.workflows?.length ? (
+              <Group gap="2xs">
+                {t.workflows.map((w) => (
+                  <Badge key={w} color="grape" variant="light">
+                    {w}
+                  </Badge>
+                ))}
+              </Group>
+            ) : (
+              <Text fz="sm" c="dimmed">
+                Any
+              </Text>
+            ),
+        },
         { key: 'c', label: 'Created', render: (t) => <TimeAgo at={t.createdAt} /> },
         { key: 'e', label: 'Expires', render: (t) => (t.expiresAt ? <TimeAgo at={t.expiresAt} /> : <Badge color="gray">never</Badge>) },
         { key: 'l', label: 'Last used', render: (t) => <TimeAgo at={t.lastUsedAt} /> },
@@ -129,12 +148,14 @@ export function Profile() {
   const qc = useQueryClient();
   const [name, setName] = useState('');
   const [days, setDays] = useState<number | string>(90);
+  const [workflows, setWorkflows] = useState<string[]>([]);
   const [created, setCreated] = useState<string | null>(null);
   const create = useMutation({
-    mutationFn: () => api.createToken(name, typeof days === 'number' ? days : null),
+    mutationFn: () => api.createToken(name, typeof days === 'number' ? days : null, workflows),
     onSuccess: (r) => {
       setCreated(r.token);
       setName('');
+      setWorkflows([]);
       void qc.invalidateQueries({ queryKey: ['tokens'] });
     },
   });
@@ -166,6 +187,9 @@ export function Profile() {
             Create token
           </Button>
         </Group>
+        <Box mt="sm">
+          <TokenWorkflows value={workflows} onChange={setWorkflows} />
+        </Box>
         {create.error && (
           <Text c="red" fz="sm" mt="xs">
             {errorText(create.error)}

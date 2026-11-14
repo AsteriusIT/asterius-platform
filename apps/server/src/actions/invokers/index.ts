@@ -16,6 +16,7 @@ import { scaffolderInvoker } from './scaffolder.js';
 import { tektonInvoker } from './tekton.js';
 import { jiraInvoker, lambdaInvoker, stepFunctionsInvoker } from './services.js';
 import { connectorApiInvoker, connectorInvoker } from './connector.js';
+import { planCheckInvoker } from './plan-check.js';
 
 const registry = new Map<string, Invoker>();
 
@@ -48,6 +49,7 @@ for (const inv of [
   scaffolderInvoker,
   connectorInvoker,
   connectorApiInvoker,
+  planCheckInvoker,
 ])
   registerInvoker(inv);
 
