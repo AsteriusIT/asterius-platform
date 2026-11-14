@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from 'jose';
+import { createRemoteJWKSet, jwtVerify, type JWTPayload, type JWTVerifyGetKey } from 'jose';
 import { config } from '../config.js';
 import { audit } from '../audit.js';
 import { assertSecureUrl, consumeFlow, failUrl, newFlow, finishLogin } from './oauth.js';
@@ -16,6 +16,8 @@ interface Discovery {
   authorization_endpoint: string;
   token_endpoint: string;
   jwks_uri: string;
+  userinfo_endpoint?: string;
+  token_endpoint_auth_methods_supported?: string[];
 }
 
 let discovery: { at: number; doc: Discovery; keys: JWTVerifyGetKey } | undefined;
@@ -30,20 +32,67 @@ async function provider() {
   // The issuer in the document must be the one we trust (mix-up protection).
   if (doc.issuer?.replace(/\/$/, '') !== issuer) throw new Error('OIDC discovery issuer mismatch');
   for (const u of [doc.authorization_endpoint, doc.token_endpoint, doc.jwks_uri]) assertSecureUrl(u, 'OIDC endpoint');
+  if (doc.userinfo_endpoint) assertSecureUrl(doc.userinfo_endpoint, 'OIDC endpoint');
   discovery = { at: Date.now(), doc, keys: createRemoteJWKSet(new URL(doc.jwks_uri)) };
   return discovery;
+}
+
+/**
+ * client_secret_post unless the provider says it does not take it and takes client_secret_basic (Asterius Identity,
+ * strict FAPI-derived servers). Providers that do not advertise their methods keep the historical client_secret_post.
+ */
+function clientAuth(doc: Discovery, body: URLSearchParams): Record<string, string> {
+  const methods = doc.token_endpoint_auth_methods_supported;
+  if (methods && !methods.includes('client_secret_post') && methods.includes('client_secret_basic')) {
+    // RFC 6749 §2.3.1: both halves are form-urlencoded before being joined and base64-encoded.
+    const pair = `${encodeURIComponent(config.OIDC_CLIENT_ID!)}:${encodeURIComponent(config.OIDC_CLIENT_SECRET!)}`;
+    return { authorization: `Basic ${Buffer.from(pair).toString('base64')}` };
+  }
+  body.set('client_secret', config.OIDC_CLIENT_SECRET!);
+  return {};
+}
+
+/**
+ * OIDC Core §5.4: with the code flow, the claims of the profile/email scopes are returned by UserInfo and a provider
+ * may leave them out of the ID token. Fill in the missing ones from there; the subject must be the ID token's (§5.3.2).
+ */
+async function withUserinfo(idClaims: JWTPayload, doc: Discovery, accessToken: string | undefined): Promise<JWTPayload> {
+  const wanted = [config.OIDC_EMAIL_CLAIM, config.OIDC_NAME_CLAIM, config.OIDC_GROUPS_CLAIM, 'email_verified'];
+  if (wanted.every((c) => idClaims[c] !== undefined) || !doc.userinfo_endpoint || !accessToken) return idClaims;
+  const res = await fetch(doc.userinfo_endpoint, {
+    headers: { authorization: `Bearer ${accessToken}`, accept: 'application/json' },
+    signal: AbortSignal.timeout(config.HTTP_TIMEOUT_SECONDS * 1000),
+  });
+  // Only fatal when the ID token alone cannot identify the user; otherwise UserInfo just adds name or groups.
+  if (!res.ok) {
+    if (idClaims[config.OIDC_EMAIL_CLAIM]) return idClaims;
+    throw new Error(`userinfo endpoint ${res.status}`);
+  }
+  const info = (await res.json()) as JWTPayload;
+  if (info.sub !== idClaims.sub) throw new Error('userinfo subject does not match the ID token');
+  const merged = { ...idClaims };
+  for (const c of wanted) if (merged[c] === undefined && info[c] !== undefined) merged[c] = info[c];
+  return merged;
 }
 
 const redirectUri = () => config.OIDC_REDIRECT_URI ?? `${config.PUBLIC_URL}/api/auth/oidc/callback`;
 
 /** Verify an ID token and extract the identity using the configured claim names. */
 export async function checkOidcIdToken(idToken: string, nonce: string, keySet: JWTVerifyGetKey) {
+  return identityOf(await verifyOidcIdToken(idToken, nonce, keySet));
+}
+
+async function verifyOidcIdToken(idToken: string, nonce: string, keySet: JWTVerifyGetKey) {
   const { payload } = await jwtVerify(idToken, keySet, { issuer: config.OIDC_ISSUER!.replace(/\/$/, ''), audience: config.OIDC_CLIENT_ID });
   if (payload.nonce !== nonce) throw new Error('nonce mismatch');
+  return payload;
+}
+
+function identityOf(payload: JWTPayload) {
   const sub = String(payload.sub ?? '');
   if (!sub) throw new Error('missing sub claim');
   const email = String(payload[config.OIDC_EMAIL_CLAIM] ?? '').toLowerCase();
-  if (!email) throw new Error(`the ID token has no "${config.OIDC_EMAIL_CLAIM}" claim`);
+  if (!email) throw new Error(`neither the ID token nor UserInfo has a "${config.OIDC_EMAIL_CLAIM}" claim`);
   const raw = payload[config.OIDC_GROUPS_CLAIM];
   const groups = Array.isArray(raw) ? raw.map(String) : typeof raw === 'string' ? [raw] : [];
   return {
@@ -90,23 +139,25 @@ export async function oidcRoutes(app: FastifyInstance) {
 
     try {
       const p = await provider();
+      const body = new URLSearchParams({
+        client_id: config.OIDC_CLIENT_ID!,
+        grant_type: 'authorization_code',
+        code: q.code,
+        redirect_uri: redirectUri(),
+        code_verifier: st.code_verifier,
+      });
+      const auth = clientAuth(p.doc, body);
       const res = await fetch(p.doc.token_endpoint, {
         method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' },
-        body: new URLSearchParams({
-          client_id: config.OIDC_CLIENT_ID!,
-          client_secret: config.OIDC_CLIENT_SECRET!,
-          grant_type: 'authorization_code',
-          code: q.code,
-          redirect_uri: redirectUri(),
-          code_verifier: st.code_verifier,
-        }),
+        headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json', ...auth },
+        body,
         signal: AbortSignal.timeout(config.HTTP_TIMEOUT_SECONDS * 1000),
       });
-      const tokens = (await res.json()) as { id_token?: string; error?: string; error_description?: string };
+      const tokens = (await res.json()) as { id_token?: string; access_token?: string; error?: string; error_description?: string };
       if (!res.ok || !tokens.id_token) throw new Error(tokens.error_description?.split('\n')[0] ?? tokens.error ?? `token endpoint ${res.status}`);
 
-      const id = await checkOidcIdToken(tokens.id_token, st.nonce, p.keys);
+      const verified = await verifyOidcIdToken(tokens.id_token, st.nonce, p.keys);
+      const id = identityOf(await withUserinfo(verified, p.doc, tokens.access_token));
       if (config.OIDC_ALLOWED_DOMAINS.length && !config.OIDC_ALLOWED_DOMAINS.includes(id.email.split('@')[1] ?? ''))
         return reply.redirect(failUrl('Your email domain is not allowed'));
       const user = await upsertExternalUser('oidc', { ...id, adminGroups: config.OIDC_ADMIN_GROUPS });
