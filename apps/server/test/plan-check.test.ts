@@ -5,7 +5,7 @@ import type { Policy } from '@asterius/shared';
 import { parsePlan, getPath } from '../src/plan/plan.js';
 import { estimate } from '../src/plan/pricing.js';
 import { BUILTIN_CATALOG } from '../src/plan/builtin-prices.js';
-import { buildOutput, opaViolations, runChecks } from '../src/plan/checks.js';
+import { buildOutput, cell, opaViolations, runChecks } from '../src/plan/checks.js';
 import { priceCatalogDef } from '../src/schemas.js';
 
 /** Plans in the format of `terraform show -json` / `tofu show -json` (test/fixtures/plans). */
@@ -207,5 +207,14 @@ describe('step output', () => {
     expect(buildOutput(plan, est, warn, { onWarning: 'ignore', maxResources: 5 }).gate).toBe('pass');
     expect(buildOutput(plan, est, [{ ...warn[0]!, severity: 'critical' }], { onWarning: 'ignore', maxResources: 5 }).gate).toBe('blocked');
     expect(buildOutput(plan, est, [], { onWarning: 'override', maxResources: 5 }).summary).toContain('**Policy findings:** none');
+  });
+});
+
+describe('summary cells', () => {
+  it('escapes backslashes before pipes and neutralises row and code-span breakers', () => {
+    expect(cell('a|b')).toBe('a\\|b');
+    // A trailing backslash must not swallow the escape of the next pipe.
+    expect(cell('x["a\\"]|y')).toBe('x["a\\\\"]\\|y');
+    expect(cell('a\nb`c')).toBe("a b'c");
   });
 });

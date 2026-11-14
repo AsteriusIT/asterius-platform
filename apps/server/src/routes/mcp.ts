@@ -22,8 +22,10 @@ export async function mcpMetadataRoutes(app: FastifyInstance) {
 export async function mcpRoutes(app: FastifyInstance) {
   app.post('/mcp', { config: { rateLimit: { max: 300, timeWindow: '1 minute' } } }, async (req, reply) => {
     const path = req.url.split('?')[0].replace(/\/$/, '').endsWith('/v1/mcp') ? MCP_PATHS[1] : MCP_PATHS[0];
-    const token = bearer(req);
-    const p0 = (token && (await authenticateAccessToken(req, token, path))) || (await authenticate(req));
+    // Every request takes both checks in this order: an OIDC access token of a trusted issuer (fully verified, else
+    // undefined), then the platform's own credentials (API or session token, cookie with CSRF). Neither branch is
+    // skipped on the strength of what the client sent.
+    const p0 = (await authenticateAccessToken(req, bearer(req), path)) ?? (await authenticate(req));
     if (!p0) return reply.code(401).header('www-authenticate', mcpChallenge(path)).send({ error: 'unauthorized' });
     if (!p0.org) return reply.code(403).send({ error: 'Join or create an organization first', code: 'NO_ORGANIZATION' });
     const p = withChannel(p0, 'mcp');

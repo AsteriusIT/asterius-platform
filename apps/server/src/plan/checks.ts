@@ -233,7 +233,17 @@ const ICON: Record<PlanSeverity, string> = { critical: '⛔', warning: '⚠️',
 
 const fmt = (n: number, currency: string) => `${n < 0 ? '-' : ''}${Math.abs(n).toFixed(2)} ${currency}`;
 const signed = (n: number, currency: string) => `${n > 0 ? '+' : ''}${fmt(n, currency)}`;
-const cell = (s: string) => s.replace(/\|/g, '\\|');
+/**
+ * Text from the plan (resource addresses carry for_each keys) or a policy, made safe inside a Markdown table cell or a
+ * code span: backslashes first (else `a\` + `\|` would end the cell), then pipes; line breaks end a row and backticks
+ * end a code span, so they become a space and a quote.
+ */
+export const cell = (s: string) =>
+  s
+    .replace(/\\/g, '\\\\')
+    .replace(/\|/g, '\\|')
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/`/g, "'");
 
 /** Markdown for approval messages and notifications: totals, the biggest changes and the violations. */
 export function summarize(o: Omit<PlanCheckOutput, 'summary' | 'kind'>, maxRows = 10): string {
