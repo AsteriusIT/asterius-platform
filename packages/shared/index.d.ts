@@ -141,6 +141,8 @@ export interface ApiToken {
   scopes?: string[] | null;
   blueprints?: string[] | null;
   ipAllow?: string[] | null;
+  /** The registered AI agent the token is bound to (null: a person's or service account's token). */
+  agent?: string | null;
 }
 
 // ---------- catalog ----------
@@ -462,7 +464,7 @@ export interface ApprovalStep extends WorkflowStepBase, ApprovalTimers {
 
 export type AgentEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
-export type AgentTool = 'catalog' | 'upsert_entity' | 'trigger_action' | 'http';
+export type AgentTool = 'catalog' | 'upsert_entity' | 'trigger_action' | 'http' | 'mcp';
 export type AiProvider = 'anthropic' | 'bedrock' | 'vertex';
 
 export interface AgentGuardrails {
@@ -471,6 +473,8 @@ export interface AgentGuardrails {
   httpHosts?: string[];
   httpMethods?: ('GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE')[];
   maxWrites?: number;
+  /** `mcp` tool: `server/tool` names of registered MCP servers (Admin > MCP servers) the agent may call. */
+  mcpTools?: string[];
 }
 
 export interface AgentMcpServer {
@@ -864,6 +868,10 @@ export interface Run {
   actionVersion?: number | null;
   /** What started the run: form, api, schedule, event, webhook, workflow (parent run) or rerun. */
   trigger?: { type: string; [k: string]: unknown };
+  /** How the run was requested: ui, api, mcp or workflow (null: platform automation). */
+  channel?: CallChannel | null;
+  /** The registered AI agent that started the run (null: a person or the platform). */
+  agent?: string | null;
   createdAt: string;
   startedAt: string | null;
   endedAt: string | null;
@@ -1038,6 +1046,63 @@ export interface AuditEntry {
   actorEmail: string | null;
   target: string | null;
   detail: Record<string, unknown>;
+  /** ui (browser session), api (API token), mcp (MCP endpoint), workflow (AI agent step); null: platform job. */
+  channel?: CallChannel | null;
+  /** Registered AI agent that made the call (null: a person or the platform). */
+  agent?: string | null;
+}
+
+export type CallChannel = 'ui' | 'api' | 'mcp' | 'workflow';
+
+// ---------- AI agent governance ----------
+/** A registered AI agent (GET /api/v1/agents): a non-human principal narrowed by its allow-lists. */
+export interface Agent {
+  identifier: string;
+  title: string;
+  description: string;
+  /** Team accountable for the agent: its members and the admins issue its tokens and may act as it. */
+  ownerTeam: string;
+  /** Workflows the agent may see and start. */
+  workflows: string[];
+  /** Blueprints the agent may read (`*`: all its user may read). */
+  blueprints: string[];
+  /** OAuth client ids of MCP clients identified as this agent. */
+  oauthClients: string[];
+  enabled: boolean;
+  version: number;
+  managed: boolean;
+  /** Active tokens bound to the agent. */
+  tokens?: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** An external MCP server whose allow-listed tools AI agent steps may call (GET /api/v1/mcp-servers). */
+export interface McpServer {
+  identifier: string;
+  title: string;
+  description: string;
+  url: string;
+  /** `{ type, …references }`: credentials are secret references. */
+  auth: ({ type: 'bearer' | 'header' | 'basic' | 'oauth2-client-credentials' } & Record<string, unknown>) | null;
+  /** Tool names agent steps may call. */
+  tools: string[];
+  timeoutSeconds: number;
+  enabled: boolean;
+  version: number;
+  managed: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** POST /api/v1/mcp-servers/:id/test: the server's tools, and which of them the allow-list lets through. */
+export interface McpServerTestResult {
+  ok: boolean;
+  message: string;
+  server?: { name?: string; version?: string; protocolVersion?: string };
+  tools: { name: string; description?: string; allowed: boolean }[];
+  /** Allow-listed names the server does not offer. */
+  missing: string[];
 }
 
 /**

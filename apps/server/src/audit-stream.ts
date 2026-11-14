@@ -23,6 +23,9 @@ interface Row {
   detail: string;
   /** Null: platform-level (sign-ins, organization management). */
   org_id: string | null;
+  /** How the call came in and the AI agent that made it (agent governance). */
+  channel?: string | null;
+  agent?: string | null;
 }
 
 export const streamEnabled = () => !!(config.AUDIT_STREAM_URL || config.AUDIT_SYSLOG_URL);
@@ -35,6 +38,8 @@ const event = (r: Row) => ({
   actor: r.actor_email,
   target: r.target,
   detail: json(r.detail, {}),
+  channel: r.channel ?? null,
+  agent: r.agent ?? null,
   source: 'asterius-platform',
 });
 
@@ -82,7 +87,7 @@ export async function flushAuditStream(): Promise<number> {
     let total = 0;
     for (;;) {
       const rows = await all<Row>(
-        'SELECT id, at, action, actor_email, target, detail, org_id FROM audit_log WHERE streamed_at IS NULL ORDER BY at, id LIMIT 200',
+        'SELECT id, at, action, actor_email, target, detail, org_id, channel, agent FROM audit_log WHERE streamed_at IS NULL ORDER BY at, id LIMIT 200',
       );
       if (!rows.length) return total;
       if (config.AUDIT_STREAM_URL) await sendHttp(rows);

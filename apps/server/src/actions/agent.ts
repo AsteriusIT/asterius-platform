@@ -2,6 +2,7 @@ import type { ObjectSchema } from '@asterius/shared';
 import type { Principal } from '../auth/users.js';
 import { converse, makeClient, type Logger, type McpServerConfig } from '../ai/model.js';
 import { agentToolSet } from '../ai/tools.js';
+import { mcpBinding } from '../agents/mcp-tools.js';
 import type { WorkflowStepDef } from '../schemas.js';
 
 /**
@@ -47,7 +48,9 @@ export async function runAgent(step: RenderedAgentStep, log: Logger, ctx: AgentR
     token: step.mcpTokens?.[i] || undefined,
     allowedTools: s.allowedTools,
   }));
-  const tools = agentToolSet(step.tools, step.guardrails, { runId: ctx.runId, stepId: ctx.stepId, actionId: ctx.action, principal: ctx.principal });
+  // Registered MCP servers: resolved (and allow-listed) before the model is called; any misconfiguration fails the step.
+  const mcp = step.tools.includes('mcp') ? await mcpBinding(step.guardrails.mcpTools ?? [], log) : undefined;
+  const tools = agentToolSet(step.tools, step.guardrails, { runId: ctx.runId, stepId: ctx.stepId, actionId: ctx.action, principal: ctx.principal }, mcp);
   const r = await converse({
     client,
     provider,

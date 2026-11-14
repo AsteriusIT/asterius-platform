@@ -25,10 +25,13 @@ import { deleteWebhook, getWebhook, listWebhooks, upsertWebhook } from './webhoo
 import { deleteFragment, dependencyOrder, listFragments, upsertFragment } from './actions/fragments.js';
 import { deleteConnector, listConnectors, upsertConnector } from './integrations/connectors/definitions.js';
 import { checkConnectionsOf, deleteConnection, listConnections, upsertConnection } from './integrations/connectors/connections.js';
+import { deleteAgent, listAgents, upsertAgent } from './agents/agents.js';
+import { deleteMcpServer, listMcpServers, upsertMcpServer } from './agents/mcp-servers.js';
 
 /**
  * Configuration as code, per organization. Files (*.yaml / *.yml / *.json) declare `teams`, `blueprints`, `connectors`,
- * `connections`, `fragments`, `actions`, `integrations`, `webhooks`, `scorecards`, `policies`, `dashboards` and seed `entities` of one organization:
+ * `connections`, `fragments`, `actions`, `integrations`, `webhooks`, `scorecards`, `policies`, `dashboards`, `agents`, `mcpServers`
+ * and seed `entities` of one organization:
  *   CONFIG_DIR/*                 the default organization, plus `organizations:` (platform-level declarations)
  *   CONFIG_DIR/orgs/<slug>/**    organization <slug> (a ConfigMap or git-sync volume per tenant)
  *   a Git repository             set by the organization's admins (Settings → Configuration as code)
@@ -109,6 +112,8 @@ export function readConfigDir(dir = config.CONFIG_DIR, opts: { platform?: boolea
         'scorecards',
         'policies',
         'dashboards',
+        'agents',
+        'mcpServers',
       ] as const)
         for (const item of parsed.data[kind]) {
           const key = `${kind}/${item.identifier}`;
@@ -293,6 +298,25 @@ export async function applyConfig(loaded: LoadedConfig, log: FastifyBaseLogger):
     (d) => upsertDashboard(d, m),
     (id) => deleteDashboard(id, m),
   );
+  // Agent governance: external MCP servers, then the agents (their owner team exists by now).
+  await applyKind(
+    log,
+    errs,
+    'mcp-server',
+    data.mcpServers,
+    await listMcpServers(),
+    (s) => upsertMcpServer(s, m),
+    (id) => deleteMcpServer(id, m),
+  );
+  await applyKind(
+    log,
+    errs,
+    'agent',
+    data.agents,
+    await listAgents(),
+    (a) => upsertAgent(a, m),
+    (id) => deleteAgent(id, m),
+  );
   // Blueprints last: actions and integrations that used a removed blueprint are gone by now.
   // The entities the configuration seeded go with them; entities created by people or integrations keep their
   // blueprint (it stays, with a warning). Removed blueprints may relate to each other: retry until no progress.
@@ -458,6 +482,8 @@ export async function planConfig(loaded?: LoadedConfig): Promise<PlanItem[]> {
   plan('scorecard', d.scorecards, await listScorecards());
   plan('policy', d.policies, await listPolicies());
   plan('dashboard', d.dashboards, await listDashboards());
+  plan('mcp-server', d.mcpServers, await listMcpServers());
+  plan('agent', d.agents, await listAgents(), ['tokens']);
   return out;
 }
 
@@ -473,6 +499,8 @@ const KINDS = [
   'scorecards',
   'policies',
   'dashboards',
+  'agents',
+  'mcpServers',
 ] as const;
 
 /** What a reload of the current organization would change: declared vs currently managed identifiers. Nothing is applied. */
@@ -496,6 +524,8 @@ export async function configDiff() {
     scorecards: await listScorecards(),
     policies: await listPolicies(),
     dashboards: await listDashboards(),
+    agents: await listAgents(),
+    mcpServers: await listMcpServers(),
   };
   const kinds: Record<string, { added: string[]; removed: string[]; kept: string[] }> = {};
   for (const k of KINDS) {
@@ -539,6 +569,8 @@ export async function importConfig(text: string, dryRun: boolean): Promise<Recor
   for (const sc of merged.scorecards) await upsertScorecard(sc, { knownBlueprints: knownTargets });
   for (const p of merged.policies) await upsertPolicy(p);
   for (const d of merged.dashboards) await upsertDashboard(d);
+  for (const s of merged.mcpServers) await upsertMcpServer(s);
+  for (const a of merged.agents) await upsertAgent(a);
   return counts;
 }
 
@@ -710,6 +742,8 @@ export async function exportDefinitions() {
     scorecards: (await listScorecards()).map((s) => strip(s as never, ['managed'])),
     policies: (await listPolicies()).map((p) => strip(p as never, ['managed'])),
     dashboards: (await listDashboards()).map((d) => strip(d as never, ['managed'])),
+    agents: (await listAgents()).map((a) => strip(a as never, ['managed', 'version', 'tokens', 'createdAt', 'updatedAt'])),
+    mcpServers: (await listMcpServers()).map((s) => strip(s as never, ['managed', 'version', 'createdAt', 'updatedAt'])),
   };
 }
 
@@ -732,8 +766,10 @@ export async function managedCounts() {
      UNION ALL SELECT 'fragments', count(*) FROM fragments WHERE managed = 1 AND org_id = ?
      UNION ALL SELECT 'teams', count(*) FROM teams WHERE managed = 1 AND org_id = ?
      UNION ALL SELECT 'connectors', count(*) FROM connectors WHERE managed = 1 AND org_id = ?
-     UNION ALL SELECT 'connections', count(*) FROM connections WHERE managed = 1 AND org_id = ?`,
-    ...Array(11).fill(orgId()),
+     UNION ALL SELECT 'connections', count(*) FROM connections WHERE managed = 1 AND org_id = ?
+     UNION ALL SELECT 'agents', count(*) FROM agents WHERE managed = 1 AND org_id = ?
+     UNION ALL SELECT 'mcpServers', count(*) FROM mcp_servers WHERE managed = 1 AND org_id = ?`,
+    ...Array(13).fill(orgId()),
   );
   return Object.fromEntries(rows.map((r) => [r.k, Number(r.n)]));
 }

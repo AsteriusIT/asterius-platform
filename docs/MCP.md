@@ -59,8 +59,102 @@
 
 Claude Code and scripts can keep using `--header "Authorization: Bearer ast_…"`.
 
+## Tools
+
+| Tool | What it does |
+| --- | --- |
+| `whoami` | The user, organization, role, teams and the agent acted as (if any). |
+| `list_blueprints`, `search_catalog`, `get_entity` | Read the catalog (blueprint read rules apply). |
+| `get_scorecards` | Scorecard results of an entity (level, pass/fail per rule). |
+| `get_entity_docs` | The Markdown of an entity's `docs` property, fetched through the SSRF guard. |
+| `get_dora_insights` | DORA metrics over a window (`days`, `team`, `service`), from what the caller may read. |
+| `list_actions`, `trigger_action` | List and start the self-service actions the caller may run. |
+| `list_runs`, `get_run` | Follow runs. |
+| `list_approvals` | What waits for the caller's decision (people only: not offered to agents). |
+
+Every tool is read-only except `trigger_action`. There is no tool to approve, reject or answer an input step.
+
+## Agents
+
+An **agent** is a registered, non-human principal of an organization (*Admin → Governance → Agents*, `PUT /api/v1/agents/:id`,
+or `agents:` in the configuration files):
+
+```yaml
+agents:
+  - identifier: release-bot
+    title: Release bot
+    ownerTeam: platform # its members (and the admins) issue its tokens and may act as it
+    workflows: [create-release, rollback] # the only actions it sees, starts and whose runs it reads
+    blueprints: [service, deployment] # the only blueprints it reads; ['*']: everything its user may read
+    oauthClients: [claude-connector] # OAuth clients (azp / client_id) that are this agent
+    enabled: true
+```
+
+An agent has no rights of its own: it acts through a user and **its permissions are the intersection of its allow-lists
+and that user's rights**. It never uses administrator bypasses (an agent of an admin gets what the blueprint and
+workflow rules grant), never approves, rejects or answers input steps, and on the REST API only reads the catalog and runs
+and starts runs (`POST /api/v1/actions/:id/runs`); everything else is a 403. Disabling or deleting the agent stops its
+tokens at once (deleting revokes them).
+
+How a caller is identified as an agent, in order:
+
+1. **An API token bound to the agent.** Issue it from *Agents → Tokens* or `POST /api/v1/agents/:id/tokens` (admins and
+   owner-team members, from a signed-in session). The token acts as the person who issued it, or for admins as a service
+   account (`userId`), narrowed by the agent. Use it as usual: `Authorization: Bearer ast_…`.
+2. **An OAuth MCP client registered for the agent.** When the access token's `azp` (or `client_id`) claim is listed in an
+   agent's `oauthClients`, every call of that client is that agent, whoever signs in. Register one client per agent in
+   Keycloak (or your authorization server) for this.
+3. **Self-selection on the MCP endpoint.** A person (session, personal token or OAuth token) adds
+   `X-Asterius-Agent: <agent>` (or `?agent=<agent>` to the MCP URL, for clients that cannot set headers) to act as an agent
+   they may use (admins and owner-team members). It can only narrow their rights; a credential bound to an agent cannot
+   claim another one.
+
+**Audit.** Audit entries and runs record the channel of the call (`ui` browser session, `api` API token, `mcp` MCP
+endpoint, `workflow` AI agent step) and the agent: filter with `GET /api/v1/audit?agent=<id>` (`*`: any agent, `-`: none)
+and `&channel=mcp`, `GET /api/v1/runs?agent=<id>`, or *Admin → Audit log → AI agent* and the agent's row actions. With
+`AUDIT_HASH_CHAIN`, the hash (chain version 3) covers the channel and the agent.
+
+## External MCP servers for AI agent steps
+
+*Admin → Governance → MCP servers* (`PUT /api/v1/mcp-servers/:id`, or `mcpServers:` in the configuration files) registers
+external MCP servers (Streamable HTTP). The **platform** is the client: calls go through its SSRF guard (`OUTBOUND_ALLOW` /
+`OUTBOUND_DENY`), with the server's timeout, no redirects and no retries.
+
+```yaml
+mcpServers:
+  - identifier: tickets
+    title: Ticketing
+    url: https://mcp.tickets.example.com/mcp
+    auth: { type: bearer, token: '${secret:tickets-mcp-token}' } # bearer, header, basic or oauth2-client-credentials; references only
+    tools: [search_issues, get_issue] # the only tools agent steps may call (at least one)
+    timeoutSeconds: 30
+```
+
+An AI agent step uses them with the `mcp` tool and its own allow-list:
+
+```yaml
+steps:
+  - id: triage
+    type: agent
+    prompt: Find the open incident tickets of {{ entity.identifier }}
+    tools: [catalog, mcp]
+    guardrails:
+      mcpTools: [tickets/search_issues] # server/tool
+      maxWrites: 5 # every MCP call counts, and is audited (agent.mcp_call)
+```
+
+Both allow-lists fail closed: `mcp` without `guardrails.mcpTools` is rejected when the workflow is saved; an unknown or
+disabled server, or a tool the server's `tools` does not allow, fails the step before the model is called; a tool the
+server does not offer is left out; the model can call nothing else. *Test* (`POST /api/v1/mcp-servers/:id/test`) connects,
+lists the server's tools and shows which ones the allow-list lets through, without calling any.
+
+This differs from the step's `mcpServers` field, which hands remote servers to the Claude API (Anthropic provider only,
+called from Anthropic's side, per-step URL and token).
+
 ## Manual verification
 
 Not testable without live accounts; check once per environment: Claude.ai custom connector and ChatGPT connector sign-in
 against your Keycloak (redirect URI accepted, `aud` mapper works, token refresh after expiry), tool listing and a
-read-only tool call, and that a user without catalog access sees only permitted entities through the connector.
+read-only tool call, and that a user without catalog access sees only permitted entities through the connector. For
+agents: a connector whose OAuth client is listed in an agent's `oauthClients` shows `agent` in `whoami` and only the
+agent's workflows in `list_actions`; an external MCP server of a real vendor answers *Test* with its tool list.

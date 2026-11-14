@@ -109,7 +109,9 @@ claude mcp add --transport http acme https://platform.example.com/api/mcp --head
 
 Remote clients (Claude.ai, ChatGPT connectors) sign in with OAuth 2.1 against the Keycloak realm: the server publishes RFC 9728 metadata at `/.well-known/oauth-protected-resource` and accepts the realm's access tokens; see [docs/MCP.md](docs/MCP.md).
 
-`whoami` and `list_approvals` show the token's organization and what waits for a decision; approving requests is deliberately not exposed to assistants.
+`whoami` and `list_approvals` show the token's organization and what waits for a decision; approving requests is deliberately not exposed to assistants. `get_scorecards`, `get_entity_docs` and `get_dora_insights` read scorecard results, entity docs and DORA metrics.
+
+**AI agent governance.** *Admin → Governance → Agents* registers AI agents (config `agents:`): owner team, allowed workflows, readable blueprints. An agent works with tokens bound to it (or as an OAuth MCP client), with its user's rights narrowed by its allow-lists, never approves, and its calls are filterable in the audit log and the runs list. *Admin → Governance → MCP servers* (config `mcpServers:`) registers external MCP servers whose allow-listed tools AI agent steps may call. See [docs/MCP.md](docs/MCP.md#agents).
 
 ## Deploying on Kubernetes
 

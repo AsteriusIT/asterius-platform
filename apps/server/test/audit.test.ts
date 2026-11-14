@@ -71,7 +71,7 @@ describe('audit log', () => {
   it('exports CSV neutralizing formulas, and NDJSON; exporting is audited', async () => {
     await admin.put('/api/v1/teams/evil', { title: '=HYPERLINK("http://evil")' });
     const csv = (await admin.get('/api/v1/audit/export?format=csv&action=team.*')).data as string;
-    expect(csv.split('\n')[0]).toBe('id,at,action,actor,target,detail');
+    expect(csv.split('\n')[0]).toBe('id,at,action,actor,target,detail,channel,agent');
     expect(csv).toContain('team.created');
     const nd = (await app.inject({ method: 'GET', url: '/api/v1/audit/export?format=json', headers: { authorization: `Bearer ${adminToken}` } })).body;
     const lines = nd
@@ -92,7 +92,7 @@ describe('audit log', () => {
     const row = await one<{ id: string; org_id: string | null; chain_version: number }>(
       "SELECT id, org_id, chain_version FROM audit_log WHERE action = 'team.created' AND chain_seq IS NOT NULL ORDER BY chain_seq DESC LIMIT 1",
     );
-    expect(Number(row!.chain_version)).toBe(2);
+    expect(Number(row!.chain_version)).toBe(3);
     await run("UPDATE audit_log SET org_id = 'other-org' WHERE id = ?", row!.id);
     expect(await verifyAuditChain()).toMatchObject({ ok: false, reason: 'entry was modified' });
     await run('UPDATE audit_log SET org_id = ? WHERE id = ?', row!.org_id, row!.id);

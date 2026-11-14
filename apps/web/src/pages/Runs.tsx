@@ -55,6 +55,8 @@ import { controlBadges, splitJobLog, STEP_STATUS_COLORS, STEP_STATUS_LABELS, STE
 import { PropertyValue } from '../components/PropertyValue';
 import { initialValues, SchemaForm, validateValues, type FormValues } from '../components/SchemaForm';
 import { UserChip } from '../components/UserChip';
+import { ViaBadge } from '../components/ViaBadge';
+import { agentFilterOptions } from '../lib/agents';
 import { appHref } from '../lib/orgUrl';
 
 const PAGE = 30;
@@ -79,7 +81,19 @@ export const runColumns = [
     ),
   },
   { key: 's', label: 'Status', render: (r: Run) => <StatusBadge status={r.status} label={r.paused ? 'Paused' : r.statusLabel} /> },
-  { key: 'u', label: 'Requested by', render: (r: Run) => <UserChip user={r.triggeredBy} /> },
+  {
+    key: 'u',
+    label: 'Requested by',
+    render: (r: Run) =>
+      r.agent ? (
+        <Group gap="xs" wrap="nowrap">
+          <UserChip user={r.triggeredBy} />
+          <ViaBadge channel={r.channel} agent={r.agent} />
+        </Group>
+      ) : (
+        <UserChip user={r.triggeredBy} />
+      ),
+  },
   { key: 't', label: 'When', render: (r: Run) => <TimeAgo at={r.createdAt} /> },
   { key: 'd', label: 'Duration', render: (r: Run) => <Text fz="sm">{r.startedAt ? duration(r.startedAt, r.endedAt) : '—'}</Text> },
 ];
@@ -96,10 +110,12 @@ export function Runs() {
   const action = params.get('action');
   const blueprint = params.get('blueprint');
   const entity = params.get('entity');
+  // `?agent=`: runs started by an AI agent (`*`: any), linked from Admin > Agents.
+  const agent = params.get('agent');
   const blueprints = useQuery({ queryKey: ['blueprints'], queryFn: api.blueprints, staleTime: 30_000 });
   const actions = useQuery({ queryKey: ['actions', 'all'], queryFn: () => api.actions(), staleTime: 60_000 });
   const q = useQuery({
-    queryKey: ['runs', scope, status.join(','), action, blueprint, entity, page],
+    queryKey: ['runs', scope, status.join(','), action, blueprint, entity, agent, page],
     queryFn: () =>
       api.runs({
         mine: scope === 'mine',
@@ -108,6 +124,7 @@ export function Runs() {
         action: action ?? undefined,
         blueprint: blueprint ?? undefined,
         entity: entity ?? undefined,
+        agent: agent ?? undefined,
         limit: PAGE,
         offset: (page - 1) * PAGE,
       }),
@@ -162,6 +179,11 @@ export function Runs() {
           />
         </SimpleGrid>
       </Group>
+      {agent && (
+        <Group gap="xs">
+          <Select aria-label="Filter by AI agent" data={agentFilterOptions([agent])} value={agent} onChange={(v) => set('agent', v ?? '')} clearable w={240} />
+        </Group>
+      )}
       <DataTable
         rows={q.data?.items}
         loading={q.isPending}

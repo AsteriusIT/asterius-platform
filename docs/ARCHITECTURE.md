@@ -72,6 +72,14 @@ organization) and an optional platform `superadmin` flag.
   `CONFIG_DIR/orgs/<slug>`, or a Git repository pulled by `orgs/git-source.ts`) inside that organization's context.
 - **MCP.** `ai/mcp-server.ts` (`POST /api/mcp`, also `/api/v1/mcp`): stateless JSON-RPC MCP server; tools run with the
   token owner's permissions in the token's organization.
+- **Agent governance** (`agents/`). Registered AI agents (`agents` table, config `agents:`) are principals narrowed by
+  allow-lists: `Principal.agent` carries the agent's workflows and blueprints; `canTrigger`, `canViewRun`/`listRuns`,
+  `can`/`accessOf`/`readFilter` (auth/access.ts) apply them on top of the user's rights, `isAdmin` is false for agents,
+  `assertHuman` refuses approvals and input answers, and agent tokens only read and start runs on the REST API.
+  Requests carry their channel (`ui`, `api`, `mcp`, `workflow`) and agent in the request context (`orgs/context.ts`
+  `Via`), recorded on `audit_log` (hash chain v3 covers them) and `runs`. External MCP servers (`mcp_servers`, config
+  `mcpServers:`) are called by `agents/mcp-client.ts` through `lib/http.ts` for AI agent steps (`tools: [mcp]`,
+  `guardrails.mcpTools`). See docs/MCP.md.
 
 ## Workflows
 

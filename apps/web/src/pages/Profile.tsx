@@ -60,9 +60,16 @@ export function TokenTable({ all }: { all?: boolean }) {
           key: 'n',
           label: 'Name',
           render: (t) => (
-            <Text fz="sm" fw={500}>
-              {t.name}
-            </Text>
+            <Group gap="xs" wrap="nowrap">
+              <Text fz="sm" fw={500}>
+                {t.name}
+              </Text>
+              {t.agent && (
+                <Badge color="grape" variant="light">
+                  agent {t.agent}
+                </Badge>
+              )}
+            </Group>
           ),
         },
         { key: 'p', label: 'Token', render: (t) => <Code>{t.prefix}…</Code> },

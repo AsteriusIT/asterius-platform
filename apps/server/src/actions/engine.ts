@@ -1,3 +1,4 @@
+import { assertHuman } from '../agents/agents.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { InvokerConfig, RunLog } from '@asterius/shared';
 import { config } from '../config.js';
@@ -792,6 +793,7 @@ export async function decideStep(
   comment: string,
   extra: { choice?: string; values?: Record<string, unknown> } = {},
 ) {
+  assertHuman(p0);
   const p = await withDelegators(p0);
   const r = await getRunRow(runId);
   const def = stepDefs(r).find((d) => d.id === stepId);
