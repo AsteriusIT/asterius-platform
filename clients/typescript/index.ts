@@ -176,7 +176,7 @@ export type Action = {
     };
   } | {
     type: "event";
-    event: "entity.created" | "entity.updated" | "entity.deleted" | "entity.expired" | "scorecard.changed" | "run.finished";
+    event: "entity.created" | "entity.updated" | "entity.deleted" | "entity.expired" | "scorecard.changed" | "run.finished" | "initiative.at_risk" | "initiative.overdue" | "initiative.completed";
     blueprint?: string | null;
     action?: string | null;
     filter?: string;
@@ -322,13 +322,14 @@ export type Action = {
       required?: Array<string>;
       order?: Array<string>;
     };
-    tools?: Array<"catalog" | "upsert_entity" | "trigger_action" | "http">;
+    tools?: Array<"catalog" | "upsert_entity" | "trigger_action" | "http" | "mcp">;
     guardrails?: {
       entityBlueprints?: Array<string>;
       actions?: Array<string>;
       httpHosts?: Array<string>;
       httpMethods?: Array<"GET" | "POST" | "PUT" | "PATCH" | "DELETE">;
       maxWrites?: number;
+      mcpTools?: Array<string>;
     };
     mcpServers?: Array<{
       name: string;
@@ -641,7 +642,8 @@ export type Policy = {
   title: string;
   description?: string;
   enabled?: boolean;
-  target: "run" | "entity";
+  target: "run" | "entity" | "plan";
+  severity?: "critical" | "warning" | "advisory";
   match?: {
     actions?: Array<string>;
     blueprints?: Array<string>;
@@ -649,6 +651,78 @@ export type Policy = {
   };
   expression: string;
   message?: string;
+};
+
+export type Initiative = {
+  identifier: string;
+  title: string;
+  description?: string;
+  scorecard: string;
+  targetLevel?: string | null;
+  rules?: Array<string>;
+  startDate: string;
+  deadline: string;
+  teams?: Array<string>;
+  owner?: string | null;
+  enabled?: boolean;
+  reminderDays?: number;
+};
+
+export type InitiativeExemptionInput = {
+  entity: string;
+  rule?: string | null;
+  reason: string;
+  expiresAt: string;
+};
+
+export type PriceCatalog = {
+  identifier: string;
+  title: string;
+  description?: string;
+  currency?: string;
+  extends?: string;
+  hoursPerMonth?: number;
+  freeProviders?: Array<string>;
+  carbon?: {
+    pue?: {
+      [key: string]: number;
+    };
+    gridIntensity?: {
+      [key: string]: number;
+    };
+    defaultGridIntensity?: number;
+    wattsPerVcpu?: {
+      [key: string]: number;
+    };
+    wattsPerGbMemory?: number;
+  };
+  prices?: Array<{
+    provider: string;
+    type: string;
+    match?: {
+      [key: string]: string | number | boolean | Array<string | number>;
+    };
+    monthly?: number;
+    hourly?: number;
+    perUnit?: Array<{
+      attribute: string;
+      scale?: number;
+      default?: number;
+      monthly?: number;
+      hourly?: number;
+      watts?: number;
+    }>;
+    quantity?: {
+      attribute: string;
+      default?: number;
+    };
+    free?: boolean;
+    usageBased?: boolean;
+    watts?: number;
+    vcpu?: number;
+    memoryGb?: number;
+    note?: string;
+  }>;
 };
 
 export type Fragment = {
@@ -786,13 +860,14 @@ export type Fragment = {
       required?: Array<string>;
       order?: Array<string>;
     };
-    tools?: Array<"catalog" | "upsert_entity" | "trigger_action" | "http">;
+    tools?: Array<"catalog" | "upsert_entity" | "trigger_action" | "http" | "mcp">;
     guardrails?: {
       entityBlueprints?: Array<string>;
       actions?: Array<string>;
       httpHosts?: Array<string>;
       httpMethods?: Array<"GET" | "POST" | "PUT" | "PATCH" | "DELETE">;
       maxWrites?: number;
+      mcpTools?: Array<string>;
     };
     mcpServers?: Array<{
       name: string;
@@ -1167,6 +1242,48 @@ export type Connection = {
   };
 };
 
+export type Agent = {
+  identifier: string;
+  title: string;
+  description?: string;
+  ownerTeam: string;
+  workflows?: Array<string>;
+  blueprints?: Array<string | "*">;
+  oauthClients?: Array<string>;
+  enabled?: boolean;
+};
+
+export type McpServer = {
+  identifier: string;
+  title: string;
+  description?: string;
+  url: string;
+  auth?: {
+    type: "bearer";
+    token: string;
+  } | {
+    type: "header";
+    headers: {
+      [key: string]: string;
+    };
+  } | {
+    type: "basic";
+    username: string;
+    password: string;
+  } | {
+    type: "oauth2-client-credentials";
+    tokenUrl: string;
+    clientId: string;
+    clientSecret: string;
+    scope?: string;
+    audience?: string;
+    authStyle?: "body" | "basic";
+  } | null;
+  tools: Array<string>;
+  timeoutSeconds?: number;
+  enabled?: boolean;
+};
+
 export type EntityInput = {
   identifier: string;
   title?: string;
@@ -1372,7 +1489,7 @@ export type ConfigFile = {
       };
     } | {
       type: "event";
-      event: "entity.created" | "entity.updated" | "entity.deleted" | "entity.expired" | "scorecard.changed" | "run.finished";
+      event: "entity.created" | "entity.updated" | "entity.deleted" | "entity.expired" | "scorecard.changed" | "run.finished" | "initiative.at_risk" | "initiative.overdue" | "initiative.completed";
       blueprint?: string | null;
       action?: string | null;
       filter?: string;
@@ -1518,13 +1635,14 @@ export type ConfigFile = {
         required?: Array<string>;
         order?: Array<string>;
       };
-      tools?: Array<"catalog" | "upsert_entity" | "trigger_action" | "http">;
+      tools?: Array<"catalog" | "upsert_entity" | "trigger_action" | "http" | "mcp">;
       guardrails?: {
         entityBlueprints?: Array<string>;
         actions?: Array<string>;
         httpHosts?: Array<string>;
         httpMethods?: Array<"GET" | "POST" | "PUT" | "PATCH" | "DELETE">;
         maxWrites?: number;
+        mcpTools?: Array<string>;
       };
       mcpServers?: Array<{
         name: string;
@@ -1844,7 +1962,8 @@ export type ConfigFile = {
     title: string;
     description?: string;
     enabled?: boolean;
-    target: "run" | "entity";
+    target: "run" | "entity" | "plan";
+    severity?: "critical" | "warning" | "advisory";
     match?: {
       actions?: Array<string>;
       blueprints?: Array<string>;
@@ -1852,6 +1971,55 @@ export type ConfigFile = {
     };
     expression: string;
     message?: string;
+  }>;
+  priceCatalogs?: Array<{
+    identifier: string;
+    title: string;
+    description?: string;
+    currency?: string;
+    extends?: string;
+    hoursPerMonth?: number;
+    freeProviders?: Array<string>;
+    carbon?: {
+      pue?: {
+        [key: string]: number;
+      };
+      gridIntensity?: {
+        [key: string]: number;
+      };
+      defaultGridIntensity?: number;
+      wattsPerVcpu?: {
+        [key: string]: number;
+      };
+      wattsPerGbMemory?: number;
+    };
+    prices?: Array<{
+      provider: string;
+      type: string;
+      match?: {
+        [key: string]: string | number | boolean | Array<string | number>;
+      };
+      monthly?: number;
+      hourly?: number;
+      perUnit?: Array<{
+        attribute: string;
+        scale?: number;
+        default?: number;
+        monthly?: number;
+        hourly?: number;
+        watts?: number;
+      }>;
+      quantity?: {
+        attribute: string;
+        default?: number;
+      };
+      free?: boolean;
+      usageBased?: boolean;
+      watts?: number;
+      vcpu?: number;
+      memoryGb?: number;
+      note?: string;
+    }>;
   }>;
   dashboards?: Array<{
     identifier: string;
@@ -1931,6 +2099,11 @@ export type ConfigFile = {
     } | {
       title?: string;
       width?: number;
+      type: "initiative";
+      initiative: string;
+    } | {
+      title?: string;
+      width?: number;
       type: "chart";
       chart?: "line" | "bar" | "area";
       stacked?: boolean;
@@ -1982,6 +2155,20 @@ export type ConfigFile = {
       show: "properties" | "scorecards" | "relations" | "links";
       properties?: Array<string>;
     }>;
+  }>;
+  initiatives?: Array<{
+    identifier: string;
+    title: string;
+    description?: string;
+    scorecard: string;
+    targetLevel?: string | null;
+    rules?: Array<string>;
+    startDate: string;
+    deadline: string;
+    teams?: Array<string>;
+    owner?: string | null;
+    enabled?: boolean;
+    reminderDays?: number;
   }>;
   fragments?: Array<{
     identifier: string;
@@ -2118,13 +2305,14 @@ export type ConfigFile = {
         required?: Array<string>;
         order?: Array<string>;
       };
-      tools?: Array<"catalog" | "upsert_entity" | "trigger_action" | "http">;
+      tools?: Array<"catalog" | "upsert_entity" | "trigger_action" | "http" | "mcp">;
       guardrails?: {
         entityBlueprints?: Array<string>;
         actions?: Array<string>;
         httpHosts?: Array<string>;
         httpMethods?: Array<"GET" | "POST" | "PUT" | "PATCH" | "DELETE">;
         maxWrites?: number;
+        mcpTools?: Array<string>;
       };
       mcpServers?: Array<{
         name: string;
@@ -2496,6 +2684,46 @@ export type ConfigFile = {
       paths: Array<string>;
     };
   }>;
+  agents?: Array<{
+    identifier: string;
+    title: string;
+    description?: string;
+    ownerTeam: string;
+    workflows?: Array<string>;
+    blueprints?: Array<string | "*">;
+    oauthClients?: Array<string>;
+    enabled?: boolean;
+  }>;
+  mcpServers?: Array<{
+    identifier: string;
+    title: string;
+    description?: string;
+    url: string;
+    auth?: {
+      type: "bearer";
+      token: string;
+    } | {
+      type: "header";
+      headers: {
+        [key: string]: string;
+      };
+    } | {
+      type: "basic";
+      username: string;
+      password: string;
+    } | {
+      type: "oauth2-client-credentials";
+      tokenUrl: string;
+      clientId: string;
+      clientSecret: string;
+      scope?: string;
+      audience?: string;
+      authStyle?: "body" | "basic";
+    } | null;
+    tools: Array<string>;
+    timeoutSeconds?: number;
+    enabled?: boolean;
+  }>;
   entities?: Array<{
     identifier: string;
     title?: string;
@@ -2755,7 +2983,8 @@ export type PolicyView = {
   title: string;
   description: string;
   enabled: boolean;
-  target: "run" | "entity";
+  target: "run" | "entity" | "plan";
+  severity: "critical" | "warning" | "advisory";
   match: {
     actions?: Array<string>;
     blueprints?: Array<string>;
@@ -2764,6 +2993,86 @@ export type PolicyView = {
   expression: string;
   message: string;
   managed: boolean;
+};
+
+export type InitiativeView = {
+  identifier: string;
+  title: string;
+  description: string;
+  scorecard: string;
+  targetLevel?: string | null;
+  rules: Array<string>;
+  startDate: string;
+  deadline: string;
+  teams: Array<string>;
+  owner?: string | null;
+  enabled: boolean;
+  reminderDays: number;
+  managed: boolean;
+  blueprint: string;
+  scorecardTitle: string;
+  status: "on_track" | "at_risk" | "overdue" | "done";
+  progress: {
+    passing: number;
+    total: number;
+    exempted: number;
+    ratio: number;
+  };
+  expected: number;
+  daysLeft: number;
+  error?: string;
+};
+
+export type PriceCatalogView = {
+  identifier: string;
+  title: string;
+  description: string;
+  currency: string;
+  extends?: string;
+  hoursPerMonth: number;
+  freeProviders?: Array<string>;
+  carbon: {
+    pue?: {
+      [key: string]: number;
+    };
+    gridIntensity?: {
+      [key: string]: number;
+    };
+    defaultGridIntensity?: number;
+    wattsPerVcpu?: {
+      [key: string]: number;
+    };
+    wattsPerGbMemory?: number;
+  };
+  prices: Array<{
+    provider: string;
+    type: string;
+    match: {
+      [key: string]: string | number | boolean | Array<string | number>;
+    };
+    monthly?: number;
+    hourly?: number;
+    perUnit?: Array<{
+      attribute: string;
+      scale: number;
+      default: number;
+      monthly?: number;
+      hourly?: number;
+      watts?: number;
+    }>;
+    quantity?: {
+      attribute: string;
+      default: number;
+    };
+    free?: boolean;
+    usageBased?: boolean;
+    watts?: number;
+    vcpu?: number;
+    memoryGb?: number;
+    note?: string;
+  }>;
+  managed: boolean;
+  builtin?: boolean;
 };
 
 export type FragmentView = {
@@ -2901,13 +3210,14 @@ export type FragmentView = {
       required?: Array<string>;
       order?: Array<string>;
     };
-    tools: Array<"catalog" | "upsert_entity" | "trigger_action" | "http">;
+    tools: Array<"catalog" | "upsert_entity" | "trigger_action" | "http" | "mcp">;
     guardrails: {
       entityBlueprints: Array<string>;
       actions: Array<string>;
       httpHosts: Array<string>;
       httpMethods: Array<"GET" | "POST" | "PUT" | "PATCH" | "DELETE">;
       maxWrites: number;
+      mcpTools: Array<string>;
     };
     mcpServers: Array<{
       name: string;
@@ -3325,6 +3635,78 @@ export type ConnectionUsage = {
   fragments: Array<string>;
 };
 
+export type AgentView = {
+  identifier: string;
+  title: string;
+  description: string;
+  ownerTeam: string;
+  workflows: Array<string>;
+  blueprints: Array<string | "*">;
+  oauthClients: Array<string>;
+  enabled: boolean;
+  version: number;
+  managed: boolean;
+  tokens?: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type McpServerView = {
+  identifier: string;
+  title: string;
+  description: string;
+  url: string;
+  auth?: {
+    type: "bearer";
+    token: string;
+  } | {
+    type: "header";
+    headers: {
+      [key: string]: string;
+    };
+  } | {
+    type: "basic";
+    username: string;
+    password: string;
+  } | {
+    type: "oauth2-client-credentials";
+    tokenUrl: string;
+    clientId: string;
+    clientSecret: string;
+    scope?: string;
+    audience?: string;
+    authStyle: "body" | "basic";
+  } | null;
+  tools: Array<string>;
+  timeoutSeconds: number;
+  enabled: boolean;
+  version: number;
+  managed: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type McpServerTestResult = {
+  ok: boolean;
+  message: string;
+  server?: {
+    name?: string;
+    version?: string;
+    protocolVersion?: string;
+  };
+  tools: Array<{
+    name: string;
+    description?: string;
+    allowed: boolean;
+  }>;
+  missing: Array<string>;
+};
+
+export type AgentToken = {
+  id: string;
+  token: string;
+};
+
 export type Delivery = {
   id: string;
   webhook: string;
@@ -3579,6 +3961,36 @@ export class AsteriusClient {
   /** POST /api/v1/actions/dry-run */
   postActionsDryRun(query?: Record<string, string | number | undefined>): Promise<unknown> {
     return this.request('POST', `/api/v1/actions/dry-run`, { query });
+  }
+
+  /** GET /api/v1/agents */
+  getAgents(query?: Record<string, string | number | undefined>): Promise<Array<AgentView>> {
+    return this.request('GET', `/api/v1/agents`, { query });
+  }
+
+  /** DELETE /api/v1/agents/{id} */
+  deleteAgentsById(id: string, query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('DELETE', `/api/v1/agents/${encodeURIComponent(id)}`, { query });
+  }
+
+  /** GET /api/v1/agents/{id} */
+  getAgentsById(id: string, query?: Record<string, string | number | undefined>): Promise<AgentView> {
+    return this.request('GET', `/api/v1/agents/${encodeURIComponent(id)}`, { query });
+  }
+
+  /** PUT /api/v1/agents/{id} */
+  putAgentsById(id: string, body: Agent, query?: Record<string, string | number | undefined>): Promise<AgentView> {
+    return this.request('PUT', `/api/v1/agents/${encodeURIComponent(id)}`, { query, body });
+  }
+
+  /** GET /api/v1/agents/{id}/tokens */
+  getAgentsTokensById(id: string, query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('GET', `/api/v1/agents/${encodeURIComponent(id)}/tokens`, { query });
+  }
+
+  /** POST /api/v1/agents/{id}/tokens */
+  postAgentsTokensById(id: string, query?: Record<string, string | number | undefined>): Promise<AgentToken> {
+    return this.request('POST', `/api/v1/agents/${encodeURIComponent(id)}/tokens`, { query });
   }
 
   /** POST /api/v1/ai/ask */
@@ -4086,6 +4498,46 @@ export class AsteriusClient {
     return this.request('POST', `/api/v1/hooks/${encodeURIComponent(org)}/${encodeURIComponent(id)}`, { query });
   }
 
+  /** GET /api/v1/initiatives */
+  getInitiatives(query?: Record<string, string | number | undefined>): Promise<Array<InitiativeView>> {
+    return this.request('GET', `/api/v1/initiatives`, { query });
+  }
+
+  /** DELETE /api/v1/initiatives/{id} */
+  deleteInitiativesById(id: string, query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('DELETE', `/api/v1/initiatives/${encodeURIComponent(id)}`, { query });
+  }
+
+  /** GET /api/v1/initiatives/{id} */
+  getInitiativesById(id: string, query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('GET', `/api/v1/initiatives/${encodeURIComponent(id)}`, { query });
+  }
+
+  /** PUT /api/v1/initiatives/{id} */
+  putInitiativesById(id: string, body: Initiative, query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('PUT', `/api/v1/initiatives/${encodeURIComponent(id)}`, { query, body });
+  }
+
+  /** GET /api/v1/initiatives/{id}/entities */
+  getInitiativesEntitiesById(id: string, query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('GET', `/api/v1/initiatives/${encodeURIComponent(id)}/entities`, { query });
+  }
+
+  /** GET /api/v1/initiatives/{id}/exemptions */
+  getInitiativesExemptionsById(id: string, query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('GET', `/api/v1/initiatives/${encodeURIComponent(id)}/exemptions`, { query });
+  }
+
+  /** POST /api/v1/initiatives/{id}/exemptions */
+  postInitiativesExemptionsById(id: string, body: InitiativeExemptionInput, query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('POST', `/api/v1/initiatives/${encodeURIComponent(id)}/exemptions`, { query, body });
+  }
+
+  /** DELETE /api/v1/initiatives/{id}/exemptions/{exemption} */
+  deleteInitiativesExemptionsByIdExemption(id: string, exemption: string, query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('DELETE', `/api/v1/initiatives/${encodeURIComponent(id)}/exemptions/${encodeURIComponent(exemption)}`, { query });
+  }
+
   /** GET /api/v1/insights */
   getInsights(query?: Record<string, string | number | undefined>): Promise<Insights> {
     return this.request('GET', `/api/v1/insights`, { query });
@@ -4151,6 +4603,31 @@ export class AsteriusClient {
     return this.request('POST', `/api/v1/mcp`, { query });
   }
 
+  /** GET /api/v1/mcp-servers */
+  getMcpServers(query?: Record<string, string | number | undefined>): Promise<Array<McpServerView>> {
+    return this.request('GET', `/api/v1/mcp-servers`, { query });
+  }
+
+  /** DELETE /api/v1/mcp-servers/{id} */
+  deleteMcpServersById(id: string, query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('DELETE', `/api/v1/mcp-servers/${encodeURIComponent(id)}`, { query });
+  }
+
+  /** GET /api/v1/mcp-servers/{id} */
+  getMcpServersById(id: string, query?: Record<string, string | number | undefined>): Promise<McpServerView> {
+    return this.request('GET', `/api/v1/mcp-servers/${encodeURIComponent(id)}`, { query });
+  }
+
+  /** PUT /api/v1/mcp-servers/{id} */
+  putMcpServersById(id: string, body: McpServer, query?: Record<string, string | number | undefined>): Promise<McpServerView> {
+    return this.request('PUT', `/api/v1/mcp-servers/${encodeURIComponent(id)}`, { query, body });
+  }
+
+  /** POST /api/v1/mcp-servers/{id}/test */
+  postMcpServersTestById(id: string, query?: Record<string, string | number | undefined>): Promise<McpServerTestResult> {
+    return this.request('POST', `/api/v1/mcp-servers/${encodeURIComponent(id)}/test`, { query });
+  }
+
   /** DELETE /api/v1/me/delegation */
   deleteMeDelegation(query?: Record<string, string | number | undefined>): Promise<unknown> {
     return this.request('DELETE', `/api/v1/me/delegation`, { query });
@@ -4164,6 +4641,11 @@ export class AsteriusClient {
   /** PUT /api/v1/me/delegation */
   putMeDelegation(body: DelegationInput, query?: Record<string, string | number | undefined>): Promise<MyDelegation> {
     return this.request('PUT', `/api/v1/me/delegation`, { query, body });
+  }
+
+  /** GET /api/v1/me/initiatives */
+  getMeInitiatives(query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('GET', `/api/v1/me/initiatives`, { query });
   }
 
   /** GET /api/v1/me/notifications */
@@ -4319,6 +4801,31 @@ export class AsteriusClient {
   /** PUT /api/v1/policies/{id} */
   putPoliciesById(id: string, body: Policy, query?: Record<string, string | number | undefined>): Promise<PolicyView> {
     return this.request('PUT', `/api/v1/policies/${encodeURIComponent(id)}`, { query, body });
+  }
+
+  /** GET /api/v1/price-catalogs */
+  getPriceCatalogs(query?: Record<string, string | number | undefined>): Promise<Array<PriceCatalogView>> {
+    return this.request('GET', `/api/v1/price-catalogs`, { query });
+  }
+
+  /** DELETE /api/v1/price-catalogs/{id} */
+  deletePriceCatalogsById(id: string, query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('DELETE', `/api/v1/price-catalogs/${encodeURIComponent(id)}`, { query });
+  }
+
+  /** GET /api/v1/price-catalogs/{id} */
+  getPriceCatalogsById(id: string, query?: Record<string, string | number | undefined>): Promise<PriceCatalogView> {
+    return this.request('GET', `/api/v1/price-catalogs/${encodeURIComponent(id)}`, { query });
+  }
+
+  /** PUT /api/v1/price-catalogs/{id} */
+  putPriceCatalogsById(id: string, body: PriceCatalog, query?: Record<string, string | number | undefined>): Promise<PriceCatalogView> {
+    return this.request('PUT', `/api/v1/price-catalogs/${encodeURIComponent(id)}`, { query, body });
+  }
+
+  /** POST /api/v1/price-catalogs/{id}/estimate */
+  postPriceCatalogsEstimateById(id: string, query?: Record<string, string | number | undefined>): Promise<unknown> {
+    return this.request('POST', `/api/v1/price-catalogs/${encodeURIComponent(id)}/estimate`, { query });
   }
 
   /** GET /api/v1/runs */
