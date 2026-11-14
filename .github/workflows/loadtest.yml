@@ -64,7 +64,7 @@ jobs:
         if: always()
         run: curl -fs $BASE_URL/metrics | grep -E '^asterius_(http_request_duration_seconds_(sum|count)|db_pool|queue_oldest|webhook_delivery_latency_seconds_(sum|count))' | head -60 || true
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: load-test
