@@ -4,13 +4,20 @@ import { blueprintOf, canTrigger, forViewer, getAction, isRunnable, listActions 
 import { getRun, listRuns, pendingApprovals, triggerRun } from '../actions/runs.js';
 import { runCatalogTool } from './tools.js';
 import { truncate } from './model.js';
-import { errorMessage } from '../lib/errors.js';
+import { errorMessage, notFound } from '../lib/errors.js';
 import { appUrl } from '../orgs/orgs.js';
+import { canRead, getEntity } from '../catalog/entities.js';
+import { getBlueprintCached } from '../catalog/blueprints.js';
+import { resultsForEntity } from '../catalog/scorecards.js';
+import { docsUrlOf, fetchDocs } from '../catalog/docs.js';
+import { computeInsights } from '../catalog/insights.js';
+import { insightsConfig } from '../schemas.js';
 
 /**
  * The platform as a Model Context Protocol server (Streamable HTTP transport, stateless JSON responses).
  * Callers authenticate with an API token and act with that user's permissions in the token's organization: the
  * catalog is readable, actions are started (and runs read) exactly as through the API. Approving is not exposed.
+ * Registered AI agents (agents/agents.ts) get the same tools narrowed by their allow-lists, without the approval queue.
  */
 
 const PROTOCOL_VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05'];
@@ -20,7 +27,18 @@ interface ToolDef {
   description: string;
   inputSchema: Record<string, unknown>;
   annotations?: Record<string, unknown>;
+  /** Offered to people only, not to agents. */
+  humansOnly?: boolean;
   run: (input: Record<string, unknown>, p: Principal) => Promise<unknown>;
+}
+
+/** An entity the caller may read (404 otherwise, as through the API). */
+async function readableEntity(i: Record<string, unknown>, p: Principal) {
+  const blueprint = typeof i.blueprint === 'string' ? i.blueprint : '';
+  const identifier = typeof i.identifier === 'string' ? i.identifier : '';
+  const e = await getEntity(blueprint, identifier).catch(() => undefined);
+  if (!e || !(await canRead(p, e))) throw notFound(`Entity ${blueprint}/${identifier}`);
+  return e;
 }
 
 const obj = (properties: Record<string, unknown>, required: string[] = []) => ({ type: 'object', properties, required, additionalProperties: false });
@@ -31,7 +49,14 @@ const TOOLS: ToolDef[] = [
     description: 'The signed-in user, the organization the token works in, the role and the teams in it.',
     inputSchema: obj({}),
     annotations: { readOnlyHint: true },
-    run: async (_i, p) => ({ user: { name: p.name, email: p.email }, organization: p.org, role: p.role, roles: p.roles, teams: p.teams }),
+    run: async (_i, p) => ({
+      user: { name: p.name, email: p.email },
+      organization: p.org,
+      role: p.role,
+      roles: p.roles,
+      teams: p.teams,
+      agent: p.agent ? { identifier: p.agent.identifier, title: p.agent.title, workflows: p.agent.workflows, blueprints: p.agent.blueprints } : null,
+    }),
   },
   {
     name: 'list_blueprints',
@@ -53,6 +78,50 @@ const TOOLS: ToolDef[] = [
     inputSchema: obj({ blueprint: { type: 'string' }, identifier: { type: 'string' } }, ['blueprint', 'identifier']),
     annotations: { readOnlyHint: true },
     run: (i, p) => runCatalogTool('get_entity', i, p), // as the caller: blueprint read rules apply
+  },
+  {
+    name: 'get_scorecards',
+    description: 'Scorecard results of one catalog entity: level reached and the pass / fail of each rule.',
+    inputSchema: obj({ blueprint: { type: 'string' }, identifier: { type: 'string' } }, ['blueprint', 'identifier']),
+    annotations: { readOnlyHint: true },
+    run: async (i, p) => {
+      const e = await readableEntity(i, p);
+      return resultsForEntity(e.blueprint, e.identifier);
+    },
+  },
+  {
+    name: 'get_entity_docs',
+    description: 'The Markdown documentation of a catalog entity (its docs property, e.g. a README), fetched by the platform.',
+    inputSchema: obj(
+      { blueprint: { type: 'string' }, identifier: { type: 'string' }, property: { type: 'string', description: 'docs property, when there are several' } },
+      ['blueprint', 'identifier'],
+    ),
+    annotations: { readOnlyHint: true },
+    run: async (i, p) => {
+      const e = await readableEntity(i, p);
+      const doc = docsUrlOf(await getBlueprintCached(e.blueprint), e, typeof i.property === 'string' ? i.property : undefined);
+      return { property: doc.property, ...(await fetchDocs(doc.url)) };
+    },
+  },
+  {
+    name: 'get_dora_insights',
+    description:
+      'DORA metrics (deployment frequency, lead time, change failure rate, time to restore) over a window, from the deployments and incidents you may read.',
+    inputSchema: obj({
+      days: { type: 'number', description: 'Window in days (default 30, at most 365)' },
+      team: { type: 'string', description: 'Only this owner team' },
+      service: { type: 'string', description: 'Only this service (entity identifier)' },
+    }),
+    annotations: { readOnlyHint: true },
+    run: async (i, p) =>
+      computeInsights(
+        insightsConfig.parse({
+          days: i.days === undefined ? undefined : Math.min(Math.max(Math.round(Number(i.days)) || 30, 1), 365),
+          team: typeof i.team === 'string' && i.team ? i.team : undefined,
+          service: typeof i.service === 'string' && i.service ? i.service : undefined,
+        }),
+        p,
+      ),
   },
   {
     name: 'list_actions',
@@ -111,6 +180,7 @@ const TOOLS: ToolDef[] = [
     description: 'Requests and workflow steps waiting for a decision you can make. Decisions stay with people: there is no tool to approve.',
     inputSchema: obj({ limit: { type: 'number' } }),
     annotations: { readOnlyHint: true },
+    humansOnly: true,
     run: async (i, p) => {
       const { items } = await pendingApprovals(p, { limit: Math.min(Math.max(Number(i.limit) || 20, 1), 100) });
       const runs = await appUrl('/runs/');
@@ -137,6 +207,8 @@ const TOOLS: ToolDef[] = [
 ];
 
 export const MCP_TOOL_NAMES = TOOLS.map((t) => t.name);
+
+const toolsFor = (p: Principal) => (p.agent ? TOOLS.filter((t) => !t.humansOnly) : TOOLS);
 
 type Id = string | number | null;
 interface Rpc {
@@ -172,17 +244,18 @@ async function handleOne(raw: unknown, p: Principal): Promise<RpcResult | undefi
           protocolVersion: PROTOCOL_VERSIONS.includes(asked) ? asked : PROTOCOL_VERSIONS[0],
           capabilities: { tools: { listChanged: false } },
           serverInfo: { name: 'asterius-platform', version: '1' },
-          instructions: 'Search the software catalog, list and start self-service actions, and follow runs. Calls use your permissions.',
+          instructions:
+            'Search the software catalog, read entity docs, scorecards and DORA insights, list and start self-service actions, and follow runs. Calls use your permissions (narrowed to the allow-lists of the agent you act as, if any).',
         },
       };
     }
     case 'ping':
       return { jsonrpc: '2.0', id, result: {} };
     case 'tools/list':
-      return { jsonrpc: '2.0', id, result: { tools: TOOLS.map(({ run: _run, ...t }) => t) } };
+      return { jsonrpc: '2.0', id, result: { tools: toolsFor(p).map(({ run: _run, humansOnly: _h, ...t }) => t) } };
     case 'tools/call': {
       const name = typeof m.params?.name === 'string' ? m.params.name : '';
-      const tool = TOOLS.find((t) => t.name === name);
+      const tool = toolsFor(p).find((t) => t.name === name);
       if (!tool) return err(id, -32602, `Unknown tool "${name}"`);
       const args = (m.params?.arguments ?? {}) as Record<string, unknown>;
       try {

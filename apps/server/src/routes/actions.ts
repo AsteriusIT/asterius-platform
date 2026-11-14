@@ -309,6 +309,9 @@ export async function actionRoutes(app: FastifyInstance) {
           action: z.string().optional(),
           blueprint: z.string().optional(),
           entity: z.string().optional(),
+          /** Runs started by this agent (`*`: by any agent, `-`: by none). */
+          agent: z.string().max(64).optional(),
+          channel: z.enum(['ui', 'api', 'mcp', 'workflow']).optional(),
           cursor: z.string().max(500).optional(),
           count: z
             .enum(['true', 'false'])

@@ -372,7 +372,9 @@ const inlineForEach = z
 
 export const AGENT_MODELS = ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-fable-5-1'] as const;
 
-export const AGENT_TOOLS = ['catalog', 'upsert_entity', 'trigger_action', 'http'] as const;
+export const AGENT_TOOLS = ['catalog', 'upsert_entity', 'trigger_action', 'http', 'mcp'] as const;
+/** `server/tool`: a tool of an MCP server registered by the admins (mcpServerDef). */
+export const MCP_TOOL_REF = /^[a-z][a-z0-9_-]{0,63}\/[A-Za-z0-9_.:-]{1,128}$/;
 export const agentGuardrails = z.object({
   /** upsert_entity: blueprints the agent may write to. */
   entityBlueprints: z.array(slug).max(50).default([]),
@@ -389,6 +391,8 @@ export const agentGuardrails = z.object({
     .default(['GET']),
   /** Write operations (upserts, triggers, non-GET calls) per step execution. */
   maxWrites: z.number().int().min(1).max(50).default(5),
+  /** mcp: tools of registered MCP servers the agent may call (`server/tool`, also allowed by the server); each call counts as a write. */
+  mcpTools: z.array(z.string().regex(MCP_TOOL_REF, 'server/tool')).max(100).default([]),
 });
 export const mcpServer = z.object({
   name: z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,39}$/),
@@ -460,7 +464,7 @@ export const workflowStep = z.discriminatedUnion('type', [
     /** catalog: read-only lookups · upsert_entity / trigger_action / http: governed write tools (need `guardrails`). */
     tools: z.array(z.enum(AGENT_TOOLS)).default([]),
     /** Allow-lists and limits of the write tools; a write tool without its allow-list is rejected. */
-    guardrails: agentGuardrails.default({ entityBlueprints: [], actions: [], httpHosts: [], httpMethods: ['GET'], maxWrites: 5 }),
+    guardrails: agentGuardrails.default({ entityBlueprints: [], actions: [], httpHosts: [], httpMethods: ['GET'], maxWrites: 5, mcpTools: [] }),
     /** Remote MCP servers the model may use (called by the Claude API, so they must be reachable from the internet over HTTPS). */
     mcpServers: z.array(mcpServer).max(5).default([]),
     maxTurns: z.number().int().min(1).max(20).default(6),
@@ -1236,6 +1240,72 @@ export const orgDecl = z.object({
 });
 export type OrgDecl = z.infer<typeof orgDecl>;
 
+// ---------- AI agent governance (agents/) ----------
+
+/**
+ * A registered AI agent: a non-human principal of the organization. It authenticates with API tokens bound to it (or as
+ * an OAuth MCP client listed in `oauthClients`) and acts with the rights of the token's user narrowed by its allow-lists.
+ */
+export const agentDef = z.object({
+  identifier: slug,
+  title: z.string().min(1).max(100),
+  description: z.string().max(2000).default(''),
+  /** Team accountable for the agent: its members (and admins) issue its tokens and may act as it. */
+  ownerTeam: slug,
+  /** Workflows (action identifiers) the agent may see and start. Empty: none. */
+  workflows: z.array(slug).max(200).default([]),
+  /** Blueprints whose entities the agent may read; `*`: every blueprint its user may read. Empty: none. */
+  blueprints: z
+    .array(z.union([slug, z.literal('*')]))
+    .max(200)
+    .default([]),
+  /** OAuth client ids (`azp` / `client_id` claim) of MCP clients that are this agent. */
+  oauthClients: z.array(z.string().min(1).max(200)).max(20).default([]),
+  enabled: z.boolean().default(true),
+});
+export type AgentDef = z.infer<typeof agentDef>;
+
+/** Auth of an external MCP server: credentials as references only (checked by agents/mcp-servers.ts). */
+const mcpServerAuth = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('bearer'), token: z.string().min(1) }),
+  z.object({
+    type: z.literal('header'),
+    headers: z
+      .record(z.string().regex(/^[A-Za-z0-9-]{1,100}$/, 'header names: letters, digits and -'), z.string().max(4000))
+      .refine((h) => Object.keys(h).length > 0, 'at least one header'),
+  }),
+  z.object({ type: z.literal('basic'), username: z.string(), password: z.string() }),
+  z.object({
+    type: z.literal('oauth2-client-credentials'),
+    tokenUrl: z.string().url(),
+    clientId: z.string().min(1),
+    clientSecret: z.string().min(1),
+    scope: z.string().optional(),
+    audience: z.string().optional(),
+    authStyle: z.enum(['body', 'basic']).default('body'),
+  }),
+]);
+
+/** An external MCP server (Streamable HTTP) whose allow-listed tools AI agent steps may call, through the SSRF guard. */
+export const mcpServerDef = z.object({
+  identifier: slug,
+  title: z.string().min(1).max(100),
+  description: z.string().max(2000).default(''),
+  url: z
+    .string()
+    .url()
+    .refine((u) => /^https?:\/\//.test(u), 'http(s) URL'),
+  auth: mcpServerAuth.nullish(),
+  /** Tool names agent steps may call (fail closed: tools not listed here are never offered). */
+  tools: z
+    .array(z.string().regex(/^[A-Za-z0-9_.:-]{1,128}$/, 'tool name'))
+    .min(1, 'allow at least one tool')
+    .max(100),
+  timeoutSeconds: z.number().int().min(1).max(120).default(30),
+  enabled: z.boolean().default(true),
+});
+export type McpServerDef = z.infer<typeof mcpServerDef>;
+
 export const configFile = z.object({
   /** Platform files only (not in an organization's own configuration). */
   organizations: z.array(orgDecl).default([]),
@@ -1251,6 +1321,9 @@ export const configFile = z.object({
   /** Connector definitions of the organization (the built-in ones ship with the platform). */
   connectors: z.array(connectorDef).default([]),
   connections: z.array(connectionDef).default([]),
+  /** AI agents and the external MCP servers their workflow steps may call (agents/). */
+  agents: z.array(agentDef).default([]),
+  mcpServers: z.array(mcpServerDef).default([]),
   entities: z.array(seedEntity).default([]),
 });
 export type ConfigFile = z.infer<typeof configFile>;

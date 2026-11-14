@@ -1,3 +1,4 @@
+import { assertHuman } from '../agents/agents.js';
 import type { ObjectSchema } from '@asterius/shared';
 import { config } from '../config.js';
 import { dialect, driver, json, later, now, one, run as exec } from '../db.js';
@@ -147,6 +148,7 @@ export async function deliverEvent(runId: string, stepId: string, name: string, 
 }
 
 export async function submitInput(p0: Principal, runId: string, stepId: string, values: Record<string, unknown>) {
+  assertHuman(p0, 'answer input steps');
   const p = await withDelegators(p0);
   const r = await getRunRow(runId);
   const def = stepDefs(r).find((d) => d.id === stepId);

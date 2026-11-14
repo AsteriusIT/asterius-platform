@@ -6,6 +6,7 @@ import pg from 'pg';
 import { config, paths } from './config.js';
 import { baseline } from './schema.js';
 import { approvalsMigration } from './migrations/approvals.js';
+import { agentsMigration } from './migrations/agents.js';
 import { componentLogger } from './logger.js';
 import { dbSpan } from './tracing.js';
 
@@ -296,6 +297,7 @@ CREATE TABLE fragment_versions (
       `);
     },
   },
+  { id: 10, name: 'agent registry, external MCP servers, call channels', up: agentsMigration },
 ];
 
 /**

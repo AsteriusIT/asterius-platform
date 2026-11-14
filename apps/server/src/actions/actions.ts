@@ -15,6 +15,7 @@ import { stepsOf, validateRunTemplates, validateWorkflow, type Step } from './wo
 import { expandWorkflow, fragmentLookup } from './fragments.js';
 import { isAdmin, matchesSubjects, type Principal } from '../auth/users.js';
 import { orgId } from '../orgs/context.js';
+import { agentMayRun } from '../agents/agents.js';
 
 interface Row {
   identifier: string;
@@ -116,9 +117,13 @@ export const blueprintOf = (a: Action): string | null => (a.trigger && 'blueprin
 /** A workflow runs once it has a trigger and at least one step. */
 export const isRunnable = (a: Action) => !!a.trigger && a.steps.length > 0;
 
-/** Workflows this principal may start by submitting their form (on an entity of `ownerTeam` for day-2 ones). */
+/** Workflows this principal may start by submitting their form (on an entity of `ownerTeam` for day-2 ones). Agents: their allowed workflows only. */
 export const canTrigger = (a: Action, p: Principal, ownerTeam: string | null) =>
-  a.enabled && isRunnable(a) && (a.trigger?.type === 'form' || a.trigger?.type === 'api') && matchesSubjects(p, a.trigger.allowed, ownerTeam);
+  a.enabled &&
+  isRunnable(a) &&
+  (a.trigger?.type === 'form' || a.trigger?.type === 'api') &&
+  agentMayRun(p, a.identifier) &&
+  matchesSubjects(p, a.trigger.allowed, ownerTeam);
 
 export async function getAction(id: string): Promise<Action> {
   const r = await one<Row>('SELECT * FROM actions WHERE org_id = ? AND identifier = ?', orgId(), id);

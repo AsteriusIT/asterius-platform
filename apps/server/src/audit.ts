@@ -6,7 +6,7 @@ import { metrics } from './metrics.js';
 import { componentLogger } from './logger.js';
 import type { AuditEntry } from '@asterius/shared';
 import { decodeCursor, encodeCursor } from './lib/cursor.js';
-import { maybeOrgId, orgId } from './orgs/context.js';
+import { currentVia, maybeOrgId, orgId } from './orgs/context.js';
 
 /**
  * Append-only audit log of changes and decisions: who, what, on which target.
@@ -17,11 +17,16 @@ import { maybeOrgId, orgId } from './orgs/context.js';
  *  - Entries can be exported (CSV / NDJSON) and streamed to a SIEM (audit-stream.ts).
  *  - Entries belong to the organization of the context (null: platform-level, e.g. sign-ins and organization
  *    management); listings and exports are per organization. The chain is platform-wide (super-admins verify it).
+ *  - Entries record the channel of the call (ui, api, mcp, workflow) and the registered AI agent acting, if any (from
+ *    the actor, else the request context), so agent-originated calls can be filtered.
  */
 
 export interface Actor {
   id: string | null;
   email: string | null;
+  /** Override of the request's channel / agent (background work done for an agent, e.g. AI agent steps). */
+  channel?: string | null;
+  agent?: string | null;
 }
 
 const log = componentLogger('audit');
@@ -31,8 +36,8 @@ export const SYSTEM: Actor = { id: null, email: 'system' };
 const CHAIN_LOCK = 726210;
 const retryQueue: { actor: Actor; action: string; target: string | null; detail: Record<string, unknown>; org: string | null }[] = [];
 
-/** Current hash formula. v1 (legacy) did not cover org_id; v2 covers org_id and the version itself. */
-export const CHAIN_VERSION = 2;
+/** Current hash formula. v1 (legacy) did not cover org_id; v2 covers org_id and the version itself; v3 also channel and agent. */
+export const CHAIN_VERSION = 3;
 
 export const chainHash = (p: {
   /** Defaults to 1 (legacy formula). */
@@ -47,21 +52,49 @@ export const chainHash = (p: {
   actorEmail: string | null;
   target: string | null;
   detail: string;
+  channel?: string | null;
+  agent?: string | null;
 }) => {
   const v = p.version ?? 1;
   const data =
     v === 1
       ? JSON.stringify([p.prev, p.seq, p.id, p.at, p.action, p.actorId, p.actorEmail, p.target, p.detail])
-      : JSON.stringify([v, p.orgId ?? null, p.prev, p.seq, p.id, p.at, p.action, p.actorId, p.actorEmail, p.target, p.detail]);
+      : v === 2
+        ? JSON.stringify([v, p.orgId ?? null, p.prev, p.seq, p.id, p.at, p.action, p.actorId, p.actorEmail, p.target, p.detail])
+        : JSON.stringify([
+            v,
+            p.orgId ?? null,
+            p.prev,
+            p.seq,
+            p.id,
+            p.at,
+            p.action,
+            p.actorId,
+            p.actorEmail,
+            p.target,
+            p.detail,
+            p.channel ?? null,
+            p.agent ?? null,
+          ]);
   return config.AUDIT_CHAIN_KEY ? createHmac('sha256', config.AUDIT_CHAIN_KEY).update(data).digest('hex') : createHash('sha256').update(data).digest('hex');
+};
+
+/** Channel and agent of an entry: the actor's override, else the request's. */
+const viaOf = (actor: Actor) => {
+  const via = currentVia();
+  return {
+    channel: actor.channel !== undefined ? actor.channel : (via?.channel ?? null),
+    agent: actor.agent !== undefined ? actor.agent : (via?.agent ?? null),
+  };
 };
 
 async function insert(actor: Actor, action: string, target: string | null, detail: Record<string, unknown>, org: string | null) {
   const id = newId();
   const text = JSON.stringify(detail);
+  const { channel, agent } = viaOf(actor);
   if (!config.AUDIT_HASH_CHAIN) {
     await run(
-      'INSERT INTO audit_log (id, org_id, at, action, actor_id, actor_email, target, detail) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO audit_log (id, org_id, at, action, actor_id, actor_email, target, detail, channel, agent) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       id,
       org,
       now(),
@@ -70,6 +103,8 @@ async function insert(actor: Actor, action: string, target: string | null, detai
       actor.email,
       target,
       text,
+      channel,
+      agent,
     );
     return;
   }
@@ -82,15 +117,31 @@ async function insert(actor: Actor, action: string, target: string | null, detai
     const seq = Number(tip?.chain_seq ?? 0) + 1;
     const prev = tip?.hash ?? '';
     const at = now();
-    const hash = chainHash({ version: CHAIN_VERSION, orgId: org, prev, seq, id, at, action, actorId: actor.id, actorEmail: actor.email, target, detail: text });
+    const hash = chainHash({
+      version: CHAIN_VERSION,
+      orgId: org,
+      prev,
+      seq,
+      id,
+      at,
+      action,
+      actorId: actor.id,
+      actorEmail: actor.email,
+      target,
+      detail: text,
+      channel,
+      agent,
+    });
     await d.query(
-      'INSERT INTO audit_log (id, org_id, at, action, actor_id, actor_email, target, detail, chain_seq, prev_hash, hash, chain_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [id, org, at, action, actor.id, actor.email, target, text, seq, prev, hash, CHAIN_VERSION],
+      'INSERT INTO audit_log (id, org_id, at, action, actor_id, actor_email, target, detail, chain_seq, prev_hash, hash, chain_version, channel, agent) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [id, org, at, action, actor.id, actor.email, target, text, seq, prev, hash, CHAIN_VERSION, channel, agent],
     );
   });
 }
 
 export async function audit(actor: Actor, action: string, target: string | null, detail: Record<string, unknown> = {}, org = maybeOrgId()) {
+  // Resolved now: a retried entry keeps the channel of the original call.
+  actor = { ...actor, ...viaOf(actor) };
   try {
     await insert(actor, action, target, detail, org);
     // Entries that failed earlier are retried as soon as the database accepts writes again.
@@ -109,9 +160,21 @@ interface Row {
   actor_email: string | null;
   target: string | null;
   detail: string;
+  channel: string | null;
+  agent: string | null;
 }
 
-const toEntry = (r: Row): AuditEntry => ({ id: r.id, at: r.at, action: r.action, actorEmail: r.actor_email, target: r.target, detail: json(r.detail, {}) });
+const toEntry = (r: Row): AuditEntry => ({
+  id: r.id,
+  at: r.at,
+  action: r.action,
+  actorEmail: r.actor_email,
+  target: r.target,
+  detail: json(r.detail, {}),
+  channel: (r.channel ?? null) as AuditEntry['channel'],
+  agent: r.agent ?? null,
+});
+const COLUMNS = 'id, at, action, actor_email, target, detail, channel, agent';
 
 export interface AuditQuery {
   /** Also platform-level entries (sign-ins, organization management): super-admins. */
@@ -123,6 +186,10 @@ export interface AuditQuery {
   target?: string;
   from?: string;
   to?: string;
+  /** ui · api · mcp · workflow. */
+  channel?: string;
+  /** An agent identifier; `*`: any agent; `-`: no agent (people and the platform). */
+  agent?: string;
 }
 
 /** Entries of the current organization matching the query. */
@@ -151,6 +218,16 @@ function filter(q: AuditQuery) {
     where.push("target LIKE ? ESCAPE '\\'");
     params.push(like(q.target));
   }
+  if (q.channel) {
+    where.push('channel = ?');
+    params.push(q.channel);
+  }
+  if (q.agent === '*') where.push('agent IS NOT NULL');
+  else if (q.agent === '-') where.push('agent IS NULL');
+  else if (q.agent) {
+    where.push('agent = ?');
+    params.push(q.agent);
+  }
   if (q.from) {
     where.push('at >= ?');
     params.push(q.from);
@@ -170,7 +247,7 @@ export async function listAudit(q: AuditQuery & { limit: number; offset: number;
     params.push(...decodeCursor(q.cursor, { s: 'audit', d: 'desc', n: 2 }));
   }
   const rows = await all<Row>(
-    `SELECT id, at, action, actor_email, target, detail FROM audit_log ${where} ORDER BY at DESC, id DESC LIMIT ? OFFSET ?`,
+    `SELECT ${COLUMNS} FROM audit_log ${where} ORDER BY at DESC, id DESC LIMIT ? OFFSET ?`,
     ...params,
     q.limit + 1,
     q.cursor ? 0 : q.offset,
@@ -192,7 +269,15 @@ export async function auditFacets(q: AuditQuery = {}) {
     `SELECT actor_email, count(*) AS n FROM audit_log ${w} AND actor_email IS NOT NULL GROUP BY actor_email ORDER BY n DESC LIMIT 100`,
     ...params,
   );
-  return { actions: actions.map((a) => ({ value: a.action, count: Number(a.n) })), actors: actors.map((a) => ({ value: a.actor_email, count: Number(a.n) })) };
+  const agents = await all<{ agent: string; n: number }>(
+    `SELECT agent, count(*) AS n FROM audit_log ${w} AND agent IS NOT NULL GROUP BY agent ORDER BY n DESC LIMIT 100`,
+    ...params,
+  );
+  return {
+    actions: actions.map((a) => ({ value: a.action, count: Number(a.n) })),
+    actors: actors.map((a) => ({ value: a.actor_email, count: Number(a.n) })),
+    agents: agents.map((a) => ({ value: a.agent, count: Number(a.n) })),
+  };
 }
 
 /** Oldest first, in pages, for exports (bounded by AUDIT_EXPORT_MAX rows). */
@@ -200,12 +285,7 @@ export async function* exportAudit(q: AuditQuery): AsyncGenerator<AuditEntry> {
   const { w, params } = filter(q);
   const PAGE = 1000;
   for (let offset = 0; offset < config.AUDIT_EXPORT_MAX; offset += PAGE) {
-    const rows = await all<Row>(
-      `SELECT id, at, action, actor_email, target, detail FROM audit_log ${w} ORDER BY at, id LIMIT ? OFFSET ?`,
-      ...params,
-      PAGE,
-      offset,
-    );
+    const rows = await all<Row>(`SELECT ${COLUMNS} FROM audit_log ${w} ORDER BY at, id LIMIT ? OFFSET ?`, ...params, PAGE, offset);
     for (const r of rows) yield toEntry(r);
     if (rows.length < PAGE) return;
   }
@@ -217,8 +297,8 @@ export const csvCell = (v: unknown) => {
   if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 };
-export const CSV_HEADER = 'id,at,action,actor,target,detail\n';
-export const csvRow = (e: AuditEntry) => `${[e.id, e.at, e.action, e.actorEmail, e.target, e.detail].map(csvCell).join(',')}\n`;
+export const CSV_HEADER = 'id,at,action,actor,target,detail,channel,agent\n';
+export const csvRow = (e: AuditEntry) => `${[e.id, e.at, e.action, e.actorEmail, e.target, e.detail, e.channel, e.agent].map(csvCell).join(',')}\n`;
 
 // ---------- tamper evidence ----------
 export interface ChainReport {
@@ -235,7 +315,7 @@ const eq = (a: string, b: string) => a.length === b.length && timingSafeEqual(Bu
 /**
  * Walk the chain from its oldest remaining entry (older ones may have been purged by retention; that entry's
  * `prev_hash` is the anchor) and recompute every hash according to the row's `chain_version` (1: legacy, no org_id;
- * 2: covers org_id). The chain may move from v1 to v2 once, never back. Entries written while the chain was disabled are ignored.
+ * 2: covers org_id; 3: also channel and agent). The chain version only ever goes up. Entries written while the chain was disabled are ignored.
  */
 export async function verifyAuditChain(): Promise<ChainReport> {
   let checked = 0;
@@ -257,6 +337,8 @@ export async function verifyAuditChain(): Promise<ChainReport> {
       chain_seq: number;
       prev_hash: string;
       hash: string;
+      channel: string | null;
+      agent: string | null;
     }>('SELECT * FROM audit_log WHERE chain_seq > ? ORDER BY chain_seq LIMIT ?', after, BATCH);
     if (!rows.length) break;
     for (const r of rows) {
@@ -264,7 +346,8 @@ export async function verifyAuditChain(): Promise<ChainReport> {
       if (expectedSeq !== undefined && seq !== expectedSeq) return { enabled: true, ok: false, checked, brokenAt: expectedSeq, reason: 'missing entry' };
       if (prevHash !== undefined && !eq(r.prev_hash, prevHash)) return { enabled: true, ok: false, checked, brokenAt: seq, reason: 'broken link' };
       const version = Number(r.chain_version ?? 1);
-      if (version !== 1 && version !== CHAIN_VERSION) return { enabled: true, ok: false, checked, brokenAt: seq, reason: 'unknown chain version' };
+      if (version !== 1 && version !== 2 && version !== CHAIN_VERSION)
+        return { enabled: true, ok: false, checked, brokenAt: seq, reason: 'unknown chain version' };
       if (version < prevVersion) return { enabled: true, ok: false, checked, brokenAt: seq, reason: 'chain version downgrade' };
       prevVersion = version;
       const h = chainHash({
@@ -279,6 +362,8 @@ export async function verifyAuditChain(): Promise<ChainReport> {
         actorEmail: r.actor_email,
         target: r.target,
         detail: r.detail,
+        channel: r.channel,
+        agent: r.agent,
       });
       if (!eq(h, r.hash)) return { enabled: true, ok: false, checked, brokenAt: seq, reason: 'entry was modified' };
       prevHash = r.hash;

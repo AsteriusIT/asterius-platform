@@ -61,8 +61,23 @@ import type {
   ConnectorDefinition,
   ConnectorVersion,
   RenderedConnectorRequest,
+  Agent,
+  McpServer,
+  McpServerTestResult,
 } from '@asterius/shared';
 import { urlOrg } from './orgUrl';
+
+/** Filters of the audit log (GET /audit, /audit/export). `agent`: an identifier, `*` (any agent) or `-` (none). */
+export type AuditFilters = {
+  search?: string;
+  actor?: string;
+  action?: string;
+  target?: string;
+  from?: string;
+  to?: string;
+  channel?: string;
+  agent?: string;
+};
 
 export interface SimulationResult {
   steps: { id: string; type: string; skipped: boolean; error?: string; preview?: unknown }[];
@@ -346,8 +361,18 @@ export const api = {
   trigger: (id: string, body: { entity?: string | null; inputs: Record<string, unknown>; overrideBlackout?: boolean; priority?: number }) =>
     request<Run>('POST', v1(`/actions/${enc(id)}/runs`), body),
 
-  runs: (q: { mine?: boolean; myTeams?: boolean; status?: string; action?: string; blueprint?: string; entity?: string; limit?: number; offset?: number }) =>
-    request<RunPage>('GET', v1(`/runs${qs(q)}`)),
+  runs: (q: {
+    mine?: boolean;
+    myTeams?: boolean;
+    status?: string;
+    action?: string;
+    blueprint?: string;
+    entity?: string;
+    /** An agent identifier, `*` (any agent) or `-` (none). */
+    agent?: string;
+    limit?: number;
+    offset?: number;
+  }) => request<RunPage>('GET', v1(`/runs${qs(q)}`)),
   /** `after`: only log lines past this sequence number (incremental polling). */
   run: (id: string, after?: number) => request<Run>('GET', v1(`/runs/${enc(id)}${after !== undefined ? `?after=${after}` : ''}`)),
   approvals: () => request<Run[]>('GET', v1('/approvals')),
@@ -436,14 +461,16 @@ export const api = {
   setSecret: (name: string, value: string, description: string) => request('PUT', v1(`/secrets/${enc(name)}`), { value, description }),
   deleteSecret: (name: string) => request('DELETE', v1(`/secrets/${enc(name)}`)),
 
-  audit: (q: { search?: string; actor?: string; action?: string; target?: string; from?: string; to?: string; limit?: number; offset?: number }) =>
-    request<AuditEntry[]>('GET', v1(`/audit${qs(q)}`)),
-  auditExport: (q: { search?: string; action?: string; actor?: string; target?: string; from?: string; to?: string }, format: 'csv' | 'json') =>
-    request<string>('GET', v1(`/audit/export${qs({ ...q, format })}`)),
+  audit: (q: AuditFilters & { limit?: number; offset?: number }) => request<AuditEntry[]>('GET', v1(`/audit${qs(q)}`)),
+  auditExport: (q: AuditFilters, format: 'csv' | 'json') => request<string>('GET', v1(`/audit/export${qs({ ...q, format })}`)),
   auditFacets: () =>
-    request<{ actions: { value: string; count: number }[]; actors: { value: string; count: number }[] }>('GET', v1('/audit/facets')).then((f) => ({
+    request<{ actions: { value: string; count: number }[]; actors: { value: string; count: number }[]; agents?: { value: string; count: number }[] }>(
+      'GET',
+      v1('/audit/facets'),
+    ).then((f) => ({
       actions: f.actions.map((x) => x.value),
       actors: f.actors.map((x) => x.value),
+      agents: (f.agents ?? []).map((x) => x.value),
     })),
   allDeliveries: (q: { status?: string; limit?: number; offset?: number }) => request<Delivery[]>('GET', v1(`/deliveries${qs(q)}`)),
   redeliverMany: (ids: string[]) => request<{ queued: number }>('POST', v1('/deliveries/redeliver'), { ids }),
@@ -536,6 +563,20 @@ export const api = {
   testConnection: (id: string) => request<ConnectionTestResult>('POST', v1(`/connections/${enc(id)}/test`), {}),
   connectionUsage: (id: string) => request<ConnectionUsage>('GET', v1(`/connections/${enc(id)}/usage`)),
   // ---- end connections & connectors admin ----
+  // ---- agent governance ----
+  agents: () => request<Agent[]>('GET', v1('/agents')),
+  saveAgent: (id: string, body: unknown, opts?: { ifMatch?: number }) =>
+    request<Agent>('PUT', v1(`/agents/${enc(id)}`), body, { headers: ifMatch(opts?.ifMatch) }),
+  deleteAgent: (id: string) => request('DELETE', v1(`/agents/${enc(id)}`)),
+  agentTokens: (id: string) => request<ApiToken[]>('GET', v1(`/agents/${enc(id)}/tokens`)),
+  createAgentToken: (id: string, body: { name?: string; expiresInDays?: number | null }) =>
+    request<{ id: string; token: string }>('POST', v1(`/agents/${enc(id)}/tokens`), body),
+  mcpServers: () => request<McpServer[]>('GET', v1('/mcp-servers')),
+  saveMcpServer: (id: string, body: unknown, opts?: { ifMatch?: number }) =>
+    request<McpServer>('PUT', v1(`/mcp-servers/${enc(id)}`), body, { headers: ifMatch(opts?.ifMatch) }),
+  deleteMcpServer: (id: string) => request('DELETE', v1(`/mcp-servers/${enc(id)}`)),
+  testMcpServer: (id: string) => request<McpServerTestResult>('POST', v1(`/mcp-servers/${enc(id)}/test`), {}),
+  // ---- end agent governance ----
 };
 
 const ifMatch = (version?: number): Record<string, string> => (version === undefined ? {} : { 'if-match': `"${version}"` });

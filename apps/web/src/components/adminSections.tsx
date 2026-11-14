@@ -14,6 +14,7 @@ import {
   IconPuzzle,
   IconRobot,
   IconSchema,
+  IconServer2,
   IconSend,
   IconSettingsAutomation,
   IconShieldCheck,
@@ -96,6 +97,8 @@ export const ADMIN_CATEGORIES: AdminCategory[] = [
     icon: i(IconShieldCheck),
     tabs: [
       { label: 'Policies', path: '/admin/policies', icon: i(IconShieldCheck) },
+      { label: 'Agents', path: '/admin/agents', icon: i(IconRobot) },
+      { label: 'MCP servers', path: '/admin/mcp-servers', icon: i(IconServer2) },
       { label: 'Audit log', path: '/admin/audit', icon: i(IconHistory) },
       { label: 'Deleted entities', path: '/admin/deleted', icon: i(IconTrashX) },
     ],

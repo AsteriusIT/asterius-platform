@@ -273,6 +273,9 @@ export async function adminRoutes(app: FastifyInstance, opts: { reloadConfig: (o
       target: z.string().max(200).optional(),
       from: date,
       to: date,
+      channel: z.enum(['ui', 'api', 'mcp', 'workflow']).optional(),
+      /** An agent identifier; `*`: any agent; `-`: no agent. */
+      agent: z.string().max(64).optional(),
     });
     admin.get('/audit', async (req, reply) => {
       const q = page
