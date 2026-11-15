@@ -62,7 +62,7 @@ jobs:
         run: |
           cosign sign --yes "${IMAGE}@${{ steps.push.outputs.digest }}"
           cosign attest --yes --type spdxjson --predicate sbom.spdx.json "${IMAGE}@${{ steps.push.outputs.digest }}"
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v5
       - name: Package and push the Helm chart (OCI)
         run: |
           helm lint deploy/helm/asterius-platform --set database.url=postgres://ci --set auth.providers=local

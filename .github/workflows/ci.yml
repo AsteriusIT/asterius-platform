@@ -32,7 +32,7 @@ jobs:
         run: npm test -w apps/server
         env: { TEST_DATABASE_URL: 'postgres://ast:ast@localhost:5432/ast' }
       - run: npm run build
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v5
       - name: Helm lint
         run: |
           helm lint deploy/helm/asterius-platform --set database.url=postgres://ci --set auth.providers=local
