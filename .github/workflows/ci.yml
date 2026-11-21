@@ -52,7 +52,7 @@ jobs:
         with:
           go-version-file: terraform-provider-asterius/go.mod
           cache-dependency-path: terraform-provider-asterius/go.sum
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v4
         with:
           terraform_wrapper: false
       - uses: actions/setup-node@v4
