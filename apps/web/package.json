@@ -48,6 +48,6 @@
   },
   "description": "Bundled by Vite into static files served by the API: every package is a build-time dependency.",
   "dependencies": {
-    "@xyflow/react": "^12.12.1"
+    "@xyflow/react": "^13.0.3"
   }
 }
